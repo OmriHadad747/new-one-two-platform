@@ -29,23 +29,6 @@ export type ExecutionStatus = "queued" | "running" | "success" | "failed" | "tim
 
 export type AppArchetype = "storefront_ui" | "backend_only";
 
-// ─── Widget Config ────────────────────────────────────────────────────────────
-// Config served by the App Block renderer at runtime.
-// Only populated for storefront_ui tenants.
-
-export interface WidgetConfigActions {
-  on_submit?: string;   // relative endpoint path for form submission
-  on_load?: string;     // relative endpoint to fetch data on load
-  data_source?: string; // relative endpoint for dynamic data
-}
-
-export interface WidgetConfig {
-  widget_type: string;                                        // must exist in App Block renderer registry
-  trigger_condition?: "out_of_stock" | "always" | "low_stock";
-  ui: Record<string, string | number | boolean>;
-  actions: WidgetConfigActions;
-}
-
 // ─── Tenant ──────────────────────────────────────────────────────────────────
 
 export interface Tenant {
@@ -56,7 +39,7 @@ export interface Tenant {
   plan: string;                 // "starter" | "pro" | "enterprise"
   kmsKeyName: string;           // GCP KMS key resource name for this tenant
   appArchetype: AppArchetype;   // storefront_ui | backend_only
-  widgetConfig: WidgetConfig | null; // null for backend_only
+  widgetJs: string | null;      // raw JS ES module source; null for backend_only
   createdAt: Date;
   updatedAt: Date;
 }
@@ -196,6 +179,7 @@ export interface HandlerContext {
   db: unknown; // postgres.TransactionSql — typed loosely to avoid hard dep on postgres lib
   payload: Record<string, unknown>;
   logger: HandlerLogger;
+  tenantId: string; // UUID of the current tenant — use in all INSERT statements
 }
 
 // The contract every generated app module must export
@@ -343,13 +327,6 @@ export interface ProgressEventMessage {
   attempt?: number;
 }
 
-/** App Block (Theme App Extension) artifacts. */
-export interface AppBlock {
-  schema: Record<string, unknown>;
-  liquid: string;
-  javascript: string;
-}
-
 /** Generated CommonJS handler module for the harness. */
 export interface HandlerModule {
   code: string;
@@ -376,7 +353,7 @@ export interface FeatureExplanation {
 
 /** The complete validated feature bundle produced by the Python generator. */
 export interface FeatureBundle {
-  widgetConfig: WidgetConfig | null; // null for backend_only apps
+  widgetModule: string | null; // raw JS ES module source; null for backend_only apps
   handlerModule: HandlerModule;
   dbMigration: DbMigration;
   explanation: FeatureExplanation;

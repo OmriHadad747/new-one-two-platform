@@ -9,10 +9,10 @@ Agents 3 (codegen) and 4 (validation) are orchestrated directly in crew.py
 because they involve parallel execution and retry loops that CrewAI's sequential
 task model doesn't natively express.
 """
+
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -99,9 +99,10 @@ OUTPUT FORMAT — respond ONLY with this JSON object (no markdown fences):
 }}
 
 Rules:
-- webhookTopics: list of valid Shopify webhook topics this feature subscribes to
+- webhookTopics: ONLY include topics whose payload is actively used to drive business logic. If a topic's data is not read or acted on in the handler, do not subscribe to it.
 - Operations describe the backend handler's Shopify API calls in execution order
 - Platform API catalog paths (for the App Block frontend) are separate from these
+- When the feature must detect a state transition (e.g. out-of-stock → in-stock, status change), include an explicit operation to read the previous state from a DB table and write the new state. Label this operation with "store" or "read previous state" so the migration agent generates the required table.
 - Output ONLY the JSON object"""
 
 SCHEMA_USER_TEMPLATE = """Feature intent:
@@ -131,15 +132,13 @@ def run_schema_agent(
         schema_fragments_section=schema_fragments_section
     )
 
-    catalog_str = "\n".join(
-        f"  {e.method} {e.path}" for e in platform_api_catalog
-    )
+    catalog_str = "\n".join(f"  {e.method} {e.path}" for e in platform_api_catalog)
     user = SCHEMA_USER_TEMPLATE.format(
         intent_json=json.dumps(intent, indent=2),
         catalog=catalog_str,
     )
 
-    llm = get_llm(max_tokens=1024)
+    llm = get_llm(max_tokens=2048)
     result = invoke(llm, system, user)
     raw = extract_json(result.content)
     return json.loads(raw)
@@ -183,7 +182,7 @@ Write the merchant explanation and technical summary."""
 def run_explanation_agent(
     intent: Dict[str, Any],
     api_plan: Dict[str, Any],
-    widget_config: Dict[str, Any],
+    widget_js_code: str,
     handler_code: str,
     migration_sql: str,
 ) -> Dict[str, Any]:
@@ -195,9 +194,8 @@ def run_explanation_agent(
     webhook_topics = api_plan.get("webhookTopics", [])
 
     widget_summary = (
-        f"widget_type={widget_config.get('widget_type')}, "
-        f"trigger={widget_config.get('trigger_condition', 'always')}"
-        if widget_config
+        "custom storefront widget (AI-generated ES module)"
+        if widget_js_code and widget_js_code.strip()
         else "none (backend-only app)"
     )
 
@@ -209,7 +207,7 @@ def run_explanation_agent(
         db_tables=db_tables,
     )
 
-    llm = get_llm(max_tokens=512)
+    llm = get_llm(max_tokens=1024)
     result = invoke(llm, EXPLANATION_SYSTEM, user)
     raw = extract_json(result.content)
     return json.loads(raw)

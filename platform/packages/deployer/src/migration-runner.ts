@@ -16,7 +16,7 @@ const FORBIDDEN_PATTERNS = [
   /\bDROP\s+TABLE\b/i,
   /\bDROP\s+COLUMN\b/i,
   /\bTRUNCATE\b/i,
-  /\bALTER\s+TABLE\b/i,
+  /\bALTER\s+TABLE\b(?!\s+\w+\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY)/i,
 ];
 
 function validateMigrationSql(migrationSql: string): void {

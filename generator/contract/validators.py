@@ -45,17 +45,6 @@ class ProgressEvent(BaseModel):
 
 # ─── FeatureBundleMessage ─────────────────────────────────────────────────────
 
-class WidgetConfigActions(BaseModel):
-    on_submit: Optional[str] = None
-    on_load: Optional[str] = None
-    data_source: Optional[str] = None
-
-
-class WidgetConfig(BaseModel):
-    widget_type: str
-    trigger_condition: Optional[Literal["out_of_stock", "always", "low_stock"]] = None
-    ui: Dict[str, Any]
-    actions: WidgetConfigActions
 
 
 class HandlerModule(BaseModel):
@@ -81,14 +70,14 @@ class FeatureExplanation(BaseModel):
 
 
 class Bundle(BaseModel):
-    widgetConfig: Optional[WidgetConfig] = None  # None for backend_only apps
+    widgetModule: Optional[str] = None  # None for backend_only apps — raw JS ES module
     handlerModule: HandlerModule
     dbMigration: DbMigration
     explanation: FeatureExplanation
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "widgetConfig": self.widgetConfig.model_dump() if self.widgetConfig else None,
+            "widgetModule": self.widgetModule,
             "handlerModule": self.handlerModule.model_dump(),
             "dbMigration": self.dbMigration.model_dump(),
             "explanation": self.explanation.model_dump(),

@@ -8,7 +8,6 @@ import type {
   WebhookSubscription,
   VersionStatus,
   AppArchetype,
-  WidgetConfig,
 } from "@new-one-two/types";
 
 // ─── Connection Pool ──────────────────────────────────────────────────────────
@@ -71,7 +70,7 @@ export async function resolveWebhookContext(
       tenantPlan: string;
       tenantKmsKeyName: string;
       tenantAppArchetype: string;
-      tenantWidgetConfig: WidgetConfig | null;
+      tenantWidgetJs: string | null;
       appId: string;
       appTenantId: string;
       appSlug: string;
@@ -102,7 +101,7 @@ export async function resolveWebhookContext(
       t.plan            AS tenant_plan,
       t.kms_key_name    AS tenant_kms_key_name,
       t.app_archetype   AS tenant_app_archetype,
-      t.widget_config   AS tenant_widget_config,
+      t.widget_js       AS tenant_widget_js,
 
       a.id                                   AS app_id,
       a.tenant_id                            AS app_tenant_id,
@@ -157,7 +156,7 @@ export async function resolveWebhookContext(
       plan: row.tenantPlan,
       kmsKeyName: row.tenantKmsKeyName,
       appArchetype: row.tenantAppArchetype as AppArchetype,
-      widgetConfig: row.tenantWidgetConfig,
+      widgetJs: row.tenantWidgetJs,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -658,30 +657,33 @@ export async function storeBundleInSession(
 }
 
 /**
- * Resolves widget_config for the App Block renderer.
- * Called by GET /widget-config?shop={shop} on the webhook gateway.
+ * Resolves the widget JS for a shop domain.
+ * Called by GET /widgets/:shop/:appId.js on the webhook gateway.
  *
- * Returns the widget_config JSONB for storefront_ui tenants.
- * Returns null if the tenant is backend_only or not found.
+ * Returns the raw JS string for storefront_ui tenants.
+ * Returns null if the tenant is backend_only, not found, or has no widget yet.
  */
-export async function resolveWidgetConfig(
-  shopDomain: string
-): Promise<WidgetConfig | null> {
+export async function resolveWidgetJs(
+  shopDomain: string,
+  appId: string
+): Promise<string | null> {
   const rows = await sql<
-    Array<{ widgetConfig: WidgetConfig | null; appArchetype: string }>
+    Array<{ widgetJs: string | null; appArchetype: string }>
   >`
     SELECT
-      t.widget_config  AS "widgetConfig",
+      t.widget_js      AS "widgetJs",
       t.app_archetype  AS "appArchetype"
     FROM tenants t
-    JOIN apps a ON a.tenant_id = t.id AND a.shop_domain = ${shopDomain}
+    JOIN apps a ON a.tenant_id = t.id
+      AND a.shop_domain = ${shopDomain}
+      AND a.id = ${appId}
     WHERE t.status = 'active'
     LIMIT 1
   `;
 
   const row = rows[0];
   if (!row || row.appArchetype !== "storefront_ui") return null;
-  return row.widgetConfig;
+  return row.widgetJs;
 }
 
 // ─── Tenant / App Management Queries ─────────────────────────────────────────
@@ -721,7 +723,7 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       plan: string;
       kmsKeyName: string;
       appArchetype: string;
-      widgetConfig: WidgetConfig | null;
+      widgetJs: string | null;
       createdAt: Date;
       updatedAt: Date;
     }>
@@ -734,7 +736,7 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       plan,
       kms_key_name    AS "kmsKeyName",
       app_archetype   AS "appArchetype",
-      widget_config   AS "widgetConfig",
+      widget_js       AS "widgetJs",
       created_at      AS "createdAt",
       updated_at      AS "updatedAt"
     FROM tenants
@@ -751,7 +753,7 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
     plan: row.plan,
     kmsKeyName: row.kmsKeyName,
     appArchetype: row.appArchetype as AppArchetype,
-    widgetConfig: row.widgetConfig,
+    widgetJs: row.widgetJs,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -838,17 +840,17 @@ export async function getAppById(
 }
 
 /**
- * Updates the widget_config for a tenant (storefront_ui archetype).
+ * Stores the widget JS for a tenant (storefront_ui archetype).
  * Called by the deployer after a successful bundle deployment.
  */
-export async function updateTenantWidgetConfig(
+export async function updateTenantWidgetJs(
   tenantId: string,
-  widgetConfig: WidgetConfig | null
+  widgetJs: string | null
 ): Promise<void> {
   await sql`
     UPDATE tenants
-    SET widget_config = ${widgetConfig ? sql.json(widgetConfig as any) : null},
-        updated_at    = NOW()
+    SET widget_js  = ${widgetJs},
+        updated_at = NOW()
     WHERE id = ${tenantId}
   `;
 }

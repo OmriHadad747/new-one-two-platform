@@ -129,7 +129,7 @@ Omit `id` from either request to auto-generate a UUID — copy it from the respo
 ### Trigger real generation
 
 ```bash
-# 1. Start a generation job (storefront_ui → produces widgetConfig + handler)
+# 1. Start a generation job (storefront_ui → produces widgetModule JS + handler)
 curl -X POST http://localhost:3002/generation \
   -H "Content-Type: application/json" \
   -d '{
@@ -157,12 +157,12 @@ curl -X POST http://localhost:3002/generation/<jobId>/approve
 ### What to verify
 
 - The Python generator logs (via `docker compose logs generator-python -f`) show all five agent stages: `intent → schema → codegen (parallel) → validation → explanation`
-- The result includes all four bundle fields: `widgetConfig`, `handlerModule`, `dbMigration`, `explanation`
-- For `storefront_ui` apps: `widgetConfig` is a non-null object with `widget_type`, `ui`, and `actions` fields
-- For `backend_only` apps: `widgetConfig` is `null`
+- The result includes all four bundle fields: `widgetModule`, `handlerModule`, `dbMigration`, `explanation`
+- For `storefront_ui` apps: `widgetModule` is a non-null JavaScript string containing `export function mount`
+- For `backend_only` apps: `widgetModule` is `null`
 - The `dbMigration.sql` has `tenant_id UUID NOT NULL` and `CREATE POLICY` in every `CREATE TABLE` (or is empty string if no DB tables needed)
 - The `handlerModule.code` uses `ctx.shopify` and `ctx.db` — no raw `fetch()` or `require()`
-- `widgetConfig.actions` paths are all listed in `platformApiCatalog`
+- The `widgetModule` code only calls `host.call()` with paths listed in `platformApiCatalog`
 
 ---
 
@@ -186,35 +186,22 @@ ngrok http 3001
 
 Note the HTTPS URL shown (e.g. `https://abc123.ngrok.io`). Use it everywhere below.
 
-**4. Create a custom app**
-Partners dashboard → Apps → Create app → Custom app.
-- Set the app URL to `https://<your-ngrok>.ngrok.io`
-- Under "Allowed redirection URL(s)", add `https://<your-ngrok>.ngrok.io/auth/callback`
-- Under "App setup" → Webhooks, set the API version to `2026-01`
-- From the app credentials page copy: **API key** and **API secret key**
-
-**5. Configure API scopes**
-In the app → "Configuration" → "Admin API integration" → "Configure", enable:
-
-| Scope | Required for |
-|-------|-------------|
-| `read_products` | Products & variants |
-| `read_inventory`, `write_inventory` | Inventory levels, adjust stock |
-| `read_orders`, `write_orders` | Orders, fulfillments |
-| `read_customers`, `write_customers` | Customer lookup, tag updates |
-| `read_price_rules`, `write_price_rules` | Discount codes |
-
-Save and continue.
-
-> **Note:** This platform uses a manually provisioned `SHOPIFY_ACCESS_TOKEN` rather than a full OAuth flow.
-> The `/auth/callback` redirect URL is required by Shopify but the callback route is not yet implemented.
-> Obtain the access token via step 6 below.
-
-**6. Get an access token for your dev store**
+**4. Get an access token for your dev store**
 
 Shopify's Dev Dashboard (mandatory as of January 2026) no longer shows a static token — instead you get a **Client ID + Client Secret** and exchange them for a short-lived token (expires in 24 hours).
 
-**6a. Create the app in the Dev Dashboard**
+**4a. Start the webhook gateway locally**
+
+Before installing the app, make sure the webhook gateway is running so Shopify can reach it during and after the install flow:
+
+```bash
+cd platform/apps/webhook-gateway
+npm run dev
+```
+
+The server listens on `http://localhost:3001` by default. Keep this terminal open throughout the setup.
+
+**4b. Create the app in the Dev Dashboard**
 
 1. Go to `https://dev.shopify.com/dashboard/` → **Create app**
 2. Name it anything (e.g. "local-dev")
@@ -229,7 +216,7 @@ Shopify's Dev Dashboard (mandatory as of January 2026) no longer shows a static 
 5. Go to **Home** → **Install app** → select your dev store → confirm
 6. Go to **Settings** → copy **Client ID** and **Client Secret**
 
-**6b. Exchange credentials for an access token**
+**4c. Exchange credentials for an access token**
 
 ```bash
 curl -X POST "https://hadad747teststore.myshopify.com/admin/oauth/access_token" \
@@ -269,35 +256,12 @@ WEBHOOK_BASE_URL=https://<your-ngrok>.ngrok.io
 > `SHOPIFY_PARTNERS_TOKEN` is different from the store access token. It's a Partners API token
 > from your partner account settings, used only for deploying App Block extensions.
 
-### Register a webhook in Shopify (for the back-in-stock feature)
-
-Once the stack is running and ngrok is up, register the `inventory_levels/update` webhook:
-
-```bash
-# Note: the REST webhooks endpoint is a legacy API. It still works but Shopify recommends
-# using the GraphQL Admin API (webhookSubscriptionCreate mutation) for new integrations.
-# This curl is only for quick manual testing — the deployer uses GraphQL automatically.
-curl -X POST "https://your-store.myshopify.com/admin/api/2026-01/webhooks.json" \
-  -H "X-Shopify-Access-Token: $SHOPIFY_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "webhook": {
-      "topic": "inventory_levels/update",
-      "address": "https://<your-ngrok>.ngrok.io/webhooks/inventory_levels/update",
-      "format": "json"
-    }
-  }'
-```
-
-> In Phase 3 the deployer auto-registers webhooks after approve — this manual step is only for
-> testing the webhook-gateway routing before a full deployment.
-
 ### End-to-end test with Shopify
 
 **1. Generate + deploy the back-in-stock feature**
 
 ```bash
-# Generate (storefront_ui → produces widgetConfig + handler)
+# Generate (storefront_ui → produces widgetModule JS + handler)
 curl -X POST http://localhost:3002/generation \
   -H "Content-Type: application/json" \
   -d '{"appId":"<app-uuid>","tenantId":"<tenant-uuid>","prompt":"Back in stock notifier","appArchetype":"storefront_ui",...}'
@@ -305,7 +269,7 @@ curl -X POST http://localhost:3002/generation \
 # Watch progress
 curl -N http://localhost:3002/generation/<jobId>/progress
 
-# Approve (runs DB migration, stores widget_config in tenant, deploys handler to local Docker)
+# Approve (runs DB migration, stores widget JS in tenant, deploys handler to local Docker)
 curl -X POST http://localhost:3002/generation/<jobId>/approve
 ```
 
@@ -327,41 +291,12 @@ docker compose logs worker --tail 50
 open http://localhost:3010
 ```
 
-**4. Test the App Block (storefront UI)**
-
-The App Block is maintained by the platform developer and deployed separately via Shopify CLI.
-It reads widget configuration at runtime from the gateway:
-
-```bash
-# Verify widget_config was stored for this tenant's shop domain
-curl "http://localhost:3001/widget-config?shop=your-store.myshopify.com"
-# Should return the widgetConfig JSON from the approved bundle
-```
-
-The App Block fetches this endpoint on every storefront page load and renders accordingly.
-To add the App Block to a theme:
-- In Shopify Admin → Online Store → Themes → Customize → add the "AI Generated Feature" block
-  to a product page section
-
----
-
-## Troubleshooting
-
-| Symptom | Check |
-|---------|-------|
-| `POST /generation` returns 500 | `docker compose logs api --tail 50` — usually a DB FK violation (tenant/app not seeded) or pubsub connection refused |
-| Bundle never appears in result | `docker compose logs api --tail 80` — look for `completed-sub` message delivery |
-| Generator logs show `ANTHROPIC_API_KEY` error | `.env` not loaded; run with `export ANTHROPIC_API_KEY=...` |
-| Validation keeps failing | Check `generator-python` logs for the exact error string; common cause is `fetch()` in JS calling a path not in `platformApiCatalog` |
-| Webhook not reaching gateway | Check ngrok dashboard at `http://localhost:4040`; verify `WEBHOOK_BASE_URL` matches the ngrok HTTPS URL |
-| App Block deploy fails | Check `SHOPIFY_PARTNERS_TOKEN` is a Partners API key (not a store token); org ID must be numeric |
-
 ## Service ports at a glance
 
 | Service | Port | Purpose |
 |---------|------|---------|
 | `api` | 3002 | Generation lifecycle REST + SSE |
-| `webhook-gateway` | 3001 | Shopify webhook ingress + `GET /widget-config` |
+| `webhook-gateway` | 3001 | Shopify webhook ingress + `GET /widgets/:shop/:appId.js` |
 | `generator-python` | 8001 | FastAPI `/health` + `/trigger` |
 | `postgres` | 5432 | Database |
 | `redis` | 6379 | BullMQ job queue |

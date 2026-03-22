@@ -44,7 +44,7 @@ ABSOLUTE RULES:
 4. Every CREATE TABLE must have a CREATE POLICY for tenant isolation
 5. NO DROP TABLE, NO ALTER TABLE on existing tables, NO TRUNCATE
 6. Use gen_random_uuid() for UUID primary keys
-7. If the feature doesn't need any new tables, output an empty string ""
+7. If the feature doesn't need any new tables, output nothing at all — zero characters, no explanation
 8. Add useful indexes (tenant_id is always a candidate)"""
 
 
@@ -58,7 +58,7 @@ def run_migration_agent(
 
     Returns raw SQL string (empty string if no tables needed).
     """
-    llm = get_llm(max_tokens=512)
+    llm = get_llm(max_tokens=2048)
 
     retry_context = ""
     if previous_errors:
@@ -87,7 +87,15 @@ Output ONLY raw SQL (no markdown fences)."""
     import re
     sql = re.sub(r"^```sql\s*", "", sql, flags=re.MULTILINE)
     sql = re.sub(r"```\s*$", "", sql, flags=re.MULTILINE)
-    return sql.strip()
+    sql = sql.strip()
+
+    # If the model returned prose instead of SQL, treat as empty (no migration needed).
+    # Valid SQL must start with a SQL keyword — anything else is a natural-language response.
+    SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMENT")
+    if sql and not sql.upper().startswith(SQL_KEYWORDS):
+        return ""
+
+    return sql
 
 
 def _extract_db_tables(api_plan: Dict[str, Any]) -> List[str]:

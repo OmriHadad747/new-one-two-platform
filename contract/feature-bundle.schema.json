@@ -22,51 +22,12 @@
     "bundle": {
       "description": "The complete feature bundle. Only present when status is 'success'.",
       "type": "object",
-      "required": ["widgetConfig", "handlerModule", "dbMigration", "explanation"],
+      "required": ["widgetModule", "handlerModule", "dbMigration", "explanation"],
       "additionalProperties": false,
       "properties": {
-        "widgetConfig": {
-          "description": "Widget configuration JSON served to the App Block renderer at runtime. null for backend_only apps.",
-          "oneOf": [
-            { "type": "null" },
-            {
-              "type": "object",
-              "required": ["widget_type", "ui", "actions"],
-              "additionalProperties": false,
-              "properties": {
-                "widget_type": {
-                  "type": "string",
-                  "description": "Must match a key in the App Block renderer registry (e.g. 'notify_me', 'stock_counter', 'countdown')."
-                },
-                "trigger_condition": {
-                  "type": "string",
-                  "enum": ["out_of_stock", "always", "low_stock"]
-                },
-                "ui": {
-                  "type": "object",
-                  "description": "Merchant-facing UI strings and values (button text, placeholders, messages)."
-                },
-                "actions": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "on_submit": {
-                      "type": "string",
-                      "description": "Relative endpoint path for form submission."
-                    },
-                    "on_load": {
-                      "type": "string",
-                      "description": "Relative endpoint to fetch data on page load."
-                    },
-                    "data_source": {
-                      "type": "string",
-                      "description": "Relative endpoint for dynamic data."
-                    }
-                  }
-                }
-              }
-            }
-          ]
+        "widgetModule": {
+          "description": "AI-generated ES module source (raw JavaScript string). Exports mount(container, host). null for backend_only apps.",
+          "type": ["string", "null"]
         },
         "handlerModule": {
           "type": "object",

@@ -49,19 +49,6 @@ export const ProgressEventSchema = z.object({
 
 // ─── FeatureBundleMessage ─────────────────────────────────────────────────────
 
-export const WidgetConfigActionsSchema = z.object({
-  on_submit: z.string().optional(),
-  on_load: z.string().optional(),
-  data_source: z.string().optional(),
-});
-
-export const WidgetConfigSchema = z.object({
-  widget_type: z.string(),
-  trigger_condition: z.enum(["out_of_stock", "always", "low_stock"]).optional(),
-  ui: z.record(z.union([z.string(), z.number(), z.boolean()])),
-  actions: WidgetConfigActionsSchema,
-});
-
 export const HandlerModuleSchema = z.object({
   code: z.string(),
   webhookTopics: z.array(z.string()),
@@ -85,7 +72,7 @@ export const ExplanationSchema = z.object({
 });
 
 export const BundleSchema = z.object({
-  widgetConfig: WidgetConfigSchema.nullable(),
+  widgetModule: z.string().nullable(), // raw JS ES module source; null for backend_only apps
   handlerModule: HandlerModuleSchema,
   dbMigration: DbMigrationSchema,
   explanation: ExplanationSchema,
@@ -118,8 +105,6 @@ export const FeatureBundleMessageSchema = z.object({
 export type PlatformApiEntry = z.infer<typeof PlatformApiEntrySchema>;
 export type GenerationRequest = z.infer<typeof GenerationRequestSchema>;
 export type ProgressEvent = z.infer<typeof ProgressEventSchema>;
-export type WidgetConfigActions = z.infer<typeof WidgetConfigActionsSchema>;
-export type WidgetConfig = z.infer<typeof WidgetConfigSchema>;
 export type HandlerModule = z.infer<typeof HandlerModuleSchema>;
 export type DbMigration = z.infer<typeof DbMigrationSchema>;
 export type TechnicalExplanation = z.infer<typeof TechnicalExplanationSchema>;

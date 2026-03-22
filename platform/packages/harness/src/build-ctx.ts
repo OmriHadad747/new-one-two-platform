@@ -26,7 +26,7 @@ export async function buildCtx(
 
   const shopify = await buildShopifyClient(APP_SHOP_DOMAIN, SHOPIFY_ACCESS_TOKEN_SECRET_NAME);
 
-  return { shopify, db: tx, payload, logger };
+  return { shopify, db: tx, payload, logger, tenantId: req.tenantId };
 }
 
 // Re-export withTenantContext so invoke-handler can use it without extra imports

@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Optional
 
 from contract.publisher import publish_completed, publish_progress
 from contract.validators import (
-    WidgetConfig,
     Bundle,
     DbMigration,
     FeatureBundleMessage,
@@ -32,14 +31,13 @@ from contract.validators import (
     ProgressEvent,
     TechnicalExplanation,
     AgentTraceEntry,
-    WidgetConfigActions,
 )
 from crews.feature_generator.agents import (
     run_explanation_agent,
     run_intent_agent,
     run_schema_agent,
 )
-from subagents.widget_config_agent import run_widget_config_agent
+from subagents.widget_js_agent import run_widget_js_agent
 from subagents.handler_agent import run_handler_agent
 from subagents.migration_agent import run_migration_agent
 from subagents.validation import validate_bundle
@@ -118,12 +116,12 @@ def run_feature_generation(request: GenerationRequest) -> None:
         is_storefront = request.appArchetype == "storefront_ui"
 
         # Initial generation (no errors on first attempt)
-        widget_config_raw, handler_code, migration_sql = _run_codegen_parallel(
+        widget_js_code, handler_code, migration_sql = _run_codegen_parallel(
             intent,
             api_plan,
             catalog_dicts,
             is_storefront=is_storefront,
-            widget_config_errors=None,
+            widget_js_errors=None,
             handler_errors=None,
             migration_errors=None,
         )
@@ -144,7 +142,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
             errors = validate_bundle(
                 handler_code=handler_code,
                 migration_sql=migration_sql,
-                widget_config=widget_config_raw,
+                widget_js=widget_js_code,
                 platform_api_catalog=catalog_dicts,
                 api_plan_topics=api_plan_topics,
             )
@@ -176,27 +174,27 @@ def run_feature_generation(request: GenerationRequest) -> None:
                 "running",
                 f"Fixing validation errors (attempt {attempt + 1}/{_MAX_RETRIES})…",
             )
-            widget_config_errors = [e for e in errors if e.startswith("widget_config:")]
+            widget_js_errors = [e for e in errors if e.startswith("widget_js:")]
             handler_errors = [e for e in errors if e.startswith("handler.js:")]
             migration_errors = [e for e in errors if e.startswith("migration:")]
 
-            new_widget_config, new_handler, new_migration = _run_codegen_parallel(
+            new_widget_js, new_handler, new_migration = _run_codegen_parallel(
                 intent,
                 api_plan,
                 catalog_dicts,
                 is_storefront=is_storefront,
-                widget_config_errors=widget_config_errors or None,
+                widget_js_errors=widget_js_errors or None,
                 handler_errors=handler_errors or None,
                 migration_errors=migration_errors or None,
                 # Keep artifacts that had no errors
-                existing_widget_config=(
-                    widget_config_raw if not widget_config_errors else None
+                existing_widget_js=(
+                    widget_js_code if not widget_js_errors else None
                 ),
                 existing_handler=handler_code if not handler_errors else None,
                 existing_migration=migration_sql if not migration_errors else None,
             )
-            if widget_config_errors:
-                widget_config_raw = new_widget_config
+            if widget_js_errors:
+                widget_js_code = new_widget_js
             if handler_errors:
                 handler_code = new_handler
             if migration_errors:
@@ -210,7 +208,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
         explanation_raw = run_explanation_agent(
             intent=intent,
             api_plan=api_plan,
-            widget_config=widget_config_raw,
+            widget_js_code=widget_js_code,
             handler_code=handler_code,
             migration_sql=migration_sql,
         )
@@ -224,26 +222,11 @@ def run_feature_generation(request: GenerationRequest) -> None:
         )
         _emit(request, "explanation", "completed", "Summary complete")
 
-        # ── Build final bundle ───────────────────────────────────────────────
+        # ── Build final bundle ────────────────────────────────────────────────
         technical = explanation_raw.get("technical", {})
 
-        # Build WidgetConfig object for storefront_ui apps
-        widget_config_obj: Optional[WidgetConfig] = None
-        if is_storefront and widget_config_raw:
-            actions_raw = widget_config_raw.get("actions", {})
-            widget_config_obj = WidgetConfig(
-                widget_type=widget_config_raw.get("widget_type", "notify_me"),
-                trigger_condition=widget_config_raw.get("trigger_condition"),
-                ui=widget_config_raw.get("ui", {}),
-                actions=WidgetConfigActions(
-                    on_submit=actions_raw.get("on_submit"),
-                    on_load=actions_raw.get("on_load"),
-                    data_source=actions_raw.get("data_source"),
-                ),
-            )
-
         bundle = Bundle(
-            widgetConfig=widget_config_obj,
+            widgetModule=widget_js_code if is_storefront else None,
             handlerModule=HandlerModule(
                 code=handler_code,
                 webhookTopics=api_plan.get("webhookTopics", []),
@@ -304,30 +287,30 @@ def _run_codegen_parallel(
     catalog_dicts: List[Dict[str, str]],
     *,
     is_storefront: bool,
-    widget_config_errors: Optional[List[str]],
+    widget_js_errors: Optional[List[str]],
     handler_errors: Optional[List[str]],
     migration_errors: Optional[List[str]],
-    existing_widget_config: Optional[Dict[str, Any]] = None,
+    existing_widget_js: Optional[str] = None,
     existing_handler: Optional[str] = None,
     existing_migration: Optional[str] = None,
-) -> tuple[Dict[str, Any], str, str]:
+) -> tuple[str, str, str]:
     """
     Run up to 3 sub-agents in parallel.
-    widget_config sub-agent only runs for storefront_ui apps.
+    widget_js sub-agent only runs for storefront_ui apps.
     If an artifact has no errors and an existing value is provided, skip re-running it.
-    Returns (widget_config_raw, handler_code, migration_sql).
+    Returns (widget_js_code, handler_code, migration_sql).
     """
     futures: dict = {}
     with ThreadPoolExecutor(max_workers=3) as pool:
         if is_storefront and (
-            widget_config_errors is not None or existing_widget_config is None
+            widget_js_errors is not None or existing_widget_js is None
         ):
-            futures["widget_config"] = pool.submit(
-                run_widget_config_agent,
+            futures["widget_js"] = pool.submit(
+                run_widget_js_agent,
                 intent,
                 api_plan,
                 catalog_dicts,
-                widget_config_errors,
+                widget_js_errors,
             )
         if handler_errors is not None or existing_handler is None:
             futures["handler"] = pool.submit(
@@ -348,8 +331,8 @@ def _run_codegen_parallel(
         for name, future in futures.items():
             results[name] = future.result()  # raises on sub-agent exception
 
-    widget_config_raw = results.get("widget_config", existing_widget_config) or {}
+    widget_js_code = results.get("widget_js", existing_widget_js) or ""
     handler_code = results.get("handler", existing_handler) or ""
     migration_sql = results.get("migration", existing_migration) or ""
 
-    return widget_config_raw, handler_code, migration_sql
+    return widget_js_code, handler_code, migration_sql

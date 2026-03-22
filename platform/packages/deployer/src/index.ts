@@ -11,7 +11,7 @@ import {
 } from "./db-writer.js";
 import { dockerImageName, callbackUrl } from "./service-namer.js";
 import { runTenantMigration, rollbackTenantMigration } from "./migration-runner.js";
-import { createDraftAppVersion, updateGenerationSession, updateTenantWidgetConfig } from "@new-one-two/db";
+import { createDraftAppVersion, updateGenerationSession, updateTenantWidgetJs } from "@new-one-two/db";
 import type { FeatureBundle } from "@new-one-two/types";
 
 const DEPLOY_MODE = process.env["DEPLOY_MODE"] ?? "cloudrun";
@@ -29,7 +29,7 @@ function buildHarnessEnvVars(params: {
     DATABASE_URL: process.env["DATABASE_URL"] ?? "",
     REDIS_HOST: process.env["REDIS_HOST"] ?? "redis",
     REDIS_PORT: process.env["REDIS_PORT"] ?? "6379",
-    NODE_ENV: process.env["NODE_ENV"] ?? "production",
+    NODE_ENV: "production",
     LOG_LEVEL: process.env["LOG_LEVEL"] ?? "info",
     SERVICE_NAME: `harness-${params.appId}`,
   };
@@ -137,7 +137,8 @@ export async function deployAppVersion(appVersionId: string): Promise<{
  *
  * Deployment sequence (atomic — rolls back migration on failure):
  *   1. Run DB migration (tenant-scoped, RLS-safe)
- *   2. Deploy App Block to Shopify Partners API
+ *   2. Store widget JS in tenants.widget_js (storefront_ui apps only)
+ *      Served at GET /widgets/:shop/:appId.js by the webhook gateway
  *   3. Create draft AppVersion from handlerModule.code
  *   4. Build + push Docker image and deploy to Cloud Run
  *   5. Wire webhook subscriptions
@@ -185,19 +186,21 @@ export async function deployFeatureBundle(params: {
 
   const app = appRows[0]!;
   let migrationRan = false;
+  // Strip surrounding quotes that the LLM sometimes emits (e.g. `""`) to avoid
+  // a PostgreSQL "zero-length delimited identifier" error.
+  const migrationSql = (bundle.dbMigration?.sql ?? "").trim().replace(/^"+|"+$/g, "").trim();
 
   try {
-    // Step 1: Apply DB migration (skipped if sql is empty)
-    if (bundle.dbMigration.sql.trim()) {
-      await runTenantMigration(tenantId, bundle.dbMigration.sql);
+    // Step 1: Apply DB migration (skipped if sql is empty).
+    if (migrationSql) {
+      await runTenantMigration(tenantId, migrationSql);
       migrationRan = true;
     }
 
-    // Step 2: Store widget_config in tenant record (storefront_ui apps only).
-    // The App Block is maintained separately by the platform developer and reads
-    // widget_config from this endpoint at runtime via GET /widget-config.
-    if (bundle.widgetConfig !== null) {
-      await updateTenantWidgetConfig(tenantId, bundle.widgetConfig);
+    // Step 2: Store widget JS in tenant record (storefront_ui apps only).
+    // Served at GET /widgets/:shop/:appId.js and loaded by the thin runtime at storefront page load.
+    if (bundle.widgetModule !== null) {
+      await updateTenantWidgetJs(tenantId, bundle.widgetModule);
     }
 
     // Step 3: Create draft AppVersion from handler code
@@ -223,7 +226,7 @@ export async function deployFeatureBundle(params: {
 
     // Roll back DB migration if it ran but subsequent steps failed
     if (migrationRan) {
-      await rollbackTenantMigration(tenantId, bundle.dbMigration.sql);
+      await rollbackTenantMigration(tenantId, migrationSql);
     }
 
     await updateGenerationSession(sessionId, {

@@ -18,8 +18,6 @@ export type {
   PlatformApiEntry,
   GenerationRequest,
   ProgressEvent,
-  WidgetConfigActions,
-  WidgetConfig,
   HandlerModule,
   DbMigration,
   TechnicalExplanation,

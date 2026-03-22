@@ -290,10 +290,10 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         }
       );
 
-      // Infer archetype from prior bundle: widgetConfig present → storefront_ui
+      // Infer archetype from prior bundle: widgetModule present → storefront_ui
       const priorBundle = session.bundle as Record<string, unknown> | null;
       const revisedArchetype =
-        priorBundle && priorBundle["widgetConfig"] !== null
+        priorBundle && priorBundle["widgetModule"] !== null
           ? "storefront_ui"
           : "backend_only";
 

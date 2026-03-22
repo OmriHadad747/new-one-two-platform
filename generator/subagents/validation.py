@@ -4,7 +4,7 @@ Agent 4 — Validation Agent (no LLM).
 Pure static analysis across all generated artifacts:
   - Handler: CommonJS module shape, no forbidden patterns, valid webhook topics
   - Migration: no DROP/ALTER, all CREATE TABLE have tenant_id, RLS policies present
-  - Widget config: widget_type in registry, actions reference valid catalog paths (storefront_ui only)
+  - Widget JS: exports mount function, no forbidden globals (storefront_ui only)
 
 Returns a list of error strings. Empty list = all validation passed.
 """
@@ -122,42 +122,54 @@ def validate_migration(sql: str) -> List[str]:
     return errors
 
 
-VALID_WIDGET_TYPES = {"notify_me", "stock_counter", "countdown"}
+FORBIDDEN_WIDGET_JS_PATTERNS = [
+    (r"\bfetch\s*\(", "raw fetch() not allowed — use host.call()"),
+    (r"\bXMLHttpRequest\b", "XMLHttpRequest not allowed — use host.call()"),
+    (r"\beval\s*\(", "eval() is not allowed"),
+    (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
+    (r"\bwindow\.", "window.* access is not allowed"),
+    (r"\bdocument\.(?!querySelector|querySelectorAll|createElement|createTextNode|getElementById|body)", "direct document.* access is not allowed outside container queries"),
+    (r"\bsetTimeout\s*\(", "setTimeout is not allowed"),
+    (r"\bsetInterval\s*\(", "setInterval is not allowed"),
+    (r"https?://", "hardcoded URLs are not allowed — use host.call() with catalog paths"),
+]
 
 
-def validate_widget_config(
-    widget_config: Dict[str, Any],
+def validate_widget_js(
+    widget_js: str,
     platform_api_catalog: List[Dict[str, str]],
 ) -> List[str]:
-    """Validate the generated widget_config JSON (storefront_ui only)."""
+    """Validate the generated widget ES module (storefront_ui only)."""
     errors: List[str] = []
 
-    if not widget_config:
-        return errors  # backend_only — no widget config to validate
+    if not widget_js or not widget_js.strip():
+        return errors  # backend_only — no widget JS to validate
 
-    widget_type = widget_config.get("widget_type", "")
-    if widget_type not in VALID_WIDGET_TYPES:
+    # Must export a mount function
+    if not re.search(r"\bexport\s+function\s+mount\b", widget_js):
         errors.append(
-            f"widget_config: unknown widget_type '{widget_type}'. "
-            f"Allowed: {sorted(VALID_WIDGET_TYPES)}"
+            "widget_js: must export a named mount function: export function mount(container, host) { ... }"
         )
 
-    # actions paths must be in the platform API catalog
+    # Forbidden patterns
+    for pattern, message in FORBIDDEN_WIDGET_JS_PATTERNS:
+        if re.search(pattern, widget_js):
+            errors.append(f"widget_js: {message}")
+
+    # host.call() paths must be in the platform API catalog
     catalog_paths = {entry["path"] for entry in platform_api_catalog}
-    actions = widget_config.get("actions", {})
-    for action_key in ("on_submit", "on_load", "data_source"):
-        path = actions.get(action_key)
-        if path and path not in catalog_paths:
+    called_paths = re.findall(r"""host\.call\s*\(\s*['"]([^'"]+)['"]""", widget_js)
+    for path in called_paths:
+        if path not in catalog_paths:
             errors.append(
-                f"widget_config: actions.{action_key} references unlisted path '{path}'. "
+                f"widget_js: host.call() references unlisted path '{path}'. "
                 f"Allowed: {sorted(catalog_paths)}"
             )
 
-    # No hardcoded tenant IDs anywhere in the config
-    config_str = str(widget_config)
-    if re.search(r"\btenant[_-]?id\b", config_str, re.IGNORECASE):
+    # No hardcoded tenant IDs
+    if re.search(r"\btenant[_-]?id\s*[:=]\s*['\"]", widget_js, re.IGNORECASE):
         errors.append(
-            "widget_config: hardcoded tenant_id detected — use dynamic context instead"
+            "widget_js: hardcoded tenant_id detected — read from host.context instead"
         )
 
     return errors
@@ -166,7 +178,7 @@ def validate_widget_config(
 def validate_bundle(
     handler_code: str,
     migration_sql: str,
-    widget_config: Dict[str, Any],
+    widget_js: str,
     platform_api_catalog: List[Dict[str, str]],
     api_plan_topics: List[str],
 ) -> List[str]:
@@ -174,5 +186,5 @@ def validate_bundle(
     return (
         validate_handler(handler_code, api_plan_topics)
         + validate_migration(migration_sql)
-        + validate_widget_config(widget_config, platform_api_catalog)
+        + validate_widget_js(widget_js, platform_api_catalog)
     )
