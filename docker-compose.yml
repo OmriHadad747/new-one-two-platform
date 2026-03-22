@@ -1,0 +1,227 @@
+services:
+  # ─── Infrastructure ──────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: new_one_two_u
+      POSTGRES_PASSWORD: paas_dev_password
+      POSTGRES_DB: new_one_two
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./platform/packages/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U new_one_two_u -d new_one_two"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── GCS Emulator (Cloud Storage) ────────────────────────────────────────────
+
+  fake-gcs:
+    image: fsouza/fake-gcs-server:latest
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "4443:4443"
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443"]
+    volumes:
+      - gcs_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:4443/storage/v1/b"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  gcs-init:
+    image: curlimages/curl:latest
+    platform: linux/amd64
+    restart: on-failure
+    depends_on:
+      fake-gcs:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "curl -s -X POST
+      'http://fake-gcs:4443/storage/v1/b?project=new-one-two-dev'
+      -H 'Content-Type: application/json'
+      -d '{\"name\":\"new-one-two-bundles-dev\"}'
+      && echo 'GCS bucket created'"
+
+  # ─── GCP Pub/Sub Emulator ─────────────────────────────────────────────────────
+
+  pubsub-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "8085:8085"
+    command: >
+      gcloud beta emulators pubsub start
+      --host-port=0.0.0.0:8085
+      --project=local
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8085/v1/projects/local/topics"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  pubsub-init:
+    image: curlimages/curl:latest
+    platform: linux/amd64
+    restart: on-failure
+    depends_on:
+      pubsub-emulator:
+        condition: service_healthy
+    entrypoint: >
+      sh -c '
+      BASE="http://pubsub-emulator:8085/v1/projects/local" ;
+      put() { H=$$(curl -s -o /dev/null -w "%{http_code}" -X PUT "$$BASE/$$1" -H "Content-Type: application/json" -d "$$2") ; [ "$$H" = "200" ] || [ "$$H" = "409" ] || { echo "Failed $$1: HTTP $$H" >&2 ; exit 1 ; } ; } ;
+      put topics/generation.requested "{}" &&
+      put topics/generation.progress  "{}" &&
+      put topics/generation.completed "{}" &&
+      put subscriptions/generator-sub     "{\"topic\":\"projects/local/topics/generation.requested\"}" &&
+      put subscriptions/api-progress-sub  "{\"topic\":\"projects/local/topics/generation.progress\"}" &&
+      put subscriptions/api-completed-sub "{\"topic\":\"projects/local/topics/generation.completed\"}" &&
+      echo "Pub/Sub topics and subscriptions ready"
+      '
+
+  # ─── Application Services ─────────────────────────────────────────────────────
+
+  webhook-gateway:
+    build:
+      context: ./platform
+      dockerfile: apps/webhook-gateway/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file:
+      - path: ./platform/.env
+        required: false
+      - path: ./platform/.env.docker
+        required: false
+    environment:
+      PORT: 3001
+      SERVICE_NAME: webhook-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./platform/apps/webhook-gateway/src
+          target: /app/apps/webhook-gateway/src
+        - action: sync+restart
+          path: ./platform/packages
+          target: /app/packages
+
+  worker:
+    build:
+      context: ./platform
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: ./platform/.env
+        required: false
+      - path: ./platform/.env.docker
+        required: false
+    environment:
+      SERVICE_NAME: worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Node.js API (replaced TypeScript generator — handles generation lifecycle via Pub/Sub)
+  api:
+    build:
+      context: ./platform
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    env_file:
+      - path: ./platform/.env
+        required: false
+      - path: ./platform/.env.docker
+        required: false
+    environment:
+      PORT: 3002
+      SERVICE_NAME: api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      pubsub-init:
+        condition: service_completed_successfully
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./platform/apps/api/src
+          target: /app/apps/api/src
+        - action: sync+restart
+          path: ./platform/packages
+          target: /app/packages
+
+  # Python CrewAI generator (consumes generation.requested, publishes progress + completed)
+  generator-python:
+    build:
+      context: ./generator
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - path: ./generator/.env
+        required: false
+      - path: ./generator/.env.docker
+        required: false
+    depends_on:
+      pubsub-init:
+        condition: service_completed_successfully
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./generator
+          target: /app
+
+  # ── Bull Board (queue UI) ────────────────────────────────────────────────────
+  bull-board:
+    image: deadly0/bull-board:latest
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "3010:3000"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BULL_PREFIX: bull
+    depends_on:
+      - redis
+
+volumes:
+  postgres_data:
+  redis_data:
+  gcs_data:

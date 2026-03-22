@@ -1,0 +1,29 @@
+{
+  "resource": "discounts",
+  "webhookTopics": [],
+  "note": "Discounts have no webhook topics — they are triggered via cron or other events.",
+  "restEndpoints": [
+    {
+      "method": "GET",
+      "path": "/price_rules.json",
+      "description": "List price rules (discount rules)",
+      "responseShape": {
+        "price_rules": [
+          { "id": 555, "title": "10OFF", "value_type": "percentage", "value": "-10.0", "starts_at": "2024-01-01T00:00:00-05:00" }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/price_rules/{id}/discount_codes.json",
+      "description": "Create a discount code under a price rule",
+      "bodyShape": { "discount_code": { "code": "NEWCODE10" } },
+      "responseShape": { "discount_code": { "id": 666, "code": "NEWCODE10", "created_at": "2024-01-01T10:00:00-05:00" } }
+    },
+    {
+      "method": "GET",
+      "path": "/price_rules/{id}/discount_codes.json",
+      "description": "List discount codes for a price rule"
+    }
+  ]
+}

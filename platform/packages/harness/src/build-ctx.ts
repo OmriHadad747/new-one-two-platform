@@ -1,0 +1,33 @@
+import { withTenantContext } from "@new-one-two/db";
+import { createRequestLogger } from "@new-one-two/logger";
+import type { HandlerContext, HarnessInvokeRequest } from "@new-one-two/types";
+import { buildShopifyClient } from "./shopify-client.js";
+
+const SHOPIFY_ACCESS_TOKEN_SECRET_NAME =
+  process.env["SHOPIFY_ACCESS_TOKEN_SECRET_NAME"] ?? null;
+
+const APP_SHOP_DOMAIN = process.env["SHOP_DOMAIN"] ?? "";
+
+export async function buildCtx(
+  req: HarnessInvokeRequest,
+  // tx is injected by invoke-handler inside the withTenantContext callback
+  tx: unknown
+): Promise<HandlerContext> {
+  const payload = JSON.parse(
+    Buffer.from(req.rawBodyBase64, "base64").toString("utf8")
+  ) as Record<string, unknown>;
+
+  const logger = createRequestLogger({
+    tenantId: req.tenantId,
+    appId: req.appId,
+    requestId: req.executionLogId,
+    topic: req.topic,
+  });
+
+  const shopify = await buildShopifyClient(APP_SHOP_DOMAIN, SHOPIFY_ACCESS_TOKEN_SECRET_NAME);
+
+  return { shopify, db: tx, payload, logger };
+}
+
+// Re-export withTenantContext so invoke-handler can use it without extra imports
+export { withTenantContext };

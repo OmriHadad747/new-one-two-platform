@@ -1,0 +1,25 @@
+{
+  "name": "@new-one-two/worker",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/worker.js",
+  "scripts": {
+    "dev": "tsx watch src/worker.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/worker.js",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "google-auth-library": "^9.0.0",
+    "@new-one-two/db": "workspace:*",
+    "@new-one-two/logger": "workspace:*",
+    "@new-one-two/types": "workspace:*",
+    "bullmq": "^5.10.0",
+    "ioredis": "^5.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.15.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@new-one-two/model-adapter",
+  "version": "0.1.0",
+  "description": "Unified LLM adapter with token tracking and retry logic",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@new-one-two/db": "workspace:*",
+    "@new-one-two/logger": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

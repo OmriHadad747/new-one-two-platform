@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "paths": {
+      "@new-one-two/types": ["./packages/types/src/index.ts"],
+      "@new-one-two/db": ["./packages/db/src/index.ts"],
+      "@new-one-two/crypto": ["./packages/crypto/src/index.ts"],
+      "@new-one-two/logger": ["./packages/logger/src/index.ts"],
+      "@new-one-two/deployer": ["./packages/deployer/src/index.ts"],
+      "@new-one-two/model-adapter": ["./packages/model-adapter/src/index.ts"],
+      "@new-one-two/pubsub-client": ["./packages/pubsub-client/src/index.ts"]
+    }
+  }
+}

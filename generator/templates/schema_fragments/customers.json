@@ -1,0 +1,49 @@
+{
+  "resource": "customers",
+  "webhookTopics": ["customers/create", "customers/update", "customers/delete"],
+  "restEndpoints": [
+    {
+      "method": "GET",
+      "path": "/customers/{id}.json",
+      "description": "Get a customer by ID",
+      "responseShape": {
+        "customer": {
+          "id": 456,
+          "email": "customer@example.com",
+          "first_name": "Jane",
+          "last_name": "Doe",
+          "tags": "VIP, loyal",
+          "orders_count": 5,
+          "total_spent": "499.99",
+          "created_at": "2024-01-01T10:00:00-05:00"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/orders.json?customer_id={id}&status=any&limit=250",
+      "description": "Get all orders for a customer (use this to count orders)"
+    },
+    {
+      "method": "PUT",
+      "path": "/customers/{id}.json",
+      "description": "Update a customer. Use to update tags.",
+      "bodyShape": { "customer": { "id": 456, "tags": "VIP, loyal" } },
+      "responseShape": { "customer": { "id": 456, "tags": "VIP, loyal" } },
+      "note": "To append a tag: get current tags, check if tag already exists, then set new comma-separated string"
+    },
+    {
+      "method": "GET",
+      "path": "/customers/search.json?query=email:{email}",
+      "description": "Search for a customer by email"
+    }
+  ],
+  "webhookPayloadShape": {
+    "id": 456,
+    "email": "customer@example.com",
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "tags": "",
+    "orders_count": 3
+  }
+}

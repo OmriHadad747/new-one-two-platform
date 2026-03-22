@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "feature-bundle",
+  "title": "FeatureBundleMessage",
+  "description": "Published to generation.completed topic by the Python generator. Contains the full validated FeatureBundle on success, or an error description on failure. No partial bundles are ever published.",
+  "type": "object",
+  "required": ["jobId", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "jobId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["success", "failed"]
+    },
+    "error": {
+      "type": "string",
+      "description": "Human-readable error message. Only present when status is 'failed'."
+    },
+    "bundle": {
+      "description": "The complete feature bundle. Only present when status is 'success'.",
+      "type": "object",
+      "required": ["widgetConfig", "handlerModule", "dbMigration", "explanation"],
+      "additionalProperties": false,
+      "properties": {
+        "widgetConfig": {
+          "description": "Widget configuration JSON served to the App Block renderer at runtime. null for backend_only apps.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["widget_type", "ui", "actions"],
+              "additionalProperties": false,
+              "properties": {
+                "widget_type": {
+                  "type": "string",
+                  "description": "Must match a key in the App Block renderer registry (e.g. 'notify_me', 'stock_counter', 'countdown')."
+                },
+                "trigger_condition": {
+                  "type": "string",
+                  "enum": ["out_of_stock", "always", "low_stock"]
+                },
+                "ui": {
+                  "type": "object",
+                  "description": "Merchant-facing UI strings and values (button text, placeholders, messages)."
+                },
+                "actions": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "on_submit": {
+                      "type": "string",
+                      "description": "Relative endpoint path for form submission."
+                    },
+                    "on_load": {
+                      "type": "string",
+                      "description": "Relative endpoint to fetch data on page load."
+                    },
+                    "data_source": {
+                      "type": "string",
+                      "description": "Relative endpoint for dynamic data."
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "handlerModule": {
+          "type": "object",
+          "required": ["code", "webhookTopics"],
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "CommonJS module.exports = { webhookTopics, cronSchedule, handler } — conforms to the harness contract."
+            },
+            "webhookTopics": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Shopify webhook topics this handler subscribes to."
+            },
+            "cronSchedule": {
+              "type": ["string", "null"],
+              "description": "Cron expression for scheduled execution, or null."
+            }
+          }
+        },
+        "dbMigration": {
+          "type": "object",
+          "required": ["sql"],
+          "additionalProperties": false,
+          "properties": {
+            "sql": {
+              "type": "string",
+              "description": "PostgreSQL DDL. All CREATE TABLE statements include tenant_id and RLS policies. No DROP or ALTER on existing tables. Empty string if no DB tables are needed."
+            }
+          }
+        },
+        "explanation": {
+          "type": "object",
+          "required": ["merchantFacing", "technical"],
+          "additionalProperties": false,
+          "properties": {
+            "merchantFacing": {
+              "type": "string",
+              "description": "Plain English description of the feature for the merchant review screen. No jargon."
+            },
+            "technical": {
+              "type": "object",
+              "required": ["webhookTopics", "dbTables", "estimatedMonthlyExecutions", "estimatedMonthlyCost"],
+              "additionalProperties": false,
+              "properties": {
+                "webhookTopics": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "dbTables": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "estimatedMonthlyExecutions": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "estimatedMonthlyCost": {
+                  "type": "string",
+                  "description": "Human-readable cost estimate, e.g. '$0.002'."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "totalInputTokens": { "type": "integer", "minimum": 0 },
+        "totalOutputTokens": { "type": "integer", "minimum": 0 },
+        "generationMs": { "type": "integer", "minimum": 0 },
+        "agentTrace": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["agent", "inputTokens", "outputTokens", "latencyMs"],
+            "additionalProperties": false,
+            "properties": {
+              "agent": { "type": "string" },
+              "inputTokens": { "type": "integer" },
+              "outputTokens": { "type": "integer" },
+              "latencyMs": { "type": "integer" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

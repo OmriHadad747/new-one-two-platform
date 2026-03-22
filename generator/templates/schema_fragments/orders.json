@@ -1,0 +1,52 @@
+{
+  "resource": "orders",
+  "webhookTopics": ["orders/create", "orders/updated", "orders/cancelled", "orders/paid"],
+  "restEndpoints": [
+    {
+      "method": "GET",
+      "path": "/orders.json",
+      "description": "List orders. Key query params: status=any|open|closed|cancelled, customer_id=<id>, created_at_min=<ISO>, created_at_max=<ISO>, limit=<1-250>",
+      "responseShape": {
+        "orders": [
+          {
+            "id": 123,
+            "order_number": 1001,
+            "email": "customer@example.com",
+            "total_price": "99.99",
+            "financial_status": "paid",
+            "fulfillment_status": null,
+            "created_at": "2024-01-01T10:00:00-05:00",
+            "customer": { "id": 456, "email": "customer@example.com", "tags": "" },
+            "line_items": [
+              { "id": 789, "title": "Product", "quantity": 1, "price": "99.99", "variant_id": 111 }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/orders/{id}.json",
+      "description": "Get a single order by ID",
+      "responseShape": { "order": { "id": 123, "order_number": 1001 } }
+    },
+    {
+      "method": "POST",
+      "path": "/orders/{id}/fulfillments.json",
+      "description": "Fulfill an order",
+      "bodyShape": { "fulfillment": { "location_id": 123, "tracking_number": "TRACK123", "notify_customer": true } },
+      "responseShape": { "fulfillment": { "id": 123, "status": "success" } }
+    }
+  ],
+  "webhookPayloadShape": {
+    "id": 123,
+    "order_number": 1001,
+    "email": "customer@example.com",
+    "total_price": "99.99",
+    "financial_status": "paid",
+    "customer": { "id": 456, "email": "customer@example.com", "tags": "" },
+    "line_items": [
+      { "id": 789, "title": "Product", "quantity": 1, "price": "99.99", "variant_id": 111 }
+    ]
+  }
+}
