@@ -8,6 +8,7 @@ Pure static analysis across all generated artifacts:
 
 Returns a list of error strings. Empty list = all validation passed.
 """
+
 from __future__ import annotations
 
 import re
@@ -41,9 +42,78 @@ FORBIDDEN_HANDLER_PATTERNS = [
 ]
 
 
+def _js_is_syntactically_complete(code: str) -> bool:
+    """
+    Heuristic completeness check — catches truncated output before Node.js sees it.
+    Tracks brace/bracket/paren depth and string state; returns False if unbalanced.
+    """
+    depth = 0
+    in_string: str | None = None
+    in_line_comment = False
+    in_block_comment = False
+    i = 0
+    while i < len(code):
+        c = code[i]
+        nxt = code[i + 1] if i + 1 < len(code) else ""
+
+        if in_line_comment:
+            if c == "\n":
+                in_line_comment = False
+            i += 1
+            continue
+
+        if in_block_comment:
+            if c == "*" and nxt == "/":
+                in_block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+
+        if in_string:
+            if c == "\\":
+                i += 2  # skip escaped char
+                continue
+            if c == in_string:
+                in_string = None
+            i += 1
+            continue
+
+        if c == "/" and nxt == "/":
+            in_line_comment = True
+            i += 2
+            continue
+        if c == "/" and nxt == "*":
+            in_block_comment = True
+            i += 2
+            continue
+        if c in ('"', "'", "`"):
+            in_string = c
+            i += 1
+            continue
+
+        if c in ("{", "(", "["):
+            depth += 1
+        elif c in ("}", ")", "]"):
+            depth -= 1
+            if depth < 0:
+                return False
+        i += 1
+
+    return depth == 0 and in_string is None and not in_block_comment
+
+
 def validate_handler(code: str, api_plan_topics: List[str]) -> List[str]:
     """Validate the generated CommonJS handler.js."""
     errors: List[str] = []
+
+    # Syntax completeness — catches truncated output before anything else
+    if not _js_is_syntactically_complete(code):
+        errors.append(
+            "handler.js: code is syntactically incomplete (truncated output) — "
+            "unbalanced braces, unclosed string, or unmatched brackets"
+        )
+        return errors  # further checks are meaningless on broken code
 
     # Shape checks
     if "module.exports" not in code:
@@ -66,9 +136,7 @@ def validate_handler(code: str, api_plan_topics: List[str]) -> List[str]:
 
         unknown = declared - VALID_WEBHOOK_TOPICS
         if unknown:
-            errors.append(
-                f"handler.js: unknown webhook topics: {sorted(unknown)}"
-            )
+            errors.append(f"handler.js: unknown webhook topics: {sorted(unknown)}")
 
         planned = set(api_plan_topics)
         mismatch = declared.symmetric_difference(planned)
@@ -94,7 +162,10 @@ def validate_migration(sql: str) -> List[str]:
         (r"\bTRUNCATE\b", "TRUNCATE"),
         # ALTER TABLE is allowed only for ENABLE ROW LEVEL SECURITY (required RLS pattern).
         # Any other ALTER TABLE form (ADD COLUMN, DROP COLUMN, etc.) is forbidden.
-        (r"\bALTER\s+TABLE\b(?!\s+\w+\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY)", "ALTER TABLE on existing tables"),
+        (
+            r"\bALTER\s+TABLE\b(?!\s+\w+\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY)",
+            "ALTER TABLE on existing tables",
+        ),
     ]
     for pattern, name in forbidden_ddl:
         if re.search(pattern, sql, re.IGNORECASE):
@@ -128,10 +199,16 @@ FORBIDDEN_WIDGET_JS_PATTERNS = [
     (r"\beval\s*\(", "eval() is not allowed"),
     (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
     (r"\bwindow\.", "window.* access is not allowed"),
-    (r"\bdocument\.(?!querySelector|querySelectorAll|createElement|createTextNode|getElementById|body)", "direct document.* access is not allowed outside container queries"),
+    (
+        r"\bdocument\.(?!querySelector|querySelectorAll|createElement|createTextNode|getElementById|body)",
+        "direct document.* access is not allowed outside container queries",
+    ),
     (r"\bsetTimeout\s*\(", "setTimeout is not allowed"),
     (r"\bsetInterval\s*\(", "setInterval is not allowed"),
-    (r"https?://", "hardcoded URLs are not allowed — use host.call() with catalog paths"),
+    (
+        r"https?://",
+        "hardcoded URLs are not allowed — use host.call() with catalog paths",
+    ),
 ]
 
 

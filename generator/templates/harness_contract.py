@@ -38,8 +38,11 @@ ctx.logger.error(msg)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SHOPIFY API PATTERNS — use these exact approaches:
 
-To find a product from an inventory item ID:
-  ✅ const variants = await ctx.shopify.get(`/variants.json?inventory_item_ids=${inventoryItemId}`)
+To find a variant from an inventory item ID (two-step lookup):
+  ✅ const { inventory_item } = await ctx.shopify.get(`/inventory_items/${inventoryItemId}.json`)
+     const variantId = inventory_item.variant_id
+     const { variant } = await ctx.shopify.get(`/variants/${variantId}.json`)
+  ❌ NEVER use /variants.json?inventory_item_ids=... — that filter parameter does not exist in the Shopify API
   ❌ NEVER scan /products.json by iterating all results — it is paginated at 250 and will silently miss products
 
 To check if a customer has a tag or attribute, fetch the customer directly:

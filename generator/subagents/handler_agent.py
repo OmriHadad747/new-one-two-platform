@@ -34,7 +34,7 @@ def run_handler_agent(
     Returns:
         Raw JavaScript string (no markdown fences).
     """
-    llm = get_code_llm(max_tokens=2048)
+    llm = get_code_llm(max_tokens=4096)
 
     retry_context = ""
     if previous_errors:

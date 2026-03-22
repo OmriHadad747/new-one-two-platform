@@ -15,9 +15,9 @@
     {
       "method": "GET",
       "path": "/inventory_items/{id}.json",
-      "description": "Get an inventory item (includes SKU)",
+      "description": "Get an inventory item. Use variant_id to look up the associated variant.",
       "responseShape": {
-        "inventory_item": { "id": 111, "sku": "SHIRT-RED-M", "tracked": true }
+        "inventory_item": { "id": 111, "sku": "SHIRT-RED-M", "tracked": true, "variant_id": 999 }
       }
     },
     {
