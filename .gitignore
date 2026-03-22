@@ -32,5 +32,8 @@ node_modules/
 # TypeScript build artifacts
 *.tsbuildinfo
 
+# Local docs and testing
+local/
+
 # Logs
 *.log
