@@ -9,6 +9,7 @@ This layer ensures:
   - All agents can be redirected to a different model by changing env vars
   - Token usage tracking is consistent across all agents
 """
+
 from __future__ import annotations
 
 import time
@@ -29,10 +30,7 @@ class LLMResponse:
     latency_ms: int
 
 
-def get_llm(
-    model: Optional[str] = None,
-    max_tokens: int = 2048,
-) -> ChatAnthropic:
+def get_llm(max_tokens: int = 2048) -> ChatAnthropic:
     """
     Returns a configured ChatAnthropic instance.
 
@@ -43,7 +41,7 @@ def get_llm(
       4. claude-haiku-4-5-20251001 (default, cheapest)
     """
     settings = get_settings()
-    resolved_model = model or settings.llm_model
+    resolved_model = settings.llm_model
     return ChatAnthropic(
         model=resolved_model,  # type: ignore[call-arg]
         max_tokens=max_tokens,
@@ -86,6 +84,7 @@ def invoke(llm: ChatAnthropic, system: str, user: str) -> LLMResponse:
 def extract_json(text: str) -> str:
     """Strip markdown code fences and extract the first JSON object/array."""
     import re
+
     text = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.MULTILINE)
     text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE)
     # Find first { or [
@@ -98,6 +97,7 @@ def extract_json(text: str) -> str:
 def extract_code(text: str) -> str:
     """Strip markdown code fences from a code block."""
     import re
+
     text = re.sub(r"^```(?:javascript|js)?\s*", "", text.strip(), flags=re.MULTILINE)
     text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE)
     return text.strip()
