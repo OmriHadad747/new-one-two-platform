@@ -1,13 +1,17 @@
 """
-FeatureGenerator crew — orchestrates all 5 agents for a single generation request.
+FeatureGenerator crew — orchestrates all 6 agents for a single generation request.
 
 Execution order:
   Agent 1  Intent       — sequential
   Agent 2  Schema       — sequential
-  Agent 3  CodeGen      — 3 sub-agents in parallel (ThreadPoolExecutor)
-  Agent 4  Validation   — sequential, retry loop (max 3 attempts total)
-  Agent 5  Explanation  — sequential
+  Agent 3  Strategy     — sequential (feature-specific coding brief for all codegen agents)
+  Agent 4  CodeGen      — generators run in parallel (ThreadPoolExecutor)
+  Agent 5  Validation   — sequential, retry loop (max 3 attempts total)
+  Agent 6  Explanation  — sequential
   Publisher             — FeatureBundleMessage to generation.completed
+
+Adding a new generator requires only creating a new Generator subclass and
+registering it in subagents/registry.py. This file never changes for new generators.
 
 Progress events are published to generation.progress at every stage transition.
 """
@@ -17,7 +21,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 from contract.publisher import publish_completed, publish_progress
 from contract.validators import (
@@ -37,10 +41,9 @@ from crews.feature_generator.agents import (
     run_intent_agent,
     run_schema_agent,
 )
-from subagents.widget_js_agent import run_widget_js_agent
-from subagents.handler_agent import run_handler_agent
-from subagents.migration_agent import run_migration_agent
-from subagents.validation import validate_bundle
+from subagents.base import CodegenContext, Generator
+from subagents.registry import GENERATORS
+from subagents.strategy_agent import run_strategy_agent
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +78,7 @@ def _emit(
 
 def run_feature_generation(request: GenerationRequest) -> None:
     """
-    Entry point — runs the full 5-agent pipeline for a GenerationRequest.
+    Entry point — runs the full 6-agent pipeline for a GenerationRequest.
     Publishes progress + completion events.  Never raises (exceptions → failure event).
     """
     start_ms = _now_ms()
@@ -108,109 +111,112 @@ def run_feature_generation(request: GenerationRequest) -> None:
             "job=%s api_plan topics=%s", request.jobId, api_plan.get("webhookTopics")
         )
 
-        # ── Agent 3: Parallel CodeGen ────────────────────────────────────────
+        # ── Agent 3: Strategy ────────────────────────────────────────────────
+        _emit(request, "strategy", "running", "Planning implementation strategy…")
+        t0 = _now_ms()
+        strategy = run_strategy_agent(intent, api_plan, request.appArchetype)
+        agent_trace.append(
+            AgentTraceEntry(
+                agent="strategy", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0
+            )
+        )
+        _emit(request, "strategy", "completed", "Strategy ready")
+        log.info(
+            "job=%s strategy gaps=%s batching=%s",
+            request.jobId,
+            [g["need"] for g in strategy.get("platformGaps") or []],
+            bool(strategy.get("cronBatching")),
+        )
+
+        # ── Agent 4: Parallel CodeGen + Agent 5: Validation (retry loop) ────
         _emit(request, "codegen", "running", "Generating feature code…")
         t0 = _now_ms()
 
         catalog_dicts = [e.model_dump() for e in request.platformApiCatalog]
         is_storefront = request.appArchetype == "storefront_ui"
 
-        # Initial generation (no errors on first attempt)
-        widget_js_code, handler_code, migration_sql = _run_codegen_parallel(
-            intent,
-            api_plan,
-            catalog_dicts,
-            is_storefront=is_storefront,
-            widget_js_errors=None,
-            handler_errors=None,
-            migration_errors=None,
+        base_ctx = CodegenContext(
+            intent=intent,
+            api_plan=api_plan,
+            strategy=strategy,
+            platform_api_catalog=catalog_dicts,
         )
 
-        agent_trace.append(
-            AgentTraceEntry(
-                agent="codegen", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0
-            )
-        )
-        _emit(request, "codegen", "completed", "Code generation complete")
+        artifacts: Dict[str, str] = {}
+        error_map: Dict[str, List[str]] = {}
 
-        # ── Agent 4: Validation + retry loop ────────────────────────────────
-        _emit(request, "validation", "running", "Validating generated artifacts…")
-        api_plan_topics: List[str] = api_plan.get("webhookTopics", [])
-
-        errors: List[str] = []
         for attempt in range(1, _MAX_RETRIES + 1):
-            errors = validate_bundle(
-                handler_code=handler_code,
-                migration_sql=migration_sql,
-                widget_js=widget_js_code,
-                platform_api_catalog=catalog_dicts,
-                api_plan_topics=api_plan_topics,
+            artifacts = _run_codegen_parallel(
+                base_ctx,
+                is_storefront=is_storefront,
+                error_map=error_map,
+                artifacts=artifacts,
             )
-            if not errors:
+
+            if attempt == 1:
+                agent_trace.append(
+                    AgentTraceEntry(
+                        agent="codegen",
+                        latencyMs=_now_ms() - t0,
+                        inputTokens=0,
+                        outputTokens=0,
+                    )
+                )
+                _emit(request, "codegen", "completed", "Code generation complete")
+                _emit(request, "validation", "running", "Validating generated artifacts…")
+
+            error_map = _validate_artifacts(artifacts, base_ctx, is_storefront)
+
+            if not error_map:
                 break
 
             log.warning(
-                "job=%s validation attempt=%d errors=%s", request.jobId, attempt, errors
+                "job=%s validation attempt=%d failing_generators=%s errors=%s",
+                request.jobId,
+                attempt,
+                list(error_map.keys()),
+                {name: errs for name, errs in error_map.items()},
             )
 
             if attempt == _MAX_RETRIES:
-                # Final attempt failed — publish failure
+                all_errors = [
+                    f"{name}: {e}" for name, errs in error_map.items() for e in errs
+                ]
                 _emit(
-                    request, "validation", "failed", f"Validation failed: {errors[0]}"
+                    request,
+                    "validation",
+                    "failed",
+                    f"Validation failed: {all_errors[0]}",
                 )
                 publish_completed(
                     FeatureBundleMessage(
                         jobId=request.jobId,
                         status="failed",
-                        error=f"Validation failed after {_MAX_RETRIES} attempts: {errors}",
+                        error=f"Validation failed after {_MAX_RETRIES} attempts: {all_errors}",
                     )
                 )
                 return
 
-            # Targeted retry: only re-run sub-agents with errors
+            failing = ", ".join(error_map.keys())
             _emit(
                 request,
                 "validation",
                 "running",
-                f"Fixing validation errors (attempt {attempt + 1}/{_MAX_RETRIES})…",
+                f"Fixing {failing} (attempt {attempt + 1}/{_MAX_RETRIES})…",
             )
-            widget_js_errors = [e for e in errors if e.startswith("widget_js:")]
-            handler_errors = [e for e in errors if e.startswith("handler.js:")]
-            migration_errors = [e for e in errors if e.startswith("migration:")]
-
-            new_widget_js, new_handler, new_migration = _run_codegen_parallel(
-                intent,
-                api_plan,
-                catalog_dicts,
-                is_storefront=is_storefront,
-                widget_js_errors=widget_js_errors or None,
-                handler_errors=handler_errors or None,
-                migration_errors=migration_errors or None,
-                # Keep artifacts that had no errors
-                existing_widget_js=(
-                    widget_js_code if not widget_js_errors else None
-                ),
-                existing_handler=handler_code if not handler_errors else None,
-                existing_migration=migration_sql if not migration_errors else None,
-            )
-            if widget_js_errors:
-                widget_js_code = new_widget_js
-            if handler_errors:
-                handler_code = new_handler
-            if migration_errors:
-                migration_sql = new_migration
 
         _emit(request, "validation", "completed", "All artifacts validated")
 
-        # ── Agent 5: Explanation ─────────────────────────────────────────────
+        # ── Agent 6: Explanation ─────────────────────────────────────────────
         _emit(request, "explanation", "running", "Writing feature summary…")
         t0 = _now_ms()
         explanation_raw = run_explanation_agent(
             intent=intent,
             api_plan=api_plan,
-            widget_js_code=widget_js_code,
-            handler_code=handler_code,
-            migration_sql=migration_sql,
+            widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
+            handler_code=artifacts.get("handler", ""),
+            migration_sql=artifacts.get("migration", ""),
+            strategy=strategy,
         )
         agent_trace.append(
             AgentTraceEntry(
@@ -226,13 +232,13 @@ def run_feature_generation(request: GenerationRequest) -> None:
         technical = explanation_raw.get("technical", {})
 
         bundle = Bundle(
-            widgetModule=widget_js_code if is_storefront else None,
+            widgetModule=artifacts.get("widget_js") if is_storefront else None,
             handlerModule=HandlerModule(
-                code=handler_code,
+                code=artifacts.get("handler", ""),
                 webhookTopics=api_plan.get("webhookTopics", []),
                 cronSchedule=api_plan.get("cronSchedule"),
             ),
-            dbMigration=DbMigration(sql=migration_sql),
+            dbMigration=DbMigration(sql=artifacts.get("migration", "")),
             explanation=FeatureExplanation(
                 merchantFacing=explanation_raw.get("merchantFacing", ""),
                 technical=TechnicalExplanation(
@@ -278,61 +284,74 @@ def run_feature_generation(request: GenerationRequest) -> None:
             log.exception("job=%s failed to publish failure event", request.jobId)
 
 
-# ── Parallel CodeGen helper ────────────────────────────────────────────────────
+# ── Parallel CodeGen ───────────────────────────────────────────────────────────
 
 
 def _run_codegen_parallel(
-    intent: Dict[str, Any],
-    api_plan: Dict[str, Any],
-    catalog_dicts: List[Dict[str, str]],
+    base_ctx: CodegenContext,
     *,
     is_storefront: bool,
-    widget_js_errors: Optional[List[str]],
-    handler_errors: Optional[List[str]],
-    migration_errors: Optional[List[str]],
-    existing_widget_js: Optional[str] = None,
-    existing_handler: Optional[str] = None,
-    existing_migration: Optional[str] = None,
-) -> tuple[str, str, str]:
+    error_map: Dict[str, List[str]],
+    artifacts: Dict[str, str],
+) -> Dict[str, str]:
     """
-    Run up to 3 sub-agents in parallel.
-    widget_js sub-agent only runs for storefront_ui apps.
-    If an artifact has no errors and an existing value is provided, skip re-running it.
-    Returns (widget_js_code, handler_code, migration_sql).
-    """
-    futures: dict = {}
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        if is_storefront and (
-            widget_js_errors is not None or existing_widget_js is None
-        ):
-            futures["widget_js"] = pool.submit(
-                run_widget_js_agent,
-                intent,
-                api_plan,
-                catalog_dicts,
-                widget_js_errors,
-            )
-        if handler_errors is not None or existing_handler is None:
-            futures["handler"] = pool.submit(
-                run_handler_agent,
-                intent,
-                api_plan,
-                handler_errors,
-            )
-        if migration_errors is not None or existing_migration is None:
-            futures["migration"] = pool.submit(
-                run_migration_agent,
-                intent,
-                api_plan,
-                migration_errors,
-            )
+    Run generators in parallel via ThreadPoolExecutor.
 
-        results = {}
+    Only generators that either have errors (retry path) or have not yet produced
+    an artifact (first run) are executed. Generators whose artifacts are clean are
+    skipped — their existing output is preserved in the returned dict.
+
+    Each generator receives its own CodegenContext with previous_errors populated
+    from error_map so the retry prompt is generator-specific.
+
+    Returns the updated artifacts dict (mutated in place and also returned).
+    """
+    to_run: List[Generator] = []
+    for name, gen in GENERATORS.items():
+        if name == "widget_js" and not is_storefront:
+            continue
+        if name in error_map or name not in artifacts:
+            to_run.append(gen)
+
+    if not to_run:
+        return artifacts
+
+    with ThreadPoolExecutor(max_workers=len(to_run)) as pool:
+        futures = {
+            gen.name: pool.submit(
+                gen.generate,
+                CodegenContext(
+                    intent=base_ctx.intent,
+                    api_plan=base_ctx.api_plan,
+                    strategy=base_ctx.strategy,
+                    platform_api_catalog=base_ctx.platform_api_catalog,
+                    previous_errors=error_map.get(gen.name),
+                ),
+            )
+            for gen in to_run
+        }
         for name, future in futures.items():
-            results[name] = future.result()  # raises on sub-agent exception
+            artifacts[name] = future.result()  # raises on sub-agent exception
 
-    widget_js_code = results.get("widget_js", existing_widget_js) or ""
-    handler_code = results.get("handler", existing_handler) or ""
-    migration_sql = results.get("migration", existing_migration) or ""
+    return artifacts
 
-    return widget_js_code, handler_code, migration_sql
+
+def _validate_artifacts(
+    artifacts: Dict[str, str],
+    ctx: CodegenContext,
+    is_storefront: bool,
+) -> Dict[str, List[str]]:
+    """
+    Run each generator's validate() on its artifact.
+
+    Returns {generator_name: [errors]} for every generator that failed.
+    An empty dict means all artifacts passed validation.
+    """
+    error_map: Dict[str, List[str]] = {}
+    for name, gen in GENERATORS.items():
+        if name == "widget_js" and not is_storefront:
+            continue
+        errs = gen.validate(artifacts.get(name, ""), ctx)
+        if errs:
+            error_map[name] = errs
+    return error_map

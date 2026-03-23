@@ -1,22 +1,31 @@
 """
-Widget JS Sub-agent — generates a self-contained ES module widget for storefront_ui apps.
+Widget JS Generator — produces a self-contained ES module for storefront_ui apps.
 
-The generated JS is loaded by the thin runtime (App Block) at storefront page load.
+The generated JS is loaded by the App Block runtime at storefront page load.
 It must export a `mount(container, host)` function and interact with the outside
 world exclusively through the `host` object (defined in /contract/host-contract.md).
 
-There is no predefined list of widget types — the AI can render anything it needs
-as long as it respects the host contract.
+There is no predefined list of widget types — the model can render any UI it
+needs as long as it respects the host contract.
 
-Model: claude-sonnet-4-6
+The strategy brief contributes two things:
+  - platformGaps: UX should reflect backend limitations (e.g. show "you'll be
+    notified" rather than "email sent" when the backend can only log intent).
+  - widgetGuidance: any feature-specific UX decisions from the Strategy Agent.
+
+Only runs for storefront_ui apps — the registry entry is always present but
+crew.py skips this generator for backend_only apps.
+
+Model: claude-sonnet-4-6 (prefers_code_model = True)
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from models.adapter import get_code_llm, invoke
+from subagents.base import CodegenContext, Generator
+from subagents.validation import validate_widget_js
 
-SYSTEM_PROMPT = """You are generating a Shopify storefront widget as a self-contained JavaScript ES module.
+_SYSTEM_PROMPT = """You are generating a Shopify storefront widget as a self-contained JavaScript ES module.
 
 The widget is loaded by a thin runtime (App Block) that calls:
   widget.mount(container, host)
@@ -52,38 +61,62 @@ The widget can render any UI it needs: forms, counters, timers, multi-step flows
 There are no restrictions on widget type — only on how it communicates with the outside world."""
 
 
-def run_widget_js_agent(
-    intent: Dict[str, Any],
-    api_plan: Dict[str, Any],
-    platform_api_catalog: List[Dict[str, str]],
-    previous_errors: Optional[List[str]] = None,
-) -> str:
-    """
-    Generate a widget JS ES module from the intent and API plan.
+class WidgetJsGenerator(Generator):
+    name = "widget_js"
+    prefers_code_model = True
+    max_tokens = 2048
 
-    Returns the raw JavaScript string (the full ES module source).
-    """
-    llm = get_code_llm(max_tokens=2048)
+    # ── Generator interface ────────────────────────────────────────────────────
 
-    catalog_desc = "\n".join(
-        f"  {entry['method']} {entry['path']}" for entry in platform_api_catalog
-    )
+    def system_prompt(self) -> str:
+        return _SYSTEM_PROMPT
 
-    retry_context = ""
-    if previous_errors:
-        retry_context = (
-            "\n\nPREVIOUS ATTEMPT FAILED VALIDATION:\n"
-            + "\n".join(f"- {e}" for e in previous_errors)
-            + "\n\nFix ALL listed errors.\n"
+    def user_prompt(self, ctx: CodegenContext) -> str:
+        retry_block = self.format_retry_block(ctx.previous_errors)
+        strategy_block = _format_strategy_block(ctx.strategy)
+        catalog_desc = "\n".join(
+            f"  {e['method']} {e['path']}" for e in ctx.platform_api_catalog
         )
 
-    user_prompt = f"""{retry_context}Feature to build: {intent.get('desiredOutcome', '')}
-Trigger type: {intent.get('triggerType', '')}
+        return (
+            f"{retry_block}"
+            f"Feature to build: {ctx.intent.get('desiredOutcome', '')}\n"
+            f"Trigger type: {ctx.intent.get('triggerType', '')}\n\n"
+            f"Platform API catalog (the ONLY paths the widget may call via host.call()):\n"
+            f"{catalog_desc}\n"
+            f"{strategy_block}"
+            "Generate the widget ES module. Output ONLY the raw JavaScript."
+        )
 
-Platform API catalog (the ONLY paths the widget may call via host.call()):
-{catalog_desc}
+    def parse(self, raw: str) -> str:
+        return raw.strip()
 
-Generate the widget ES module. Output ONLY the raw JavaScript."""
+    def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
+        return validate_widget_js(artifact, ctx.platform_api_catalog)
 
-    result = invoke(llm, SYSTEM_PROMPT, user_prompt)
-    return result.content.strip()
+
+# ── Private prompt-building helpers ───────────────────────────────────────────
+
+
+def _format_strategy_block(strategy: Optional[Dict[str, Any]]) -> str:
+    """
+    Render strategy fields relevant to the widget UX.
+    Platform gaps affect what the widget should communicate to the user.
+    """
+    if not strategy:
+        return ""
+
+    parts: List[str] = []
+
+    gaps = strategy.get("platformGaps") or []
+    if gaps:
+        lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
+        parts.append(
+            f"\nBackend limitations the widget UX should reflect:\n{lines}"
+        )
+
+    guidance = (strategy.get("widgetGuidance") or "").strip()
+    if guidance:
+        parts.append(f"\nWidget guidance:\n  {guidance}")
+
+    return "\n".join(parts) + "\n" if parts else ""

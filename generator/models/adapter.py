@@ -30,18 +30,17 @@ class LLMResponse:
     latency_ms: int
 
 
-def get_llm(max_tokens: int = 2048) -> ChatAnthropic:
+def get_llm(max_tokens: int = 2048, model: Optional[str] = None) -> ChatAnthropic:
     """
     Returns a configured ChatAnthropic instance.
 
     Model precedence:
       1. Explicit `model` argument
-      2. LLM_MODEL_CODE env var (for code generation agents)
-      3. LLM_MODEL env var
-      4. claude-haiku-4-5-20251001 (default, cheapest)
+      2. LLM_MODEL env var
+      3. claude-haiku-4-5-20251001 (default, cheapest)
     """
     settings = get_settings()
-    resolved_model = settings.llm_model
+    resolved_model = model or settings.llm_model
     return ChatAnthropic(
         model=resolved_model,  # type: ignore[call-arg]
         max_tokens=max_tokens,

@@ -2,19 +2,20 @@
 Agent definitions for the FeatureGenerator crew.
 
 Agent 1 — Intent Agent
-Agent 2 — Schema & API Planning Agent
-Agent 5 — Explanation Agent
+Agent 2 — Schema & API Planning Agent (includes schema fragment loading)
+Agent 6 — Explanation Agent
 
-Agents 3 (codegen) and 4 (validation) are orchestrated directly in crew.py
-because they involve parallel execution and retry loops that CrewAI's sequential
-task model doesn't natively express.
+Agents 3 (strategy), 4 (codegen), and 5 (validation) live in their own modules
+under subagents/ because they require more complex logic: strategy has its own
+prompt structure, codegen uses the Generator ABC + registry pattern for
+parallelism, and validation is pure static analysis with no LLM involvement.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from models.adapter import get_llm, invoke, extract_json
 
@@ -153,6 +154,9 @@ Write two outputs:
    - No technical jargon (no "webhook", "database", "API", "Lambda", etc.)
    - Explain what the customer sees, what happens when they interact with it,
      and what the merchant can configure.
+   - If known limitations are listed, mention them briefly in plain language
+     (e.g. "Note: to send email notifications, this feature requires an email service
+     like Klaviyo or SendGrid to be connected to your store.").
 2. technical: A JSON summary of the technical details for the platform dashboard.
 
 OUTPUT FORMAT — respond ONLY with this JSON object (no markdown fences):
@@ -174,7 +178,7 @@ API plan:
 
 Storefront widget: {widget_summary}
 Handler subscribes to: {webhook_topics}
-DB tables created: {db_tables}
+DB tables created: {db_tables}{platform_gaps_section}
 
 Write the merchant explanation and technical summary."""
 
@@ -185,6 +189,7 @@ def run_explanation_agent(
     widget_js_code: str,
     handler_code: str,
     migration_sql: str,
+    strategy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Agent 5: Generate merchant explanation + technical summary."""
     import re
@@ -199,12 +204,20 @@ def run_explanation_agent(
         else "none (backend-only app)"
     )
 
+    # Surface platform gaps so the explanation can mention known limitations
+    platform_gaps_section = ""
+    gaps = (strategy or {}).get("platformGaps") or []
+    if gaps:
+        lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
+        platform_gaps_section = f"\n\nKnown platform limitations:\n{lines}"
+
     user = EXPLANATION_USER_TEMPLATE.format(
         intent_json=json.dumps(intent, indent=2),
         api_plan_json=json.dumps(api_plan, indent=2),
         widget_summary=widget_summary,
         webhook_topics=webhook_topics,
         db_tables=db_tables,
+        platform_gaps_section=platform_gaps_section,
     )
 
     llm = get_llm(max_tokens=1024)

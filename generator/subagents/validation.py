@@ -1,18 +1,21 @@
 """
-Agent 4 — Validation Agent (no LLM).
+Static analysis utilities shared across all generators.
 
-Pure static analysis across all generated artifacts:
-  - Handler: CommonJS module shape, no forbidden patterns, valid webhook topics
-  - Migration: no DROP/ALTER, all CREATE TABLE have tenant_id, RLS policies present
-  - Widget JS: exports mount function, no forbidden globals (storefront_ui only)
+Each Generator subclass owns its validate() method and delegates here for the
+actual checks. This file contains:
+  - Per-artifact validate functions (validate_handler, validate_migration, validate_widget_js)
+  - Shared constants (VALID_WEBHOOK_TOPICS, forbidden pattern lists)
+  - _js_is_syntactically_complete() heuristic used by validate_handler
 
-Returns a list of error strings. Empty list = all validation passed.
+validate_bundle() has been removed. Orchestration (crew.py) now calls
+gen.validate(artifact, ctx) on each generator directly, which eliminates the
+need for a cross-artifact aggregator here.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Dict, List
 
 VALID_WEBHOOK_TOPICS = {
     "orders/create",
@@ -110,23 +113,23 @@ def validate_handler(code: str, api_plan_topics: List[str]) -> List[str]:
     # Syntax completeness — catches truncated output before anything else
     if not _js_is_syntactically_complete(code):
         errors.append(
-            "handler.js: code is syntactically incomplete (truncated output) — "
+            "code is syntactically incomplete (truncated output) — "
             "unbalanced braces, unclosed string, or unmatched brackets"
         )
         return errors  # further checks are meaningless on broken code
 
     # Shape checks
     if "module.exports" not in code:
-        errors.append("handler.js: module.exports not found")
+        errors.append("module.exports not found")
     if "webhookTopics" not in code:
-        errors.append("handler.js: webhookTopics not found in exports")
+        errors.append("webhookTopics not found in exports")
     if "handler" not in code:
-        errors.append("handler.js: handler function not found in exports")
+        errors.append("handler function not found in exports")
 
     # Forbidden patterns
     for pattern, message in FORBIDDEN_HANDLER_PATTERNS:
         if re.search(pattern, code):
-            errors.append(f"handler.js: {message}")
+            errors.append(message)
 
     # Extract declared webhook topics
     topic_match = re.search(r"webhookTopics\s*:\s*\[([^\]]*)\]", code)
@@ -136,13 +139,13 @@ def validate_handler(code: str, api_plan_topics: List[str]) -> List[str]:
 
         unknown = declared - VALID_WEBHOOK_TOPICS
         if unknown:
-            errors.append(f"handler.js: unknown webhook topics: {sorted(unknown)}")
+            errors.append(f"unknown webhook topics: {sorted(unknown)}")
 
         planned = set(api_plan_topics)
         mismatch = declared.symmetric_difference(planned)
         if mismatch and planned:
             errors.append(
-                f"handler.js: webhook topics don't match API plan. "
+                f"webhook topics don't match API plan. "
                 f"Declared: {sorted(declared)}, Planned: {sorted(planned)}"
             )
 
@@ -169,7 +172,7 @@ def validate_migration(sql: str) -> List[str]:
     ]
     for pattern, name in forbidden_ddl:
         if re.search(pattern, sql, re.IGNORECASE):
-            errors.append(f"migration: forbidden SQL operation: {name}")
+            errors.append(f"forbidden SQL operation: {name}")
 
     # Each CREATE TABLE must include tenant_id
     create_table_stmts = re.findall(
@@ -178,7 +181,7 @@ def validate_migration(sql: str) -> List[str]:
     for stmt in create_table_stmts:
         if "tenant_id" not in stmt.lower():
             errors.append(
-                f"migration: CREATE TABLE missing tenant_id column: "
+                f"CREATE TABLE missing tenant_id column: "
                 f"{stmt[:80].strip()}..."
             )
 
@@ -188,7 +191,7 @@ def validate_migration(sql: str) -> List[str]:
         re.search(r"\bROW\s+LEVEL\s+SECURITY\b", sql, re.IGNORECASE)
     ) or bool(re.search(r"\bCREATE\s+POLICY\b", sql, re.IGNORECASE))
     if has_create_table and not has_rls:
-        errors.append("migration: CREATE TABLE present but no RLS policy found")
+        errors.append("CREATE TABLE present but no RLS policy found")
 
     return errors
 
@@ -225,13 +228,13 @@ def validate_widget_js(
     # Must export a mount function
     if not re.search(r"\bexport\s+function\s+mount\b", widget_js):
         errors.append(
-            "widget_js: must export a named mount function: export function mount(container, host) { ... }"
+            "must export a named mount function: export function mount(container, host) { ... }"
         )
 
     # Forbidden patterns
     for pattern, message in FORBIDDEN_WIDGET_JS_PATTERNS:
         if re.search(pattern, widget_js):
-            errors.append(f"widget_js: {message}")
+            errors.append(message)
 
     # host.call() paths must be in the platform API catalog
     catalog_paths = {entry["path"] for entry in platform_api_catalog}
@@ -239,29 +242,16 @@ def validate_widget_js(
     for path in called_paths:
         if path not in catalog_paths:
             errors.append(
-                f"widget_js: host.call() references unlisted path '{path}'. "
+                f"host.call() references unlisted path '{path}'. "
                 f"Allowed: {sorted(catalog_paths)}"
             )
 
     # No hardcoded tenant IDs
     if re.search(r"\btenant[_-]?id\s*[:=]\s*['\"]", widget_js, re.IGNORECASE):
         errors.append(
-            "widget_js: hardcoded tenant_id detected — read from host.context instead"
+            "hardcoded tenant_id detected — read from host.context instead"
         )
 
     return errors
 
 
-def validate_bundle(
-    handler_code: str,
-    migration_sql: str,
-    widget_js: str,
-    platform_api_catalog: List[Dict[str, str]],
-    api_plan_topics: List[str],
-) -> List[str]:
-    """Run all validators and return the combined error list."""
-    return (
-        validate_handler(handler_code, api_plan_topics)
-        + validate_migration(migration_sql)
-        + validate_widget_js(widget_js, platform_api_catalog)
-    )

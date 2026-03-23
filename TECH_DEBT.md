@@ -4,6 +4,39 @@ Items that are known gaps but deliberately deferred. Each entry has the affected
 
 ---
 
+## TD-008 — Revision generation ignores `priorBundle`; strategy not stored in bundle
+
+**Affected files**
+- `platform/apps/api/src/routes/generation.ts` — `/revise` endpoint reads `session.bundle` from DB and passes it as `priorBundle` in the new `GenerationRequest` (lines 294–308) ✅
+- `generator/contract/validators.py` — `GenerationRequest.priorBundle` field is received by the generator ✅
+- `generator/crews/feature_generator/crew.py` — `request.priorBundle` is never read; every revision runs as a fresh generation ❌
+- `generator/subagents/strategy_agent.py` — produces a strategy brief but it is discarded after use ❌
+- `contract/feature-bundle.schema.json` — `Bundle` has no `strategy` field ❌
+
+**What's broken**
+
+Two linked gaps:
+
+1. **`priorBundle` is ignored.** The API correctly retrieves the prior bundle from DB and forwards it to the generator, but the crew never reads `request.priorBundle`. Every revision is a cold start — the generator sees only the augmented prompt (`original + "Merchant feedback: ..."`) with no knowledge of what code already exists. This produces unnecessary regressions: a merchant asking to "change the notification message" gets the entire handler rewritten from scratch rather than a targeted edit.
+
+2. **Strategy is not persisted.** The Strategy Agent's brief (state machine decisions, platform gaps, cron batching advice) is used during generation and then discarded. It is not stored in the bundle, so revisions cannot build on prior architectural decisions. A revision might generate a different state machine sentinel or different batching strategy for no reason other than the strategy agent reasoning from scratch.
+
+**What to do**
+
+Step 1 — Store strategy in the bundle:
+- Add `strategy` as an optional field to `Bundle` in `contract/feature-bundle.schema.json`, `contract/validators.py`, and the TypeScript types in `platform/packages/types/`.
+- In `crew.py`, include `strategy` in the `Bundle` before publishing.
+
+Step 2 — Consume `priorBundle` in the generator:
+- In `crew.py`, after the intent and schema agents, check if `request.priorBundle` is present.
+- If present, pass the prior strategy (from `priorBundle["strategy"]`) and prior artifacts to the Strategy Agent so it can make decisions aware of what already exists — or skip re-running strategy entirely if the intent and API plan match the prior run.
+- Pass the prior code artifacts to each codegen agent as additional context: "here is the current handler — make only the changes needed to satisfy the feedback". This is a targeted-edit prompt rather than a full rewrite.
+
+Step 3 — Update the revise endpoint (optional):
+- The endpoint currently infers `appArchetype` from whether `widgetModule` is present in the prior bundle (line 295–298). Once strategy is stored, the archetype could be read directly from the bundle instead of being inferred.
+
+---
+
 ## TD-001 — Generation `meta` is never persisted
 
 **Affected files**
@@ -84,27 +117,6 @@ Generated handlers that need to notify customers (back-in-stock, order alerts, e
 
 **What to do**
 Integrate a 3rd-party transactional email provider (Resend, SendGrid, Postmark, etc.) at the platform level and expose it as `ctx.email.send({ to, subject, text })` in the harness contract. The provider credentials would be stored in Secret Manager per-tenant or platform-wide. This keeps generated handlers clean and provider-agnostic.
-
----
-
-## TD-006 — No runtime agent for Shopify API strategy decisions
-
-**Affected files**
-- `generator/subagents/handler_agent.py` — generates handler code following a static harness contract
-- `generator/crews/feature_generator/agents.py` — Agent 2 (schema) produces the API plan without Shopify domain expertise
-- `generator/templates/harness_contract.py` — contains static Shopify API pattern rules as prompt guidance
-
-**What's missing**
-The current generator encodes Shopify API best practices as static rules in the system prompt (e.g. "use `/variants.json?inventory_item_ids=` not `/products.json`"). This works for known patterns but cannot reason about novel or ambiguous cases at runtime — e.g. deciding whether to use GraphQL vs REST for a given query, choosing the right pagination strategy for large catalogs, or picking the least-expensive API path to reach a goal.
-
-**What to do**
-Add a **Shopify Strategy Agent** between Agent 2 (schema) and Agent 3 (codegen) that:
-1. Receives the API plan and feature intent.
-2. Validates and enriches each operation with the correct Shopify REST/GraphQL path, pagination strategy, and rate-limit budget.
-3. Flags any plan steps that would require scanning unbounded resource lists and rewrites them to use filtered endpoints.
-4. Outputs an annotated API plan that Agent 3 (handler codegen) follows exactly.
-
-This agent should have access to Shopify API schema fragments (already loaded in `agents.py`) and a curated set of anti-pattern rules.
 
 ---
 

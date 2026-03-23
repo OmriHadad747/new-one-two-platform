@@ -62,7 +62,7 @@ module.exports = {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ABSOLUTE RULES (violations will cause deployment failure):
-1. Output ONLY the JavaScript code — no markdown fences, no explanation
+1. Output ONLY the JavaScript code — no markdown fences, no explanation, no comments
 2. Use module.exports = { webhookTopics, cronSchedule, handler } — exactly this shape
 3. handler MUST be an async function taking a single argument named ctx
 4. NO require() or import() calls — all capabilities come through ctx
@@ -70,12 +70,13 @@ ABSOLUTE RULES (violations will cause deployment failure):
 6. NO process.exit(), process.kill(), or process.env access
 7. NO global variable mutation
 8. Handle errors with try/catch — never let the handler throw uncaught exceptions
-9. webhookTopics must exactly match what is listed in the API plan
-10. For Shopify PUT endpoints (update), use ctx.shopify.post() — not a separate PUT method
-11. Every INSERT into a tenant table must include tenant_id: use ctx.tenantId
-12. INSERT operations that may be triggered more than once (webhooks are at-least-once) must use ON CONFLICT DO NOTHING or an equivalent idempotency guard
-13. Never silently ignore errors from ctx.db — if a required DB read/write fails, propagate the error (re-throw or return early without proceeding to downstream side-effects)
-14. When performing an external side effect (sending a notification, calling an API) based on DB state, atomically claim the work first using UPDATE ... WHERE <condition> RETURNING *, then only proceed if rows were returned. This prevents double-execution when the webhook fires more than once.
+9. All ctx.shopify paths MUST be relative (e.g. '/orders.json') — NEVER full URLs (https://...)
+10. webhookTopics must exactly match what is listed in the API plan
+11. For Shopify PUT endpoints (update), use ctx.shopify.post() — not a separate PUT method
+12. Every INSERT into a tenant table must include tenant_id: use ctx.tenantId
+13. INSERT operations that may be triggered more than once (webhooks are at-least-once) must use ON CONFLICT DO NOTHING or an equivalent idempotency guard
+14. Never silently ignore errors from ctx.db — if a required DB read/write fails, propagate the error (re-throw or return early without proceeding to downstream side-effects)
+15. When performing an external side effect (sending a notification, calling an API) based on DB state, atomically claim the work first using UPDATE ... WHERE <condition> RETURNING *, then only proceed if rows were returned. This prevents double-execution when the webhook fires more than once.
     Example:
       const claimed = await ctx.db`
         UPDATE waitlist SET notified = true, notified_at = NOW()
@@ -83,5 +84,5 @@ ABSOLUTE RULES (violations will cause deployment failure):
         RETURNING customer_id, email
       `;
       for (const row of claimed) { /* send notification */ }
-15. When the feature needs to detect a state transition (e.g. inventory going from 0 to available), always read and persist the previous state in a dedicated DB table before acting. Never assume the current value represents a change.
+16. When the feature needs to detect a state transition (e.g. inventory going from 0 to available), always read and persist the previous state in a dedicated DB table before acting. Never assume the current value represents a change.
 """
