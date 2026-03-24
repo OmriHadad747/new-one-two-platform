@@ -17,6 +17,23 @@ registering it in registry.py. No changes to orchestration code (crew.py).
 
 CodegenContext carries all inputs shared across generators for a single generation
 run. Sub-agents read only the fields they need.
+
+plan shape:
+  {
+    "shopifyPlan": {
+      "webhookTopics": [...],
+      "cronSchedule": null | "...",
+      "operations": [...]
+    },
+    "implementationSpec": {
+      "stateMachine": null | { needsStateTracking, trackedEntity, unknownSentinel, ... },
+      "platformGaps": [...],
+      "cronBatching": null | { required, batchEndpoint, maxBatchSize, advice },
+      "codeSpec": { "webhookPath": [...], "cronPath": [...], "functions": [...] },
+      "migrationGuidance": "...",
+      "widgetGuidance": null | "..."
+    }
+  }
 """
 from __future__ import annotations
 
@@ -33,8 +50,10 @@ class CodegenContext:
     Fields
     ------
     intent              Parsed intent from Agent 1 (run_intent_agent).
-    api_plan            Shopify API plan from Agent 2 (run_schema_agent).
-    strategy            Feature coding brief from Agent 3 (run_strategy_agent).
+    plan                Unified plan from the Planner Agent — contains both
+                        shopifyPlan (Shopify API surface) and implementationSpec
+                        (codeSpec, stateMachine, platformGaps, cronBatching, guidance).
+                        Replaces the former separate api_plan + strategy fields.
     platform_api_catalog Allowed backend paths for widget host.call(). Empty for
                         backend_only apps but always present so generators don't
                         need to guard against None.
@@ -43,8 +62,7 @@ class CodegenContext:
     """
 
     intent: Dict[str, Any]
-    api_plan: Dict[str, Any]
-    strategy: Dict[str, Any]
+    plan: Dict[str, Any]
     platform_api_catalog: List[Dict[str, str]] = field(default_factory=list)
     previous_errors: Optional[List[str]] = None
 

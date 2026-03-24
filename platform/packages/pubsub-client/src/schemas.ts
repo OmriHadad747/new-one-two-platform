@@ -34,7 +34,7 @@ export const ProgressEventSchema = z.object({
   agent: z.enum([
     "intent",
     "schema",
-    "strategy",
+    "planner",
     "codegen",
     "widget_config",
     "handler",

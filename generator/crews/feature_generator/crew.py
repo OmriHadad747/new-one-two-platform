@@ -1,13 +1,14 @@
 """
-FeatureGenerator crew — orchestrates all 6 agents for a single generation request.
+FeatureGenerator crew — orchestrates all agents for a single generation request.
 
-Execution order:
-  Agent 1  Intent       — sequential
-  Agent 2  Schema       — sequential
-  Agent 3  Strategy     — sequential (feature-specific coding brief for all codegen agents)
-  Agent 4  CodeGen      — generators run in parallel (ThreadPoolExecutor)
-  Agent 5  Validation   — sequential, retry loop (max 3 attempts total)
-  Agent 6  Explanation  — sequential
+Pipeline:
+  Agent 1  Intent       — parse merchant prompt into structured intent
+  Agent 2  Planner      — merged Schema + Strategy: produces shopifyPlan + implementationSpec
+           validate_plan — rule-based gate (webhook topics, cron syntax, atomic-claim check)
+           (retry Planner once on validation failure before failing the job)
+  Agent 3  CodeGen      — generators run in parallel (ThreadPoolExecutor)
+  Agent 4  Validation   — static analysis per artifact, retry loop (max 3 attempts total)
+  Agent 5  Explanation  — sequential, writes merchant-facing summary
   Publisher             — FeatureBundleMessage to generation.completed
 
 Adding a new generator requires only creating a new Generator subclass and
@@ -21,7 +22,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from contract.publisher import publish_completed, publish_progress
 from contract.validators import (
@@ -37,17 +38,19 @@ from contract.validators import (
     AgentTraceEntry,
 )
 from crews.feature_generator.agents import (
+    load_schema_fragments,
     run_explanation_agent,
     run_intent_agent,
-    run_schema_agent,
 )
 from subagents.base import CodegenContext, Generator
+from subagents.planner_agent import run_planner_agent
 from subagents.registry import GENERATORS
-from subagents.strategy_agent import run_strategy_agent
+from subagents.validation import validate_plan
 
 log = logging.getLogger(__name__)
 
-_MAX_RETRIES = 3  # total attempts (1 initial + 2 retries)
+_MAX_RETRIES = 3        # total codegen attempts (1 initial + 2 retries)
+_MAX_PLAN_ATTEMPTS = 2  # total planner attempts (1 initial + 1 retry on plan validation failure)
 
 
 def _now_ms() -> int:
@@ -78,8 +81,8 @@ def _emit(
 
 def run_feature_generation(request: GenerationRequest) -> None:
     """
-    Entry point — runs the full 6-agent pipeline for a GenerationRequest.
-    Publishes progress + completion events.  Never raises (exceptions → failure event).
+    Entry point — runs the full pipeline for a GenerationRequest.
+    Publishes progress + completion events. Never raises (exceptions → failure event).
     """
     start_ms = _now_ms()
     agent_trace: List[AgentTraceEntry] = []
@@ -90,55 +93,86 @@ def run_feature_generation(request: GenerationRequest) -> None:
         t0 = _now_ms()
         intent = run_intent_agent(request.prompt)
         agent_trace.append(
-            AgentTraceEntry(
-                agent="intent", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0
-            )
+            AgentTraceEntry(agent="intent", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
         )
         _emit(request, "intent", "completed", "Feature spec ready")
         log.info("job=%s intent=%s", request.jobId, intent)
 
-        # ── Agent 2: Schema ──────────────────────────────────────────────────
-        _emit(request, "schema", "running", "Mapping Shopify APIs…")
+        # ── Agent 2: Planner (+ validate_plan gate) ──────────────────────────
+        _emit(request, "planner", "running", "Planning Shopify API surface and implementation…")
         t0 = _now_ms()
-        api_plan = run_schema_agent(intent, request.platformApiCatalog)
-        agent_trace.append(
-            AgentTraceEntry(
-                agent="schema", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0
-            )
-        )
-        _emit(request, "schema", "completed", "API plan complete")
-        log.info(
-            "job=%s api_plan topics=%s", request.jobId, api_plan.get("webhookTopics")
-        )
 
-        # ── Agent 3: Strategy ────────────────────────────────────────────────
-        _emit(request, "strategy", "running", "Planning implementation strategy…")
-        t0 = _now_ms()
-        strategy = run_strategy_agent(intent, api_plan, request.appArchetype)
-        agent_trace.append(
-            AgentTraceEntry(
-                agent="strategy", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0
+        schema_fragments = load_schema_fragments(intent.get("resources", []))
+        plan: Optional[Dict] = None
+        plan_errors: List[str] = []
+
+        for plan_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
+            plan = run_planner_agent(
+                prompt=request.prompt,
+                intent=intent,
+                platform_api_catalog=request.platformApiCatalog,
+                app_archetype=request.appArchetype,
+                schema_fragments=schema_fragments,
+                validation_errors=plan_errors if plan_attempt > 1 else None,
             )
+            plan_errors = validate_plan(plan)
+
+            if not plan_errors:
+                break
+
+            log.warning(
+                "job=%s plan validation attempt=%d errors=%s",
+                request.jobId,
+                plan_attempt,
+                plan_errors,
+            )
+
+            if plan_attempt == _MAX_PLAN_ATTEMPTS:
+                _emit(
+                    request,
+                    "planner",
+                    "failed",
+                    f"Plan validation failed: {plan_errors[0]}",
+                )
+                publish_completed(
+                    FeatureBundleMessage(
+                        jobId=request.jobId,
+                        status="failed",
+                        error=f"Planner produced invalid plan after {_MAX_PLAN_ATTEMPTS} attempts: {plan_errors}",
+                    )
+                )
+                return
+
+            _emit(
+                request,
+                "planner",
+                "running",
+                f"Fixing plan (attempt {plan_attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
+            )
+
+        agent_trace.append(
+            AgentTraceEntry(agent="planner", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
         )
-        _emit(request, "strategy", "completed", "Strategy ready")
+        _emit(request, "planner", "completed", "Plan ready")
         log.info(
-            "job=%s strategy gaps=%s batching=%s",
+            "job=%s plan topics=%s cron=%s has_code_spec=%s",
             request.jobId,
-            [g["need"] for g in strategy.get("platformGaps") or []],
-            bool(strategy.get("cronBatching")),
+            plan.get("shopifyPlan", {}).get("webhookTopics"),
+            plan.get("shopifyPlan", {}).get("cronSchedule"),
+            bool((plan.get("implementationSpec") or {}).get("codeSpec")),
         )
 
-        # ── Agent 4: Parallel CodeGen + Agent 5: Validation (retry loop) ────
+        # ── Agent 3: Parallel CodeGen + Agent 4: Validation (retry loop) ────
         _emit(request, "codegen", "running", "Generating feature code…")
         t0 = _now_ms()
 
         catalog_dicts = [e.model_dump() for e in request.platformApiCatalog]
-        is_storefront = request.appArchetype == "storefront_ui"
+        archetype = intent.get("appArchetype") or request.appArchetype
+        is_storefront = archetype == "storefront_ui"
 
         base_ctx = CodegenContext(
             intent=intent,
-            api_plan=api_plan,
-            strategy=strategy,
+            plan=plan,
             platform_api_catalog=catalog_dicts,
         )
 
@@ -207,16 +241,15 @@ def run_feature_generation(request: GenerationRequest) -> None:
 
         _emit(request, "validation", "completed", "All artifacts validated")
 
-        # ── Agent 6: Explanation ─────────────────────────────────────────────
+        # ── Agent 5: Explanation ─────────────────────────────────────────────
         _emit(request, "explanation", "running", "Writing feature summary…")
         t0 = _now_ms()
         explanation_raw = run_explanation_agent(
             intent=intent,
-            api_plan=api_plan,
+            plan=plan,
             widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
             handler_code=artifacts.get("handler", ""),
             migration_sql=artifacts.get("migration", ""),
-            strategy=strategy,
         )
         agent_trace.append(
             AgentTraceEntry(
@@ -230,13 +263,14 @@ def run_feature_generation(request: GenerationRequest) -> None:
 
         # ── Build final bundle ────────────────────────────────────────────────
         technical = explanation_raw.get("technical", {})
+        shopify_plan = plan.get("shopifyPlan", {})
 
         bundle = Bundle(
             widgetModule=artifacts.get("widget_js") if is_storefront else None,
             handlerModule=HandlerModule(
                 code=artifacts.get("handler", ""),
-                webhookTopics=api_plan.get("webhookTopics", []),
-                cronSchedule=api_plan.get("cronSchedule"),
+                webhookTopics=shopify_plan.get("webhookTopics", []),
+                cronSchedule=shopify_plan.get("cronSchedule"),
             ),
             dbMigration=DbMigration(sql=artifacts.get("migration", "")),
             explanation=FeatureExplanation(
@@ -244,9 +278,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
                 technical=TechnicalExplanation(
                     webhookTopics=technical.get("webhookTopics", []),
                     dbTables=technical.get("dbTables", []),
-                    estimatedMonthlyExecutions=technical.get(
-                        "estimatedMonthlyExecutions", 0
-                    ),
+                    estimatedMonthlyExecutions=technical.get("estimatedMonthlyExecutions", 0),
                     estimatedMonthlyCost=technical.get("estimatedMonthlyCost", "$0"),
                 ),
             ),
@@ -254,7 +286,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
 
         total_ms = _now_ms() - start_ms
         meta = GenerationMeta(
-            totalInputTokens=0,  # TODO: aggregation deferred — models return per-call counts
+            totalInputTokens=0,
             totalOutputTokens=0,
             generationMs=total_ms,
             agentTrace=agent_trace,
@@ -303,8 +335,6 @@ def _run_codegen_parallel(
 
     Each generator receives its own CodegenContext with previous_errors populated
     from error_map so the retry prompt is generator-specific.
-
-    Returns the updated artifacts dict (mutated in place and also returned).
     """
     to_run: List[Generator] = []
     for name, gen in GENERATORS.items():
@@ -322,8 +352,7 @@ def _run_codegen_parallel(
                 gen.generate,
                 CodegenContext(
                     intent=base_ctx.intent,
-                    api_plan=base_ctx.api_plan,
-                    strategy=base_ctx.strategy,
+                    plan=base_ctx.plan,
                     platform_api_catalog=base_ctx.platform_api_catalog,
                     previous_errors=error_map.get(gen.name),
                 ),

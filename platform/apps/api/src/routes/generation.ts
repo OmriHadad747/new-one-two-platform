@@ -168,14 +168,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         return reply.status(404).send({ error: "Job not found" });
       }
 
-      if (session.bundle) {
-        return reply.send({ status: "success", bundle: session.bundle });
-      }
-
       if (session.status === "failed") {
         return reply
           .status(422)
           .send({ status: "failed", error: session.errorMessage });
+      }
+
+      if (session.bundle && Object.keys(session.bundle as Record<string, unknown>).length > 0) {
+        return reply.send({ status: "success", bundle: session.bundle });
       }
 
       // Still running

@@ -7,9 +7,9 @@ Rules enforced by both the system prompt and validate():
   - Every table must have a CREATE POLICY for tenant isolation
   - No DROP TABLE, no ALTER TABLE on existing tables, no TRUNCATE
 
-The strategy brief contributes schema decisions: column nullability (the state
-column must be NULLABLE when the state machine uses null as the unknown sentinel)
-and any migration-specific guidance from the Strategy Agent.
+The implementationSpec contributes schema decisions: the state column must be
+NULLABLE when the state machine uses null as the unknown sentinel, and any
+migration-specific guidance from migrationGuidance.
 
 Model: claude-haiku (prefers_code_model = False — DDL is simpler than handler code)
 """
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
 from subagents.validation import validate_migration
@@ -51,7 +51,10 @@ ABSOLUTE RULES:
 5. NO DROP TABLE, NO ALTER TABLE on existing tables, NO TRUNCATE
 6. Use gen_random_uuid() for UUID primary keys
 7. If the feature doesn't need any new tables, output nothing at all — zero characters, no explanation
-8. Add useful indexes (tenant_id is always a candidate)"""
+8. Add useful indexes (tenant_id is always a candidate)
+9. Shopify entity IDs (variant_id, product_id, order_id, customer_id, inventory_item_id) are
+   numeric integers — store them as BIGINT or TEXT, NEVER as UUID.
+   Only tenant_id and internal record primary keys use the UUID type."""
 
 _SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMENT")
 
@@ -68,15 +71,15 @@ class MigrationGenerator(Generator):
 
     def user_prompt(self, ctx: CodegenContext) -> str:
         retry_block = self.format_retry_block(ctx.previous_errors)
-        strategy_block = _format_strategy_block(ctx.strategy)
-        db_hints = _extract_db_hints(ctx.api_plan)
+        schema_block = _format_schema_guidance(ctx.plan)
+        db_hints = _extract_db_hints(ctx.plan)
 
         return (
             f"{retry_block}"
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Trigger: {ctx.intent.get('triggerType', '')}\n\n"
             f"Data to persist:\n{json.dumps(db_hints, indent=2)}\n"
-            f"{strategy_block}"
+            f"{schema_block}"
             "Generate the PostgreSQL DDL migration for this feature.\n"
             "Follow the tenant isolation pattern exactly.\n"
             "Output ONLY raw SQL (no markdown fences)."
@@ -99,35 +102,33 @@ class MigrationGenerator(Generator):
 # ── Private prompt-building helpers ───────────────────────────────────────────
 
 
-def _format_strategy_block(strategy: Optional[Dict[str, Any]]) -> str:
-    """Render the strategy fields relevant to schema design."""
-    if not strategy:
-        return ""
-
+def _format_schema_guidance(plan: Dict[str, Any]) -> str:
+    """Render schema decisions from implementationSpec relevant to DDL generation."""
+    impl = plan.get("implementationSpec") or {}
     parts: List[str] = []
 
-    sm = strategy.get("stateMachine")
-    if sm and sm.get("needsStateTracking"):
+    sm = impl.get("stateMachine") or {}
+    if sm.get("needsStateTracking"):
         sentinel = sm.get("unknownSentinel", "null")
         parts.append(
-            f"\nSchema guidance from feature strategy:\n"
+            f"\nSchema guidance:\n"
             f"  - The state column must be NULLABLE "
             f"({sentinel!r} = no prior observation, distinct from any real value).\n"
             f"  - Tracked entity: {sm.get('trackedEntity', '')}"
         )
 
-    guidance = (strategy.get("migrationGuidance") or "").strip()
+    guidance = (impl.get("migrationGuidance") or "").strip()
     if guidance:
-        header = "\nSchema guidance from feature strategy:" if not parts else ""
+        header = "\nSchema guidance:" if not parts else ""
         parts.append(f"{header}\n  - {guidance}")
 
     return "\n".join(parts) + "\n" if parts else ""
 
 
-def _extract_db_hints(api_plan: Dict[str, Any]) -> List[str]:
-    """Extract table/storage hints from the API plan operations."""
+def _extract_db_hints(plan: Dict[str, Any]) -> List[str]:
+    """Extract table/storage hints from the shopifyPlan operations list."""
     hints = []
-    for op in api_plan.get("operations", []):
+    for op in (plan.get("shopifyPlan") or {}).get("operations", []):
         desc = op.get("description", "").lower()
         if any(kw in desc for kw in ["insert", "store", "save", "create record", "table"]):
             hints.append(op.get("description", ""))

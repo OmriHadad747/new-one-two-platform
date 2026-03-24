@@ -170,6 +170,19 @@ export interface HandlerLogger {
   debug(msg: string): void;
 }
 
+export interface EmailSendParams {
+  to: string;
+  subject: string;
+  templateId?: string;
+  data?: Record<string, unknown>;
+}
+
+// Provider-agnostic email client. Current implementation: log stub (EMAIL_SENT event).
+// See TD-007 for the real provider integration.
+export interface EmailClient {
+  send(params: EmailSendParams): Promise<void>;
+}
+
 // The context injected into every tenant handler call
 export interface HandlerContext {
   shopify: {
@@ -180,6 +193,7 @@ export interface HandlerContext {
   payload: Record<string, unknown>;
   logger: HandlerLogger;
   tenantId: string; // UUID of the current tenant — use in all INSERT statements
+  email: EmailClient;
 }
 
 // The contract every generated app module must export

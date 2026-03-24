@@ -1,6 +1,6 @@
 import { withTenantContext } from "@new-one-two/db";
 import { createRequestLogger } from "@new-one-two/logger";
-import type { HandlerContext, HarnessInvokeRequest } from "@new-one-two/types";
+import type { EmailClient, HandlerContext, HarnessInvokeRequest } from "@new-one-two/types";
 import { buildShopifyClient } from "./shopify-client.js";
 
 const SHOPIFY_ACCESS_TOKEN_SECRET_NAME =
@@ -26,7 +26,16 @@ export async function buildCtx(
 
   const shopify = await buildShopifyClient(APP_SHOP_DOMAIN, SHOPIFY_ACCESS_TOKEN_SECRET_NAME);
 
-  return { shopify, db: tx, payload, logger, tenantId: req.tenantId };
+  const email: EmailClient = {
+    async send(params) {
+      logger.info(
+        { event: "EMAIL_SENT", tenantId: req.tenantId, ...params },
+        "email stub — provider not yet wired (see TD-007)"
+      );
+    },
+  };
+
+  return { shopify, db: tx, payload, logger, tenantId: req.tenantId, email };
 }
 
 // Re-export withTenantContext so invoke-handler can use it without extra imports

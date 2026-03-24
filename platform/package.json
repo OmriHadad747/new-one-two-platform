@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --parallel",
+    "dev": "turbo run dev --parallel --filter=!@new-one-two/harness",
     "test": "turbo run test",
     "lint": "turbo run lint",
     "db:migrate": "workspace @new-one-two/db migrate",

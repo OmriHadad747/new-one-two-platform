@@ -3,19 +3,19 @@ Static analysis utilities shared across all generators.
 
 Each Generator subclass owns its validate() method and delegates here for the
 actual checks. This file contains:
+  - validate_plan()    — rule-based gate on the Planner output (Change 2)
   - Per-artifact validate functions (validate_handler, validate_migration, validate_widget_js)
   - Shared constants (VALID_WEBHOOK_TOPICS, forbidden pattern lists)
   - _js_is_syntactically_complete() heuristic used by validate_handler
 
 validate_bundle() has been removed. Orchestration (crew.py) now calls
-gen.validate(artifact, ctx) on each generator directly, which eliminates the
-need for a cross-artifact aggregator here.
+gen.validate(artifact, ctx) on each generator directly.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Dict, List
+from typing import Any, Dict, List
 
 VALID_WEBHOOK_TOPICS = {
     "orders/create",
@@ -32,6 +32,70 @@ VALID_WEBHOOK_TOPICS = {
     "inventory_items/update",
     "app/uninstalled",
 }
+
+
+# ── Plan validator (Change 2) ──────────────────────────────────────────────────
+
+
+def _is_valid_cron(expr: str) -> bool:
+    """Minimal cron validator — checks for 5 whitespace-separated fields."""
+    return len(expr.strip().split()) == 5
+
+
+def validate_plan(plan: Dict[str, Any]) -> List[str]:
+    """
+    Rule-based gate on the Planner Agent output. Called in crew.py before codegen.
+    Returns a list of error strings; empty list = plan is valid.
+
+    Checks:
+      1. All webhookTopics are in the known-valid set.
+      2. cronSchedule, if present, is a syntactically valid 5-field cron expression.
+      3. When needsStateTracking is true and a cronPath exists, the cronPath must
+         contain an explicit atomic-claim step (RETURNING + skip-if-zero-rows).
+    """
+    errors: List[str] = []
+    shopify = plan.get("shopifyPlan") or {}
+    impl = plan.get("implementationSpec") or {}
+
+    # 1. Webhook topics must be known
+    for topic in shopify.get("webhookTopics") or []:
+        if topic not in VALID_WEBHOOK_TOPICS:
+            errors.append(
+                f"unknown webhook topic {topic!r} — "
+                f"valid topics: {sorted(VALID_WEBHOOK_TOPICS)}"
+            )
+
+    # 2. cronSchedule must be a valid 5-field expression if present
+    cron = shopify.get("cronSchedule")
+    if cron is not None and not _is_valid_cron(cron):
+        errors.append(
+            f"invalid cronSchedule {cron!r} — must be a 5-field cron expression "
+            f"(e.g. '*/15 * * * *')"
+        )
+
+    # 3. State machine + cron path requires an explicit atomic claim step
+    sm = impl.get("stateMachine") or {}
+    if sm.get("needsStateTracking"):
+        code_spec = impl.get("codeSpec") or {}
+        cron_path = code_spec.get("cronPath") or []
+        if cron_path:
+            has_claim = any(
+                "RETURNING" in step
+                or "returning" in step.lower()
+                or "claimed" in step.lower()
+                for step in cron_path
+            )
+            if not has_claim:
+                errors.append(
+                    "stateMachine.needsStateTracking is true but codeSpec.cronPath "
+                    "has no atomic claim step — add a RETURNING-based UPDATE with "
+                    "a skip-if-zero-rows guard before acting on the transition"
+                )
+
+    return errors
+
+
+# ── Handler validator ──────────────────────────────────────────────────────────
 
 FORBIDDEN_HANDLER_PATTERNS = [
     (r"\brequire\s*\(", "require() calls are not allowed"),
@@ -128,8 +192,16 @@ def validate_handler(code: str, api_plan_topics: List[str]) -> List[str]:
 
     # Forbidden patterns
     for pattern, message in FORBIDDEN_HANDLER_PATTERNS:
-        if re.search(pattern, code):
-            errors.append(message)
+        match = re.search(pattern, code)
+        if match:
+            # For URL violations, show the offending URL so the retry prompt is specific
+            if "URL" in message or "http" in message.lower():
+                # Extract up to 80 chars of context around the match
+                start = max(0, match.start() - 20)
+                snippet = code[start : match.start() + 60].replace("\n", " ").strip()
+                errors.append(f"{message} — found: '{snippet}'")
+            else:
+                errors.append(message)
 
     # Extract declared webhook topics
     topic_match = re.search(r"webhookTopics\s*:\s*\[([^\]]*)\]", code)
@@ -150,6 +222,9 @@ def validate_handler(code: str, api_plan_topics: List[str]) -> List[str]:
             )
 
     return errors
+
+
+# ── Migration validator ────────────────────────────────────────────────────────
 
 
 def validate_migration(sql: str) -> List[str]:
@@ -195,6 +270,8 @@ def validate_migration(sql: str) -> List[str]:
 
     return errors
 
+
+# ── Widget JS validator ────────────────────────────────────────────────────────
 
 FORBIDDEN_WIDGET_JS_PATTERNS = [
     (r"\bfetch\s*\(", "raw fetch() not allowed — use host.call()"),
@@ -253,5 +330,3 @@ def validate_widget_js(
         )
 
     return errors
-
-

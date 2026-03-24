@@ -100,23 +100,55 @@ Once TD-002 is resolved (agents return token counts), call `insertGenerationEven
 
 ---
 
-## TD-007 — No email sending capability in generated handlers
+## TD-007 — Wire real email provider behind `ctx.email.send()`
+
+**Current state**
+`ctx.email.send({ to, subject, templateId, data })` exists in the harness contract and is already
+used by generated handlers. The current implementation is a log stub — it emits a structured
+`EMAIL_SENT` log event with the full delivery intent but does not deliver anything.
 
 **Affected files**
-- `generator/templates/harness_contract.py` — defines the ctx API surface available to handlers
-- `generator/subagents/handler_agent.py` — generates handler code; will hallucinate a Shopify email endpoint if not constrained
-
-**What's missing**
-Generated handlers that need to notify customers (back-in-stock, order alerts, etc.) have no legitimate email-sending primitive. Shopify's Admin API has no general-purpose transactional email endpoint. The LLM tends to hallucinate `/emails.json` which doesn't exist, causing silent failures.
-
-**Shopify's legitimate options (and why they don't fit):**
-- **Shopify Email** — a marketing tool for campaigns, not transactional sends. No API to trigger per-customer emails programmatically.
-- **Customer notifications** (`POST /customers/{id}/send_invite.json`) — only sends account invitations.
-- **Draft order invoice** (`POST /draft_orders/{id}/send_invoice.json`) — triggers an order-related email, not a general notification.
-- None of these are appropriate for arbitrary transactional notifications.
+- `platform/packages/harness/src/build-ctx.ts` — stub implementation of `ctx.email`
+- `generator/templates/harness_contract.py` — documents the `ctx.email` API surface
 
 **What to do**
-Integrate a 3rd-party transactional email provider (Resend, SendGrid, Postmark, etc.) at the platform level and expose it as `ctx.email.send({ to, subject, text })` in the harness contract. The provider credentials would be stored in Secret Manager per-tenant or platform-wide. This keeps generated handlers clean and provider-agnostic.
+Replace the stub with a real provider adapter (Resend, SendGrid, Postmark, etc.):
+1. Store provider credentials in Secret Manager per-tenant (or platform-wide for MVP).
+2. Implement a provider adapter behind `ctx.email.send()` in `build-ctx.ts`.
+3. Add delivery status tracking and basic error handling (retry / dead-letter).
+4. The harness contract and all generated handlers require zero changes — the API surface is already correct.
+
+**Complexity:** Medium — provider adapter + tenant credential storage + error handling.
+
+---
+
+## TD-009 — Clarification Agent (pre-flight Q&A before planning)
+
+**What's missing**
+The current flow is fire-and-forget: the merchant submits a prompt and the Planner reasons
+about ambiguities on its own. For questions that can't be resolved from the prompt alone
+(e.g. "do you have multiple locations?", "which email provider are you using?"), the Planner
+either picks a default or adds a platformGap. A Clarification Agent would ask 1–3 targeted
+questions before planning, then feed the answers directly into the Planner as resolved context.
+
+**Why deferred**
+Requires breaking the fire-and-forget generation flow into a two-phase interactive flow:
+1. Job starts → Clarification Agent returns questions → job enters `waiting_for_clarification` state
+2. Merchant answers → job resumes → Planner runs with answers in context
+
+This touches the full stack: new job states in the DB, new API endpoints
+(`GET /generation/:jobId/questions`, `POST /generation/:jobId/answers`), pubsub contract
+changes, and frontend support for the Q&A step.
+
+**Affected files (when implemented)**
+- `platform/apps/api/src/routes/generation.ts` — new endpoints for questions/answers
+- `platform/packages/db/` — new job state + answers storage
+- `platform/packages/pubsub-client/src/schemas.ts` — new message types
+- `generator/crews/feature_generator/crew.py` — new pre-planning phase
+- `generator/crews/feature_generator/agents.py` — new clarification agent
+- Frontend (not yet built)
+
+**Complexity:** Medium-High — full-stack flow change, new job lifecycle state.
 
 ---
 

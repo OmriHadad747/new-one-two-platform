@@ -1,12 +1,16 @@
 """
 Handler Generator — produces the CommonJS handler.js for the harness.
 
-Constraints come from two sources:
-  - HARNESS_CONTRACT (static):  the platform API surface, absolute rules,
-                                Shopify API patterns. Never feature-specific.
-  - CodegenContext.strategy (dynamic): feature-specific decisions from the
-                                Strategy Agent (state machine, platform gaps,
-                                cron batching). Injected into the user prompt.
+System prompt: HARNESS_BASE (always) — ctx API surface, output format, core rules.
+
+JIT harness sections (Change 3): injected into the user prompt only when the plan
+requires them, keeping the context window focused on what actually applies:
+  HARNESS_SECTION_WEBHOOK       — when webhookTopics is non-empty
+  HARNESS_SECTION_STATE_MACHINE — when implementationSpec.stateMachine.needsStateTracking
+  HARNESS_SECTION_CRON_BATCHING — when implementationSpec.cronBatching.required
+
+The codeSpec from the Planner is rendered as a numbered algorithm the generator
+implements literally — no interpretation, no gap-filling.
 
 Model: claude-sonnet-4-6 (prefers_code_model = True)
 """
@@ -14,15 +18,16 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
 from subagents.validation import validate_handler
-from templates.harness_contract import HARNESS_CONTRACT
-
-_SYSTEM_PROMPT = f"""You are an expert Node.js developer writing Shopify automation handlers.
-
-{HARNESS_CONTRACT}"""
+from templates.harness_contract import (
+    HARNESS_BASE,
+    HARNESS_SECTION_CRON_BATCHING,
+    HARNESS_SECTION_STATE_MACHINE,
+    HARNESS_SECTION_WEBHOOK,
+)
 
 
 class HandlerGenerator(Generator):
@@ -33,19 +38,22 @@ class HandlerGenerator(Generator):
     # ── Generator interface ────────────────────────────────────────────────────
 
     def system_prompt(self) -> str:
-        return _SYSTEM_PROMPT
+        return f"You are an expert Node.js developer writing Shopify automation handlers.\n\n{HARNESS_BASE}"
 
     def user_prompt(self, ctx: CodegenContext) -> str:
         retry_block = self.format_retry_block(ctx.previous_errors)
-        strategy_block = _format_strategy_block(ctx.strategy)
+        jit_sections = _build_jit_sections(ctx.plan)
+        spec_block = _format_code_spec(ctx.plan)
+        gaps_block = _format_platform_gaps(ctx.plan)
 
         return (
             f"{retry_block}"
-            f"Merchant's goal: {ctx.intent.get('desiredOutcome', '')}\n\n"
-            f"API Plan to implement:\n{json.dumps(ctx.api_plan, indent=2)}\n"
-            f"{strategy_block}"
-            "Generate the handler.js module that implements this plan exactly.\n"
-            "Only output JavaScript code — no explanation, no markdown fences."
+            f"{jit_sections}"
+            f"Feature: {ctx.intent.get('desiredOutcome', '')}\n\n"
+            f"Shopify API plan:\n{json.dumps(ctx.plan.get('shopifyPlan', {}), indent=2)}\n"
+            f"{gaps_block}"
+            f"{spec_block}"
+            "Generate the handler.js module. Output ONLY the JavaScript code."
         )
 
     def parse(self, raw: str) -> str:
@@ -54,59 +62,85 @@ class HandlerGenerator(Generator):
         return text.strip()
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
-        return validate_handler(artifact, ctx.api_plan.get("webhookTopics", []))
+        topics = ctx.plan.get("shopifyPlan", {}).get("webhookTopics", [])
+        return validate_handler(artifact, topics)
 
 
-# ── Private prompt-building helpers ───────────────────────────────────────────
+# ── JIT harness section builder (Change 3) ────────────────────────────────────
 
 
-def _format_strategy_block(strategy: Optional[Dict[str, Any]]) -> str:
+def _build_jit_sections(plan: Dict[str, Any]) -> str:
     """
-    Render the strategy brief as a delimited section in the user prompt.
-    Each subsection only appears when it contains actionable content, so the
-    prompt stays concise for simple features with no gaps or cron.
+    Inject only the harness pattern sections relevant to this specific plan.
+    Irrelevant sections are omitted so the model focuses on what applies.
     """
-    if not strategy:
+    shopify = plan.get("shopifyPlan") or {}
+    impl = plan.get("implementationSpec") or {}
+    sm = impl.get("stateMachine") or {}
+    batching = impl.get("cronBatching") or {}
+
+    sections: List[str] = []
+
+    if shopify.get("webhookTopics"):
+        sections.append(HARNESS_SECTION_WEBHOOK)
+
+    if sm.get("needsStateTracking"):
+        sections.append(HARNESS_SECTION_STATE_MACHINE)
+
+    if batching.get("required"):
+        sections.append(HARNESS_SECTION_CRON_BATCHING)
+
+    return "".join(sections)
+
+
+# ── Prompt-building helpers ────────────────────────────────────────────────────
+
+
+def _format_code_spec(plan: Dict[str, Any]) -> str:
+    """
+    Render the codeSpec from implementationSpec as a numbered algorithm.
+    The generator implements this literally — no interpretation required.
+    """
+    impl = plan.get("implementationSpec") or {}
+    code_spec = impl.get("codeSpec") or {}
+
+    webhook_path: List[str] = code_spec.get("webhookPath") or []
+    cron_path: List[str] = code_spec.get("cronPath") or []
+    functions: List[Dict[str, Any]] = code_spec.get("functions") or []
+
+    if not webhook_path and not cron_path and not functions:
         return ""
 
     parts: List[str] = [
         "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "FEATURE CODING BRIEF — apply these decisions exactly:",
+        "IMPLEMENTATION SPEC — implement exactly as described, step by step:",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
 
-    sm = strategy.get("stateMachine")
-    if sm and sm.get("needsStateTracking"):
-        sentinel = sm.get("unknownSentinel", "null")
-        skip_word = "YES" if sm.get("skipWhenUnknown", True) else "NO"
-        parts.append(
-            f"\nState machine:\n"
-            f"  Tracked entity  : {sm.get('trackedEntity', '')}\n"
-            f"  Unknown sentinel: {sentinel}  ← use this (not 0, not false) when no prior DB row exists\n"
-            f"  Skip when unknown: {skip_word} — {sm.get('skipRationale', '')}"
-        )
+    if webhook_path:
+        steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(webhook_path))
+        parts.append(f"\nWebhook handler path:\n{steps}")
 
-    gaps = strategy.get("platformGaps") or []
-    if gaps:
-        lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
-        parts.append(
-            f"\nPlatform gaps (ctx cannot provide these — handle exactly as stated):\n{lines}"
-        )
+    if cron_path:
+        steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(cron_path))
+        parts.append(f"\nCron handler path:\n{steps}")
 
-    batching = strategy.get("cronBatching")
-    if batching and batching.get("required"):
-        parts.append(
-            f"\nCron batching (required — never call Shopify APIs inside the per-item loop):\n"
-            f"  Endpoint    : {batching.get('batchEndpoint', '')}\n"
-            f"  Max per call: {batching.get('maxBatchSize', 50)}\n"
-            f"  Instruction : {batching.get('advice', '')}"
-        )
+    if functions:
+        parts.append("\nHelper functions:")
+        for fn in functions:
+            fn_steps = "\n".join(
+                f"    {i + 1}. {s}" for i, s in enumerate(fn.get("steps") or [])
+            )
+            parts.append(f"  {fn['name']}:\n{fn_steps}")
 
-    guidance = (strategy.get("handlerGuidance") or "").strip()
-    if guidance:
-        parts.append(f"\nAdditional guidance:\n  {guidance}")
-
-    parts.append(
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    )
+    parts.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     return "\n".join(parts)
+
+
+def _format_platform_gaps(plan: Dict[str, Any]) -> str:
+    """Render platformGaps so the handler knows what to do instead of missing ctx capabilities."""
+    gaps = (plan.get("implementationSpec") or {}).get("platformGaps") or []
+    if not gaps:
+        return ""
+    lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
+    return f"\nPlatform limitations (ctx cannot provide these — handle exactly as stated):\n{lines}\n"

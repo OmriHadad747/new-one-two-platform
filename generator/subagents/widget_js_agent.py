@@ -3,15 +3,12 @@ Widget JS Generator — produces a self-contained ES module for storefront_ui ap
 
 The generated JS is loaded by the App Block runtime at storefront page load.
 It must export a `mount(container, host)` function and interact with the outside
-world exclusively through the `host` object (defined in /contract/host-contract.md).
+world exclusively through the `host` object.
 
-There is no predefined list of widget types — the model can render any UI it
-needs as long as it respects the host contract.
-
-The strategy brief contributes two things:
+The implementationSpec contributes two things:
   - platformGaps: UX should reflect backend limitations (e.g. show "you'll be
     notified" rather than "email sent" when the backend can only log intent).
-  - widgetGuidance: any feature-specific UX decisions from the Strategy Agent.
+  - widgetGuidance: feature-specific UX decisions from the Planner.
 
 Only runs for storefront_ui apps — the registry entry is always present but
 crew.py skips this generator for backend_only apps.
@@ -20,7 +17,7 @@ Model: claude-sonnet-4-6 (prefers_code_model = True)
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
 from subagents.validation import validate_widget_js
@@ -73,7 +70,7 @@ class WidgetJsGenerator(Generator):
 
     def user_prompt(self, ctx: CodegenContext) -> str:
         retry_block = self.format_retry_block(ctx.previous_errors)
-        strategy_block = _format_strategy_block(ctx.strategy)
+        ux_block = _format_ux_guidance(ctx.plan)
         catalog_desc = "\n".join(
             f"  {e['method']} {e['path']}" for e in ctx.platform_api_catalog
         )
@@ -84,7 +81,7 @@ class WidgetJsGenerator(Generator):
             f"Trigger type: {ctx.intent.get('triggerType', '')}\n\n"
             f"Platform API catalog (the ONLY paths the widget may call via host.call()):\n"
             f"{catalog_desc}\n"
-            f"{strategy_block}"
+            f"{ux_block}"
             "Generate the widget ES module. Output ONLY the raw JavaScript."
         )
 
@@ -98,24 +95,17 @@ class WidgetJsGenerator(Generator):
 # ── Private prompt-building helpers ───────────────────────────────────────────
 
 
-def _format_strategy_block(strategy: Optional[Dict[str, Any]]) -> str:
-    """
-    Render strategy fields relevant to the widget UX.
-    Platform gaps affect what the widget should communicate to the user.
-    """
-    if not strategy:
-        return ""
-
+def _format_ux_guidance(plan: Dict[str, Any]) -> str:
+    """Render UX-relevant fields from implementationSpec for the widget developer."""
+    impl = plan.get("implementationSpec") or {}
     parts: List[str] = []
 
-    gaps = strategy.get("platformGaps") or []
+    gaps = impl.get("platformGaps") or []
     if gaps:
         lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
-        parts.append(
-            f"\nBackend limitations the widget UX should reflect:\n{lines}"
-        )
+        parts.append(f"\nBackend limitations the widget UX should reflect:\n{lines}")
 
-    guidance = (strategy.get("widgetGuidance") or "").strip()
+    guidance = (impl.get("widgetGuidance") or "").strip()
     if guidance:
         parts.append(f"\nWidget guidance:\n  {guidance}")
 
