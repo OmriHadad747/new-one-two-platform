@@ -45,10 +45,11 @@ async function widgetJsHandler(
 
   log.debug({ shop, appId }, "Widget JS resolved");
 
-  // No long-term caching — the runtime imports this fresh per page load.
-  // Short cache (5s) absorbs burst traffic from the same storefront page.
+  // CORS: widget JS is fetched by the runtime from a Shopify storefront domain.
+  // We allow all origins — the widget itself is sandboxed by the host API contract.
   return reply
     .header("Content-Type", "application/javascript; charset=utf-8")
+    .header("Access-Control-Allow-Origin", "*")
     .header("Cache-Control", "public, max-age=5")
     .code(200)
     .send(widgetJs);

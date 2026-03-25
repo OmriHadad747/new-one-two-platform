@@ -11,7 +11,7 @@ import {
 } from "./db-writer.js";
 import { dockerImageName, callbackUrl } from "./service-namer.js";
 import { runTenantMigration, rollbackTenantMigration } from "./migration-runner.js";
-import { createDraftAppVersion, updateGenerationSession, updateTenantWidgetJs } from "@new-one-two/db";
+import { createDraftAppVersion, updateGenerationSession, updateAppWidgetJs, updateAppArchetype } from "@new-one-two/db";
 import type { FeatureBundle } from "@new-one-two/types";
 
 const DEPLOY_MODE = process.env["DEPLOY_MODE"] ?? "cloudrun";
@@ -20,12 +20,15 @@ function buildHarnessEnvVars(params: {
   tenantId: string;
   appId: string;
   shopDomain: string;
-  accessTokenSecretName: string | null;
+  clientId: string;
+  clientSecretName: string;
 }): Record<string, string> {
   const envVars: Record<string, string> = {
     TENANT_ID: params.tenantId,
     APP_ID: params.appId,
     SHOP_DOMAIN: params.shopDomain,
+    SHOPIFY_CLIENT_ID: params.clientId,
+    SHOPIFY_CLIENT_SECRET_NAME: params.clientSecretName,
     DATABASE_URL: process.env["DATABASE_URL"] ?? "",
     REDIS_HOST: process.env["REDIS_HOST"] ?? "redis",
     REDIS_PORT: process.env["REDIS_PORT"] ?? "6379",
@@ -33,10 +36,6 @@ function buildHarnessEnvVars(params: {
     LOG_LEVEL: process.env["LOG_LEVEL"] ?? "info",
     SERVICE_NAME: `harness-${params.appId}`,
   };
-
-  if (params.accessTokenSecretName) {
-    envVars["SHOPIFY_ACCESS_TOKEN_SECRET_NAME"] = params.accessTokenSecretName;
-  }
 
   // Pass dev escape hatches through to the harness container
   if (process.env["SM_DEV_SECRETS"]) {
@@ -81,7 +80,8 @@ export async function deployAppVersion(appVersionId: string): Promise<{
       tenantId: tenant.id,
       appId: app.id,
       shopDomain: app.shopDomain,
-      accessTokenSecretName: app.shopifyAccessTokenSecretName,
+      clientId: app.shopifyApiKey,
+      clientSecretName: app.shopifySecretName,
     });
 
     const { functionUrl } =
@@ -162,16 +162,16 @@ export async function deployFeatureBundle(params: {
   const appRows = await sql<
     Array<{
       shopifyApiKey: string;
+      shopifySecretName: string;
       shopDomain: string;
       tenantSlug: string;
       appSlug: string;
-      shopifyAccessTokenSecretName: string | null;
     }>
   >`
     SELECT
-      a.shopify_api_key                  AS "shopifyApiKey",
-      a.shop_domain                      AS "shopDomain",
-      a.shopify_access_token_secret_name AS "shopifyAccessTokenSecretName",
+      a.shopify_api_key     AS "shopifyApiKey",
+      a.shopify_secret_name AS "shopifySecretName",
+      a.shop_domain         AS "shopDomain",
       t.slug AS "tenantSlug",
       a.slug AS "appSlug"
     FROM apps a
@@ -184,7 +184,6 @@ export async function deployFeatureBundle(params: {
     throw new Error(`App ${appId} not found for tenant ${tenantId}`);
   }
 
-  const app = appRows[0]!;
   let migrationRan = false;
   // Strip surrounding quotes that the LLM sometimes emits (e.g. `""`) to avoid
   // a PostgreSQL "zero-length delimited identifier" error.
@@ -197,10 +196,12 @@ export async function deployFeatureBundle(params: {
       migrationRan = true;
     }
 
-    // Step 2: Store widget JS in tenant record (storefront_ui apps only).
+    // Step 2: Store widget JS on the app record + set its archetype.
     // Served at GET /widgets/:shop/:appId.js and loaded by the thin runtime at storefront page load.
+    const archetype = bundle.widgetModule !== null ? "storefront_ui" : "backend_only";
+    await updateAppArchetype(appId, archetype);
     if (bundle.widgetModule !== null) {
-      await updateTenantWidgetJs(tenantId, bundle.widgetModule);
+      await updateAppWidgetJs(appId, bundle.widgetModule);
     }
 
     // Step 3: Create draft AppVersion from handler code

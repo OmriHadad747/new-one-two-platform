@@ -6,64 +6,93 @@ interface ShopifyClient {
   readonly callCount: number;
 }
 
-// Cache access tokens to avoid a Secret Manager round-trip per invocation
+// In-memory token cache keyed by shopDomain.
+// Entries are refreshed when < REFRESH_WINDOW_MS remains before expiry.
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
-const TOKEN_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const REFRESH_WINDOW_MS = 5 * 60 * 1000; // refresh 5 min before actual expiry
 
-async function getAccessToken(secretName: string): Promise<string> {
-  const cached = tokenCache.get(secretName);
-  if (cached && Date.now() < cached.expiresAt) {
+/**
+ * Obtains a valid Shopify Admin API access token via the OAuth 2.0
+ * client_credentials grant. Tokens expire in ~24 h (expires_in = 86399).
+ * The result is cached in-process; a new grant is only issued when the
+ * cached token is within REFRESH_WINDOW_MS of expiry.
+ */
+async function getAccessToken(
+  shopDomain: string,
+  clientId: string,
+  clientSecretName: string
+): Promise<string> {
+  const cached = tokenCache.get(shopDomain);
+  if (cached && Date.now() < cached.expiresAt - REFRESH_WINDOW_MS) {
     return cached.token;
   }
-  const token = await getSecret(secretName);
-  tokenCache.set(secretName, { token, expiresAt: Date.now() + TOKEN_TTL_MS });
-  return token;
+
+  const clientSecret = await getSecret(clientSecretName);
+
+  const res = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "client_credentials",
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Shopify token refresh failed [${res.status}]: ${body}`);
+  }
+
+  const data = (await res.json()) as { access_token: string; expires_in: number };
+  const expiresAt = Date.now() + data.expires_in * 1000;
+  tokenCache.set(shopDomain, { token: data.access_token, expiresAt });
+  return data.access_token;
 }
 
 export async function buildShopifyClient(
   shopDomain: string,
-  accessTokenSecretName: string | null
+  clientId: string | null,
+  clientSecretName: string | null
 ): Promise<ShopifyClient> {
   let callCount = 0;
 
-  // If no access token secret configured (e.g. Phase 2 test), return a stub
-  // that logs warnings rather than failing hard.
-  if (!accessTokenSecretName) {
+  // If no client credentials configured (e.g. backend-only apps), return a
+  // stub that warns rather than failing hard.
+  if (!clientId || !clientSecretName) {
     return {
       get: async (path: string) => {
         callCount++;
-        console.warn(`[shopify stub] GET ${path} — no access token configured`);
+        console.warn(`[shopify stub] GET ${path} — no client credentials configured`);
         return {};
       },
       post: async (path: string) => {
         callCount++;
-        console.warn(`[shopify stub] POST ${path} — no access token configured`);
+        console.warn(`[shopify stub] POST ${path} — no client credentials configured`);
         return {};
       },
       get callCount() { return callCount; },
     };
   }
 
-  const accessToken = await getAccessToken(accessTokenSecretName);
   const baseUrl = `https://${shopDomain}/admin/api/2026-01`;
-
-  const headers = {
-    "Content-Type": "application/json",
-    "X-Shopify-Access-Token": accessToken,
-  };
 
   return {
     async get(path: string): Promise<unknown> {
       callCount++;
-      const res = await fetch(`${baseUrl}${path}`, { headers });
+      const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+      const res = await fetch(`${baseUrl}${path}`, {
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
+      });
       if (!res.ok) throw new Error(`Shopify GET ${path} failed: ${res.status}`);
       return res.json();
     },
     async post(path: string, body: unknown): Promise<unknown> {
       callCount++;
+      const token = await getAccessToken(shopDomain, clientId, clientSecretName);
       const res = await fetch(`${baseUrl}${path}`, {
         method: "POST",
-        headers,
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`Shopify POST ${path} failed: ${res.status}`);

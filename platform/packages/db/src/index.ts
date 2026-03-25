@@ -52,9 +52,6 @@ export interface GatewayContext {
 /**
  * Resolves everything the webhook gateway needs in ONE query.
  * Returns null if tenant/app doesn't exist, is inactive, or has no active function.
- *
- * Note: postgres.camel returns flat rows. We use unambiguous snake_case aliases
- * and construct the nested GatewayContext manually.
  */
 export async function resolveWebhookContext(
   tenantSlug: string,
@@ -69,13 +66,15 @@ export async function resolveWebhookContext(
       tenantStatus: string;
       tenantPlan: string;
       tenantKmsKeyName: string;
-      tenantAppArchetype: string;
-      tenantWidgetJs: string | null;
+      tenantShopDomain: string | null;
+      tenantShopifyAccessTokenSecretName: string | null;
       appId: string;
       appTenantId: string;
       appSlug: string;
       appName: string;
       appStatus: string;
+      appArchetype: string;
+      appWidgetJs: string | null;
       appShopifyApiKey: string;
       appShopifySecretName: string;
       appShopifyAccessTokenSecretName: string | null;
@@ -94,20 +93,22 @@ export async function resolveWebhookContext(
     }>
   >`
     SELECT
-      t.id              AS tenant_id,
-      t.slug            AS tenant_slug,
-      t.name            AS tenant_name,
-      t.status          AS tenant_status,
-      t.plan            AS tenant_plan,
-      t.kms_key_name    AS tenant_kms_key_name,
-      t.app_archetype   AS tenant_app_archetype,
-      t.widget_js       AS tenant_widget_js,
+      t.id                                   AS tenant_id,
+      t.slug                                 AS tenant_slug,
+      t.name                                 AS tenant_name,
+      t.status                               AS tenant_status,
+      t.plan                                 AS tenant_plan,
+      t.kms_key_name                         AS tenant_kms_key_name,
+      t.shop_domain                          AS tenant_shop_domain,
+      t.shopify_access_token_secret_name     AS tenant_shopify_access_token_secret_name,
 
       a.id                                   AS app_id,
       a.tenant_id                            AS app_tenant_id,
       a.slug                                 AS app_slug,
       a.name                                 AS app_name,
       a.status                               AS app_status,
+      a.app_archetype                        AS app_archetype,
+      a.widget_js                            AS app_widget_js,
       a.shopify_api_key                      AS app_shopify_api_key,
       a.shopify_secret_name                  AS app_shopify_secret_name,
       a.shopify_access_token_secret_name     AS app_shopify_access_token_secret_name,
@@ -155,8 +156,8 @@ export async function resolveWebhookContext(
       status: row.tenantStatus as Tenant["status"],
       plan: row.tenantPlan,
       kmsKeyName: row.tenantKmsKeyName,
-      appArchetype: row.tenantAppArchetype as AppArchetype,
-      widgetJs: row.tenantWidgetJs,
+      shopDomain: row.tenantShopDomain,
+      shopifyAccessTokenSecretName: row.tenantShopifyAccessTokenSecretName,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -166,6 +167,8 @@ export async function resolveWebhookContext(
       slug: row.appSlug,
       name: row.appName,
       status: row.appStatus as App["status"],
+      appArchetype: row.appArchetype as AppArchetype,
+      widgetJs: row.appWidgetJs,
       shopifyApiKey: row.appShopifyApiKey,
       shopifySecretName: row.appShopifySecretName,
       shopifyAccessTokenSecretName: row.appShopifyAccessTokenSecretName,
@@ -312,6 +315,8 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       appSlug: string;
       appName: string;
       appStatus: string;
+      appArchetype: string;
+      appWidgetJs: string | null;
       appShopifyApiKey: string;
       appShopifySecretName: string;
       appShopifyAccessTokenSecretName: string | null;
@@ -340,6 +345,8 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       a.slug                                 AS "appSlug",
       a.name                                 AS "appName",
       a.status                               AS "appStatus",
+      a.app_archetype                        AS "appArchetype",
+      a.widget_js                            AS "appWidgetJs",
       a.shopify_api_key                      AS "appShopifyApiKey",
       a.shopify_secret_name                  AS "appShopifySecretName",
       a.shopify_access_token_secret_name     AS "appShopifyAccessTokenSecretName",
@@ -380,6 +387,8 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       slug: row.appSlug,
       name: row.appName,
       status: row.appStatus as App["status"],
+      appArchetype: row.appArchetype as AppArchetype,
+      widgetJs: row.appWidgetJs,
       shopifyApiKey: row.appShopifyApiKey,
       shopifySecretName: row.appShopifySecretName,
       shopifyAccessTokenSecretName: row.appShopifyAccessTokenSecretName,
@@ -495,10 +504,9 @@ export async function updateGenerationSession(
     attemptCount: number;
     appVersionId: string;
     errorMessage: string;
-    jobId: string; // Phase 4: Pub/Sub correlation UUID
+    jobId: string;
   }>
 ): Promise<void> {
-  // Build dynamic update — only set fields that are provided
   await sql`
     UPDATE generation_sessions
     SET
@@ -550,7 +558,6 @@ export async function createDraftAppVersion(params: {
   tenantId: string;
   generatedCode: Record<string, string>;
 }): Promise<{ id: string }> {
-  // Get count of existing versions to build a unique semver
   const countRows = await sql<{ count: string }[]>`
     SELECT COUNT(*)::text AS count FROM app_versions WHERE app_id = ${params.appId}
   `;
@@ -571,9 +578,6 @@ export async function createDraftAppVersion(params: {
   return { id: rows[0]!.id };
 }
 
-/**
- * Extends GenerationSessionRow with the Phase 4 Pub/Sub columns added in migration 0006.
- */
 export interface GenerationSessionWithBundle extends GenerationSessionRow {
   jobId: string | null;
   bundle: Record<string, unknown> | null;
@@ -581,7 +585,6 @@ export interface GenerationSessionWithBundle extends GenerationSessionRow {
 
 /**
  * Looks up a generation session by Pub/Sub job_id.
- * Called by apps/api when it receives generation.completed from Pub/Sub.
  */
 export async function getSessionByJobId(
   jobId: string
@@ -624,7 +627,6 @@ export async function getSessionByJobId(
 
 /**
  * Stores the FeatureBundle JSONB and updates session status once generation.completed arrives.
- * Also updates existing fields for backward compat with the deploy pipeline.
  */
 export async function storeBundleInSession(
   jobId: string,
@@ -632,7 +634,6 @@ export async function storeBundleInSession(
   status: "completed" | "failed",
   errorMessage?: string
 ): Promise<void> {
-  // Unpack individual fields from the bundle so the legacy columns stay populated
   const handlerModule = bundle["handlerModule"] as Record<string, unknown> | undefined;
   const explanation = bundle["explanation"] as Record<string, unknown> | undefined;
 
@@ -657,11 +658,11 @@ export async function storeBundleInSession(
 }
 
 /**
- * Resolves the widget JS for a shop domain.
- * Called by GET /widgets/:shop/:appId.js on the webhook gateway.
+ * Resolves the widget JS for a shop/app pair.
+ * Called by GET /widgets/:shop/:appId.js on the API service.
  *
- * Returns the raw JS string for storefront_ui tenants.
- * Returns null if the tenant is backend_only, not found, or has no widget yet.
+ * Returns the raw JS string for storefront_ui apps.
+ * Returns null if not found, backend_only, or widget not yet generated.
  */
 export async function resolveWidgetJs(
   shopDomain: string,
@@ -671,13 +672,14 @@ export async function resolveWidgetJs(
     Array<{ widgetJs: string | null; appArchetype: string }>
   >`
     SELECT
-      t.widget_js      AS "widgetJs",
-      t.app_archetype  AS "appArchetype"
-    FROM tenants t
-    JOIN apps a ON a.tenant_id = t.id
-      AND a.shop_domain = ${shopDomain}
+      a.widget_js      AS "widgetJs",
+      a.app_archetype  AS "appArchetype"
+    FROM apps a
+    JOIN tenants t ON t.id = a.tenant_id
+    WHERE a.shop_domain = ${shopDomain}
       AND a.id = ${appId}
-    WHERE t.status = 'active'
+      AND a.status = 'active'
+      AND t.status = 'active'
     LIMIT 1
   `;
 
@@ -687,25 +689,26 @@ export async function resolveWidgetJs(
 }
 
 // ─── Tenant / App Management Queries ─────────────────────────────────────────
-// Called by the tenant management API (POST /tenants, GET /tenants/:id, etc.).
 
 export async function createTenant(params: {
   id?: string;
   slug: string;
   name: string;
   plan?: string;
-  appArchetype?: string;
+  shopDomain?: string;
+  shopifyAccessTokenSecretName?: string;
   kmsKeyName?: string;
 }): Promise<{ id: string }> {
   const rows = await sql<{ id: string }[]>`
-    INSERT INTO tenants (id, slug, name, status, plan, app_archetype, kms_key_name)
+    INSERT INTO tenants (id, slug, name, status, plan, shop_domain, shopify_access_token_secret_name, kms_key_name)
     VALUES (
       ${params.id ?? sql`uuid_generate_v4()`},
       ${params.slug},
       ${params.name},
       'active',
       ${params.plan ?? "starter"},
-      ${params.appArchetype ?? "backend_only"},
+      ${params.shopDomain ?? null},
+      ${params.shopifyAccessTokenSecretName ?? null},
       ${params.kmsKeyName ?? "projects/local/locations/global/keyRings/dev/cryptoKeys/dev-key"}
     )
     RETURNING id
@@ -722,8 +725,8 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       status: string;
       plan: string;
       kmsKeyName: string;
-      appArchetype: string;
-      widgetJs: string | null;
+      shopDomain: string | null;
+      shopifyAccessTokenSecretName: string | null;
       createdAt: Date;
       updatedAt: Date;
     }>
@@ -734,11 +737,11 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       name,
       status,
       plan,
-      kms_key_name    AS "kmsKeyName",
-      app_archetype   AS "appArchetype",
-      widget_js       AS "widgetJs",
-      created_at      AS "createdAt",
-      updated_at      AS "updatedAt"
+      kms_key_name                         AS "kmsKeyName",
+      shop_domain                          AS "shopDomain",
+      shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
+      created_at                           AS "createdAt",
+      updated_at                           AS "updatedAt"
     FROM tenants
     WHERE id = ${id}
     LIMIT 1
@@ -752,11 +755,76 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
     status: row.status as Tenant["status"],
     plan: row.plan,
     kmsKeyName: row.kmsKeyName,
-    appArchetype: row.appArchetype as AppArchetype,
-    widgetJs: row.widgetJs,
+    shopDomain: row.shopDomain,
+    shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/**
+ * Finds a tenant by shop domain. Used during OAuth callback to detect re-installs.
+ */
+export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant | null> {
+  const rows = await sql<
+    Array<{
+      id: string;
+      slug: string;
+      name: string;
+      status: string;
+      plan: string;
+      kmsKeyName: string;
+      shopDomain: string | null;
+      shopifyAccessTokenSecretName: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  >`
+    SELECT
+      id,
+      slug,
+      name,
+      status,
+      plan,
+      kms_key_name                         AS "kmsKeyName",
+      shop_domain                          AS "shopDomain",
+      shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
+      created_at                           AS "createdAt",
+      updated_at                           AS "updatedAt"
+    FROM tenants
+    WHERE shop_domain = ${shopDomain}
+    LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    status: row.status as Tenant["status"],
+    plan: row.plan,
+    kmsKeyName: row.kmsKeyName,
+    shopDomain: row.shopDomain,
+    shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/**
+ * Updates a tenant's Shopify access token secret name. Used on OAuth re-install.
+ */
+export async function updateTenantAccessToken(
+  tenantId: string,
+  shopifyAccessTokenSecretName: string
+): Promise<void> {
+  await sql`
+    UPDATE tenants
+    SET
+      shopify_access_token_secret_name = ${shopifyAccessTokenSecretName},
+      updated_at = NOW()
+    WHERE id = ${tenantId}
+  `;
 }
 
 export async function createApp(params: {
@@ -765,13 +833,14 @@ export async function createApp(params: {
   slug: string;
   name: string;
   shopDomain: string;
+  appArchetype?: string;
   shopifyApiKey?: string;
   shopifySecretName?: string;
 }): Promise<{ id: string }> {
   const rows = await sql<{ id: string }[]>`
     INSERT INTO apps (
       id, tenant_id, slug, name, status,
-      shop_domain, shopify_api_key, shopify_secret_name
+      shop_domain, app_archetype, shopify_api_key, shopify_secret_name
     ) VALUES (
       ${params.id ?? sql`uuid_generate_v4()`},
       ${params.tenantId},
@@ -779,6 +848,7 @@ export async function createApp(params: {
       ${params.name},
       'active',
       ${params.shopDomain},
+      ${params.appArchetype ?? "backend_only"},
       ${params.shopifyApiKey ?? "dev-api-key"},
       ${params.shopifySecretName ?? "projects/local/secrets/dev/versions/latest"}
     )
@@ -798,6 +868,8 @@ export async function getAppById(
       slug: string;
       name: string;
       status: string;
+      appArchetype: string;
+      widgetJs: string | null;
       shopifyApiKey: string;
       shopifySecretName: string;
       shopifyAccessTokenSecretName: string | null;
@@ -812,6 +884,8 @@ export async function getAppById(
       slug,
       name,
       status,
+      app_archetype                        AS "appArchetype",
+      widget_js                            AS "widgetJs",
       shopify_api_key                      AS "shopifyApiKey",
       shopify_secret_name                  AS "shopifySecretName",
       shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
@@ -830,6 +904,8 @@ export async function getAppById(
     slug: row.slug,
     name: row.name,
     status: row.status as App["status"],
+    appArchetype: row.appArchetype as AppArchetype,
+    widgetJs: row.widgetJs,
     shopifyApiKey: row.shopifyApiKey,
     shopifySecretName: row.shopifySecretName,
     shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
@@ -840,18 +916,35 @@ export async function getAppById(
 }
 
 /**
- * Stores the widget JS for a tenant (storefront_ui archetype).
+ * Stores the widget JS for a platform app (storefront_ui archetype).
  * Called by the deployer after a successful bundle deployment.
  */
-export async function updateTenantWidgetJs(
-  tenantId: string,
+export async function updateAppWidgetJs(
+  appId: string,
   widgetJs: string | null
 ): Promise<void> {
   await sql`
-    UPDATE tenants
+    UPDATE apps
     SET widget_js  = ${widgetJs},
         updated_at = NOW()
-    WHERE id = ${tenantId}
+    WHERE id = ${appId}
+  `;
+}
+
+/**
+ * Updates the app_archetype for a platform app.
+ * Called by the deployer when deploying a bundle — archetype is inferred from
+ * whether widgetModule is present (storefront_ui) or null (backend_only).
+ */
+export async function updateAppArchetype(
+  appId: string,
+  appArchetype: AppArchetype
+): Promise<void> {
+  await sql`
+    UPDATE apps
+    SET app_archetype = ${appArchetype},
+        updated_at    = NOW()
+    WHERE id = ${appId}
   `;
 }
 

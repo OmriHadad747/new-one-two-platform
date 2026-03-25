@@ -3,8 +3,8 @@ import { createRequestLogger } from "@new-one-two/logger";
 import type { EmailClient, HandlerContext, HarnessInvokeRequest } from "@new-one-two/types";
 import { buildShopifyClient } from "./shopify-client.js";
 
-const SHOPIFY_ACCESS_TOKEN_SECRET_NAME =
-  process.env["SHOPIFY_ACCESS_TOKEN_SECRET_NAME"] ?? null;
+const SHOPIFY_CLIENT_ID = process.env["SHOPIFY_CLIENT_ID"] ?? null;
+const SHOPIFY_CLIENT_SECRET_NAME = process.env["SHOPIFY_CLIENT_SECRET_NAME"] ?? null;
 
 const APP_SHOP_DOMAIN = process.env["SHOP_DOMAIN"] ?? "";
 
@@ -24,7 +24,7 @@ export async function buildCtx(
     topic: req.topic,
   });
 
-  const shopify = await buildShopifyClient(APP_SHOP_DOMAIN, SHOPIFY_ACCESS_TOKEN_SECRET_NAME);
+  const shopify = await buildShopifyClient(APP_SHOP_DOMAIN, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET_NAME);
 
   const email: EmailClient = {
     async send(params) {

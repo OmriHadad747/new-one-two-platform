@@ -152,18 +152,21 @@ changes, and frontend support for the Q&A step.
 
 ---
 
-## TD-005 — Shopify access tokens expire every 24 hours but are stored as static secrets
+## TD-006 — Widget JS is served from Postgres; needs GCS in production
 
 **Affected files**
-- `platform/packages/harness/src/build-ctx.ts` — reads `SHOPIFY_ACCESS_TOKEN_SECRET_NAME` and passes it to `buildShopifyClient`
-- `platform/packages/harness/src/shopify-client.ts` — fetches the token from Secret Manager once at request time, no refresh logic
-- `platform/packages/deployer/src/index.ts` — sets `SHOPIFY_ACCESS_TOKEN_SECRET_NAME` as a static env var on the harness container
+- `platform/apps/api/src/routes/widget-js.ts` — reads `widget_js` from DB and streams it directly
+- `platform/packages/db/src/index.ts` — `resolveWidgetJs` queries `apps.widget_js`
+- `platform/packages/deployer/src/index.ts` — `updateAppWidgetJs` writes the raw JS string to Postgres
 
-**What's broken**
-Shopify's new Dev Dashboard (mandatory as of January 2026) issues access tokens via the OAuth 2.0 client credentials grant. Tokens expire after 24 hours. The current design stores a single static token in GCP Secret Manager and never refreshes it — harness containers will start returning `401 Unauthorized` from the Shopify Admin API after the token expires.
+**What's wrong**
+`GET /widgets/:shop/:appId.js` reads the raw JS out of `apps.widget_js` (Postgres TEXT column) on every request. Cache-Control is `max-age=5`, so at any real storefront traffic volume this becomes a Postgres read per page load. It also means widget JS is capped at Postgres row limits and bypasses the existing GCS bundle infrastructure.
 
 **What to do**
-1. Store `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` in Secret Manager instead of (or alongside) the access token.
-2. In `shopify-client.ts`, implement a token refresh: POST to `https://{shopDomain}/admin/oauth/access_token` with `grant_type=client_credentials` before making API calls.
-3. Cache the token in-memory with its expiry (`expires_in` is 86399 seconds) and only re-fetch when within a refresh window (e.g. < 5 minutes remaining).
-4. For local dev: re-run the token exchange curl and update `SHOPIFY_ACCESS_TOKEN` in `.env` every 24 hours until the refresh logic is implemented.
+1. In the deployer, upload widget JS to GCS as a public object at a deterministic path: `gs://<bucket>/widgets/<appId>.js`. Set `Cache-Control: public, max-age=3600` on the object.
+2. In `widget-js.ts`, replace the Postgres read with a `302` redirect to `https://storage.googleapis.com/<bucket>/widgets/<appId>.js`. GCS serves the file directly to the browser — no separate CDN product needed, Google's infrastructure handles global distribution.
+3. On re-deploy, overwrite the same GCS path. The 1-hour browser cache means stale widgets are served for at most an hour after a deploy — acceptable for most use cases.
+
+**Interim** (already in place): the 5-second `max-age` keeps Postgres load manageable for low traffic. Switch to GCS before going to production scale.
+
+**Complexity:** Low — follows the existing `gcsBundlePath` pattern already used for handler bundles.

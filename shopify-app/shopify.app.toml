@@ -1,0 +1,22 @@
+name             = "new-one-two"
+client_id        = "REPLACE_WITH_SHOPIFY_CLIENT_ID"
+application_url  = "https://REPLACE_WITH_PLATFORM_URL"
+embedded         = false
+
+[access_scopes]
+scopes = "read_products,write_products,read_orders,write_orders,read_customers,read_inventory"
+
+[auth]
+redirect_urls = [
+  "https://REPLACE_WITH_PLATFORM_URL/oauth/callback",
+  "http://localhost:3002/oauth/callback",
+]
+
+[webhooks]
+api_version = "2026-01"
+
+[[extensions]]
+path = "extensions/widget-runtime"
+
+[pos]
+embedded = false

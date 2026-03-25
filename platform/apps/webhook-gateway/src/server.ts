@@ -1,6 +1,5 @@
 import Fastify from "fastify";
 import { webhookRoutes } from "./routes/webhook.js";
-import { widgetJsRoutes } from "./routes/widget-js.js";
 import { healthRoutes } from "./routes/health.js";
 import { errorHandler } from "./plugins/error-handler.js";
 import { rawBodyPlugin } from "./plugins/raw-body.js";
@@ -31,7 +30,6 @@ export async function buildServer() {
   // ── Routes ─────────────────────────────────────────────────────────────────
   await app.register(healthRoutes, { prefix: "/health" });
   await app.register(webhookRoutes, { prefix: "/webhook" });
-  await app.register(widgetJsRoutes, { prefix: "/widgets" });
 
   // ── Graceful Shutdown ──────────────────────────────────────────────────────
   const shutdown = async (signal: string) => {

@@ -16,13 +16,13 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   app.post<{ Body: CreateTenantRequest }>(
     "/",
     async (req: FastifyRequest<{ Body: CreateTenantRequest }>, reply: FastifyReply) => {
-      const { id, slug, name, plan, appArchetype, kmsKeyName } = req.body;
+      const { id, slug, name, plan, shopDomain, kmsKeyName } = req.body;
 
       if (!slug || !name) {
         return reply.status(400).send({ error: "slug and name are required" });
       }
 
-      const { id: tenantId } = await createTenant({ id, slug, name, plan, appArchetype, kmsKeyName });
+      const { id: tenantId } = await createTenant({ id, slug, name, plan, shopDomain, kmsKeyName });
       const tenant = await getTenantById(tenantId);
       return reply.status(201).send(tenant);
     }
@@ -50,7 +50,7 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       reply: FastifyReply
     ) => {
       const { tenantId } = req.params;
-      const { id, slug, name, shopDomain, shopifyApiKey, shopifySecretName } = req.body;
+      const { id, slug, name, shopDomain, appArchetype, shopifyApiKey, shopifySecretName } = req.body;
 
       if (!slug || !name || !shopDomain) {
         return reply.status(400).send({ error: "slug, name, and shopDomain are required" });
@@ -67,6 +67,7 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
         slug,
         name,
         shopDomain,
+        appArchetype,
         shopifyApiKey,
         shopifySecretName,
       });

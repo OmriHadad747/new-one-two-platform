@@ -181,6 +181,49 @@ function decryptWithDevKey(data: Buffer): Buffer {
   return Buffer.concat([decipher.update(enc), decipher.final()]);
 }
 
+// ─── Secret Manager Write ──────────────────────────────────────────────────────
+
+/**
+ * Creates or updates a GCP Secret Manager secret and adds a new version.
+ * Creates the secret if it doesn't already exist.
+ * Returns the full resource name pointing to the latest version:
+ *   "projects/{project}/secrets/{secretId}/versions/latest"
+ *
+ * projectId defaults to GCP_PROJECT_ID env var.
+ */
+export async function storeSecret(
+  secretId: string,
+  value: string,
+  projectId?: string
+): Promise<string> {
+  const project = projectId ?? process.env["GCP_PROJECT_ID"];
+  if (!project) throw new Error("GCP_PROJECT_ID not set and no projectId provided");
+
+  const client = secretManager();
+  const parent = `projects/${project}`;
+  const secretName = `${parent}/secrets/${secretId}`;
+
+  // Create the secret if it doesn't exist
+  try {
+    await client.createSecret({
+      parent,
+      secretId,
+      secret: { replication: { automatic: {} } },
+    });
+  } catch (err: unknown) {
+    // gRPC ALREADY_EXISTS = code 6
+    if ((err as { code?: number }).code !== 6) throw err;
+  }
+
+  // Add a new version with the plaintext value
+  await client.addSecretVersion({
+    parent: secretName,
+    payload: { data: Buffer.from(value, "utf8") },
+  });
+
+  return `${secretName}/versions/latest`;
+}
+
 // ─── HMAC Helpers ─────────────────────────────────────────────────────────────
 
 /**

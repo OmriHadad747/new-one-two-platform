@@ -1,0 +1,45 @@
+{% comment %}
+  Widget Runtime App Block
+  ─────────────────────────────────────────────────────────────────────────────
+  Thin, fixed block — deployed once, never changes after installation.
+  The merchant sets `app_id` in the Theme Editor to connect this block to a
+  specific platform app. Multiple blocks can be placed independently across
+  the theme, each pointing to a different app_id.
+
+  The platform URL is read from the shop metafield `platform_app.base_url`,
+  which is written by the platform during OAuth install. Falls back to
+  localhost for local development.
+{% endcomment %}
+
+{%- assign platform_url = shop.metafields.platform_app.base_url -%}
+{%- if platform_url == blank -%}
+  {%- assign platform_url = 'http://localhost:3002' -%}
+{%- endif -%}
+
+{%- if block.settings.app_id != blank -%}
+  <div
+    data-widget-runtime
+    data-app-id="{{ block.settings.app_id | escape }}"
+    data-shop="{{ shop.permanent_domain | escape }}"
+    data-platform-url="{{ platform_url | escape }}"
+    {{ block.shopify_attributes }}
+  ></div>
+
+  {{ 'widget-runtime.js' | asset_url | script_tag }}
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Platform Widget",
+  "target": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "app_id",
+      "label": "App ID",
+      "info": "The platform app ID to render in this block. Set by your dashboard when you create a platform app.",
+      "default": ""
+    }
+  ]
+}
+{% endschema %}

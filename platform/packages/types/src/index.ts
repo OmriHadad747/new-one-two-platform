@@ -38,8 +38,8 @@ export interface Tenant {
   status: TenantStatus;
   plan: string;                 // "starter" | "pro" | "enterprise"
   kmsKeyName: string;           // GCP KMS key resource name for this tenant
-  appArchetype: AppArchetype;   // storefront_ui | backend_only
-  widgetJs: string | null;      // raw JS ES module source; null for backend_only
+  shopDomain: string | null;    // mystore.myshopify.com — set on OAuth install
+  shopifyAccessTokenSecretName: string | null; // GCP Secret Manager path for OAuth access token
   createdAt: Date;
   updatedAt: Date;
 }
@@ -52,6 +52,8 @@ export interface App {
   slug: string;                          // unique within tenant
   name: string;
   status: AppStatus;
+  appArchetype: AppArchetype;            // storefront_ui | backend_only
+  widgetJs: string | null;              // raw JS ES module source; null for backend_only
   shopifyApiKey: string;
   shopifySecretName: string;             // GCP Secret Manager resource name (HMAC signing secret)
   shopifyAccessTokenSecretName: string | null; // GCP Secret Manager resource name (OAuth access token)
@@ -403,7 +405,7 @@ export interface CreateTenantRequest {
   slug: string;
   name: string;
   plan?: string;         // default: "starter"
-  appArchetype?: AppArchetype; // default: "backend_only"
+  shopDomain?: string;   // mystore.myshopify.com — set on OAuth install
   /**
    * GCP KMS key resource name.
    * Format: projects/{project}/locations/{location}/keyRings/{ring}/cryptoKeys/{key}
@@ -419,6 +421,7 @@ export interface CreateAppRequest {
   slug: string;
   name: string;
   shopDomain: string;    // must end with .myshopify.com
+  appArchetype?: AppArchetype; // default: "backend_only"
   shopifyApiKey?: string;
   /**
    * GCP Secret Manager resource name for the Shopify webhook HMAC signing secret.

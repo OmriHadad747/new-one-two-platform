@@ -12,6 +12,7 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@new-one-two/crypto": "workspace:*",
     "@new-one-two/db": "workspace:*",
     "@new-one-two/deployer": "workspace:*",
     "@new-one-two/logger": "workspace:*",

@@ -32,6 +32,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@new-one-two/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
       '@new-one-two/db':
         specifier: workspace:*
         version: link:../../packages/db
