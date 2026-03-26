@@ -53,6 +53,5 @@ export async function deployToDockerLocal(
   logger.info({ containerName, imageName }, "Harness container started");
 
   // The worker (inside compose) reaches it via container name on the shared network.
-  // Include /invoke path so the worker can POST directly to this URL.
-  return { functionUrl: `http://${containerName}:8080/invoke` };
+  return { functionUrl: `http://${containerName}:8080` };
 }

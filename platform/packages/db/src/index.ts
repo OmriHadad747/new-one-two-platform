@@ -75,7 +75,7 @@ export async function resolveWebhookContext(
       appStatus: string;
       appArchetype: string;
       appWidgetJs: string | null;
-      appShopifyApiKey: string;
+      appShopifyClientId: string;
       appShopifySecretName: string;
       appShopifyAccessTokenSecretName: string | null;
       appShopDomain: string;
@@ -109,7 +109,7 @@ export async function resolveWebhookContext(
       a.status                               AS app_status,
       a.app_archetype                        AS app_archetype,
       a.widget_js                            AS app_widget_js,
-      a.shopify_api_key                      AS app_shopify_api_key,
+      a.shopify_client_id                      AS app_shopify_client_id,
       a.shopify_secret_name                  AS app_shopify_secret_name,
       a.shopify_access_token_secret_name     AS app_shopify_access_token_secret_name,
       a.shop_domain                          AS app_shop_domain,
@@ -169,7 +169,7 @@ export async function resolveWebhookContext(
       status: row.appStatus as App["status"],
       appArchetype: row.appArchetype as AppArchetype,
       widgetJs: row.appWidgetJs,
-      shopifyApiKey: row.appShopifyApiKey,
+      shopifyClientId: row.appShopifyClientId,
       shopifySecretName: row.appShopifySecretName,
       shopifyAccessTokenSecretName: row.appShopifyAccessTokenSecretName,
       shopDomain: row.appShopDomain,
@@ -317,7 +317,7 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       appStatus: string;
       appArchetype: string;
       appWidgetJs: string | null;
-      appShopifyApiKey: string;
+      appShopifyClientId: string;
       appShopifySecretName: string;
       appShopifyAccessTokenSecretName: string | null;
       appShopDomain: string;
@@ -347,7 +347,7 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       a.status                               AS "appStatus",
       a.app_archetype                        AS "appArchetype",
       a.widget_js                            AS "appWidgetJs",
-      a.shopify_api_key                      AS "appShopifyApiKey",
+      a.shopify_client_id                      AS "appShopifyClientId",
       a.shopify_secret_name                  AS "appShopifySecretName",
       a.shopify_access_token_secret_name     AS "appShopifyAccessTokenSecretName",
       a.shop_domain                          AS "appShopDomain",
@@ -389,7 +389,7 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       status: row.appStatus as App["status"],
       appArchetype: row.appArchetype as AppArchetype,
       widgetJs: row.appWidgetJs,
-      shopifyApiKey: row.appShopifyApiKey,
+      shopifyClientId: row.appShopifyClientId,
       shopifySecretName: row.appShopifySecretName,
       shopifyAccessTokenSecretName: row.appShopifyAccessTokenSecretName,
       shopDomain: row.appShopDomain,
@@ -658,24 +658,27 @@ export async function storeBundleInSession(
 }
 
 /**
- * Resolves the widget JS for a shop/app pair.
+ * Resolves the widget JS and active backend function URL for a shop/app pair.
  * Called by GET /widgets/:shop/:appId.js on the API service.
  *
- * Returns the raw JS string for storefront_ui apps.
  * Returns null if not found, backend_only, or widget not yet generated.
+ * functionUrl is null when the bundle has not been deployed yet.
  */
 export async function resolveWidgetJs(
   shopDomain: string,
   appId: string
-): Promise<string | null> {
+): Promise<{ widgetJs: string; functionUrl: string | null } | null> {
   const rows = await sql<
-    Array<{ widgetJs: string | null; appArchetype: string }>
+    Array<{ widgetJs: string | null; appArchetype: string; functionUrl: string | null }>
   >`
     SELECT
-      a.widget_js      AS "widgetJs",
-      a.app_archetype  AS "appArchetype"
+      a.widget_js       AS "widgetJs",
+      a.app_archetype   AS "appArchetype",
+      df.function_url   AS "functionUrl"
     FROM apps a
     JOIN tenants t ON t.id = a.tenant_id
+    LEFT JOIN deployed_functions df
+      ON df.app_id = a.id AND df.is_active = TRUE
     WHERE a.shop_domain = ${shopDomain}
       AND a.id = ${appId}
       AND a.status = 'active'
@@ -684,8 +687,8 @@ export async function resolveWidgetJs(
   `;
 
   const row = rows[0];
-  if (!row || row.appArchetype !== "storefront_ui") return null;
-  return row.widgetJs;
+  if (!row || row.appArchetype !== "storefront_ui" || !row.widgetJs) return null;
+  return { widgetJs: row.widgetJs, functionUrl: row.functionUrl };
 }
 
 // ─── Tenant / App Management Queries ─────────────────────────────────────────
@@ -834,13 +837,13 @@ export async function createApp(params: {
   name: string;
   shopDomain: string;
   appArchetype?: string;
-  shopifyApiKey?: string;
+  shopifyClientId?: string;
   shopifySecretName?: string;
 }): Promise<{ id: string }> {
   const rows = await sql<{ id: string }[]>`
     INSERT INTO apps (
       id, tenant_id, slug, name, status,
-      shop_domain, app_archetype, shopify_api_key, shopify_secret_name
+      shop_domain, app_archetype, shopify_client_id, shopify_secret_name
     ) VALUES (
       ${params.id ?? sql`uuid_generate_v4()`},
       ${params.tenantId},
@@ -849,7 +852,7 @@ export async function createApp(params: {
       'active',
       ${params.shopDomain},
       ${params.appArchetype ?? "backend_only"},
-      ${params.shopifyApiKey ?? "dev-api-key"},
+      ${params.shopifyClientId ?? "dev-api-key"},
       ${params.shopifySecretName ?? "projects/local/secrets/dev/versions/latest"}
     )
     RETURNING id
@@ -870,7 +873,7 @@ export async function getAppById(
       status: string;
       appArchetype: string;
       widgetJs: string | null;
-      shopifyApiKey: string;
+      shopifyClientId: string;
       shopifySecretName: string;
       shopifyAccessTokenSecretName: string | null;
       shopDomain: string;
@@ -886,7 +889,7 @@ export async function getAppById(
       status,
       app_archetype                        AS "appArchetype",
       widget_js                            AS "widgetJs",
-      shopify_api_key                      AS "shopifyApiKey",
+      shopify_client_id                      AS "shopifyClientId",
       shopify_secret_name                  AS "shopifySecretName",
       shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
       shop_domain                          AS "shopDomain",
@@ -906,7 +909,7 @@ export async function getAppById(
     status: row.status as App["status"],
     appArchetype: row.appArchetype as AppArchetype,
     widgetJs: row.widgetJs,
-    shopifyApiKey: row.shopifyApiKey,
+    shopifyClientId: row.shopifyClientId,
     shopifySecretName: row.shopifySecretName,
     shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
     shopDomain: row.shopDomain,

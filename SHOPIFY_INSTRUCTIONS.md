@@ -37,14 +37,13 @@ redirect_urls = [
 ]
 ```
 
-**Platform env / Secret Manager** — store the client secret so the OAuth route can use it:
+**`platform/.env`** — `PLATFORM_URL` must be the same URL as `application_url` in the toml:
 
 ```bash
-# Local dev (.env)
+PLATFORM_URL=https://<your platform domain>   # same value as application_url above
+
 SHOPIFY_CLIENT_ID=<client ID>
 SHOPIFY_CLIENT_SECRET=<client secret>
-
-# Production — store via your existing storeSecret flow
 ```
 
 ---

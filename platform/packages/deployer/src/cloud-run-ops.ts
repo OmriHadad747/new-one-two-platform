@@ -78,6 +78,5 @@ export async function deployToCloudRun(
     throw new Error(`Cloud Run service for app ${appId} has no URI after deployment`);
   }
 
-  // Append /invoke path so the worker can POST directly to this URL
-  return { functionUrl: `${serviceUrl}/invoke` };
+  return { functionUrl: serviceUrl };
 }

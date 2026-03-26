@@ -24,6 +24,9 @@
 })();
 
 async function mountBlock(block) {
+  if (block.dataset.widgetMounted) return;
+  block.dataset.widgetMounted = "1";
+
   const appId = block.dataset.appId;
   const shop = block.dataset.shop;
   const platformUrl = block.dataset.platformUrl;
@@ -40,7 +43,8 @@ async function mountBlock(block) {
 
   try {
     const widgetModule = await fetchWidgetModule(platformUrl, shop, appId);
-    const host = buildHost({ appId, shop, platformUrl, container });
+    const backendUrl = widgetModule.__BACKEND_URL__ ?? null;
+    const host = buildHost({ appId, shop, backendUrl, block });
     await widgetModule.mount(container, host);
   } catch (err) {
     console.error(`[widget-runtime] Failed to mount widget "${appId}":`, err);
@@ -55,7 +59,10 @@ async function mountBlock(block) {
 async function fetchWidgetModule(platformUrl, shop, appId) {
   const widgetUrl = `${platformUrl}/widgets/${encodeURIComponent(shop)}/${encodeURIComponent(appId)}.js`;
 
-  const res = await fetch(widgetUrl, { credentials: "omit" });
+  const res = await fetch(widgetUrl, {
+    credentials: "omit",
+    headers: { "ngrok-skip-browser-warning": "1" },
+  });
   if (!res.ok) {
     throw new Error(`Widget not found [${res.status}]: ${widgetUrl}`);
   }
@@ -75,21 +82,24 @@ async function fetchWidgetModule(platformUrl, shop, appId) {
  * Builds the host API object passed to widget.mount(container, host).
  * This is the complete and only interface between the widget and the outside world.
  */
-function buildHost({ appId, shop, platformUrl, container }) {
+function buildHost({ appId, shop, backendUrl, block }) {
   return {
     // ── Page context ─────────────────────────────────────────────────────────
     context: {
       shop,
-      productId: readShopifyContext("product-id"),
-      variantId: readShopifyContext("variant-id"),
+      productId: block.dataset.productId ?? readShopifyContext("product-id"),
+      variantId: block.dataset.variantId ?? readShopifyContext("variant-id"),
       customerId: window.ShopifyAnalytics?.meta?.page?.customerId ?? null,
     },
 
     // ── Backend calls ─────────────────────────────────────────────────────────
-    // The widget uses this instead of fetch. Requests are routed through the
-    // platform, which enforces tenant isolation and auth.
+    // Calls go directly to the merchant's deployed function backend.
+    // __BACKEND_URL__ is injected into the widget JS by the platform at serve time.
     call: async (path, body) => {
-      const res = await fetch(`${platformUrl}${path}`, {
+      if (!backendUrl) {
+        throw new Error(`[host.call] Widget backend not deployed yet — cannot call ${path}`);
+      }
+      const res = await fetch(`${backendUrl}/widget${path}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

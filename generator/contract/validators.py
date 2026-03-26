@@ -13,19 +13,13 @@ from pydantic import BaseModel, Field
 
 # ─── GenerationRequest ────────────────────────────────────────────────────────
 
-class PlatformApiEntry(BaseModel):
-    method: Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
-    path: str
-
-
 class GenerationRequest(BaseModel):
     jobId: str
     tenantId: str
     appId: str
     prompt: str
-    appArchetype: Literal["storefront_ui", "backend_only"]
-    platformApiCatalog: List[PlatformApiEntry]
-    existingFeatures: List[str]
+    appArchetype: Literal["storefront_ui", "backend_only"] = "backend_only"
+    existingFeatures: List[str] = Field(default_factory=list)
     priorBundle: Optional[Dict[str, Any]] = None
 
 

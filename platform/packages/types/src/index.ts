@@ -54,7 +54,7 @@ export interface App {
   status: AppStatus;
   appArchetype: AppArchetype;            // storefront_ui | backend_only
   widgetJs: string | null;              // raw JS ES module source; null for backend_only
-  shopifyApiKey: string;
+  shopifyClientId: string;
   shopifySecretName: string;             // GCP Secret Manager resource name (HMAC signing secret)
   shopifyAccessTokenSecretName: string | null; // GCP Secret Manager resource name (OAuth access token)
   shopDomain: string;                    // mystore.myshopify.com
@@ -196,6 +196,12 @@ export interface HandlerContext {
   logger: HandlerLogger;
   tenantId: string; // UUID of the current tenant — use in all INSERT statements
   email: EmailClient;
+  /** How the handler was invoked. Use this instead of inspecting ctx.payload. */
+  trigger: "webhook" | "cron" | "widget";
+  /** Set when trigger === "widget". The path segment after /widget (e.g. "/signup"). */
+  widgetPath?: string;
+  /** Set when trigger === "widget". Parsed request body from the storefront. */
+  widgetBody?: Record<string, unknown>;
 }
 
 // The contract every generated app module must export
@@ -215,6 +221,14 @@ export interface HarnessInvokeRequest {
   rawBodyBase64: string;
   headers: Record<string, string>;
   receivedAt: string;
+}
+
+// What the storefront sends to POST /widget/* on the deployed function harness
+export interface WidgetInvokeRequest {
+  shopDomain: string;  // from X-Shop-Domain header
+  appId: string;       // from X-App-Id header
+  path: string;        // e.g. "/signup" (the part after /widget)
+  body: Record<string, unknown>;
 }
 
 // What POST /invoke returns to the worker
@@ -308,20 +322,14 @@ export interface ApproveGenerationRequest {
 // and the Pydantic models in generator/contract/validators.py.
 // Source of truth: /contract/*.schema.json
 
-export interface PlatformApiEntry {
-  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
-  path: string;
-}
-
 /** Published to generation.requested by apps/api. */
 export interface GenerationRequestMessage {
   jobId: string;
   tenantId: string;
   appId: string;
   prompt: string;
-  appArchetype: AppArchetype;
-  platformApiCatalog: PlatformApiEntry[];
-  existingFeatures: string[];
+  appArchetype?: AppArchetype;         // default: "backend_only" (set by Zod/Pydantic)
+  existingFeatures?: string[];         // default: [] (set by Zod/Pydantic)
   priorBundle?: Record<string, unknown> | null;
 }
 
@@ -329,14 +337,14 @@ export interface GenerationRequestMessage {
 export interface ProgressEventMessage {
   jobId: string;
   agent:
-    | "intent"
-    | "schema"
-    | "codegen"
-    | "widget_config"
-    | "handler"
-    | "migration"
-    | "validation"
-    | "explanation";
+  | "intent"
+  | "schema"
+  | "codegen"
+  | "widget_config"
+  | "handler"
+  | "migration"
+  | "validation"
+  | "explanation";
   status: "running" | "completed" | "failed" | "retrying";
   message: string;
   timestampMs: number;
@@ -404,14 +412,7 @@ export interface CreateTenantRequest {
   id?: string;
   slug: string;
   name: string;
-  plan?: string;         // default: "starter"
-  shopDomain?: string;   // mystore.myshopify.com — set on OAuth install
-  /**
-   * GCP KMS key resource name.
-   * Format: projects/{project}/locations/{location}/keyRings/{ring}/cryptoKeys/{key}
-   * Defaults to a local dev placeholder when omitted.
-   */
-  kmsKeyName?: string;
+  plan?: string; // default: "starter"
 }
 
 /** POST /tenants/:tenantId/apps request body. */
@@ -420,14 +421,6 @@ export interface CreateAppRequest {
   id?: string;
   slug: string;
   name: string;
-  shopDomain: string;    // must end with .myshopify.com
-  appArchetype?: AppArchetype; // default: "backend_only"
-  shopifyApiKey?: string;
-  /**
-   * GCP Secret Manager resource name for the Shopify webhook HMAC signing secret.
-   * Defaults to a local dev placeholder when omitted.
-   */
-  shopifySecretName?: string;
 }
 
 /** POST /generation request body (apps/api). */
@@ -435,9 +428,6 @@ export interface StartGenerationRequest {
   appId: string;
   tenantId: string;
   prompt: string;
-  appArchetype?: AppArchetype; // defaults to tenant's app_archetype if not provided
-  platformApiCatalog?: PlatformApiEntry[];
-  existingFeatures?: string[];
 }
 
 /** POST /generation/:jobId/revise request body. */

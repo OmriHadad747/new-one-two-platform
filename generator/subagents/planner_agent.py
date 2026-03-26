@@ -12,7 +12,7 @@ Why merged:
   the cron path's atomic claim explicitly guards against the webhook path having already
   processed the same state transition.
 
-Input:  prompt + intent + schema_fragments + platform_api_catalog + app_archetype
+Input:  prompt + intent + schema_fragments + app_archetype
 Output: plan dict — { shopifyPlan, implementationSpec }
 
   shopifyPlan:
@@ -21,7 +21,7 @@ Output: plan dict — { shopifyPlan, implementationSpec }
   implementationSpec:
     stateMachine, platformGaps, cronBatching,
     codeSpec { webhookPath[], cronPath[], functions[] },
-    migrationGuidance, widgetGuidance
+    migrationGuidance, widgetGuidance, widgetApiCatalog
 
 Model: claude-sonnet-4-6 — reasoning quality here cascades directly to all generated artifacts.
 """
@@ -96,9 +96,27 @@ codeSpec: THE MOST IMPORTANT SECTION.
       Step N+2: "for each row in claimed: emit/log notification"
       Rationale: emitting first then marking risks double-notification on crash between the two steps.
   - Helper functions get their own entry in functions[] with all steps listed
+  - When a webhook path must both update a state table AND claim/send notifications as separate
+    steps, write the state-update step first, then explicitly note between steps:
+    "// crash here leaves state updated but notifications unsent — cron path is the backstop"
+    The cron path MUST be designed to re-check and claim any notifications not yet sent,
+    independently of the current live inventory/state (i.e. query the DB for unsent rows,
+    don't re-check Shopify state). This ensures the cron recovers from a webhook crash.
 
   webhookPath: steps for the webhook handler path ([] if triggerType is cron-only)
   cronPath:    steps for the cron handler path ([] if triggerType is webhook-only)
+  widgetPath:  steps for each widget API path ([] for backend_only apps).
+    This is the CONTRACT between the widget and the handler — both generators read it.
+    Writing rules for widgetPath:
+    - Each entry covers one catalog path. Start the step with "path /foo:"
+    - For host.call() bodies: write the EXACT field names the widget sends, e.g.
+        "widget calls host.call('/signup', { customerEmail, variantId, productId })"
+      The handler step for the same path MUST destructure those exact same field names:
+        "const { customerEmail, variantId, productId } = ctx.widgetBody"
+    - Only include fields available in host.context (variantId, productId, customerId)
+      or from user input (e.g. customerEmail from a form). Never include IDs the widget
+      cannot know (e.g. inventoryItemId) — the handler resolves those server-side:
+        "resolve inventoryItemId: GET /variants/${variantId}.json → variant.inventory_item_id"
   functions:   shared helper functions
 
 migrationGuidance: 1-2 sentences on schema decisions — column nullability, sentinel meaning, indexes.
@@ -113,6 +131,20 @@ migrationGuidance: 1-2 sentences on schema decisions — column nullability, sen
 
 widgetGuidance: 1-2 UX sentences for the storefront widget (null if appArchetype is backend_only).
   Focus on UX implications of platformGaps (e.g. "show 'you will be notified' not 'email sent'").
+
+widgetApiCatalog: null for backend_only apps.
+  For storefront_ui apps: the exact paths the widget will call via host.call().
+  Decide based on what this specific feature requires — do not add speculative extras.
+  Rules:
+  - path must start with "/" and be a short slug (e.g. "/signup", "/status", "/redeem")
+  - method "POST" = mutation (writes to DB), "GET" = read-only query
+  - The runtime always sends HTTP POST regardless of method — method is semantic intent only
+  - Only include paths the widget will actually call in the generated code
+  Widget body contract — when writing codeSpec for widget paths, use these exact field names:
+  - customerEmail (the user's email — the widget sends this, NOT "email")
+  - variantId, productId, customerId (camelCase from host.context — always available)
+  - inventoryItemId is NOT sent by the widget — if needed, the handler must resolve it:
+    GET /variants/${variantId}.json → variant.inventory_item_id
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):
@@ -152,12 +184,16 @@ OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanatio
     "codeSpec": {
       "webhookPath": ["step 1", "step 2"],
       "cronPath": ["step 1", "step 2"],
+      "widgetPath": ["path /signup: widget calls host.call('/signup', { customerEmail, variantId, productId })", "path /signup: handler: const { customerEmail, variantId, productId } = ctx.widgetBody"],
       "functions": [
         { "name": "fnName", "steps": ["step 1", "step 2"] }
       ]
     },
     "migrationGuidance": "...",
-    "widgetGuidance": null
+    "widgetGuidance": null,
+    "widgetApiCatalog": null | [
+      { "method": "POST" | "GET", "path": "/slug" }
+    ]
   }
 }"""
 
@@ -165,9 +201,6 @@ _PLANNER_USER_TEMPLATE = """{error_block}Merchant request: {prompt}
 
 Feature intent:
 {intent_json}
-
-Platform API catalog (backend routes the widget may call via host.call()):
-{catalog}
 
 App archetype: {archetype}
 {schema_section}{jit_notes}Produce the complete plan."""
@@ -201,6 +234,23 @@ _JIT_NOTE_VARIANTS_CRON = """
   with all steps naming the exact variables, fields, and batch size (250).
 """
 
+_JIT_NOTE_INVENTORY_CRON = """
+⚠ Inventory cron stock-check note (inject because this feature uses inventory in a cron path):
+  Do NOT use variant.inventory_quantity from /products.json — this field is unreliable for
+  multi-location stores. It can be stale or incorrect when stock exists at only some locations.
+
+  Correct pattern — batch via inventory_levels.json:
+  1. Store inventory_item_id (BIGINT) in the DB table alongside variant_id.
+     Add "store inventory_item_id BIGINT to support batch inventory level fetching" to migrationGuidance.
+  2. In the cron pre-fetch phase, collect all unique inventory_item_ids from pending DB rows.
+  3. Batch-fetch: GET /inventory_levels.json?inventory_item_ids=<comma-ids> (max 50 per batch).
+  4. Build inventoryMap: Map<inventory_item_id, storeWideTotal> by summing level.available
+     across all location entries for each inventory_item_id.
+  5. Loop body uses inventoryMap — zero Shopify inventory calls inside the loop.
+  Write this as a concrete function in codeSpec.functions[] (e.g. batchFetchInventoryLevels)
+  with all steps naming the exact variables, fields, and batch size (50).
+"""
+
 
 def _build_jit_notes(intent: Dict[str, Any]) -> str:
     """Inject contextual guidance into the planner prompt based on what resources the intent uses."""
@@ -209,6 +259,8 @@ def _build_jit_notes(intent: Dict[str, Any]) -> str:
     notes: List[str] = []
     if "inventory" in resources:
         notes.append(_JIT_NOTE_INVENTORY)
+    if "inventory" in resources and trigger in ("cron", "both"):
+        notes.append(_JIT_NOTE_INVENTORY_CRON)
     if "products" in resources and trigger in ("cron", "both"):
         notes.append(_JIT_NOTE_VARIANTS_CRON)
     return "".join(notes)
@@ -217,7 +269,6 @@ def _build_jit_notes(intent: Dict[str, Any]) -> str:
 def run_planner_agent(
     prompt: str,
     intent: Dict[str, Any],
-    platform_api_catalog: List[Any],
     app_archetype: str,
     schema_fragments: str,
     validation_errors: Optional[List[str]] = None,
@@ -226,15 +277,15 @@ def run_planner_agent(
     Merged Planner Agent: produces shopifyPlan + implementationSpec in one call.
 
     Args:
-        prompt:               Original merchant prompt (gives the Planner full context).
-        intent:               Parsed intent from Agent 1 (run_intent_agent).
-        platform_api_catalog: Allowed backend routes for widget host.call().
-        app_archetype:        "storefront_ui" | "backend_only"
-        schema_fragments:     Shopify API doc snippets for the relevant resources.
-        validation_errors:    Errors from validate_plan() on a prior attempt, or None.
+        prompt:            Original merchant prompt (gives the Planner full context).
+        intent:            Parsed intent from Agent 1 (run_intent_agent).
+        app_archetype:     "storefront_ui" | "backend_only"
+        schema_fragments:  Shopify API doc snippets for the relevant resources.
+        validation_errors: Errors from validate_plan() on a prior attempt, or None.
 
     Returns:
         plan dict with keys: shopifyPlan, implementationSpec
+        For storefront_ui apps, implementationSpec includes widgetApiCatalog.
     """
     error_block = ""
     if validation_errors:
@@ -249,7 +300,6 @@ def run_planner_agent(
         if schema_fragments
         else ""
     )
-    catalog_str = "\n".join(f"  {e.method} {e.path}" for e in platform_api_catalog)
 
     jit_notes = _build_jit_notes(intent)
 
@@ -257,13 +307,12 @@ def run_planner_agent(
         error_block=error_block,
         prompt=prompt,
         intent_json=json.dumps(intent, indent=2),
-        catalog=catalog_str,
         archetype=app_archetype,
         schema_section=schema_section,
         jit_notes=jit_notes,
     )
 
-    llm = get_code_llm(max_tokens=4096)
+    llm = get_code_llm(max_tokens=8192)
     for attempt in range(2):
         result = invoke(llm, PLANNER_SYSTEM, user)
         raw = extract_json(result.content)

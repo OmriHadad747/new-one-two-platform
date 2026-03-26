@@ -17,6 +17,7 @@ Model: claude-sonnet-4-6 (prefers_code_model = True)
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
@@ -53,6 +54,9 @@ RULES:
 6. Never hardcode tenant IDs, shop domains, or product IDs — read from host.context
 7. All backend paths must come from the platformApiCatalog provided — never invent paths
 8. Output ONLY the raw JavaScript — no markdown fences, no explanation, no comments outside the code
+9. If platformApiCatalog is empty and the feature requires persistent data collection (e.g. an
+   email signup form), do NOT silently collect data that will be discarded — render a clear
+   "this feature requires backend configuration" message instead. Never fake a successful save.
 
 The widget can render any UI it needs: forms, counters, timers, multi-step flows, etc.
 There are no restrictions on widget type — only on how it communicates with the outside world."""
@@ -61,7 +65,7 @@ There are no restrictions on widget type — only on how it communicates with th
 class WidgetJsGenerator(Generator):
     name = "widget_js"
     prefers_code_model = True
-    max_tokens = 2048
+    max_tokens = 4096
 
     # ── Generator interface ────────────────────────────────────────────────────
 
@@ -74,6 +78,7 @@ class WidgetJsGenerator(Generator):
         catalog_desc = "\n".join(
             f"  {e['method']} {e['path']}" for e in ctx.platform_api_catalog
         )
+        widget_spec_block = _format_widget_spec(ctx.plan)
 
         return (
             f"{retry_block}"
@@ -81,18 +86,44 @@ class WidgetJsGenerator(Generator):
             f"Trigger type: {ctx.intent.get('triggerType', '')}\n\n"
             f"Platform API catalog (the ONLY paths the widget may call via host.call()):\n"
             f"{catalog_desc}\n"
+            f"{widget_spec_block}"
             f"{ux_block}"
             "Generate the widget ES module. Output ONLY the raw JavaScript."
         )
 
     def parse(self, raw: str) -> str:
-        return raw.strip()
+        text = re.sub(r"^```(?:javascript|js)?\s*", "", raw.strip(), flags=re.MULTILINE)
+        text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE)
+        text = text.strip()
+        # Strip any leading prose the model emitted before the JS code.
+        # Widget modules always start with export/const/let/var/function/comment.
+        js_start = re.search(r"^(export\s|const\s|let\s|var\s|function\s|//|/\*)", text, re.MULTILINE)
+        if js_start and js_start.start() > 0:
+            text = text[js_start.start():]
+        return text.strip()
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         return validate_widget_js(artifact, ctx.platform_api_catalog)
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────
+
+
+def _format_widget_spec(plan: Dict[str, Any]) -> str:
+    """
+    Render codeSpec.widgetPath steps as the authoritative host.call() contract.
+    The planner writes the exact field names the widget must send — the handler
+    is generated from the same steps, so both sides agree on field names.
+    """
+    impl = plan.get("implementationSpec") or {}
+    steps: List[str] = (impl.get("codeSpec") or {}).get("widgetPath") or []
+    if not steps:
+        return ""
+    numbered = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(steps))
+    return (
+        f"\nWidget API contract (implement host.call() bodies exactly as specified):\n"
+        f"{numbered}\n"
+    )
 
 
 def _format_ux_guidance(plan: Dict[str, Any]) -> str:

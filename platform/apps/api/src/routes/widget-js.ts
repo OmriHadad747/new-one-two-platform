@@ -5,6 +5,17 @@ import { createRequestLogger } from "@new-one-two/logger";
 // ─── Route Registration ────────────────────────────────────────────────────────
 
 export async function widgetJsRoutes(app: FastifyInstance) {
+  // CORS preflight — browsers send OPTIONS before the actual GET when custom headers
+  // are present (e.g. ngrok-skip-browser-warning in dev, or any future custom header).
+  app.options("/:shop/:appId.js", async (_request, reply) => {
+    return reply
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Access-Control-Allow-Methods", "GET, OPTIONS")
+      .header("Access-Control-Allow-Headers", "*")
+      .code(204)
+      .send();
+  });
+
   app.get<{
     Params: { shop: string; appId: string };
   }>(
@@ -36,14 +47,20 @@ async function widgetJsHandler(
   const { shop, appId } = request.params;
   const log = createRequestLogger({ requestId: request.id });
 
-  const widgetJs = await resolveWidgetJs(shop, appId);
+  const result = await resolveWidgetJs(shop, appId);
 
-  if (!widgetJs) {
+  if (!result) {
     log.debug({ shop, appId }, "No widget JS found");
     return reply.code(404).send("// Widget not found");
   }
 
-  log.debug({ shop, appId }, "Widget JS resolved");
+  log.debug({ shop, appId, hasBackend: !!result.functionUrl }, "Widget JS resolved");
+
+  // Prepend the backend URL so the widget runtime can call the app's deployed
+  // function directly without routing through the platform on every widget interaction.
+  // The runtime reads __BACKEND_URL__ from the module exports after dynamic import.
+  const backendUrlExport = `export const __BACKEND_URL__ = ${JSON.stringify(result.functionUrl)};\n`;
+  const fullJs = backendUrlExport + result.widgetJs;
 
   // CORS: widget JS is fetched by the runtime from a Shopify storefront domain.
   // We allow all origins — the widget itself is sandboxed by the host API contract.
@@ -52,5 +69,5 @@ async function widgetJsHandler(
     .header("Access-Control-Allow-Origin", "*")
     .header("Cache-Control", "public, max-age=5")
     .code(200)
-    .send(widgetJs);
+    .send(fullJs);
 }

@@ -268,6 +268,20 @@ def validate_migration(sql: str) -> List[str]:
     if has_create_table and not has_rls:
         errors.append("CREATE TABLE present but no RLS policy found")
 
+    # Each CREATE POLICY must have WITH CHECK so INSERTs are also tenant-scoped
+    policy_stmts = re.findall(
+        r"CREATE\s+POLICY\b[^;]+;", sql, re.IGNORECASE | re.DOTALL
+    )
+    for stmt in policy_stmts:
+        if "with check" not in stmt.lower():
+            # Extract policy name for a readable error
+            name_match = re.search(r"CREATE\s+POLICY\s+(\w+)", stmt, re.IGNORECASE)
+            policy_name = name_match.group(1) if name_match else "unknown"
+            errors.append(
+                f"policy '{policy_name}' missing WITH CHECK clause — "
+                "INSERT operations bypass tenant isolation without it"
+            )
+
     return errors
 
 
@@ -327,6 +341,21 @@ def validate_widget_js(
     if re.search(r"\btenant[_-]?id\s*[:=]\s*['\"]", widget_js, re.IGNORECASE):
         errors.append(
             "hardcoded tenant_id detected — read from host.context instead"
+        )
+
+    # Widget must not silently discard collected user data
+    has_submit = bool(
+        re.search(
+            r"type=[\"']submit[\"']|addEventListener\([\"']submit|\.submit\s*\(",
+            widget_js,
+        )
+    )
+    has_host_call = bool(re.search(r"\bhost\.call\s*\(", widget_js))
+    if has_submit and not has_host_call:
+        errors.append(
+            "widget has a submit action but never calls host.call() — collected data "
+            "is silently discarded. Add a POST endpoint to platformApiCatalog and call "
+            "it via host.call(path, data) to persist the submission"
         )
 
     return errors

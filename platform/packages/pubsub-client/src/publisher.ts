@@ -1,5 +1,6 @@
 import { getPubSubClient, TOPIC_GENERATION_REQUESTED } from "./client.js";
-import { GenerationRequestSchema, type GenerationRequest } from "./schemas.js";
+import { GenerationRequestSchema } from "./schemas.js";
+import type { z } from "zod";
 import { logger as baseLogger } from "@new-one-two/logger";
 
 const logger = baseLogger.child({ service: "pubsub-client" });
@@ -11,20 +12,20 @@ const logger = baseLogger.child({ service: "pubsub-client" });
  * Returns the Pub/Sub message ID.
  */
 export async function publishGenerationRequest(
-  data: GenerationRequest
+  data: z.input<typeof GenerationRequestSchema>
 ): Promise<string> {
-  GenerationRequestSchema.parse(data); // throws ZodError on invalid data
+  const parsed = GenerationRequestSchema.parse(data); // fills in defaults, throws ZodError on invalid
 
   const topic = getPubSubClient().topic(TOPIC_GENERATION_REQUESTED);
   const messageId = await topic.publishMessage({
-    data: Buffer.from(JSON.stringify(data)),
+    data: Buffer.from(JSON.stringify(parsed)),
     attributes: {
-      jobId: data.jobId,
-      tenantId: data.tenantId,
-      appId: data.appId,
+      jobId: parsed.jobId,
+      tenantId: parsed.tenantId,
+      appId: parsed.appId,
     },
   });
 
-  logger.info({ jobId: data.jobId, messageId }, "GenerationRequest published");
+  logger.info({ jobId: parsed.jobId, messageId }, "GenerationRequest published");
   return messageId;
 }

@@ -239,10 +239,8 @@ Add to `platform/.env`:
 
 ```bash
 # Your Shopify dev store
-SHOPIFY_SHOP_DOMAIN=your-store.myshopify.com
-SHOPIFY_ACCESS_TOKEN=shpua_...            # from OAuth install step
-SHOPIFY_API_KEY=abc123...                 # from app credentials
-SHOPIFY_API_SECRET=shpss_...             # from app credentials
+SHOPIFY_CLIENT_ID=abc123...               # client_id from Partner Dashboard
+SHOPIFY_CLIENT_SECRET=shpss_...          # client_secret from Partner Dashboard
 
 # Shopify Partners API (for App Block deployment)
 # From partners.shopify.com → Settings → Partner API clients → Create API key

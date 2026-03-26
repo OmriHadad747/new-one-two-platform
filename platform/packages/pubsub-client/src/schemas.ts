@@ -11,19 +11,13 @@ import { z } from "zod";
 
 // ─── GenerationRequest ────────────────────────────────────────────────────────
 
-export const PlatformApiEntrySchema = z.object({
-  method: z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"]),
-  path: z.string().startsWith("/"),
-});
-
 export const GenerationRequestSchema = z.object({
   jobId: z.string().uuid(),
   tenantId: z.string().uuid(),
   appId: z.string().uuid(),
   prompt: z.string().min(1),
-  appArchetype: z.enum(["storefront_ui", "backend_only"]),
-  platformApiCatalog: z.array(PlatformApiEntrySchema),
-  existingFeatures: z.array(z.string()),
+  appArchetype: z.enum(["storefront_ui", "backend_only"]).default("backend_only"),
+  existingFeatures: z.array(z.string()).default([]),
   priorBundle: z.record(z.unknown()).nullable().optional(),
 });
 
@@ -103,7 +97,6 @@ export const FeatureBundleMessageSchema = z.object({
 
 // ─── Inferred types ───────────────────────────────────────────────────────────
 
-export type PlatformApiEntry = z.infer<typeof PlatformApiEntrySchema>;
 export type GenerationRequest = z.infer<typeof GenerationRequestSchema>;
 export type ProgressEvent = z.infer<typeof ProgressEventSchema>;
 export type HandlerModule = z.infer<typeof HandlerModuleSchema>;

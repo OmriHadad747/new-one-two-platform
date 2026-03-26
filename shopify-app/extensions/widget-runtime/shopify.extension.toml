@@ -1,6 +1,7 @@
 api_version = "2026-01"
 
 [[extensions]]
+uid = "6beb6400-1f55-4552-3fe5-52a4eef85f5ea635a73e"
 type = "theme"
 name = "Widget Runtime"
 handle = "widget-runtime"

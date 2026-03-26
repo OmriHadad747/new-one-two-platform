@@ -40,7 +40,8 @@ CREATE TABLE {table_name} (
 ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY {table_name}_tenant_isolation ON {table_name}
-  USING (tenant_id = current_setting('app.current_tenant_id')::UUID);
+  USING (tenant_id = current_setting('app.current_tenant_id')::UUID)
+  WITH CHECK (tenant_id = current_setting('app.current_tenant_id')::UUID);
 ```
 
 ABSOLUTE RULES:
@@ -54,7 +55,13 @@ ABSOLUTE RULES:
 8. Add useful indexes (tenant_id is always a candidate)
 9. Shopify entity IDs (variant_id, product_id, order_id, customer_id, inventory_item_id) are
    numeric integers — store them as BIGINT or TEXT, NEVER as UUID.
-   Only tenant_id and internal record primary keys use the UUID type."""
+   Only tenant_id and internal record primary keys use the UUID type.
+10. Do NOT create a standalone (tenant_id) index when a composite index already starts with
+    tenant_id — the composite index satisfies tenant-only range scans too. Redundant indexes
+    waste write overhead and storage.
+11. Do NOT add domain-alias timestamp columns (e.g. signed_up_at, enrolled_at) that duplicate
+    created_at — use created_at for record creation time. Only add a separate domain timestamp
+    when it can differ from created_at (e.g. notified_at, fulfilled_at, cancelled_at)."""
 
 _SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMENT")
 

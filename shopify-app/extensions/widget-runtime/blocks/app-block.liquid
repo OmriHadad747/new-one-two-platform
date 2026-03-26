@@ -22,10 +22,14 @@
     data-app-id="{{ block.settings.app_id | escape }}"
     data-shop="{{ shop.permanent_domain | escape }}"
     data-platform-url="{{ platform_url | escape }}"
+    {%- if product -%}
+    data-product-id="{{ product.id }}"
+    data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+    {%- endif -%}
     {{ block.shopify_attributes }}
   ></div>
 
-  {{ 'widget-runtime.js' | asset_url | script_tag }}
+  <script src="{{ 'widget-runtime.js' | asset_url }}" defer></script>
 {%- endif -%}
 
 {% schema %}
@@ -37,8 +41,7 @@
       "type": "text",
       "id": "app_id",
       "label": "App ID",
-      "info": "The platform app ID to render in this block. Set by your dashboard when you create a platform app.",
-      "default": ""
+      "info": "The platform app ID to render in this block. Set by your dashboard when you create a platform app."
     }
   ]
 }

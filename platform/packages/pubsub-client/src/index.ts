@@ -15,7 +15,6 @@ export {
   stopSubscriptions,
 } from "./subscriber.js";
 export type {
-  PlatformApiEntry,
   GenerationRequest,
   ProgressEvent,
   HandlerModule,

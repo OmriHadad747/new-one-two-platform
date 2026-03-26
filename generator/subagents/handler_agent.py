@@ -8,6 +8,7 @@ requires them, keeping the context window focused on what actually applies:
   HARNESS_SECTION_WEBHOOK       — when webhookTopics is non-empty
   HARNESS_SECTION_STATE_MACHINE — when implementationSpec.stateMachine.needsStateTracking
   HARNESS_SECTION_CRON_BATCHING — when implementationSpec.cronBatching.required
+  HARNESS_SECTION_WIDGET        — when platform_api_catalog is non-empty (storefront_ui apps)
 
 The codeSpec from the Planner is rendered as a numbered algorithm the generator
 implements literally — no interpretation, no gap-filling.
@@ -27,6 +28,7 @@ from templates.harness_contract import (
     HARNESS_SECTION_CRON_BATCHING,
     HARNESS_SECTION_STATE_MACHINE,
     HARNESS_SECTION_WEBHOOK,
+    HARNESS_SECTION_WIDGET,
 )
 
 
@@ -42,7 +44,7 @@ class HandlerGenerator(Generator):
 
     def user_prompt(self, ctx: CodegenContext) -> str:
         retry_block = self.format_retry_block(ctx.previous_errors)
-        jit_sections = _build_jit_sections(ctx.plan)
+        jit_sections = _build_jit_sections(ctx.plan, ctx.platform_api_catalog)
         spec_block = _format_code_spec(ctx.plan)
         gaps_block = _format_platform_gaps(ctx.plan)
 
@@ -69,7 +71,7 @@ class HandlerGenerator(Generator):
 # ── JIT harness section builder (Change 3) ────────────────────────────────────
 
 
-def _build_jit_sections(plan: Dict[str, Any]) -> str:
+def _build_jit_sections(plan: Dict[str, Any], platform_api_catalog: List[Dict[str, str]]) -> str:
     """
     Inject only the harness pattern sections relevant to this specific plan.
     Irrelevant sections are omitted so the model focuses on what applies.
@@ -90,6 +92,9 @@ def _build_jit_sections(plan: Dict[str, Any]) -> str:
     if batching.get("required"):
         sections.append(HARNESS_SECTION_CRON_BATCHING)
 
+    if platform_api_catalog:
+        sections.append(HARNESS_SECTION_WIDGET)
+
     return "".join(sections)
 
 
@@ -106,9 +111,10 @@ def _format_code_spec(plan: Dict[str, Any]) -> str:
 
     webhook_path: List[str] = code_spec.get("webhookPath") or []
     cron_path: List[str] = code_spec.get("cronPath") or []
+    widget_path: List[str] = code_spec.get("widgetPath") or []
     functions: List[Dict[str, Any]] = code_spec.get("functions") or []
 
-    if not webhook_path and not cron_path and not functions:
+    if not webhook_path and not cron_path and not widget_path and not functions:
         return ""
 
     parts: List[str] = [
@@ -124,6 +130,10 @@ def _format_code_spec(plan: Dict[str, Any]) -> str:
     if cron_path:
         steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(cron_path))
         parts.append(f"\nCron handler path:\n{steps}")
+
+    if widget_path:
+        steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(widget_path))
+        parts.append(f"\nWidget handler path (ctx.trigger === 'widget'):\n{steps}")
 
     if functions:
         parts.append("\nHelper functions:")

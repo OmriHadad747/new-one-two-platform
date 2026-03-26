@@ -25,15 +25,18 @@ import { deployFeatureBundle, deployAppVersion } from "@new-one-two/deployer";
 import type {
   StartGenerationRequest,
   ReviseGenerationRequest,
-  PlatformApiEntry,
   FeatureBundle,
 } from "@new-one-two/types";
 
-// Default platform API catalog for the back-in-stock MVP
-const DEFAULT_PLATFORM_API_CATALOG: PlatformApiEntry[] = [
-  { method: "POST", path: "/features/waitlist/signup" },
-  { method: "GET", path: "/features/waitlist/status" },
-];
+/**
+ * Platform-owned widget API catalog.
+ *
+ * These are the only platform routes a generated widget may call via host.call().
+ * The platform (not the caller) is the authoritative source — callers never supply this.
+ *
+ * Each path here must have a corresponding route handler on the platform API that
+ * accepts POST with X-Shop-Domain + X-App-Id headers for tenant resolution.
+ */
 
 export const generationRoute: FastifyPluginAsync = async (app) => {
   // ─── POST /generation ──────────────────────────────────────────────────────
@@ -41,8 +44,7 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   app.post<{ Body: StartGenerationRequest }>(
     "/",
     async (req: FastifyRequest<{ Body: StartGenerationRequest }>, reply: FastifyReply) => {
-      const { appId, tenantId, prompt, appArchetype, platformApiCatalog, existingFeatures } =
-        req.body;
+      const { appId, tenantId, prompt } = req.body;
 
       if (!appId || !tenantId || !prompt) {
         return reply
@@ -61,15 +63,7 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       await updateGenerationSession(sessionId, { jobId, status: "running" });
 
-      await publishGenerationRequest({
-        jobId,
-        tenantId,
-        appId,
-        prompt,
-        appArchetype: appArchetype ?? "backend_only",
-        platformApiCatalog: platformApiCatalog ?? DEFAULT_PLATFORM_API_CATALOG,
-        existingFeatures: existingFeatures ?? [],
-      });
+      await publishGenerationRequest({ jobId, tenantId, appId, prompt });
 
       // Register a persistent completed listener that writes the bundle to DB.
       // This runs regardless of whether any SSE client is connected.
@@ -292,20 +286,13 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       // Infer archetype from prior bundle: widgetModule present → storefront_ui
       const priorBundle = session.bundle as Record<string, unknown> | null;
-      const revisedArchetype =
-        priorBundle && priorBundle["widgetModule"] !== null
-          ? "storefront_ui"
-          : "backend_only";
 
       await publishGenerationRequest({
         jobId: newJobId,
         tenantId: session.tenantId,
         appId: session.appId,
         prompt: revisedPrompt,
-        appArchetype: revisedArchetype,
-        platformApiCatalog: DEFAULT_PLATFORM_API_CATALOG,
-        existingFeatures: [],
-        priorBundle: priorBundle,
+        priorBundle,
       });
 
       logger.info(

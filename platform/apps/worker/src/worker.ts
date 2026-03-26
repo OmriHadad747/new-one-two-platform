@@ -169,7 +169,7 @@ async function processWebhookJob(job: Job<WebhookJobPayload>): Promise<void> {
 
     const t0 = performance.now();
     const { statusCode, invocationId, harnessResponse } = await invokeCloudRunFunction(
-      payload.functionUrl,
+      `${payload.functionUrl}/invoke`,
       functionPayload
     );
     durationMs = Math.round(performance.now() - t0);

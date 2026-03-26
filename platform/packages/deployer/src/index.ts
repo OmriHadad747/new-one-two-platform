@@ -80,7 +80,7 @@ export async function deployAppVersion(appVersionId: string): Promise<{
       tenantId: tenant.id,
       appId: app.id,
       shopDomain: app.shopDomain,
-      clientId: app.shopifyApiKey,
+      clientId: app.shopifyClientId,
       clientSecretName: app.shopifySecretName,
     });
 
@@ -161,7 +161,7 @@ export async function deployFeatureBundle(params: {
   const { sql } = await import("@new-one-two/db");
   const appRows = await sql<
     Array<{
-      shopifyApiKey: string;
+      shopifyClientId: string;
       shopifySecretName: string;
       shopDomain: string;
       tenantSlug: string;
@@ -169,7 +169,7 @@ export async function deployFeatureBundle(params: {
     }>
   >`
     SELECT
-      a.shopify_api_key     AS "shopifyApiKey",
+      a.shopify_client_id     AS "shopifyClientId",
       a.shopify_secret_name AS "shopifySecretName",
       a.shop_domain         AS "shopDomain",
       t.slug AS "tenantSlug",

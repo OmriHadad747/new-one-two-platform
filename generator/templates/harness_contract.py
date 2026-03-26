@@ -36,6 +36,20 @@ ctx.db  — postgres.js tagged template (RLS-scoped to this tenant)
 ctx.tenantId — UUID string of the current tenant
   MUST be included as the tenant_id column value in every INSERT statement.
 
+ctx.trigger — how the handler was invoked: 'webhook' | 'cron' | 'widget'
+  Use ctx.trigger to branch between code paths. NEVER inspect ctx.payload to infer trigger type.
+  Example:
+    if (ctx.trigger === 'widget') {
+      // handle storefront request via ctx.widgetPath / ctx.widgetBody
+    } else if (ctx.trigger === 'cron') {
+      // handle periodic job
+    } else {
+      // handle Shopify webhook via ctx.payload
+    }
+
+ctx.widgetPath — path segment from the storefront request (e.g. '/signup'). Set only when ctx.trigger === 'widget'.
+ctx.widgetBody — parsed request body from the storefront widget. Set only when ctx.trigger === 'widget'.
+
 ctx.payload — the parsed Shopify webhook body (object). For cron jobs this is {}.
   Example: const orderId = ctx.payload.id
 
@@ -194,4 +208,69 @@ Variant/product batch pattern — Shopify has NO batch variant-by-IDs endpoint:
        // use entry.variant and entry.product
      }
   NOTE: product_id must be stored in the DB table — it is the key for this batch approach.
+
+Inventory level batch pattern — use this when checking stock in a cron path.
+inventory_quantity from /products.json is unreliable for multi-location stores:
+  ❌ if (variantData.inventory_quantity <= 0) continue  // stale for multi-location
+  ✅ // Pre-fetch inventory levels — always accurate; sums across all locations
+     const inventoryItemIds = [...new Set(rows.map(r => r.inventory_item_id))]
+     const inventoryMap = new Map()  // Map<inventory_item_id, storeWideTotal>
+     const INV_BATCH = 50
+     for (let i = 0; i < inventoryItemIds.length; i += INV_BATCH) {
+       const chunk = inventoryItemIds.slice(i, i + INV_BATCH)
+       const { inventory_levels } = await ctx.shopify.get(
+         `/inventory_levels.json?inventory_item_ids=${chunk.join(',')}`
+       )
+       for (const level of (inventory_levels || [])) {
+         const prev = inventoryMap.get(level.inventory_item_id) || 0
+         inventoryMap.set(level.inventory_item_id, prev + (level.available || 0))
+       }
+     }
+     // Loop body checks inventoryMap — zero inventory API calls inside the loop
+     for (const row of rows) {
+       const storeWideTotal = inventoryMap.get(row.inventory_item_id) || 0
+       if (storeWideTotal <= 0) continue
+       // proceed with notification
+     }
+  NOTE: inventory_item_id must be stored in the DB table — it is the key for this batch approach.
+"""
+
+HARNESS_SECTION_WIDGET = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WIDGET ROUTING — this handler receives storefront requests from the widget:
+
+When ctx.trigger === 'widget', the storefront called host.call(path, body).
+  ctx.widgetPath — the path the widget called (e.g. '/signup', '/status')
+  ctx.widgetBody — the body the widget sent (object)
+
+Rule: Route on ctx.widgetPath inside the widget branch. Always return a value.
+  ✅ if (ctx.trigger === 'widget') {
+       if (ctx.widgetPath === '/signup') {
+         const { customerEmail, variantId, productId } = ctx.widgetBody
+         await ctx.db`INSERT INTO ... ON CONFLICT DO NOTHING`
+         return { ok: true }
+       }
+       if (ctx.widgetPath === '/status') {
+         const [row] = await ctx.db`SELECT ... WHERE tenant_id = ${ctx.tenantId} AND ...`
+         return { status: row ? row.status : 'not_signed_up' }
+       }
+       return { error: 'unknown path' }
+     }
+  ❌ if (!ctx.payload || Object.keys(ctx.payload).length === 0) { ... }
+     // NEVER use payload emptiness to detect cron or widget — use ctx.trigger
+
+Rule: Use the exact field names from the widgetPath codeSpec — the planner defines the
+  contract and both the widget and handler are generated from it. Do not rename fields.
+
+Rule: The widget can only send what host.context provides (variantId, productId, customerId)
+  plus user input. IDs not in host.context must be resolved server-side:
+  ✅ const { variant } = await ctx.shopify.get(`/variants/${variantId}.json`)
+     const inventoryItemId = variant.inventory_item_id
+
+Rule: Widget paths must match the platformApiCatalog exactly.
+  The catalog lists every path the widget may call. Do not handle paths not in the catalog.
+  Do not invent paths — only handle paths listed in the catalog provided.
+
+Rule: Widget responses are returned directly to the storefront — keep them small and JSON-safe.
+  Return { ok: true } or { status: '...' } — never return raw DB rows or internal state.
 """

@@ -110,7 +110,6 @@ def run_feature_generation(request: GenerationRequest) -> None:
             plan = run_planner_agent(
                 prompt=request.prompt,
                 intent=intent,
-                platform_api_catalog=request.platformApiCatalog,
                 app_archetype=request.appArchetype,
                 schema_fragments=schema_fragments,
                 validation_errors=plan_errors if plan_attempt > 1 else None,
@@ -166,7 +165,9 @@ def run_feature_generation(request: GenerationRequest) -> None:
         _emit(request, "codegen", "running", "Generating feature code…")
         t0 = _now_ms()
 
-        catalog_dicts = [e.model_dump() for e in request.platformApiCatalog]
+        # widgetApiCatalog is decided by the planner based on what this specific
+        # feature needs — not hardcoded by the platform.
+        catalog_dicts = (plan.get("implementationSpec") or {}).get("widgetApiCatalog") or []
         archetype = intent.get("appArchetype") or request.appArchetype
         is_storefront = archetype == "storefront_ui"
 
