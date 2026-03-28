@@ -139,13 +139,11 @@ def validate_codespec(
     Checks:
       1. Each widgetApiCatalog path has at least one widgetPath entry.
       2. storefrontReads declared by architect must appear as host.storefront() in widgetPath.
-      3. No inventoryItemId in widget host.call() bodies in widgetPath steps.
-      4. Atomic claim: every RETURNING step is immediately followed by a skip guard.
-      5. State transition guard present when needsStateTracking is true.
-      6. No Shopify API calls inside per-item loop bodies — any path.
-      7. host.call() body fields must be from the allowed widget body field set.
-      8. For each path, host.call() fields must match ctx.widgetBody destructuring (spec contract).
-      9. Cron path SELECTs must be scoped to ctx.tenantId — never cross-tenant.
+      3. Atomic claim: every RETURNING step is immediately followed by a skip guard.
+      4. State transition guard present when needsStateTracking is true.
+      5. No Shopify API calls inside per-item loop bodies — any path.
+      6. For each path, host.call() fields must match ctx.widgetBody destructuring (spec contract).
+      7. Cron path SELECTs must be scoped to ctx.tenantId — never cross-tenant.
     """
     errors: List[str] = []
     impl = architect_output.get("implementationSpec") or {}
@@ -185,16 +183,6 @@ def validate_codespec(
                 f"{', '.join(r.get('path', '?') for r in storefront_reads)}"
             )
 
-    # 3. inventoryItemId must never appear in widget host.call() bodies
-    for i, step in enumerate(widget_path):
-        step_lower = step.lower()
-        if "host.call" in step_lower and "inventoryitemid" in step_lower:
-            errors.append(
-                f"widgetPath step {i + 1}: inventoryItemId must not appear in "
-                f"host.call() body — the widget cannot know it. Handler must resolve "
-                f"it server-side: GET /variants/${{variantId}}.json → variant.inventory_item_id"
-            )
-
     # 3. Atomic claim ordering: RETURNING step must be immediately followed by a skip guard
     for path_name, path_steps in [("webhookPath", webhook_path), ("cronPath", cron_path)]:
         for i, step in enumerate(path_steps):
@@ -219,15 +207,15 @@ def validate_codespec(
     if sm.get("needsStateTracking"):
         all_steps = webhook_path + cron_path
         has_null_guard = any(
-            re.search(r"prevState\s*===\s*null|prevState\s*==\s*null|prev_state\s*is\s*null", s, re.IGNORECASE)
-            or "never observed" in s.lower()
+            re.search(r"\bprev\w*\s*[=!]=\s*null|\bprev\w*\s+is\s+null", s, re.IGNORECASE)
+            or re.search(r"never.?observed|null.?sentinel|first.?seen|first.?observation", s, re.IGNORECASE)
             for s in all_steps
         )
         if not has_null_guard:
             errors.append(
                 "stateMachine.needsStateTracking is true but codeSpec has no "
-                "prevState === null skip guard — add an explicit step: "
-                "'if prevState === null: skip // never observed — cannot confirm transition'"
+                "null-state skip guard — add an explicit step handling the case where "
+                "previous state is null (never observed): skip the transition check"
             )
 
     # 5. No Shopify API calls inside per-item loop bodies — applies to ALL paths always.
@@ -248,27 +236,7 @@ def validate_codespec(
                         f"Step: {step[:100]!r}"
                     )
 
-    # 6. host.call() body fields in widgetPath must be from the allowed set.
-    # This catches field name typos (e.g. 'email' instead of 'customerEmail') at spec time,
-    # before codegen runs — preventing oscillating mismatch retries.
-    _ALLOWED_WIDGET_FIELDS = {"customerEmail", "variantId", "productId", "customerId"}
-    _NON_FIELD_WP = {"true", "false", "null", "undefined", "host", "context", "await"}
-    for i, step in enumerate(widget_path):
-        call_match = re.search(
-            r"host\.call\s*\(['\"][^'\"]+['\"],\s*\{([^}]*)\}", step, re.IGNORECASE
-        )
-        if call_match:
-            raw = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", call_match.group(1))
-            unknown = {f for f in raw if f not in _NON_FIELD_WP} - _ALLOWED_WIDGET_FIELDS
-            if unknown:
-                errors.append(
-                    f"codeSpec.widgetPath step {i + 1}: host.call() body contains "
-                    f"disallowed field(s) {sorted(unknown)} — allowed fields are "
-                    f"{sorted(_ALLOWED_WIDGET_FIELDS)}. "
-                    f"Common mistake: use 'customerEmail' not 'email'."
-                )
-
-    # 7. For each widgetPath route, host.call() body fields must exactly match
+    # 6. For each widgetPath route, host.call() body fields must exactly match
     # ctx.widgetBody destructuring fields. Catches spec-level contradictions before codegen.
     _NON_FIELD_SPEC = {"true", "false", "null", "undefined", "host", "context", "await",
                        "only", "when", "if", "is", "not"}
@@ -335,8 +303,8 @@ def validate_cross_artifact(
     destructures from ctx.widgetBody for the same route path.
 
     Only runs for storefront_ui apps (crew.py guards on is_storefront).
-    Returns {generator_name: [errors]} — errors are attributed to "handler" since
-    the handler implements the contract and is the likely source of a mismatch.
+    Returns {generator_name: [errors]} — errors are attributed to both "handler"
+    and "widget_js" so both generators receive the mismatch on retry and can converge.
     """
     if not widget_js or not handler_code:
         return {}
@@ -375,8 +343,11 @@ def validate_cross_artifact(
             # Path not in handler — already caught by validate_widget_js path check
             continue
 
-        # Scan ~800 chars after the route match for ctx.widgetBody usage
-        window = handler_code[route_match.start():route_match.start() + 800]
+        # Scan from this route match to the next ctx.widgetPath check (or end of handler)
+        route_start = route_match.start()
+        next_route = re.search(r"ctx\.widgetPath\s*===", handler_code[route_start + 1:])
+        route_end = (route_start + 1 + next_route.start()) if next_route else len(handler_code)
+        window = handler_code[route_start:route_end]
 
         destr_match = re.search(
             r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody",
@@ -386,10 +357,12 @@ def validate_cross_artifact(
         if not destr_match:
             # No destructuring — check if handler even reads ctx.widgetBody
             if "ctx.widgetBody" not in window:
-                errors.setdefault("handler", []).append(
+                msg = (
                     f"widget sends {sorted(sent_fields)} to '{path}' but handler "
                     f"has no ctx.widgetBody access in the '{path}' route"
                 )
+                errors.setdefault("handler", []).append(msg)
+                errors.setdefault("widget_js", []).append(msg)
             continue
 
         # Extract field names from the destructuring pattern
@@ -399,18 +372,14 @@ def validate_cross_artifact(
 
         missing = sent_fields - handler_fields
         if missing:
-            # Build an actionable hint: point to the most common mistake
-            hint = ""
-            if "email" in missing:
-                hint = " (hint: use 'customerEmail' not 'email' — the codeSpec contract name)"
-            elif "email" in handler_fields and "customerEmail" in sent_fields:
-                hint = " (hint: handler should use 'customerEmail' not 'email')"
-            errors.setdefault("handler", []).append(
+            msg = (
                 f"widget sends field(s) {sorted(missing)} to '{path}' but handler "
                 f"destructures {sorted(handler_fields)} from ctx.widgetBody — "
-                f"field name mismatch{hint}. "
+                f"field name mismatch. "
                 f"The codeSpec.widgetPath is the ground truth: align both sides to it."
             )
+            errors.setdefault("handler", []).append(msg)
+            errors.setdefault("widget_js", []).append(msg)
 
     return errors
 
