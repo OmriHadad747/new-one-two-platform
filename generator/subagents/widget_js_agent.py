@@ -75,9 +75,7 @@ class WidgetJsGenerator(Generator):
     def user_prompt(self, ctx: CodegenContext) -> str:
         retry_block = self.format_retry_block(ctx.previous_errors)
         ux_block = _format_ux_guidance(ctx.plan)
-        catalog_desc = "\n".join(
-            f"  {e['method']} {e['path']}" for e in ctx.platform_api_catalog
-        )
+        catalog_desc = _format_catalog(ctx.platform_api_catalog)
         widget_spec_block = _format_widget_spec(ctx.plan)
 
         return (
@@ -109,11 +107,23 @@ class WidgetJsGenerator(Generator):
 # ── Private prompt-building helpers ───────────────────────────────────────────
 
 
+def _format_catalog(catalog: List[Dict[str, Any]]) -> str:
+    """Format the API catalog with response shapes so the widget uses exact field names."""
+    if not catalog:
+        return "  (none)"
+    lines = []
+    for e in catalog:
+        shape = e.get("responseShape")
+        shape_str = f" → {shape}" if shape else ""
+        lines.append(f"  {e['method']} {e['path']}{shape_str}")
+    return "\n".join(lines)
+
+
 def _format_widget_spec(plan: Dict[str, Any]) -> str:
     """
     Render codeSpec.widgetPath steps as the authoritative host.call() contract.
-    The planner writes the exact field names the widget must send — the handler
-    is generated from the same steps, so both sides agree on field names.
+    The planner writes the exact field names the widget must send AND the exact
+    response shape the handler returns — both sides are generated from these steps.
     """
     impl = plan.get("implementationSpec") or {}
     steps: List[str] = (impl.get("codeSpec") or {}).get("widgetPath") or []
@@ -121,7 +131,7 @@ def _format_widget_spec(plan: Dict[str, Any]) -> str:
         return ""
     numbered = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(steps))
     return (
-        f"\nWidget API contract (implement host.call() bodies exactly as specified):\n"
+        f"\nWidget API contract (implement host.call() bodies and result checks exactly as specified):\n"
         f"{numbered}\n"
     )
 

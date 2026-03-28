@@ -272,5 +272,7 @@ Rule: Widget paths must match the platformApiCatalog exactly.
   Do not invent paths — only handle paths listed in the catalog provided.
 
 Rule: Widget responses are returned directly to the storefront — keep them small and JSON-safe.
-  Return { ok: true } or { status: '...' } — never return raw DB rows or internal state.
+  CRITICAL: Return EXACTLY the responseShape from the widget API catalog — never rename fields.
+  The widget generator sees the same catalog and checks the exact field names listed there.
+  Never return raw DB rows or internal state.
 """

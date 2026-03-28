@@ -47,6 +47,7 @@ class HandlerGenerator(Generator):
         jit_sections = _build_jit_sections(ctx.plan, ctx.platform_api_catalog)
         spec_block = _format_code_spec(ctx.plan)
         gaps_block = _format_platform_gaps(ctx.plan)
+        catalog_block = _format_widget_catalog(ctx.platform_api_catalog)
 
         return (
             f"{retry_block}"
@@ -54,6 +55,7 @@ class HandlerGenerator(Generator):
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n\n"
             f"Shopify API plan:\n{json.dumps(ctx.plan.get('shopifyPlan', {}), indent=2)}\n"
             f"{gaps_block}"
+            f"{catalog_block}"
             f"{spec_block}"
             "Generate the handler.js module. Output ONLY the JavaScript code."
         )
@@ -145,6 +147,25 @@ def _format_code_spec(plan: Dict[str, Any]) -> str:
 
     parts.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     return "\n".join(parts)
+
+
+def _format_widget_catalog(catalog: List[Dict[str, Any]]) -> str:
+    """
+    Show the widget API catalog with response shapes so the handler returns exact field names.
+    Mirrors what the widget generator sees — both sides must agree on these shapes.
+    """
+    if not catalog:
+        return ""
+    lines = []
+    for e in catalog:
+        shape = e.get("responseShape")
+        shape_str = f" → return {shape}" if shape else ""
+        lines.append(f"  {e['method']} {e['path']}{shape_str}")
+    return (
+        "\nWidget API catalog (handler MUST return the exact responseShape for each path):\n"
+        + "\n".join(lines)
+        + "\n"
+    )
 
 
 def _format_platform_gaps(plan: Dict[str, Any]) -> str:

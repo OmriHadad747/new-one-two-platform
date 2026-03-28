@@ -114,7 +114,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
                 schema_fragments=schema_fragments,
                 validation_errors=plan_errors if plan_attempt > 1 else None,
             )
-            plan_errors = validate_plan(plan)
+            plan_errors = validate_plan(plan, app_archetype=request.appArchetype)
 
             if not plan_errors:
                 break

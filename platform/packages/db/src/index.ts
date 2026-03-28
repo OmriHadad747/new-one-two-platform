@@ -691,6 +691,30 @@ export async function resolveWidgetJs(
   return { widgetJs: row.widgetJs, functionUrl: row.functionUrl };
 }
 
+/**
+ * Returns the active deployed function URL for a shop/app pair.
+ * Used by the widget proxy route to forward storefront calls to the container.
+ * Returns null if the app is not found, inactive, or not yet deployed.
+ */
+export async function resolveAppFunctionUrl(
+  shopDomain: string,
+  appId: string
+): Promise<string | null> {
+  const rows = await sql<Array<{ functionUrl: string | null }>>`
+    SELECT df.function_url AS "functionUrl"
+    FROM apps a
+    JOIN tenants t ON t.id = a.tenant_id
+    LEFT JOIN deployed_functions df
+      ON df.app_id = a.id AND df.is_active = TRUE
+    WHERE a.shop_domain = ${shopDomain}
+      AND a.id = ${appId}
+      AND a.status = 'active'
+      AND t.status = 'active'
+    LIMIT 1
+  `;
+  return rows[0]?.functionUrl ?? null;
+}
+
 // ─── Tenant / App Management Queries ─────────────────────────────────────────
 
 export async function createTenant(params: {

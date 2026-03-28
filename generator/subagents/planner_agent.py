@@ -117,6 +117,10 @@ codeSpec: THE MOST IMPORTANT SECTION.
       or from user input (e.g. customerEmail from a form). Never include IDs the widget
       cannot know (e.g. inventoryItemId) — the handler resolves those server-side:
         "resolve inventoryItemId: GET /variants/${variantId}.json → variant.inventory_item_id"
+    - ALWAYS end each path's steps with a response shape line, e.g.:
+        "path /signup: handler returns { ok: true } on success; widget checks result.ok"
+        "path /status: handler returns { inStock: bool, isSignedUp: bool }; widget reads result.inStock"
+      The response shape MUST match widgetApiCatalog[path].responseShape exactly.
   functions:   shared helper functions
 
 migrationGuidance: 1-2 sentences on schema decisions — column nullability, sentinel meaning, indexes.
@@ -140,6 +144,9 @@ widgetApiCatalog: null for backend_only apps.
   - method "POST" = mutation (writes to DB), "GET" = read-only query
   - The runtime always sends HTTP POST regardless of method — method is semantic intent only
   - Only include paths the widget will actually call in the generated code
+  - responseShape: the EXACT JSON object the handler returns on success. Both the handler
+    and widget generators receive this and must use these exact field names — no aliases,
+    no renames. Error responses always use { error: "short_slug" } — do not list errors here.
   Widget body contract — when writing codeSpec for widget paths, use these exact field names:
   - customerEmail (the user's email — the widget sends this, NOT "email")
   - variantId, productId, customerId (camelCase from host.context — always available)
@@ -192,7 +199,7 @@ OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanatio
     "migrationGuidance": "...",
     "widgetGuidance": null,
     "widgetApiCatalog": null | [
-      { "method": "POST" | "GET", "path": "/slug" }
+      { "method": "POST" | "GET", "path": "/slug", "responseShape": { "fieldName": "exampleValue" } }
     ]
   }
 }"""

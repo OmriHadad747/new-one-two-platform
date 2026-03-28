@@ -43,8 +43,7 @@ async function mountBlock(block) {
 
   try {
     const widgetModule = await fetchWidgetModule(platformUrl, shop, appId);
-    const backendUrl = widgetModule.__BACKEND_URL__ ?? null;
-    const host = buildHost({ appId, shop, backendUrl, block });
+    const host = buildHost({ appId, shop, platformUrl, block });
     await widgetModule.mount(container, host);
   } catch (err) {
     console.error(`[widget-runtime] Failed to mount widget "${appId}":`, err);
@@ -82,7 +81,7 @@ async function fetchWidgetModule(platformUrl, shop, appId) {
  * Builds the host API object passed to widget.mount(container, host).
  * This is the complete and only interface between the widget and the outside world.
  */
-function buildHost({ appId, shop, backendUrl, block }) {
+function buildHost({ appId, shop, platformUrl, block }) {
   return {
     // ── Page context ─────────────────────────────────────────────────────────
     context: {
@@ -93,18 +92,16 @@ function buildHost({ appId, shop, backendUrl, block }) {
     },
 
     // ── Backend calls ─────────────────────────────────────────────────────────
-    // Calls go directly to the merchant's deployed function backend.
-    // __BACKEND_URL__ is injected into the widget JS by the platform at serve time.
+    // Widget calls are proxied through the platform API, which forwards them
+    // internally to the deployed container. Containers are not browser-accessible
+    // (Docker-internal in dev, INGRESS_TRAFFIC_INTERNAL_ONLY in production).
     call: async (path, body) => {
-      if (!backendUrl) {
-        throw new Error(`[host.call] Widget backend not deployed yet — cannot call ${path}`);
-      }
-      const res = await fetch(`${backendUrl}/widget${path}`, {
+      const proxyUrl = `${platformUrl}/widgets/${encodeURIComponent(shop)}/${encodeURIComponent(appId)}/widget${path}`;
+      const res = await fetch(proxyUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Shop-Domain": shop,
-          "X-App-Id": appId,
+          "ngrok-skip-browser-warning": "1",
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
       });

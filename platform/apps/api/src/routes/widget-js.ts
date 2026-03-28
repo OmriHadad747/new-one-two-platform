@@ -1,12 +1,11 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { resolveWidgetJs } from "@new-one-two/db";
+import { resolveWidgetJs, resolveAppFunctionUrl } from "@new-one-two/db";
 import { createRequestLogger } from "@new-one-two/logger";
 
 // ─── Route Registration ────────────────────────────────────────────────────────
 
 export async function widgetJsRoutes(app: FastifyInstance) {
-  // CORS preflight — browsers send OPTIONS before the actual GET when custom headers
-  // are present (e.g. ngrok-skip-browser-warning in dev, or any future custom header).
+  // CORS preflight for widget JS fetch
   app.options("/:shop/:appId.js", async (_request, reply) => {
     return reply
       .header("Access-Control-Allow-Origin", "*")
@@ -34,9 +33,23 @@ export async function widgetJsRoutes(app: FastifyInstance) {
     },
     widgetJsHandler
   );
+
+  // CORS preflight for widget proxy calls
+  app.options("/:shop/:appId/widget/*", async (_request, reply) => {
+    return reply
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Access-Control-Allow-Methods", "POST, OPTIONS")
+      .header("Access-Control-Allow-Headers", "*")
+      .code(204)
+      .send();
+  });
+
+  app.post<{
+    Params: { shop: string; appId: string; "*": string };
+  }>("/:shop/:appId/widget/*", widgetProxyHandler);
 }
 
-// ─── Handler ───────────────────────────────────────────────────────────────────
+// ─── Widget JS Handler ─────────────────────────────────────────────────────────
 
 async function widgetJsHandler(
   request: FastifyRequest<{
@@ -54,20 +67,59 @@ async function widgetJsHandler(
     return reply.code(404).send("// Widget not found");
   }
 
-  log.debug({ shop, appId, hasBackend: !!result.functionUrl }, "Widget JS resolved");
-
-  // Prepend the backend URL so the widget runtime can call the app's deployed
-  // function directly without routing through the platform on every widget interaction.
-  // The runtime reads __BACKEND_URL__ from the module exports after dynamic import.
-  const backendUrlExport = `export const __BACKEND_URL__ = ${JSON.stringify(result.functionUrl)};\n`;
-  const fullJs = backendUrlExport + result.widgetJs;
+  log.debug({ shop, appId }, "Widget JS resolved");
 
   // CORS: widget JS is fetched by the runtime from a Shopify storefront domain.
-  // We allow all origins — the widget itself is sandboxed by the host API contract.
   return reply
     .header("Content-Type", "application/javascript; charset=utf-8")
     .header("Access-Control-Allow-Origin", "*")
     .header("Cache-Control", "public, max-age=5")
     .code(200)
-    .send(fullJs);
+    .send(result.widgetJs);
+}
+
+// ─── Widget Proxy Handler ──────────────────────────────────────────────────────
+// Forwards storefront widget calls to the deployed container.
+// The container is internal-only (Docker network / Cloud Run INGRESS_TRAFFIC_INTERNAL_ONLY)
+// and cannot be reached by the browser directly — all widget traffic routes through here.
+
+async function widgetProxyHandler(
+  request: FastifyRequest<{
+    Params: { shop: string; appId: string; "*": string };
+  }>,
+  reply: FastifyReply
+) {
+  const { shop, appId } = request.params;
+  const path = request.params["*"];
+  const log = createRequestLogger({ requestId: request.id });
+
+  const functionUrl = await resolveAppFunctionUrl(shop, appId);
+
+  if (!functionUrl) {
+    log.debug({ shop, appId }, "Widget proxy: no deployed function");
+    return reply
+      .header("Access-Control-Allow-Origin", "*")
+      .code(503)
+      .send({ error: "backend_not_deployed" });
+  }
+
+  const targetUrl = `${functionUrl}/widget/${path}`;
+  log.debug({ shop, appId, path, targetUrl }, "Widget proxy forwarding");
+
+  const res = await fetch(targetUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shop-Domain": shop,
+      "X-App-Id": appId,
+    },
+    body: JSON.stringify(request.body ?? {}),
+  });
+
+  const data = await res.json();
+
+  return reply
+    .header("Access-Control-Allow-Origin", "*")
+    .code(res.status)
+    .send(data);
 }

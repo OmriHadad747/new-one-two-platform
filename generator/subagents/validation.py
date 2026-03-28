@@ -42,7 +42,7 @@ def _is_valid_cron(expr: str) -> bool:
     return len(expr.strip().split()) == 5
 
 
-def validate_plan(plan: Dict[str, Any]) -> List[str]:
+def validate_plan(plan: Dict[str, Any], app_archetype: str = "backend_only") -> List[str]:
     """
     Rule-based gate on the Planner Agent output. Called in crew.py before codegen.
     Returns a list of error strings; empty list = plan is valid.
@@ -50,7 +50,9 @@ def validate_plan(plan: Dict[str, Any]) -> List[str]:
     Checks:
       1. All webhookTopics are in the known-valid set.
       2. cronSchedule, if present, is a syntactically valid 5-field cron expression.
-      3. When needsStateTracking is true and a cronPath exists, the cronPath must
+      3. storefront_ui apps must have a non-empty widgetApiCatalog.
+      4. widgetPath steps require a non-empty widgetApiCatalog.
+      5. When needsStateTracking is true and a cronPath exists, the cronPath must
          contain an explicit atomic-claim step (RETURNING + skip-if-zero-rows).
     """
     errors: List[str] = []
@@ -73,10 +75,26 @@ def validate_plan(plan: Dict[str, Any]) -> List[str]:
             f"(e.g. '*/15 * * * *')"
         )
 
-    # 3. State machine + cron path requires an explicit atomic claim step
+    # 3. storefront_ui apps must always have a widgetApiCatalog
+    code_spec = impl.get("codeSpec") or {}
+    widget_path = code_spec.get("widgetPath") or []
+    widget_catalog = impl.get("widgetApiCatalog") or []
+    if app_archetype == "storefront_ui" and not widget_catalog:
+        errors.append(
+            "widgetApiCatalog is null/empty for a storefront_ui app — "
+            "list every path the widget calls via host.call() with its responseShape"
+        )
+
+    # 4. widgetPath steps require a non-empty widgetApiCatalog (catches archetype mismatches)
+    if widget_path and not widget_catalog:
+        errors.append(
+            "codeSpec.widgetPath has steps but widgetApiCatalog is null/empty — "
+            "every widget path must be listed in widgetApiCatalog with its responseShape"
+        )
+
+    # 4. State machine + cron path requires an explicit atomic claim step
     sm = impl.get("stateMachine") or {}
     if sm.get("needsStateTracking"):
-        code_spec = impl.get("codeSpec") or {}
         cron_path = code_spec.get("cronPath") or []
         if cron_path:
             has_claim = any(
@@ -256,8 +274,7 @@ def validate_migration(sql: str) -> List[str]:
     for stmt in create_table_stmts:
         if "tenant_id" not in stmt.lower():
             errors.append(
-                f"CREATE TABLE missing tenant_id column: "
-                f"{stmt[:80].strip()}..."
+                f"CREATE TABLE missing tenant_id column: " f"{stmt[:80].strip()}..."
             )
 
     # RLS policy required when creating tables
@@ -339,9 +356,7 @@ def validate_widget_js(
 
     # No hardcoded tenant IDs
     if re.search(r"\btenant[_-]?id\s*[:=]\s*['\"]", widget_js, re.IGNORECASE):
-        errors.append(
-            "hardcoded tenant_id detected — read from host.context instead"
-        )
+        errors.append("hardcoded tenant_id detected — read from host.context instead")
 
     # Widget must not silently discard collected user data
     has_submit = bool(
