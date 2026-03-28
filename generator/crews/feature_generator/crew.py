@@ -3,12 +3,15 @@ FeatureGenerator crew — orchestrates all agents for a single generation reques
 
 Pipeline:
   Agent 1  Intent       — parse merchant prompt into structured intent
-  Agent 2  Planner      — merged Schema + Strategy: produces shopifyPlan + implementationSpec
-           validate_plan — rule-based gate (webhook topics, cron syntax, atomic-claim check)
-           (retry Planner once on validation failure before failing the job)
-  Agent 3  CodeGen      — generators run in parallel (ThreadPoolExecutor)
-  Agent 4  Validation   — static analysis per artifact, retry loop (max 3 attempts total)
-  Agent 5  Explanation  — sequential, writes merchant-facing summary
+  Agent 2  Architect    — structural decisions: webhooks, state machine, catalog, gaps
+           validate_architect — rule-based gate (topics, cron syntax, catalog paths, sentinel)
+           (retry Architect once on validation failure before failing the job)
+  Agent 3  CodeSpec     — step-by-step algorithms written against locked architect output
+           validate_codespec — rule-based gate (claim ordering, field names, loop safety)
+           (retry CodeSpec once on validation failure before failing the job)
+  Agent 4  CodeGen      — generators run in parallel (ThreadPoolExecutor)
+  Agent 5  Validation   — static analysis per artifact + cross-artifact check, retry loop (max 3)
+  Agent 6  Explanation  — sequential, writes merchant-facing summary
   Publisher             — FeatureBundleMessage to generation.completed
 
 Adding a new generator requires only creating a new Generator subclass and
@@ -43,14 +46,15 @@ from crews.feature_generator.agents import (
     run_intent_agent,
 )
 from subagents.base import CodegenContext, Generator
-from subagents.planner_agent import run_planner_agent
+from subagents.architect_agent import run_architect_agent
+from subagents.codespec_agent import run_codespec_agent
 from subagents.registry import GENERATORS
-from subagents.validation import validate_plan
+from subagents.validation import validate_architect, validate_codespec, validate_cross_artifact
 
 log = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3        # total codegen attempts (1 initial + 2 retries)
-_MAX_PLAN_ATTEMPTS = 2  # total planner attempts (1 initial + 1 retry on plan validation failure)
+_MAX_PLAN_ATTEMPTS = 2  # attempts for both Architect and CodeSpec (1 initial + 1 retry each)
 
 
 def _now_ms() -> int:
@@ -98,75 +102,145 @@ def run_feature_generation(request: GenerationRequest) -> None:
         _emit(request, "intent", "completed", "Feature spec ready")
         log.info("job=%s intent=%s", request.jobId, intent)
 
-        # ── Agent 2: Planner (+ validate_plan gate) ──────────────────────────
-        _emit(request, "planner", "running", "Planning Shopify API surface and implementation…")
+        # ── Agent 2: Architect (+ validate_architect gate) ───────────────────
+        _emit(request, "architect", "running", "Planning Shopify API surface…")
         t0 = _now_ms()
 
         schema_fragments = load_schema_fragments(intent.get("resources", []))
-        plan: Optional[Dict] = None
-        plan_errors: List[str] = []
+        architect_output: Optional[Dict] = None
+        arch_errors: List[str] = []
 
-        for plan_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
-            plan = run_planner_agent(
+        for arch_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
+            architect_output = run_architect_agent(
                 prompt=request.prompt,
                 intent=intent,
                 app_archetype=request.appArchetype,
                 schema_fragments=schema_fragments,
-                validation_errors=plan_errors if plan_attempt > 1 else None,
+                validation_errors=arch_errors if arch_attempt > 1 else None,
             )
-            plan_errors = validate_plan(plan, app_archetype=request.appArchetype)
+            arch_errors = validate_architect(architect_output, app_archetype=request.appArchetype)
 
-            if not plan_errors:
+            if not arch_errors:
                 break
 
             log.warning(
-                "job=%s plan validation attempt=%d errors=%s",
+                "job=%s architect validation attempt=%d errors=%s",
                 request.jobId,
-                plan_attempt,
-                plan_errors,
+                arch_attempt,
+                arch_errors,
             )
 
-            if plan_attempt == _MAX_PLAN_ATTEMPTS:
+            if arch_attempt == _MAX_PLAN_ATTEMPTS:
                 _emit(
                     request,
-                    "planner",
+                    "architect",
                     "failed",
-                    f"Plan validation failed: {plan_errors[0]}",
+                    f"Architect validation failed: {arch_errors[0]}",
                 )
                 publish_completed(
                     FeatureBundleMessage(
                         jobId=request.jobId,
                         status="failed",
-                        error=f"Planner produced invalid plan after {_MAX_PLAN_ATTEMPTS} attempts: {plan_errors}",
+                        error=f"Architect produced invalid plan after {_MAX_PLAN_ATTEMPTS} attempts: {arch_errors}",
                     )
                 )
                 return
 
             _emit(
                 request,
-                "planner",
+                "architect",
                 "running",
-                f"Fixing plan (attempt {plan_attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
+                f"Fixing architect plan (attempt {arch_attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
             )
 
         agent_trace.append(
-            AgentTraceEntry(agent="planner", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
+            AgentTraceEntry(agent="architect", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
         )
-        _emit(request, "planner", "completed", "Plan ready")
+        _emit(request, "architect", "completed", "Structural plan ready")
         log.info(
-            "job=%s plan topics=%s cron=%s has_code_spec=%s",
+            "job=%s architect topics=%s cron=%s has_catalog=%s",
             request.jobId,
-            plan.get("shopifyPlan", {}).get("webhookTopics"),
-            plan.get("shopifyPlan", {}).get("cronSchedule"),
-            bool((plan.get("implementationSpec") or {}).get("codeSpec")),
+            (architect_output.get("shopifyPlan") or {}).get("webhookTopics"),
+            (architect_output.get("shopifyPlan") or {}).get("cronSchedule"),
+            bool((architect_output.get("implementationSpec") or {}).get("widgetApiCatalog")),
         )
 
-        # ── Agent 3: Parallel CodeGen + Agent 4: Validation (retry loop) ────
+        # ── Agent 3: CodeSpec (+ validate_codespec gate) ─────────────────────
+        _emit(request, "codespec", "running", "Writing implementation algorithms…")
+        t0 = _now_ms()
+
+        codespec_output: Optional[Dict] = None
+        cs_errors: List[str] = []
+
+        for cs_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
+            codespec_output = run_codespec_agent(
+                prompt=request.prompt,
+                intent=intent,
+                architect_output=architect_output,
+                validation_errors=cs_errors if cs_attempt > 1 else None,
+            )
+            cs_errors = validate_codespec(codespec_output, architect_output)
+
+            if not cs_errors:
+                break
+
+            log.warning(
+                "job=%s codespec validation attempt=%d errors=%s",
+                request.jobId,
+                cs_attempt,
+                cs_errors,
+            )
+
+            if cs_attempt == _MAX_PLAN_ATTEMPTS:
+                _emit(
+                    request,
+                    "codespec",
+                    "failed",
+                    f"CodeSpec validation failed: {cs_errors[0]}",
+                )
+                publish_completed(
+                    FeatureBundleMessage(
+                        jobId=request.jobId,
+                        status="failed",
+                        error=f"CodeSpec produced invalid spec after {_MAX_PLAN_ATTEMPTS} attempts: {cs_errors}",
+                    )
+                )
+                return
+
+            _emit(
+                request,
+                "codespec",
+                "running",
+                f"Fixing code spec (attempt {cs_attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
+            )
+
+        # Merge into the complete plan dict — identical shape to what generators consume
+        plan: Dict = {
+            **architect_output,
+            "implementationSpec": {
+                **(architect_output.get("implementationSpec") or {}),
+                "codeSpec": codespec_output.get("codeSpec") or {},
+            },
+        }
+
+        agent_trace.append(
+            AgentTraceEntry(agent="codespec", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
+        )
+        _emit(request, "codespec", "completed", "Implementation spec ready")
+        log.info(
+            "job=%s codespec webhook_steps=%d cron_steps=%d widget_steps=%d",
+            request.jobId,
+            len((plan.get("implementationSpec") or {}).get("codeSpec", {}).get("webhookPath") or []),
+            len((plan.get("implementationSpec") or {}).get("codeSpec", {}).get("cronPath") or []),
+            len((plan.get("implementationSpec") or {}).get("codeSpec", {}).get("widgetPath") or []),
+        )
+
+        # ── Agent 4: Parallel CodeGen + Agent 5: Validation (retry loop) ────
         _emit(request, "codegen", "running", "Generating feature code…")
         t0 = _now_ms()
 
-        # widgetApiCatalog is decided by the planner based on what this specific
-        # feature needs — not hardcoded by the platform.
+        # widgetApiCatalog is decided by the Architect agent based on what this
+        # specific feature needs — not hardcoded by the platform.
         catalog_dicts = (plan.get("implementationSpec") or {}).get("widgetApiCatalog") or []
         archetype = intent.get("appArchetype") or request.appArchetype
         is_storefront = archetype == "storefront_ui"
@@ -242,7 +316,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
 
         _emit(request, "validation", "completed", "All artifacts validated")
 
-        # ── Agent 5: Explanation ─────────────────────────────────────────────
+        # ── Agent 6: Explanation ─────────────────────────────────────────────
         _emit(request, "explanation", "running", "Writing feature summary…")
         t0 = _now_ms()
         explanation_raw = run_explanation_agent(
@@ -372,7 +446,7 @@ def _validate_artifacts(
     is_storefront: bool,
 ) -> Dict[str, List[str]]:
     """
-    Run each generator's validate() on its artifact.
+    Run each generator's validate() on its artifact, then run cross-artifact checks.
 
     Returns {generator_name: [errors]} for every generator that failed.
     An empty dict means all artifacts passed validation.
@@ -384,4 +458,20 @@ def _validate_artifacts(
         errs = gen.validate(artifacts.get(name, ""), ctx)
         if errs:
             error_map[name] = errs
+
+    # Cross-artifact field-name check: only when both widget and handler passed
+    # their individual validators (no point checking contract if either is broken)
+    if (
+        is_storefront
+        and "widget_js" not in error_map
+        and "handler" not in error_map
+    ):
+        cross_errors = validate_cross_artifact(
+            artifacts.get("widget_js", ""),
+            artifacts.get("handler", ""),
+        )
+        for gen_name, errs in cross_errors.items():
+            if errs:
+                error_map.setdefault(gen_name, []).extend(errs)
+
     return error_map

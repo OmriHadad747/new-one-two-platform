@@ -4,46 +4,6 @@ Two phases: first verify the pipeline works with no LLM or Shopify involved, the
 
 ---
 
-## Phase A — Smoke Test (no credentials required)
-
-This tests the full Pub/Sub lifecycle — session creation, message routing, DB persistence — by injecting a pre-built mock bundle. No Anthropic key, no Shopify account.
-
-### Prerequisites
-
-- Docker Desktop running
-- `python3` on PATH (ships with macOS)
-
-### Run it
-
-```bash
-./scripts/smoke-test.sh
-```
-
-Add `--clean` to tear everything down when done:
-
-```bash
-./scripts/smoke-test.sh --clean
-```
-
-### What it checks
-
-| # | Check |
-|---|-------|
-| 1 | postgres, redis, fake-gcs, pubsub-emulator start and are healthy |
-| 2 | pubsub-init creates all 3 topics + 3 subscriptions |
-| 3 | Test tenant + app seeded in DB (idempotent) |
-| 4 | Node.js `api` service starts and `/health` returns `service: api` |
-| 5 | `POST /generation` returns `{jobId, sessionId}` with HTTP 202 |
-| 6 | The published `GenerationRequest` lands in `generator-sub` |
-| 7 | Injected mock `FeatureBundleMessage` is received by `api-completed-sub` |
-| 8 | Bundle is persisted to DB within ~5s of injection |
-| 9 | `GET /generation/:jobId/result` returns the full bundle |
-| 10 | Unknown jobId returns 404 |
-
-If any check fails the script exits 1. Failing checks print `docker compose logs` commands to debug.
-
----
-
 ## Phase B — Real AI Generation (Anthropic key, no Shopify yet)
 
 This runs the full five-agent Python pipeline against real Claude models.

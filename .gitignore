@@ -38,3 +38,6 @@ local/
 # Logs
 .dev-logs/
 
+results.json
+
+shopify.app.toml

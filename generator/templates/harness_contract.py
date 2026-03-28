@@ -29,9 +29,13 @@ ctx.db  — postgres.js tagged template (RLS-scoped to this tenant)
   Example: const rows = await ctx.db`SELECT * FROM my_table WHERE id = ${someId}`
   Example: await ctx.db`INSERT INTO my_table (col, tenant_id) VALUES (${value}, ${ctx.tenantId})`
   ID passing: postgres.js handles JS numbers (from Shopify payloads) and strings (from prior DB
-  reads of BIGINT columns) correctly. NEVER wrap Shopify IDs in String() — pass them directly:
-    ✅ WHERE variant_id = ${variant_id}        // variant_id is a number or already a string
+  reads of BIGINT columns) correctly. NEVER wrap IDs in String() when passing to ctx.db — pass directly:
+    ✅ WHERE variant_id = ${variant_id}        // number or string — postgres.js handles both
     ❌ WHERE variant_id = ${String(variant_id)} // unnecessary cast, adds confusion
+  Map key normalization: when using IDs as JavaScript Map/object keys, always normalize with
+  String() on both sides — Shopify API returns numeric IDs, postgres.js returns strings for BIGINT:
+    ✅ dataMap.set(String(item.id), item)       // Shopify → Map
+    ✅ dataMap.get(String(row.entity_id))       // DB row → Map lookup
 
 ctx.tenantId — UUID string of the current tenant
   MUST be included as the tenant_id column value in every INSERT statement.
@@ -110,6 +114,15 @@ ABSOLUTE RULES (violations will cause deployment failure):
 12. For Shopify PUT endpoints (update), use ctx.shopify.post() — not a separate PUT method
 13. Every INSERT into a tenant table must include tenant_id: use ctx.tenantId
 14. Never silently ignore errors from ctx.db — propagate or return early on failure
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SHOPIFY API LOOP RULE — applies to every handler path:
+
+NEVER call ctx.shopify inside a per-item loop. Pre-fetch all Shopify data into a
+lookup map before any loop. Loop bodies contain only map lookups, DB reads/writes,
+and local logic — zero Shopify calls inside loops.
+  ✅ Pre-fetch → build map → loop reads map
+  ❌ for (const item of items) { await ctx.shopify.get(...) }
 """
 
 # ── Conditional sections ───────────────────────────────────────────────────────
@@ -134,6 +147,35 @@ NEVER emit first and mark after; a crash between those two steps causes double-e
      for (const row of claimed) { /* emit/log side effect using row data */ }
   ❌ fetch rows → emit side effects → mark as done   (crash window between emit and mark)
   ❌ UPDATE without RETURNING + length check          (allows double-execution on replay)
+
+Rule: When the webhook handler must enrich data for multiple items found in the DB
+(e.g. fetching product details to compose notification emails after a state transition),
+apply the same pre-fetch discipline as the cron path — batch ALL Shopify calls before
+any loop, never per-item:
+  ✅ // 1. Query DB for pending items — include all IDs needed for batch lookup
+     const pending = await ctx.db`SELECT DISTINCT variant_id, product_id FROM ... WHERE ...`
+     // 2. Collect distinct Shopify entity IDs
+     const productIds = [...new Set(pending.map(r => String(r.product_id)))]
+     // 3. Batch-fetch Shopify data (max 250 per call for products)
+     const infoMap = {}
+     for (let i = 0; i < productIds.length; i += 250) {
+       const chunk = productIds.slice(i, i + 250)
+       const { products } = await ctx.shopify.get(
+         `/products.json?ids=${chunk.join(',')}&fields=id,title,handle,variants`
+       )
+       for (const p of products)
+         for (const v of p.variants)
+           infoMap[String(v.id)] = { variantTitle: v.title, productTitle: p.title, productHandle: p.handle }
+     }
+     // 4. Process loop — zero Shopify calls
+     for (const row of pending) {
+       const info = infoMap[String(row.variant_id)]
+       if (!info) continue
+       // claim rows and send notifications using info
+     }
+  ❌ for (const id of ids) { await ctx.shopify.get(`/variants/${id}.json`) }  // N sequential calls
+  NOTE: All foreign-key IDs needed for batch lookup (e.g. product_id) MUST be stored
+  in the DB table — SELECT them alongside the primary entity ID.
 """
 
 HARNESS_SECTION_STATE_MACHINE = """
@@ -197,13 +239,15 @@ Variant/product batch pattern — Shopify has NO batch variant-by-IDs endpoint:
        )
        for (const p of products) {
          for (const v of p.variants) {
-           variantMap.set(v.id, { variant: v, product: { id: p.id, title: p.title } })
+           variantMap.set(String(v.id), { variant: v, product: { id: p.id, title: p.title } })
          }
        }
      }
      // Loop body uses variantMap — zero Shopify calls
+     // KEY TYPE NOTE: Shopify API returns variant_id as a number; postgres.js returns BIGINT
+     // columns as strings. Always use String() on both sides of Map.set/get to avoid misses.
      for (const row of rows) {
-       const entry = variantMap.get(row.variant_id)
+       const entry = variantMap.get(String(row.variant_id))
        if (!entry) continue
        // use entry.variant and entry.product
      }
@@ -227,6 +271,10 @@ inventory_quantity from /products.json is unreliable for multi-location stores:
        }
      }
      // Loop body checks inventoryMap — zero inventory API calls inside the loop
+     // KEY TYPE NOTE: Shopify API returns inventory_item_id as a number; postgres.js returns
+     // BIGINT columns as strings. Use String() on both sides to ensure Map.get() matches:
+     //   inventoryMap.set(String(level.inventory_item_id), ...)
+     //   inventoryMap.get(String(row.inventory_item_id))
      for (const row of rows) {
        const storeWideTotal = inventoryMap.get(row.inventory_item_id) || 0
        if (storeWideTotal <= 0) continue
@@ -275,4 +323,23 @@ Rule: Widget responses are returned directly to the storefront — keep them sma
   CRITICAL: Return EXACTLY the responseShape from the widget API catalog — never rename fields.
   The widget generator sees the same catalog and checks the exact field names listed there.
   Never return raw DB rows or internal state.
+"""
+
+HARNESS_SECTION_WIDGET_STOREFRONT = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WIDGET STOREFRONT READS — widget fetches Shopify public data directly:
+
+The widget uses host.storefront(relativePath) to read public Shopify storefront data
+without involving the backend handler. The handler is NOT called for these reads.
+
+  host.storefront(relativePath) → Promise<any>
+  Fetches public Shopify storefront endpoints (same-origin, no auth required).
+  Common paths:
+    '/products/${handle}.js'           → full product JSON including variants[].available
+    '/collections/${handle}.js'        → collection with products
+    '/cart.js'                         → current cart state
+
+When ctx.trigger === 'widget', the handler only handles host.call() paths from the
+widgetApiCatalog. It does NOT handle host.storefront() requests — those go directly
+to Shopify. Do not add handler code to proxy storefront data.
 """

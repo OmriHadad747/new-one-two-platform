@@ -2,11 +2,11 @@
 Agent definitions for the FeatureGenerator crew.
 
 Agent 1 — Intent Agent         (run_intent_agent)
-Agent 5 — Explanation Agent    (run_explanation_agent)
+Agent 6 — Explanation Agent    (run_explanation_agent)
 
-The former Schema Agent (Agent 2) and Strategy Agent (Agent 3) have been merged
-into the Planner Agent (subagents/planner_agent.py). The Planner produces a single
-unified plan with shopifyPlan + implementationSpec (including codeSpec).
+Agents 2–3 (Architect + CodeSpec) live in subagents/architect_agent.py and
+subagents/codespec_agent.py respectively. Agents 4–5 (CodeGen + Validation)
+are orchestrated directly by crew.py via the generator registry.
 """
 
 from __future__ import annotations

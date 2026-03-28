@@ -29,6 +29,7 @@ from templates.harness_contract import (
     HARNESS_SECTION_STATE_MACHINE,
     HARNESS_SECTION_WEBHOOK,
     HARNESS_SECTION_WIDGET,
+    HARNESS_SECTION_WIDGET_STOREFRONT,
 )
 
 
@@ -91,11 +92,16 @@ def _build_jit_sections(plan: Dict[str, Any], platform_api_catalog: List[Dict[st
     if sm.get("needsStateTracking"):
         sections.append(HARNESS_SECTION_STATE_MACHINE)
 
-    if batching.get("required"):
+    if batching.get("required") or shopify.get("webhookTopics"):
         sections.append(HARNESS_SECTION_CRON_BATCHING)
 
     if platform_api_catalog:
         sections.append(HARNESS_SECTION_WIDGET)
+
+    storefront_reads = (plan.get("implementationSpec") or {}).get("storefrontReads") or []
+    widget_guidance = (plan.get("implementationSpec") or {}).get("widgetGuidance") or ""
+    if storefront_reads or "host.storefront" in widget_guidance:
+        sections.append(HARNESS_SECTION_WIDGET_STOREFRONT)
 
     return "".join(sections)
 

@@ -33,26 +33,38 @@ WHERE:
   host      — the ONLY interface to the outside world. Its full shape:
 
     host.context = {
-      shop: string,          // "example.myshopify.com"
-      productId: string|null,
-      variantId: string|null,
-      customerId: string|null,
+      shop: string,           // "example.myshopify.com"
+      productId: string|null, // Shopify product ID (numeric string)
+      variantId: string|null, // Shopify variant ID (numeric string)
+      customerId: string|null,// Shopify customer ID, null for guests
+      productHandle: string|null, // Shopify product handle (slug), null outside product pages
     }
 
-    host.call(path, body?)   // POST to your platform backend. Returns Promise<any>.
-                             // path must be one of the paths in platformApiCatalog.
-                             // body is optional for data-fetch calls.
+    host.call(path, body?)        // POST to your platform backend. Returns Promise<any>.
+                                  // Use for: DB reads/writes, Admin-API-only data, mutations.
+                                  // path must be one of the paths in platformApiCatalog.
 
-    host.getFormData(form)   // Reads named inputs from a <form> element → plain object.
+    host.storefront(relativePath) // Fetch Shopify's public storefront endpoints. Returns Promise<any>.
+                                  // Use for: product details, variant availability, pricing, cart.
+                                  // relativePath must be a relative path (no hostname).
+                                  // Example: host.storefront('/products/' + host.context.productHandle + '.js')
+                                  //          → returns product JSON with variants[].available
+
+    host.getFormData(form)        // Reads named inputs from a <form> element → plain object.
 
 RULES:
 1. Export ONLY a named `mount` function: export function mount(container, host) { ... }
 2. Render only inside `container` — never access the DOM outside it
-3. Use ONLY host.call() for backend requests — never fetch(), XMLHttpRequest, or any URL
+3. For backend requests use host.call(). For Shopify public storefront data use host.storefront().
+   NEVER use raw fetch(), XMLHttpRequest, or hardcoded URLs.
+   Decision rule: if the data is publicly available from Shopify's storefront (product details,
+   variant availability, pricing, cart) → host.storefront(). If it requires your backend
+   (DB state, Admin-API-only data, writes) → host.call().
 4. Never access window.*, document.* (except container.querySelector patterns), or globals
 5. Never use eval(), Function(), setTimeout, setInterval
 6. Never hardcode tenant IDs, shop domains, or product IDs — read from host.context
-7. All backend paths must come from the platformApiCatalog provided — never invent paths
+7. All host.call() paths must come from the platformApiCatalog — never invent paths.
+   host.storefront() paths are Shopify's public paths, not from the catalog.
 8. Output ONLY the raw JavaScript — no markdown fences, no explanation, no comments outside the code
 9. If platformApiCatalog is empty and the feature requires persistent data collection (e.g. an
    email signup form), do NOT silently collect data that will be discarded — render a clear

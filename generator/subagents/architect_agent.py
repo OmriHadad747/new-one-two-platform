@@ -1,29 +1,22 @@
 """
-Planner Agent — single model call replacing the former Schema Agent + Strategy Agent.
+Architect Agent — stage 1 of the two-stage planning chain.
 
-Why merged:
-  The codeSpec (step-by-step algorithm per code path) requires simultaneous knowledge of:
-    1. Which Shopify APIs the feature uses         (formerly Schema Agent's domain)
-    2. How to implement patterns in the harness    (formerly Strategy Agent's domain)
-    3. How webhook and cron paths interact         (cross-domain — neither agent saw this)
+Produces all structural decisions: which Shopify webhooks and APIs the feature
+uses, whether a state machine is needed, platform gaps, cron batching strategy,
+widget catalog, and schema / UX guidance.
 
-  Split agents handled (1) and (2) in sequence but couldn't reason about (3). A single
-  Sonnet call sees the full picture and produces a coherent codeSpec where, for example,
-  the cron path's atomic claim explicitly guards against the webhook path having already
-  processed the same state transition.
+Does NOT produce codeSpec — that is the CodeSpec Agent's job (stage 2).
 
-Input:  prompt + intent + schema_fragments + app_archetype
-Output: plan dict — { shopifyPlan, implementationSpec }
+Why splitting helps:
+  All decisions here are bounded and enumerable: pick topics from a known list,
+  decide if a state machine is needed (binary), identify gaps against the known
+  ctx surface.  No creative algorithm writing.  The output (~2000–3000 tokens)
+  is validated by validate_architect() before any codeSpec tokens are generated,
+  so structural failures are caught cheaply and do not waste a codespec retry.
 
-  shopifyPlan:
-    webhookTopics, cronSchedule, operations
+Output: { shopifyPlan, implementationSpec }  — WITHOUT implementationSpec.codeSpec.
 
-  implementationSpec:
-    stateMachine, platformGaps, cronBatching,
-    codeSpec { webhookPath[], cronPath[], functions[] },
-    migrationGuidance, widgetGuidance, widgetApiCatalog
-
-Model: claude-sonnet-4-6 — reasoning quality here cascades directly to all generated artifacts.
+Model: claude-sonnet-4-6
 """
 from __future__ import annotations
 
@@ -33,9 +26,9 @@ from typing import Any, Dict, List, Optional
 from models.adapter import get_code_llm, invoke, extract_json
 
 
-PLANNER_SYSTEM = """You are a senior Shopify automation architect. Your output is consumed directly by code generators — be precise and concrete, not vague.
+ARCHITECT_SYSTEM = """You are a senior Shopify automation architect. Your output is consumed by a CodeSpec agent that writes step-by-step algorithms — your job is structural decisions only, not algorithms.
 
-You produce a two-section plan: the Shopify API surface (shopifyPlan) and the implementation spec (implementationSpec).
+Produce a two-section plan: the Shopify API surface (shopifyPlan) and the implementation spec (implementationSpec). Do NOT include a codeSpec key — the CodeSpec agent writes that separately against your locked decisions.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SECTION 1 — shopifyPlan
@@ -55,19 +48,19 @@ operations: Shopify API calls made by the handler, in execution order.
   and a "write new state" operation — this signals the migration agent to create the required table.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SECTION 2 — implementationSpec
+SECTION 2 — implementationSpec  (no codeSpec key)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 stateMachine: null if the feature does NOT need to detect state transitions.
   A state machine is needed when the handler must compare the current value to a prior observed value.
-  - unknownSentinel is ALWAYS "null" — never 0, false, or empty string.
+  - unknownSentinel is ALWAYS the string "null" — never the number 0, false, or empty string.
     Reason: 0 may be a real valid state (zero inventory is meaningful). null = never observed.
   - skipWhenUnknown is almost always true: cannot confirm a transition without witnessing the start.
 
 platformGaps: What this feature needs that ctx cannot deliver.
   ctx provides: ctx.shopify.get/post, ctx.db (Postgres), ctx.tenantId, ctx.payload, ctx.logger,
                 ctx.email.send({ to, subject, templateId?, data? }).
-  ctx does NOT provide: SMS, push, Slack, external HTTP, file storage.
+  ctx does NOT provide: SMS, push notifications, Slack, external HTTP, file storage.
   For each gap, specify the exact mitigation the handler should use (usually: log full delivery
   intent with ctx.logger.info so an external integration can consume it).
   Note: email is available via ctx.email.send() — do NOT list email as a platformGap.
@@ -77,51 +70,7 @@ cronBatching: Required when the cron path would call Shopify APIs inside a per-i
   Fix: fetch all Shopify data in batches BEFORE the loop. Loop body has zero Shopify calls.
   Important: Shopify has NO batch variant-by-IDs endpoint. To batch variant/product data,
   store product_id (BIGINT) in the DB and batch via /products.json?ids=... (max 250), then
-  extract variants from product.variants[]. Document this in codeSpec.functions[] with exact steps.
-
-codeSpec: THE MOST IMPORTANT SECTION.
-  Step-by-step algorithm for each code path. Code generators implement this literally.
-
-  Writing rules:
-  - Each step is ONE concrete action — not an English prose sentence
-  - Reference specific variable names, table names, API paths, and field names
-  - Atomic claims MUST be written as two explicit steps:
-      "claimed = UPDATE ... WHERE ... AND state=X RETURNING id"
-      "if claimed.length === 0: [skip/continue/return]  // [reason]"
-  - State transition guards MUST be explicit:
-      "if prevState === null: [skip] // never observed — cannot confirm transition"
-  - Notification pattern — claim BEFORE emitting (MANDATORY ordering):
-      Step N:   "claimed = UPDATE ... SET notified_at = NOW() WHERE ... AND notified_at IS NULL RETURNING id, customer_email, ..."
-      Step N+1: "if claimed.length === 0: return  // already notified — idempotency guard"
-      Step N+2: "for each row in claimed: emit/log notification"
-      Rationale: emitting first then marking risks double-notification on crash between the two steps.
-  - Helper functions get their own entry in functions[] with all steps listed
-  - When a webhook path must both update a state table AND claim/send notifications as separate
-    steps, write the state-update step first, then explicitly note between steps:
-    "// crash here leaves state updated but notifications unsent — cron path is the backstop"
-    The cron path MUST be designed to re-check and claim any notifications not yet sent,
-    independently of the current live inventory/state (i.e. query the DB for unsent rows,
-    don't re-check Shopify state). This ensures the cron recovers from a webhook crash.
-
-  webhookPath: steps for the webhook handler path ([] if triggerType is cron-only)
-  cronPath:    steps for the cron handler path ([] if triggerType is webhook-only)
-  widgetPath:  steps for each widget API path ([] for backend_only apps).
-    This is the CONTRACT between the widget and the handler — both generators read it.
-    Writing rules for widgetPath:
-    - Each entry covers one catalog path. Start the step with "path /foo:"
-    - For host.call() bodies: write the EXACT field names the widget sends, e.g.
-        "widget calls host.call('/signup', { customerEmail, variantId, productId })"
-      The handler step for the same path MUST destructure those exact same field names:
-        "const { customerEmail, variantId, productId } = ctx.widgetBody"
-    - Only include fields available in host.context (variantId, productId, customerId)
-      or from user input (e.g. customerEmail from a form). Never include IDs the widget
-      cannot know (e.g. inventoryItemId) — the handler resolves those server-side:
-        "resolve inventoryItemId: GET /variants/${variantId}.json → variant.inventory_item_id"
-    - ALWAYS end each path's steps with a response shape line, e.g.:
-        "path /signup: handler returns { ok: true } on success; widget checks result.ok"
-        "path /status: handler returns { inStock: bool, isSignedUp: bool }; widget reads result.inStock"
-      The response shape MUST match widgetApiCatalog[path].responseShape exactly.
-  functions:   shared helper functions
+  extract variants from product.variants[]. Note this in advice and migrationGuidance.
 
 migrationGuidance: 1-2 sentences on schema decisions — column nullability, sentinel meaning, indexes.
   If stateMachine is set, state column MUST be NULLABLE (null = never observed).
@@ -130,8 +79,8 @@ migrationGuidance: 1-2 sentences on schema decisions — column nullability, sen
   Only tenant_id and internal record primary keys use UUID.
   CRITICAL: Tables that store one record per customer per Shopify entity (signup, subscription,
   opt-in) MUST have a UNIQUE constraint — not just an index — on the natural deduplication key
-  (typically tenant_id, entity_id, customer_email). A plain index does not prevent duplicate rows.
-  Use CONSTRAINT uq_<table>_<key> UNIQUE (...). This enables ON CONFLICT DO NOTHING inserts.
+  (typically tenant_id, entity_id, customer_email). Use CONSTRAINT uq_<table>_<key> UNIQUE (...).
+  This enables ON CONFLICT DO NOTHING inserts.
 
 widgetGuidance: 1-2 UX sentences for the storefront widget (null if appArchetype is backend_only).
   Focus on UX implications of platformGaps (e.g. "show 'you will be notified' not 'email sent'").
@@ -139,6 +88,9 @@ widgetGuidance: 1-2 UX sentences for the storefront widget (null if appArchetype
 widgetApiCatalog: null for backend_only apps.
   For storefront_ui apps: the exact paths the widget will call via host.call().
   Decide based on what this specific feature requires — do not add speculative extras.
+  Before adding any path: ask "can the widget get this data from host.storefront() instead?"
+  If yes → add to storefrontReads, not widgetApiCatalog.
+  Only add to widgetApiCatalog if the path requires backend involvement.
   Rules:
   - path must start with "/" and be a short slug (e.g. "/signup", "/status", "/redeem")
   - method "POST" = mutation (writes to DB), "GET" = read-only query
@@ -147,11 +99,37 @@ widgetApiCatalog: null for backend_only apps.
   - responseShape: the EXACT JSON object the handler returns on success. Both the handler
     and widget generators receive this and must use these exact field names — no aliases,
     no renames. Error responses always use { error: "short_slug" } — do not list errors here.
-  Widget body contract — when writing codeSpec for widget paths, use these exact field names:
+  Widget body contract (used by the CodeSpec agent when writing widgetPath steps):
   - customerEmail (the user's email — the widget sends this, NOT "email")
   - variantId, productId, customerId (camelCase from host.context — always available)
   - inventoryItemId is NOT sent by the widget — if needed, the handler must resolve it:
     GET /variants/${variantId}.json → variant.inventory_item_id
+  User-identity in responseShape: if a path returns a user-specific boolean (e.g.
+  alreadySubscribed, isSignedUp), the handler MUST check by customerId, not email.
+  The widget cannot read the customer's email — only customerId is available from host.context.
+  Store customer_id BIGINT (Shopify customer ID) in the subscriptions table alongside
+  customer_email so both logged-in and guest flows are supported.
+
+storefrontReads: null for backend_only apps.
+  For storefront_ui apps: list Shopify public endpoints the widget reads directly via
+  host.storefront() — data the widget can fetch without a backend call.
+  Use this instead of widgetApiCatalog entries when the data is publicly available
+  from Shopify's storefront (no auth, no DB, no Admin API needed).
+  Rules:
+  - Include only if the widget actually needs this data to render or make decisions
+  - path: relative Shopify storefront path, may include ${host.context.X} placeholders
+  - dataUsed: one-line description of what field(s) the widget reads and why
+  Classification guide — use host.storefront() for:
+    ✅ product/variant availability (available boolean, inventory_quantity)
+    ✅ product details (title, price, description, images, variants)
+    ✅ collection data, cart state
+  Use host.call() (backend) for:
+    ✅ any data stored in your DB (subscriptions, points, state)
+    ✅ customer-specific state (alreadySubscribed, hasRedeemed, loyaltyPoints)
+    ✅ Admin-API-only data (order history, customer tags, fulfillments)
+    ✅ any write operation (signup, redeem, update)
+  CRITICAL: Do NOT add a widgetApiCatalog path whose sole purpose is to proxy publicly
+  available Shopify storefront data. That is a wasted backend call.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):
@@ -188,29 +166,24 @@ OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanatio
       "maxBatchSize": 50,
       "advice": "one sentence: what to pre-fetch and how to build the lookup map"
     },
-    "codeSpec": {
-      "webhookPath": ["step 1", "step 2"],
-      "cronPath": ["step 1", "step 2"],
-      "widgetPath": ["path /signup: widget calls host.call('/signup', { customerEmail, variantId, productId })", "path /signup: handler: const { customerEmail, variantId, productId } = ctx.widgetBody"],
-      "functions": [
-        { "name": "fnName", "steps": ["step 1", "step 2"] }
-      ]
-    },
     "migrationGuidance": "...",
     "widgetGuidance": null,
+    "storefrontReads": null | [
+      { "path": "/products/${host.context.productHandle}.js", "dataUsed": "variant.available — to decide whether to show the button" }
+    ],
     "widgetApiCatalog": null | [
       { "method": "POST" | "GET", "path": "/slug", "responseShape": { "fieldName": "exampleValue" } }
     ]
   }
 }"""
 
-_PLANNER_USER_TEMPLATE = """{error_block}Merchant request: {prompt}
+_ARCHITECT_USER_TEMPLATE = """{error_block}Merchant request: {prompt}
 
 Feature intent:
 {intent_json}
 
 App archetype: {archetype}
-{schema_section}{jit_notes}Produce the complete plan."""
+{schema_section}{jit_notes}Produce the structural plan (no codeSpec)."""
 
 # ── JIT contextual notes keyed on intent resources ────────────────────────────
 
@@ -237,8 +210,8 @@ _JIT_NOTE_VARIANTS_CRON = """
   3. Batch-fetch: GET /products.json?ids=<comma-ids>&fields=id,title,variants (max 250 per batch).
   4. Build variantMap: Map<variant_id, {variant, product}> by iterating product.variants[].
   5. Loop body uses variantMap only — zero Shopify calls inside the loop.
-  Write this as a concrete function in codeSpec.functions[] (e.g. batchFetchProductVariantData)
-  with all steps naming the exact variables, fields, and batch size (250).
+  Set cronBatching.required = true with batchEndpoint "/products.json?ids=<comma-ids>&fields=id,title,variants"
+  and maxBatchSize 250.
 """
 
 _JIT_NOTE_INVENTORY_CRON = """
@@ -254,13 +227,13 @@ _JIT_NOTE_INVENTORY_CRON = """
   4. Build inventoryMap: Map<inventory_item_id, storeWideTotal> by summing level.available
      across all location entries for each inventory_item_id.
   5. Loop body uses inventoryMap — zero Shopify inventory calls inside the loop.
-  Write this as a concrete function in codeSpec.functions[] (e.g. batchFetchInventoryLevels)
-  with all steps naming the exact variables, fields, and batch size (50).
+  Set cronBatching.required = true with batchEndpoint "/inventory_levels.json?inventory_item_ids=<comma-ids>"
+  and maxBatchSize 50.
 """
 
 
 def _build_jit_notes(intent: Dict[str, Any]) -> str:
-    """Inject contextual guidance into the planner prompt based on what resources the intent uses."""
+    """Inject contextual guidance into the architect prompt based on intent resources."""
     resources = [r.lower() for r in (intent.get("resources") or [])]
     trigger = intent.get("triggerType", "")
     notes: List[str] = []
@@ -273,7 +246,7 @@ def _build_jit_notes(intent: Dict[str, Any]) -> str:
     return "".join(notes)
 
 
-def run_planner_agent(
+def run_architect_agent(
     prompt: str,
     intent: Dict[str, Any],
     app_archetype: str,
@@ -281,24 +254,24 @@ def run_planner_agent(
     validation_errors: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Merged Planner Agent: produces shopifyPlan + implementationSpec in one call.
+    Architect Agent: produces shopifyPlan + implementationSpec (WITHOUT codeSpec).
 
     Args:
-        prompt:            Original merchant prompt (gives the Planner full context).
-        intent:            Parsed intent from Agent 1 (run_intent_agent).
+        prompt:            Original merchant prompt.
+        intent:            Parsed intent from run_intent_agent().
         app_archetype:     "storefront_ui" | "backend_only"
         schema_fragments:  Shopify API doc snippets for the relevant resources.
-        validation_errors: Errors from validate_plan() on a prior attempt, or None.
+        validation_errors: Errors from validate_architect() on a prior attempt, or None.
 
     Returns:
-        plan dict with keys: shopifyPlan, implementationSpec
-        For storefront_ui apps, implementationSpec includes widgetApiCatalog.
+        architect_output dict with keys: shopifyPlan, implementationSpec
+        implementationSpec does NOT contain a codeSpec key.
     """
     error_block = ""
     if validation_errors:
         lines = "\n".join(f"  - {e}" for e in validation_errors)
         error_block = (
-            f"PREVIOUS ATTEMPT FAILED PLAN VALIDATION:\n{lines}\n"
+            f"PREVIOUS ATTEMPT FAILED ARCHITECT VALIDATION:\n{lines}\n"
             f"Fix ALL listed errors in this attempt.\n\n"
         )
 
@@ -310,7 +283,7 @@ def run_planner_agent(
 
     jit_notes = _build_jit_notes(intent)
 
-    user = _PLANNER_USER_TEMPLATE.format(
+    user = _ARCHITECT_USER_TEMPLATE.format(
         error_block=error_block,
         prompt=prompt,
         intent_json=json.dumps(intent, indent=2),
@@ -319,9 +292,9 @@ def run_planner_agent(
         jit_notes=jit_notes,
     )
 
-    llm = get_code_llm(max_tokens=8192)
+    llm = get_code_llm(max_tokens=3000)
     for attempt in range(2):
-        result = invoke(llm, PLANNER_SYSTEM, user)
+        result = invoke(llm, ARCHITECT_SYSTEM, user)
         raw = extract_json(result.content)
         try:
             return json.loads(raw)

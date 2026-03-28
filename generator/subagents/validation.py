@@ -3,13 +3,21 @@ Static analysis utilities shared across all generators.
 
 Each Generator subclass owns its validate() method and delegates here for the
 actual checks. This file contains:
-  - validate_plan()    — rule-based gate on the Planner output (Change 2)
-  - Per-artifact validate functions (validate_handler, validate_migration, validate_widget_js)
-  - Shared constants (VALID_WEBHOOK_TOPICS, forbidden pattern lists)
-  - _js_is_syntactically_complete() heuristic used by validate_handler
 
-validate_bundle() has been removed. Orchestration (crew.py) now calls
-gen.validate(artifact, ctx) on each generator directly.
+  Planning gates (two-stage chain):
+    - validate_architect()      — structural decisions (topics, cron, catalog)
+    - validate_codespec()       — algorithm correctness (claim ordering, field names)
+
+  Per-artifact validators:
+    - validate_handler()        — CommonJS handler.js
+    - validate_migration()      — PostgreSQL DDL
+    - validate_widget_js()      — storefront ES module
+
+  Cross-artifact validator:
+    - validate_cross_artifact() — widget↔handler field-name contract
+
+  Shared constants (VALID_WEBHOOK_TOPICS, forbidden pattern lists)
+  _js_is_syntactically_complete() heuristic used by validate_handler
 """
 
 from __future__ import annotations
@@ -34,30 +42,31 @@ VALID_WEBHOOK_TOPICS = {
 }
 
 
-# ── Plan validator (Change 2) ──────────────────────────────────────────────────
-
-
 def _is_valid_cron(expr: str) -> bool:
     """Minimal cron validator — checks for 5 whitespace-separated fields."""
     return len(expr.strip().split()) == 5
 
 
-def validate_plan(plan: Dict[str, Any], app_archetype: str = "backend_only") -> List[str]:
+# ── Architect validator ────────────────────────────────────────────────────────
+
+
+def validate_architect(
+    architect_output: Dict[str, Any], app_archetype: str = "backend_only"
+) -> List[str]:
     """
-    Rule-based gate on the Planner Agent output. Called in crew.py before codegen.
-    Returns a list of error strings; empty list = plan is valid.
+    Rule-based gate on the Architect Agent output (structural decisions only).
+    Returns a list of error strings; empty list = valid.
 
     Checks:
       1. All webhookTopics are in the known-valid set.
-      2. cronSchedule, if present, is a syntactically valid 5-field cron expression.
+      2. cronSchedule, if present, is a valid 5-field cron expression.
       3. storefront_ui apps must have a non-empty widgetApiCatalog.
-      4. widgetPath steps require a non-empty widgetApiCatalog.
-      5. When needsStateTracking is true and a cronPath exists, the cronPath must
-         contain an explicit atomic-claim step (RETURNING + skip-if-zero-rows).
+      4. All widgetApiCatalog paths start with '/'.
+      5. stateMachine.unknownSentinel, if set, must be the string "null".
     """
     errors: List[str] = []
-    shopify = plan.get("shopifyPlan") or {}
-    impl = plan.get("implementationSpec") or {}
+    shopify = architect_output.get("shopifyPlan") or {}
+    impl = architect_output.get("implementationSpec") or {}
 
     # 1. Webhook topics must be known
     for topic in shopify.get("webhookTopics") or []:
@@ -75,40 +84,308 @@ def validate_plan(plan: Dict[str, Any], app_archetype: str = "backend_only") -> 
             f"(e.g. '*/15 * * * *')"
         )
 
-    # 3. storefront_ui apps must always have a widgetApiCatalog
-    code_spec = impl.get("codeSpec") or {}
-    widget_path = code_spec.get("widgetPath") or []
+    # 3. storefront_ui apps should declare their widget API catalog
     widget_catalog = impl.get("widgetApiCatalog") or []
-    if app_archetype == "storefront_ui" and not widget_catalog:
-        errors.append(
-            "widgetApiCatalog is null/empty for a storefront_ui app — "
-            "list every path the widget calls via host.call() with its responseShape"
-        )
+    storefront_reads = impl.get("storefrontReads") or []
+    if app_archetype == "storefront_ui" and not widget_catalog and not storefront_reads:
+        # Check widgetGuidance for evidence of host.storefront() usage before failing
+        guidance = (impl.get("widgetGuidance") or "").lower()
+        if "host.storefront" not in guidance and "storefront" not in guidance:
+            errors.append(
+                "widgetApiCatalog is null/empty for a storefront_ui app — "
+                "list every path the widget calls via host.call() with its responseShape, "
+                "or if all widget data comes from Shopify's public storefront, "
+                "describe host.storefront() usage in widgetGuidance"
+            )
 
-    # 4. widgetPath steps require a non-empty widgetApiCatalog (catches archetype mismatches)
-    if widget_path and not widget_catalog:
-        errors.append(
-            "codeSpec.widgetPath has steps but widgetApiCatalog is null/empty — "
-            "every widget path must be listed in widgetApiCatalog with its responseShape"
-        )
+    # 4. Every widgetApiCatalog path must start with '/'
+    for entry in widget_catalog:
+        path = entry.get("path", "")
+        if path and not path.startswith("/"):
+            errors.append(
+                f"widgetApiCatalog path {path!r} must start with '/' "
+                f"(e.g. '/signup', '/status')"
+            )
 
-    # 4. State machine + cron path requires an explicit atomic claim step
+    # 5. stateMachine.unknownSentinel must be the string "null", never 0 or false
     sm = impl.get("stateMachine") or {}
     if sm.get("needsStateTracking"):
-        cron_path = code_spec.get("cronPath") or []
-        if cron_path:
-            has_claim = any(
-                "RETURNING" in step
-                or "returning" in step.lower()
-                or "claimed" in step.lower()
-                for step in cron_path
+        sentinel = sm.get("unknownSentinel")
+        if sentinel != "null":
+            errors.append(
+                f"stateMachine.unknownSentinel is {sentinel!r} — must be the string "
+                f"\"null\" (not the number 0, not false, not empty string). "
+                f"Reason: 0 is a valid real state (zero inventory); null = never observed."
             )
-            if not has_claim:
+
+    return errors
+
+
+# ── CodeSpec validator ─────────────────────────────────────────────────────────
+
+
+def validate_codespec(
+    codespec_output: Dict[str, Any],
+    architect_output: Dict[str, Any],
+) -> List[str]:
+    """
+    Rule-based gate on the CodeSpec Agent output (algorithm correctness).
+    Returns a list of error strings; empty list = valid.
+
+    Args:
+        codespec_output:  { "codeSpec": { webhookPath, cronPath, widgetPath, functions } }
+        architect_output: Full architect plan (shopifyPlan + implementationSpec without codeSpec).
+
+    Checks:
+      1. Each widgetApiCatalog path has at least one widgetPath entry.
+      2. No inventoryItemId in widget host.call() bodies in widgetPath steps.
+      3. Atomic claim: every RETURNING step is immediately followed by a skip guard.
+      4. State transition guard present when needsStateTracking is true.
+      5. No Shopify API calls inside per-item loop bodies — any path.
+      6. host.call() body fields must be from the allowed widget body field set.
+      7. For each path, host.call() fields must match ctx.widgetBody destructuring (spec contract).
+    """
+    errors: List[str] = []
+    impl = architect_output.get("implementationSpec") or {}
+    sm = impl.get("stateMachine") or {}
+    batching = impl.get("cronBatching") or {}
+    widget_catalog = impl.get("widgetApiCatalog") or []
+
+    code_spec = codespec_output.get("codeSpec") or {}
+    webhook_path: List[str] = code_spec.get("webhookPath") or []
+    cron_path: List[str] = code_spec.get("cronPath") or []
+    widget_path: List[str] = code_spec.get("widgetPath") or []
+
+    # 1. Each catalog path must be covered by at least one widgetPath step
+    for entry in widget_catalog:
+        catalog_path = entry.get("path", "")
+        if catalog_path:
+            covered = any(
+                f"path {catalog_path}" in step or catalog_path in step
+                for step in widget_path
+            )
+            if not covered:
                 errors.append(
-                    "stateMachine.needsStateTracking is true but codeSpec.cronPath "
-                    "has no atomic claim step — add a RETURNING-based UPDATE with "
-                    "a skip-if-zero-rows guard before acting on the transition"
+                    f"widgetApiCatalog path '{catalog_path}' has no corresponding "
+                    f"entry in codeSpec.widgetPath — each catalog path needs at least "
+                    f"one widgetPath step starting with 'path {catalog_path}:'"
                 )
+
+    # 2. inventoryItemId must never appear in widget host.call() bodies
+    for i, step in enumerate(widget_path):
+        step_lower = step.lower()
+        if "host.call" in step_lower and "inventoryitemid" in step_lower:
+            errors.append(
+                f"widgetPath step {i + 1}: inventoryItemId must not appear in "
+                f"host.call() body — the widget cannot know it. Handler must resolve "
+                f"it server-side: GET /variants/${{variantId}}.json → variant.inventory_item_id"
+            )
+
+    # 3. Atomic claim ordering: RETURNING step must be immediately followed by a skip guard
+    for path_name, path_steps in [("webhookPath", webhook_path), ("cronPath", cron_path)]:
+        for i, step in enumerate(path_steps):
+            if "RETURNING" in step or "returning" in step.lower():
+                next_step = path_steps[i + 1] if i + 1 < len(path_steps) else ""
+                has_length_check = bool(
+                    re.search(r"\.length\s*[=!]=\s*0|=== 0|== 0", next_step)
+                )
+                has_skip_word = any(
+                    w in next_step.lower()
+                    for w in ("skip", "return", "continue", "stop", "break")
+                )
+                if not (has_length_check or has_skip_word):
+                    errors.append(
+                        f"codeSpec.{path_name} step {i + 1}: RETURNING-based atomic claim "
+                        f"must be immediately followed by a skip-if-zero-rows guard "
+                        f"(e.g. 'if claimed.length === 0: return'). "
+                        f"Next step is: {next_step[:80]!r}"
+                    )
+
+    # 4. State transition guard required when needsStateTracking is true
+    if sm.get("needsStateTracking"):
+        all_steps = webhook_path + cron_path
+        has_null_guard = any(
+            re.search(r"prevState\s*===\s*null|prevState\s*==\s*null|prev_state\s*is\s*null", s, re.IGNORECASE)
+            or "never observed" in s.lower()
+            for s in all_steps
+        )
+        if not has_null_guard:
+            errors.append(
+                "stateMachine.needsStateTracking is true but codeSpec has no "
+                "prevState === null skip guard — add an explicit step: "
+                "'if prevState === null: skip // never observed — cannot confirm transition'"
+            )
+
+    # 5. No Shopify API calls inside per-item loop bodies — applies to ALL paths always.
+    loop_indicators = re.compile(
+        r"\bfor\s+each\b|\bfor\s+\(|\bfor\s+const\b|loop\s+body|\binside\s+loop\b",
+        re.IGNORECASE,
+    )
+    shopify_call = re.compile(r"/admin/api/|ctx\.shopify\.", re.IGNORECASE)
+    for path_name, path_steps in [("webhookPath", webhook_path), ("cronPath", cron_path)]:
+        for i, step in enumerate(path_steps):
+            if loop_indicators.search(step) and shopify_call.search(step):
+                # Allow batch pre-fetch steps (the loop that chunks IDs and calls Shopify)
+                if not re.search(r"\bbatch\b|\bchunk\b|\bpre.?fetch\b", step, re.IGNORECASE):
+                    errors.append(
+                        f"codeSpec.{path_name} step {i + 1}: Shopify API call inside a "
+                        f"per-item loop — move all ctx.shopify calls to a pre-fetch phase "
+                        f"before the loop (batch pattern). "
+                        f"Step: {step[:100]!r}"
+                    )
+
+    # 6. host.call() body fields in widgetPath must be from the allowed set.
+    # This catches field name typos (e.g. 'email' instead of 'customerEmail') at spec time,
+    # before codegen runs — preventing oscillating mismatch retries.
+    _ALLOWED_WIDGET_FIELDS = {"customerEmail", "variantId", "productId", "customerId"}
+    _NON_FIELD_WP = {"true", "false", "null", "undefined", "host", "context", "await"}
+    for i, step in enumerate(widget_path):
+        call_match = re.search(
+            r"host\.call\s*\(['\"][^'\"]+['\"],\s*\{([^}]*)\}", step, re.IGNORECASE
+        )
+        if call_match:
+            raw = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", call_match.group(1))
+            unknown = {f for f in raw if f not in _NON_FIELD_WP} - _ALLOWED_WIDGET_FIELDS
+            if unknown:
+                errors.append(
+                    f"codeSpec.widgetPath step {i + 1}: host.call() body contains "
+                    f"disallowed field(s) {sorted(unknown)} — allowed fields are "
+                    f"{sorted(_ALLOWED_WIDGET_FIELDS)}. "
+                    f"Common mistake: use 'customerEmail' not 'email'."
+                )
+
+    # 7. For each widgetPath route, host.call() body fields must exactly match
+    # ctx.widgetBody destructuring fields. Catches spec-level contradictions before codegen.
+    _NON_FIELD_SPEC = {"true", "false", "null", "undefined", "host", "context", "await",
+                       "only", "when", "if", "is", "not"}
+    _spec_call_fields: Dict[str, set] = {}
+    _spec_body_fields: Dict[str, set] = {}
+    for step in widget_path:
+        pm = re.match(r"path\s+(/\S+):\s*(.*)", step.strip(), re.IGNORECASE)
+        if not pm:
+            continue
+        slug, content = pm.group(1), pm.group(2)
+        call_m = re.search(
+            r"host\.call\s*\(['\"][^'\"]+['\"],\s*\{([^}]*)\}", content, re.IGNORECASE
+        )
+        if call_m:
+            fields = {f for f in re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", call_m.group(1))
+                      if f not in _NON_FIELD_SPEC}
+            _spec_call_fields[slug] = fields
+        body_m = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody", content)
+        if body_m:
+            fields = {f for f in re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", body_m.group(1))
+                      if f not in _NON_FIELD_SPEC}
+            _spec_body_fields[slug] = fields
+
+    for slug in set(list(_spec_call_fields.keys()) + list(_spec_body_fields.keys())):
+        call_f = _spec_call_fields.get(slug, set())
+        body_f = _spec_body_fields.get(slug, set())
+        if call_f and body_f and call_f != body_f:
+            parts = []
+            extra = body_f - call_f
+            missing = call_f - body_f
+            if extra:
+                parts.append(f"handler destructures {sorted(extra)} not sent by widget")
+            if missing:
+                parts.append(f"widget sends {sorted(missing)} not destructured by handler")
+            errors.append(
+                f"codeSpec.widgetPath '{slug}': widget↔handler field contract mismatch — "
+                f"{'; '.join(parts)}. "
+                f"ctx.widgetBody destructuring must exactly match the host.call() body fields."
+            )
+
+    return errors
+
+
+# ── Cross-artifact validator ───────────────────────────────────────────────────
+
+
+def validate_cross_artifact(
+    widget_js: str,
+    handler_code: str,
+) -> Dict[str, List[str]]:
+    """
+    Checks that field names the widget sends via host.call() match what the handler
+    destructures from ctx.widgetBody for the same route path.
+
+    Only runs for storefront_ui apps (crew.py guards on is_storefront).
+    Returns {generator_name: [errors]} — errors are attributed to "handler" since
+    the handler implements the contract and is the likely source of a mismatch.
+    """
+    if not widget_js or not handler_code:
+        return {}
+
+    errors: Dict[str, List[str]] = {}
+
+    _NON_FIELD = {
+        "true", "false", "null", "undefined", "host", "context", "await",
+        "const", "let", "var", "return", "if", "else", "new", "this",
+        "async", "function", "result", "data", "response", "error",
+    }
+
+    # Extract all host.call('/path', { ... }) from widget JS
+    call_pattern = re.compile(
+        r"host\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{([^}]*)\}",
+        re.DOTALL,
+    )
+
+    for m in call_pattern.finditer(widget_js):
+        path = m.group(1)
+        body_str = m.group(2)
+
+        # Extract all identifier names from the object body
+        raw_idents = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", body_str)
+        sent_fields = {f for f in raw_idents if f not in _NON_FIELD}
+
+        if not sent_fields:
+            continue
+
+        # Find the handler's route block for this path
+        route_match = re.search(
+            rf"ctx\.widgetPath\s*===\s*['\"](?:{re.escape(path)})['\"]",
+            handler_code,
+        )
+        if not route_match:
+            # Path not in handler — already caught by validate_widget_js path check
+            continue
+
+        # Scan ~800 chars after the route match for ctx.widgetBody usage
+        window = handler_code[route_match.start():route_match.start() + 800]
+
+        destr_match = re.search(
+            r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody",
+            window,
+        )
+
+        if not destr_match:
+            # No destructuring — check if handler even reads ctx.widgetBody
+            if "ctx.widgetBody" not in window:
+                errors.setdefault("handler", []).append(
+                    f"widget sends {sorted(sent_fields)} to '{path}' but handler "
+                    f"has no ctx.widgetBody access in the '{path}' route"
+                )
+            continue
+
+        # Extract field names from the destructuring pattern
+        destr_str = destr_match.group(1)
+        raw_destr = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", destr_str)
+        handler_fields = {f for f in raw_destr if f not in _NON_FIELD}
+
+        missing = sent_fields - handler_fields
+        if missing:
+            # Build an actionable hint: point to the most common mistake
+            hint = ""
+            if "email" in missing:
+                hint = " (hint: use 'customerEmail' not 'email' — the codeSpec contract name)"
+            elif "email" in handler_fields and "customerEmail" in sent_fields:
+                hint = " (hint: handler should use 'customerEmail' not 'email')"
+            errors.setdefault("handler", []).append(
+                f"widget sends field(s) {sorted(missing)} to '{path}' but handler "
+                f"destructures {sorted(handler_fields)} from ctx.widgetBody — "
+                f"field name mismatch{hint}. "
+                f"The codeSpec.widgetPath is the ground truth: align both sides to it."
+            )
 
     return errors
 
@@ -305,7 +582,7 @@ def validate_migration(sql: str) -> List[str]:
 # ── Widget JS validator ────────────────────────────────────────────────────────
 
 FORBIDDEN_WIDGET_JS_PATTERNS = [
-    (r"\bfetch\s*\(", "raw fetch() not allowed — use host.call()"),
+    (r"\bfetch\s*\(", "raw fetch() not allowed — use host.call() for backend requests or host.storefront() for Shopify public endpoints"),
     (r"\bXMLHttpRequest\b", "XMLHttpRequest not allowed — use host.call()"),
     (r"\beval\s*\(", "eval() is not allowed"),
     (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
@@ -343,6 +620,15 @@ def validate_widget_js(
     for pattern, message in FORBIDDEN_WIDGET_JS_PATTERNS:
         if re.search(pattern, widget_js):
             errors.append(message)
+
+    # host.storefront() must use relative paths only — no full URLs
+    storefront_calls = re.findall(r"""host\.storefront\s*\(\s*['"`]([^'"`]+)['"`]""", widget_js)
+    for path in storefront_calls:
+        if path.startswith("http://") or path.startswith("https://"):
+            errors.append(
+                f"host.storefront() must use a relative path (e.g. '/products/x.js'), "
+                f"not a full URL: '{path[:60]}'"
+            )
 
     # host.call() paths must be in the platform API catalog
     catalog_paths = {entry["path"] for entry in platform_api_catalog}
