@@ -47,6 +47,9 @@ ABSOLUTE RULES — violations will cause codegen failures:
     If the email template needs a product URL, pass product_id or product_handle as a data field
     and let the email template construct the URL: e.g. data: { productHandle, variantId }.
   ALWAYS use ctx.tenantId for the tenant UUID — NEVER ctx.shop.tenant_id or ctx.tenant.id.
+  CRON PATH: the harness calls the handler once per tenant with ctx.tenantId already set.
+    Every SELECT in the cron path MUST include AND tenant_id = ${ctx.tenantId}.
+    NEVER fetch rows across all tenants in a cron SELECT.
 
 Atomic claims MUST be written as two explicit consecutive steps:
   "claimed = UPDATE ... WHERE ... AND state=X RETURNING id"
@@ -96,6 +99,16 @@ Shopify batch endpoints:
     → build inventoryMap<inventory_item_id, storeWideTotal> by summing level.available across all locations
     → inventory_item_id MUST be stored in the DB table
   Orders/customers: no batch endpoint — use individual lookups only when N is guaranteed small (≤3)
+
+Shopify entity boundary rule — never read fields across entity types without a separate fetch:
+  Each Shopify API endpoint returns fields for ONE entity type only.
+  variant.json (GET /variants/{id}.json) returns variant-scoped fields: id, title, price, sku,
+    product_id, inventory_item_id — it does NOT include product-level fields such as product_title
+    or product handle. NEVER reference variant.product_title — this field does not exist.
+  If a path has resolved a variant_id but needs product-level data (title, handle), it must
+  make a separate fetch: GET /products/${productId}.json → use product.title, product.handle.
+  Apply this same discipline to any entity: order line items do not carry customer fields,
+  inventory items do not carry product fields, etc. Always fetch the owning entity explicitly.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WIDGET PATH CONTRACT
@@ -155,6 +168,17 @@ ALWAYS end each path's steps with a response shape line that EXACTLY matches
 widgetApiCatalog[path].responseShape, e.g.:
   "path /signup: handler returns { ok: true } on success; widget checks result.ok"
   "path /status: handler returns { inStock: bool, isSignedUp: bool }; widget reads result.inStock"
+
+Multi-outcome responses — when a mutation returns multiple boolean flags that encode
+distinct outcomes (e.g. success + alreadySubscribed, success + alreadyRedeemed), the widget
+MUST check the more-specific flag BEFORE the general success flag. Without this explicit
+ordering, the general flag is always true and the specific branch is unreachable.
+Write the response shape line as:
+  "path /signup: handler returns { success: true, alreadySubscribed: false } on new insert,
+   { success: true, alreadySubscribed: true } on duplicate;
+   widget checks result.alreadySubscribed before result.success"
+This rule applies whenever two or more boolean flags can be simultaneously true with different
+meanings — always check the narrowest condition first.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):

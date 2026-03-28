@@ -77,6 +77,10 @@ migrationGuidance: 1-2 sentences on schema decisions — column nullability, sen
   CRITICAL: Shopify entity IDs (variant_id, product_id, order_id, customer_id, inventory_item_id)
   are numeric integers — always specify BIGINT or TEXT for these columns, NEVER UUID.
   Only tenant_id and internal record primary keys use UUID.
+  CRITICAL: customer_id in storefront-facing tables (subscriptions, opt-ins, wishlists, any table
+  a widget POSTs into) MUST be BIGINT (nullable — no NOT NULL constraint). The widget's customerId
+  from host.context is null for guest visitors; a NOT NULL constraint causes INSERT failures for
+  all guest submissions.
   CRITICAL: Tables that store one record per customer per Shopify entity (signup, subscription,
   opt-in) MUST have a UNIQUE constraint — not just an index — on the natural deduplication key
   (typically tenant_id, entity_id, customer_email). Use CONSTRAINT uq_<table>_<key> UNIQUE (...).

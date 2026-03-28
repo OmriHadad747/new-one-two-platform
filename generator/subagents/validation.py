@@ -138,18 +138,21 @@ def validate_codespec(
 
     Checks:
       1. Each widgetApiCatalog path has at least one widgetPath entry.
-      2. No inventoryItemId in widget host.call() bodies in widgetPath steps.
-      3. Atomic claim: every RETURNING step is immediately followed by a skip guard.
-      4. State transition guard present when needsStateTracking is true.
-      5. No Shopify API calls inside per-item loop bodies — any path.
-      6. host.call() body fields must be from the allowed widget body field set.
-      7. For each path, host.call() fields must match ctx.widgetBody destructuring (spec contract).
+      2. storefrontReads declared by architect must appear as host.storefront() in widgetPath.
+      3. No inventoryItemId in widget host.call() bodies in widgetPath steps.
+      4. Atomic claim: every RETURNING step is immediately followed by a skip guard.
+      5. State transition guard present when needsStateTracking is true.
+      6. No Shopify API calls inside per-item loop bodies — any path.
+      7. host.call() body fields must be from the allowed widget body field set.
+      8. For each path, host.call() fields must match ctx.widgetBody destructuring (spec contract).
+      9. Cron path SELECTs must be scoped to ctx.tenantId — never cross-tenant.
     """
     errors: List[str] = []
     impl = architect_output.get("implementationSpec") or {}
     sm = impl.get("stateMachine") or {}
     batching = impl.get("cronBatching") or {}
     widget_catalog = impl.get("widgetApiCatalog") or []
+    storefront_reads = impl.get("storefrontReads") or []
 
     code_spec = codespec_output.get("codeSpec") or {}
     webhook_path: List[str] = code_spec.get("webhookPath") or []
@@ -171,7 +174,18 @@ def validate_codespec(
                     f"one widgetPath step starting with 'path {catalog_path}:'"
                 )
 
-    # 2. inventoryItemId must never appear in widget host.call() bodies
+    # 2. storefrontReads declared by architect must appear as host.storefront() in widgetPath
+    if storefront_reads:
+        has_storefront_call = any("host.storefront" in step for step in widget_path)
+        if not has_storefront_call:
+            errors.append(
+                f"implementationSpec.storefrontReads declares {len(storefront_reads)} storefront "
+                f"read(s) but codeSpec.widgetPath has no host.storefront() call — "
+                f"add widget steps that call host.storefront() for: "
+                f"{', '.join(r.get('path', '?') for r in storefront_reads)}"
+            )
+
+    # 3. inventoryItemId must never appear in widget host.call() bodies
     for i, step in enumerate(widget_path):
         step_lower = step.lower()
         if "host.call" in step_lower and "inventoryitemid" in step_lower:
@@ -293,6 +307,17 @@ def validate_codespec(
                 f"codeSpec.widgetPath '{slug}': widget↔handler field contract mismatch — "
                 f"{'; '.join(parts)}. "
                 f"ctx.widgetBody destructuring must exactly match the host.call() body fields."
+            )
+
+    # 8. Cron path SELECTs must be scoped to ctx.tenantId — never cross-tenant
+    select_re = re.compile(r"\bSELECT\b", re.IGNORECASE)
+    tenant_re = re.compile(r"ctx\.tenantId", re.IGNORECASE)
+    for i, step in enumerate(cron_path):
+        if select_re.search(step) and not tenant_re.search(step):
+            errors.append(
+                f"codeSpec.cronPath step {i + 1}: SELECT is missing tenant_id filter — "
+                f"add 'AND tenant_id = ${{ctx.tenantId}}'. "
+                f"The harness calls the cron handler once per tenant with ctx.tenantId set."
             )
 
     return errors
@@ -544,7 +569,7 @@ def validate_migration(sql: str) -> List[str]:
         if re.search(pattern, sql, re.IGNORECASE):
             errors.append(f"forbidden SQL operation: {name}")
 
-    # Each CREATE TABLE must include tenant_id
+    # Each CREATE TABLE must include tenant_id; customer_id must be nullable
     create_table_stmts = re.findall(
         r"CREATE\s+TABLE\s+\w+\s*\([\s\S]*?\);", sql, re.IGNORECASE
     )
@@ -552,6 +577,11 @@ def validate_migration(sql: str) -> List[str]:
         if "tenant_id" not in stmt.lower():
             errors.append(
                 f"CREATE TABLE missing tenant_id column: " f"{stmt[:80].strip()}..."
+            )
+        if re.search(r"\bcustomer_id\b[^,\n]*\bNOT\s+NULL\b", stmt, re.IGNORECASE):
+            errors.append(
+                "customer_id column must be nullable (BIGINT without NOT NULL) — "
+                "storefront widget visitors can be guests with customerId = null"
             )
 
     # RLS policy required when creating tables

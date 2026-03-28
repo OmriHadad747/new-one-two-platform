@@ -61,7 +61,12 @@ ABSOLUTE RULES:
     waste write overhead and storage.
 11. Do NOT add domain-alias timestamp columns (e.g. signed_up_at, enrolled_at) that duplicate
     created_at — use created_at for record creation time. Only add a separate domain timestamp
-    when it can differ from created_at (e.g. notified_at, fulfilled_at, cancelled_at)."""
+    when it can differ from created_at (e.g. notified_at, fulfilled_at, cancelled_at).
+12. Derive ALL table columns from the "DB operations from codeSpec" section in the user prompt.
+    Every column that appears in SELECT …, INSERT INTO (…), UPDATE … SET col =, or UPSERT …
+    clauses MUST be present in the corresponding CREATE TABLE. The codeSpec operations are the
+    authoritative column list — do not rely solely on the schema guidance text, which may be
+    incomplete. If a step says SET notified_at = NOW(), the table needs notified_at TIMESTAMPTZ."""
 
 _SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMENT")
 
@@ -79,13 +84,16 @@ class MigrationGenerator(Generator):
     def user_prompt(self, ctx: CodegenContext) -> str:
         retry_block = self.format_retry_block(ctx.previous_errors)
         schema_block = _format_schema_guidance(ctx.plan)
-        db_hints = _extract_db_hints(ctx.plan)
+        sql_steps = _extract_codespec_sql_steps(ctx.plan)
+
+        sql_block = "\n".join(f"  {s}" for s in sql_steps) if sql_steps else "  (none)"
 
         return (
             f"{retry_block}"
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Trigger: {ctx.intent.get('triggerType', '')}\n\n"
-            f"Data to persist:\n{json.dumps(db_hints, indent=2)}\n"
+            f"DB operations from codeSpec (ground truth for required tables and columns):\n"
+            f"{sql_block}\n"
             f"{schema_block}"
             "Generate the PostgreSQL DDL migration for this feature.\n"
             "Follow the tenant isolation pattern exactly.\n"
@@ -132,11 +140,24 @@ def _format_schema_guidance(plan: Dict[str, Any]) -> str:
     return "\n".join(parts) + "\n" if parts else ""
 
 
-def _extract_db_hints(plan: Dict[str, Any]) -> List[str]:
-    """Extract table/storage hints from the shopifyPlan operations list."""
-    hints = []
-    for op in (plan.get("shopifyPlan") or {}).get("operations", []):
-        desc = op.get("description", "").lower()
-        if any(kw in desc for kw in ["insert", "store", "save", "create record", "table"]):
-            hints.append(op.get("description", ""))
-    return hints
+def _extract_codespec_sql_steps(plan: Dict[str, Any]) -> List[str]:
+    """
+    Extract DB operation steps from the codeSpec — ground truth for required columns.
+
+    Scans all path arrays in codeSpec for steps that contain SQL keywords.
+    These steps carry the exact table names and column lists the handler will use,
+    so the migration agent can derive the full schema from them rather than relying
+    on the architect's free-text migrationGuidance (which can omit columns).
+    """
+    impl = plan.get("implementationSpec") or {}
+    code_spec = impl.get("codeSpec") or {}
+
+    all_steps: List[str] = []
+    for path_key in ("webhookPath", "cronPath", "widgetPath"):
+        all_steps.extend(code_spec.get(path_key) or [])
+
+    sql_keywords = ("SELECT", "INSERT", "UPDATE", "UPSERT", "DELETE")
+    return [
+        step for step in all_steps
+        if any(kw in step.upper() for kw in sql_keywords)
+    ]
