@@ -17,6 +17,7 @@ import {
   getTenantByShopDomain,
   updateTenantAccessToken,
 } from "@new-one-two/db";
+import { reRegisterTenantWebhooks } from "../lib/shopify-webhooks.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -115,15 +116,26 @@ export const oauthRoute: FastifyPluginAsync = async (app) => {
       }
 
       // 5. Persist tenant + access token
+      let tenantId: string;
       try {
         const secretName = await storeAccessToken(shop, accessToken);
-        const tenantId = await upsertTenant(shop, secretName);
+        tenantId = await upsertTenant(shop, secretName);
         logger.info({ shop, tenantId }, "OAuth install complete");
-        return reply.redirect(`${DASHBOARD_URL}/merchants/${tenantId}`);
       } catch (err) {
         logger.error({ err, shop }, "Failed to persist tenant after OAuth");
         return reply.status(500).send({ error: "Internal error during install" });
       }
+
+      // 6. Re-register all active webhooks with the current WEBHOOK_BASE_URL.
+      //    Non-fatal — handles ngrok URL rotations and re-installs without
+      //    requiring a full re-deploy.
+      try {
+        await reRegisterTenantWebhooks({ tenantId, shop, accessToken });
+      } catch (err) {
+        logger.warn({ err, shop, tenantId }, "Failed to re-register webhooks after OAuth — continuing");
+      }
+
+      return reply.redirect(`${DASHBOARD_URL}/merchants/${tenantId}`);
     }
   );
 };
@@ -255,10 +267,17 @@ async function exchangeCodeForToken(shop: string, code: string): Promise<string>
  * Returns the secret resource name to store on the tenant.
  */
 async function storeAccessToken(shop: string, accessToken: string): Promise<string> {
-  // In local dev, skip Secret Manager and return a placeholder path.
+  // In local dev, skip Secret Manager and return a deterministic placeholder path.
+  // The token value must be added manually to SM_DEV_SECRETS in platform/.env so
+  // that getSecret() can resolve it (needed for webhook registration during deploy).
   if (process.env["NODE_ENV"] !== "production") {
     const secretName = `projects/local/secrets/${shop.replace(".myshopify.com", "")}-access-token/versions/latest`;
-    logger.info({ shop, secretName }, "[dev] Skipping Secret Manager — using placeholder");
+    logger.info(
+      { shop, secretName },
+      "[dev] Access token not persisted to Secret Manager. " +
+      `To enable Shopify webhook registration, add to SM_DEV_SECRETS in platform/.env: ` +
+      `"${secretName}":"${accessToken}"`
+    );
     return secretName;
   }
 

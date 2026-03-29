@@ -202,13 +202,15 @@ export interface HandlerContext {
   widgetPath?: string;
   /** Set when trigger === "widget". Parsed request body from the storefront. */
   widgetBody?: Record<string, unknown>;
+  /** Set when trigger === "widget". Shopify customer ID from the storefront session, null for guests. */
+  customerId?: string | null;
 }
 
 // The contract every generated app module must export
 export interface AppModule {
   webhookTopics: WebhookTopic[];
   cronSchedule: string | null;
-  handler: (ctx: HandlerContext) => Promise<void>;
+  handler: (ctx: HandlerContext) => Promise<unknown>;
 }
 
 // What the worker sends to POST /invoke on the harness

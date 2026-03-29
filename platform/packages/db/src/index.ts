@@ -296,7 +296,7 @@ export async function updateExecutionStatus(
 export async function getAppVersionWithCode(appVersionId: string): Promise<{
   version: AppVersion;
   app: App;
-  tenant: Pick<Tenant, "id" | "slug" | "kmsKeyName">;
+  tenant: Pick<Tenant, "id" | "slug" | "kmsKeyName" | "shopifyAccessTokenSecretName">;
 } | null> {
   const rows = await sql<
     Array<{
@@ -326,6 +326,7 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       tenantId: string;
       tenantSlug: string;
       tenantKmsKeyName: string;
+      tenantShopifyAccessTokenSecretName: string | null;
     }>
   >`
     SELECT
@@ -354,9 +355,10 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       a.created_at                           AS "appCreatedAt",
       a.updated_at                           AS "appUpdatedAt",
 
-      t.id           AS "tenantId",
-      t.slug         AS "tenantSlug",
-      t.kms_key_name AS "tenantKmsKeyName"
+      t.id                                 AS "tenantId",
+      t.slug                               AS "tenantSlug",
+      t.kms_key_name                       AS "tenantKmsKeyName",
+      t.shopify_access_token_secret_name   AS "tenantShopifyAccessTokenSecretName"
 
     FROM app_versions av
     JOIN apps a ON a.id = av.app_id
@@ -400,8 +402,30 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       id: row.tenantId,
       slug: row.tenantSlug,
       kmsKeyName: row.tenantKmsKeyName,
+      shopifyAccessTokenSecretName: row.tenantShopifyAccessTokenSecretName,
     },
   };
+}
+
+/**
+ * Returns all active webhook topics across all apps for a tenant.
+ * Used by the OAuth callback to re-register webhooks after re-install.
+ */
+export async function getActiveWebhookTopicsForTenant(
+  tenantId: string
+): Promise<Array<{ tenantSlug: string; appSlug: string; topic: string }>> {
+  return sql<Array<{ tenantSlug: string; appSlug: string; topic: string }>>`
+    SELECT DISTINCT
+      t.slug  AS "tenantSlug",
+      a.slug  AS "appSlug",
+      ws.topic
+    FROM webhook_subscriptions ws
+    JOIN apps    a ON a.id  = ws.app_id
+    JOIN tenants t ON t.id  = a.tenant_id
+    WHERE ws.tenant_id = ${tenantId}
+      AND ws.active    = TRUE
+    ORDER BY a.slug, ws.topic
+  `;
 }
 
 /**
@@ -699,9 +723,9 @@ export async function resolveWidgetJs(
 export async function resolveAppFunctionUrl(
   shopDomain: string,
   appId: string
-): Promise<string | null> {
-  const rows = await sql<Array<{ functionUrl: string | null }>>`
-    SELECT df.function_url AS "functionUrl"
+): Promise<{ functionUrl: string; tenantId: string } | null> {
+  const rows = await sql<Array<{ functionUrl: string | null; tenantId: string }>>`
+    SELECT df.function_url AS "functionUrl", t.id AS "tenantId"
     FROM apps a
     JOIN tenants t ON t.id = a.tenant_id
     LEFT JOIN deployed_functions df
@@ -712,7 +736,9 @@ export async function resolveAppFunctionUrl(
       AND t.status = 'active'
     LIMIT 1
   `;
-  return rows[0]?.functionUrl ?? null;
+  const row = rows[0];
+  if (!row?.functionUrl) return null;
+  return { functionUrl: row.functionUrl, tenantId: row.tenantId };
 }
 
 // ─── Tenant / App Management Queries ─────────────────────────────────────────

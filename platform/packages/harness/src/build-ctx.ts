@@ -35,7 +35,7 @@ export async function buildCtx(
     },
   };
 
-  return { shopify, db: tx, payload, logger, tenantId: req.tenantId, email };
+  return { shopify, db: tx, payload, logger, tenantId: req.tenantId, email, trigger: "webhook" as const };
 }
 
 // Re-export withTenantContext so invoke-handler can use it without extra imports

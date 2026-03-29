@@ -10,6 +10,7 @@ import {
   setVersionStatus,
 } from "./db-writer.js";
 import { dockerImageName, callbackUrl } from "./service-namer.js";
+import { registerShopifyWebhooks } from "./shopify-webhook-registrar.js";
 import { runTenantMigration, rollbackTenantMigration } from "./migration-runner.js";
 import { createDraftAppVersion, updateGenerationSession, updateAppWidgetJs, updateAppArchetype } from "@new-one-two/db";
 import type { FeatureBundle } from "@new-one-two/types";
@@ -23,15 +24,21 @@ function buildHarnessEnvVars(params: {
   clientId: string;
   clientSecretName: string;
 }): Record<string, string> {
+  // When deploying locally, the harness runs inside Docker but the DB/Redis
+  // are on the host. Rewrite localhost → host.docker.internal so the container
+  // can reach host-bound services.
+  const dockerHost = DEPLOY_MODE === "local" ? "host.docker.internal" : "localhost";
+  const databaseUrl = (process.env["DATABASE_URL"] ?? "").replace(
+    /(@|\/\/)localhost(:\d+)/g,
+    `$1${dockerHost}$2`
+  );
   const envVars: Record<string, string> = {
     TENANT_ID: params.tenantId,
     APP_ID: params.appId,
     SHOP_DOMAIN: params.shopDomain,
     SHOPIFY_CLIENT_ID: params.clientId,
     SHOPIFY_CLIENT_SECRET_NAME: params.clientSecretName,
-    DATABASE_URL: process.env["DATABASE_URL"] ?? "",
-    REDIS_HOST: process.env["REDIS_HOST"] ?? "redis",
-    REDIS_PORT: process.env["REDIS_PORT"] ?? "6379",
+    DATABASE_URL: databaseUrl,
     NODE_ENV: "production",
     LOG_LEVEL: process.env["LOG_LEVEL"] ?? "info",
     SERVICE_NAME: `harness-${params.appId}`,
@@ -102,14 +109,24 @@ export async function deployAppVersion(appVersionId: string): Promise<{
       timeoutSec: 30,
     });
 
-    // 6. Wire webhook subscriptions
+    // 6. Register webhooks with Shopify, then persist subscriptions to DB.
+    //    Registration is non-fatal — a failed Shopify call falls back to a
+    //    local placeholder ID so the DB row is always written.
     if (webhookTopics.length > 0) {
+      const appCallbackUrl = callbackUrl(tenant.slug, app.slug);
+      const shopifyWebhookIds = await registerShopifyWebhooks({
+        shop: app.shopDomain,
+        accessTokenSecretName: tenant.shopifyAccessTokenSecretName,
+        topics: webhookTopics,
+        callbackUrl: appCallbackUrl,
+      });
       await writeWebhookSubscriptions({
         appId: app.id,
         tenantId: tenant.id,
         deployedFunctionId,
         topics: webhookTopics,
-        callbackUrl: callbackUrl(tenant.slug, app.slug),
+        callbackUrl: appCallbackUrl,
+        shopifyWebhookIds,
       });
     }
 
@@ -204,11 +221,17 @@ export async function deployFeatureBundle(params: {
       await updateAppWidgetJs(appId, bundle.widgetModule);
     }
 
-    // Step 3: Create draft AppVersion from handler code
+    // Step 3: Create draft AppVersion from handler code + metadata
     const { id: appVersionId } = await createDraftAppVersion({
       appId,
       tenantId,
-      generatedCode: { "handler.js": bundle.handlerModule.code },
+      generatedCode: {
+        "handler.js": bundle.handlerModule.code,
+        "_metadata.json": JSON.stringify({
+          webhookTopics: bundle.handlerModule.webhookTopics,
+          cronSchedule: bundle.handlerModule.cronSchedule,
+        }),
+      },
     });
 
     // Steps 4-6: reuse existing deployAppVersion pipeline

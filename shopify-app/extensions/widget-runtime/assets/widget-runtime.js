@@ -18,6 +18,25 @@
  * Multiple App Block instances on the same page each run independently.
  */
 
+// ── URL-change detection (one-time setup) ────────────────────────────────────
+// Shopify's variant picker uses history.pushState/replaceState without a page
+// reload. We patch them once to fire a synthetic "urlchange" event so every
+// mounted widget can re-evaluate its page context.
+(function patchHistory() {
+  function wrap(original) {
+    return function (...args) {
+      const result = original.apply(this, args);
+      window.dispatchEvent(new Event("urlchange"));
+      return result;
+    };
+  }
+  history.pushState = wrap(history.pushState);
+  history.replaceState = wrap(history.replaceState);
+  window.addEventListener("popstate", () =>
+    window.dispatchEvent(new Event("urlchange"))
+  );
+})();
+
 (async () => {
   const blocks = document.querySelectorAll("[data-widget-runtime]");
   await Promise.all(Array.from(blocks).map(mountBlock));
@@ -41,13 +60,35 @@ async function mountBlock(block) {
   container.setAttribute("data-widget-container", appId);
   block.appendChild(container);
 
+  let widgetModule;
   try {
-    const widgetModule = await fetchWidgetModule(platformUrl, shop, appId);
-    const host = buildHost({ appId, shop, platformUrl });
-    await widgetModule.mount(container, host);
+    widgetModule = await fetchWidgetModule(platformUrl, shop, appId);
   } catch (err) {
-    console.error(`[widget-runtime] Failed to mount widget "${appId}":`, err);
+    console.error(`[widget-runtime] Failed to fetch widget "${appId}":`, err);
+    return;
   }
+
+  async function runMount() {
+    container.innerHTML = "";
+    try {
+      const host = buildHost({ appId, shop, platformUrl });
+      await widgetModule.mount(container, host);
+    } catch (err) {
+      console.error(`[widget-runtime] Failed to mount widget "${appId}":`, err);
+    }
+  }
+
+  // Initial mount
+  await runMount();
+
+  // Re-mount whenever the URL changes (variant switches, navigation, etc.)
+  let lastUrl = location.href;
+  window.addEventListener("urlchange", () => {
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+      runMount();
+    }
+  });
 }
 
 /**

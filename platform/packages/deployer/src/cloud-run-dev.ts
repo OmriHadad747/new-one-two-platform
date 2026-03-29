@@ -4,6 +4,17 @@ import { localContainerName } from "./service-namer.js";
 
 const COMPOSE_NETWORK = process.env["COMPOSE_NETWORK"] ?? "new-one-two_default";
 
+// Host that both the host machine and Docker containers can use to reach host-bound ports.
+// On Mac/Windows Docker Desktop, host.docker.internal is added to /etc/hosts → 127.0.0.1.
+// Override with DEV_HARNESS_HOST env var if needed (e.g. on Linux use the Docker bridge IP).
+const DEV_HARNESS_HOST = process.env["DEV_HARNESS_HOST"] ?? "host.docker.internal";
+
+// Deterministic host port per app: last 4 hex chars of appId → offset in 9000–9499 range.
+function devHostPort(appId: string): number {
+  const hex = appId.replace(/-/g, "").slice(-4);
+  return 9000 + (parseInt(hex, 16) % 500);
+}
+
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, args, { stdio: "pipe" });
@@ -39,19 +50,24 @@ export async function deployToDockerLocal(
     // Container didn't exist — fine
   }
 
-  // Start new container on the compose network
+  const hostPort = devHostPort(appId);
+
+  // Start new container on the compose network, also bound to a host port so
+  // services running outside Docker (e.g. the API in dev mode) can reach it.
   const args = [
     "run", "-d",
     "--name", containerName,
     "--network", COMPOSE_NETWORK,
     "--restart", "unless-stopped",
+    "-p", `${hostPort}:8080`,
     ...buildEnvArgs(envVars),
     imageName,
   ];
 
   await run("docker", args);
-  logger.info({ containerName, imageName }, "Harness container started");
+  logger.info({ containerName, imageName, hostPort }, "Harness container started");
 
-  // The worker (inside compose) reaches it via container name on the shared network.
-  return { functionUrl: `http://${containerName}:8080` };
+  // host.docker.internal resolves to the host machine from both the host itself
+  // (Docker Desktop adds it to /etc/hosts) and from inside Docker containers.
+  return { functionUrl: `http://${DEV_HARNESS_HOST}:${hostPort}` };
 }

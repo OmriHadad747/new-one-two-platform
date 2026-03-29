@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { logger } from "@new-one-two/logger";
 import type { HarnessInvokeRequest } from "@new-one-two/types";
 import { handleInvoke } from "./invoke-handler.js";
+import { handleWidgetInvoke } from "./widget-handler.js";
 import { loadModule } from "./module-loader.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "8080", 10);
@@ -12,6 +13,25 @@ const app = Fastify({
 });
 
 app.get("/health", async () => ({ status: "ok" }));
+
+app.post<{ Params: { "*": string }; Body: Record<string, unknown> }>(
+  "/widget/*",
+  async (request, reply) => {
+    const widgetPath = "/" + request.params["*"];
+    const tenantId = request.headers["x-tenant-id"] as string | undefined;
+
+    if (!tenantId) {
+      return reply.status(400).send({ error: "missing_tenant_id" });
+    }
+
+    const { status, data } = await handleWidgetInvoke(
+      tenantId,
+      widgetPath,
+      (request.body ?? {}) as Record<string, unknown>
+    );
+    return reply.status(status).send(data);
+  }
+);
 
 app.post<{ Body: HarnessInvokeRequest }>("/invoke", async (request, reply) => {
   const body = request.body;

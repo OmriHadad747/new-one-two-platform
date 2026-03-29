@@ -93,9 +93,9 @@ async function widgetProxyHandler(
   const path = request.params["*"];
   const log = createRequestLogger({ requestId: request.id });
 
-  const functionUrl = await resolveAppFunctionUrl(shop, appId);
+  const resolved = await resolveAppFunctionUrl(shop, appId);
 
-  if (!functionUrl) {
+  if (!resolved) {
     log.debug({ shop, appId }, "Widget proxy: no deployed function");
     return reply
       .header("Access-Control-Allow-Origin", "*")
@@ -103,23 +103,42 @@ async function widgetProxyHandler(
       .send({ error: "backend_not_deployed" });
   }
 
+  const { functionUrl, tenantId } = resolved;
   const targetUrl = `${functionUrl}/widget/${path}`;
   log.debug({ shop, appId, path, targetUrl }, "Widget proxy forwarding");
 
-  const res = await fetch(targetUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shop-Domain": shop,
-      "X-App-Id": appId,
-    },
-    body: JSON.stringify(request.body ?? {}),
-  });
+  try {
+    const res = await fetch(targetUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shop-Domain": shop,
+        "X-App-Id": appId,
+        "X-Tenant-Id": tenantId,
+      },
+      // Ensure body is sent as string; default to empty object string if null
+      body: JSON.stringify(request.body ?? {}),
+    });
 
-  const data = await res.json();
+    const data = await res.json().catch(() => ({}));
 
-  return reply
-    .header("Access-Control-Allow-Origin", "*")
-    .code(res.status)
-    .send(data);
+    if (!res.ok) {
+      log.error({ shop, appId, path, status: res.status, data }, "Widget proxy: harness returned error");
+    }
+
+    return reply
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Content-Type", res.headers.get("content-type") || "application/json")
+      .code(res.status)
+      .send(data);
+
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error({ message, shop, appId, path, targetUrl }, "Widget proxy: fetch failed");
+
+    return reply
+      .header("Access-Control-Allow-Origin", "*")
+      .code(502)
+      .send({ error: "bad_gateway" });
+  }
 }

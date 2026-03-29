@@ -24,6 +24,9 @@ export async function writeWebhookSubscriptions(params: {
   deployedFunctionId: string;
   topics: string[];
   callbackUrl: string;
+  /** Real Shopify webhook IDs returned by registerShopifyWebhooks. Falls back to a
+   *  local placeholder for topics where registration was skipped or failed. */
+  shopifyWebhookIds?: Record<string, string>;
 }): Promise<void> {
   // upsertWebhookSubscription uses RLS — must run within tenant context
   await withTenantContext(params.tenantId, async (_tx) => {
@@ -33,9 +36,9 @@ export async function writeWebhookSubscriptions(params: {
         tenantId: params.tenantId,
         deployedFunctionId: params.deployedFunctionId,
         topic,
-        // Placeholder — will be replaced with a real Shopify webhook ID when
-        // Shopify confirms subscription registration (Phase 4+)
-        shopifyWebhookId: `local-${params.appId}-${topic.replace("/", "-")}`,
+        shopifyWebhookId:
+          params.shopifyWebhookIds?.[topic] ??
+          `local-${params.appId}-${topic.replace(/\//g, "-")}`,
         callbackUrl: params.callbackUrl,
       });
     }
