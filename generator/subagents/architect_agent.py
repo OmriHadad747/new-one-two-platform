@@ -104,10 +104,13 @@ widgetApiCatalog: null for backend_only apps.
     and widget generators receive this and must use these exact field names — no aliases,
     no renames. Error responses always use { error: "short_slug" } — do not list errors here.
   Widget body contract (used by the CodeSpec agent when writing widgetPath steps):
-  - customerEmail (the user's email — the widget sends this, NOT "email")
-  - variantId, productId, customerId (camelCase from host.context — always available)
-  - inventoryItemId is NOT sent by the widget — if needed, the handler must resolve it:
-    GET /variants/${variantId}.json → variant.inventory_item_id
+  Widget body fields must only contain data the widget can actually access:
+  - form inputs captured by the widget (e.g. customerEmail — the widget sends this, NOT "email")
+  - identifiers resolved from the page URL (location.pathname / location.search)
+  - identifiers resolved from host.storefront() responses
+  - customerId from host.context (null for guests)
+  NEVER include server-side-only data the widget cannot know. Example: inventoryItemId must
+  be resolved server-side — GET /variants/${variantId}.json → variant.inventory_item_id
   User-identity in responseShape: if a path returns a user-specific boolean (e.g.
   alreadySubscribed, isSignedUp), the handler MUST check by customerId, not email.
   The widget cannot read the customer's email — only customerId is available from host.context.
@@ -173,7 +176,7 @@ OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanatio
     "migrationGuidance": "...",
     "widgetGuidance": null,
     "storefrontReads": null | [
-      { "path": "/products/${host.context.productHandle}.js", "dataUsed": "variant.available — to decide whether to show the button" }
+      { "path": "/products/${handle}.js", "dataUsed": "variant.available — widget extracts handle from location.pathname, variantId from location.search" }
     ],
     "widgetApiCatalog": null | [
       { "method": "POST" | "GET", "path": "/slug", "responseShape": { "fieldName": "exampleValue" } }

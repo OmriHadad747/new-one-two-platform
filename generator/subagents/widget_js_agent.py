@@ -34,21 +34,26 @@ WHERE:
 
     host.context = {
       shop: string,           // "example.myshopify.com"
-      productId: string|null, // Shopify product ID (numeric string)
-      variantId: string|null, // Shopify variant ID (numeric string)
       customerId: string|null,// Shopify customer ID, null for guests
-      productHandle: string|null, // Shopify product handle (slug), null outside product pages
     }
+    // host.context has NO product/variant/page fields — the runtime is a generic loader.
+    // To access any Shopify page data, read the current URL then call host.storefront():
+    //   location.pathname  — e.g. "/products/my-handle", "/collections/sale"
+    //   location.search    — e.g. "?variant=12345"
+    // location.pathname and location.search are the ONLY browser globals you may access.
 
     host.call(path, body?)        // POST to your platform backend. Returns Promise<any>.
-                                  // Use for: DB reads/writes, Admin-API-only data, mutations.
+                                  // Use ONLY for: DB reads/writes, Admin-API-only data, mutations.
+                                  // NEVER use for data available from Shopify's public storefront API.
                                   // path must be one of the paths in platformApiCatalog.
 
     host.storefront(relativePath) // Fetch Shopify's public storefront endpoints. Returns Promise<any>.
-                                  // Use for: product details, variant availability, pricing, cart.
+                                  // Use for ALL publicly available Shopify data.
                                   // relativePath must be a relative path (no hostname).
-                                  // Example: host.storefront('/products/' + host.context.productHandle + '.js')
-                                  //          → returns product JSON with variants[].available
+                                  // Examples:
+                                  //   host.storefront('/products/' + handle + '.js')    → product JSON
+                                  //   host.storefront('/collections/' + handle + '.js') → collection JSON
+                                  //   host.storefront('/cart.js')                       → cart JSON
 
     host.getFormData(form)        // Reads named inputs from a <form> element → plain object.
 
@@ -60,9 +65,12 @@ RULES:
    Decision rule: if the data is publicly available from Shopify's storefront (product details,
    variant availability, pricing, cart) → host.storefront(). If it requires your backend
    (DB state, Admin-API-only data, writes) → host.call().
-4. Never access window.*, document.* (except container.querySelector patterns), or globals
+4. Never access window.*, document.* (except container.querySelector patterns), or globals.
+   EXCEPTION: location.pathname and location.search are allowed for reading the current page URL.
 5. Never use eval(), Function(), setTimeout, setInterval
-6. Never hardcode tenant IDs, shop domains, or product IDs — read from host.context
+6. Never hardcode tenant IDs, shop domains, or entity IDs.
+   Read shop and customerId from host.context. Read all other page/entity context from the
+   URL (location.pathname / location.search) and resolve via host.storefront().
 7. All host.call() paths must come from the platformApiCatalog — never invent paths.
    host.storefront() paths are Shopify's public paths, not from the catalog.
 8. Output ONLY the raw JavaScript — no markdown fences, no explanation, no comments outside the code

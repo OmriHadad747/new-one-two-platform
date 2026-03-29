@@ -12,8 +12,8 @@
  *
  * The widget cannot:
  *   - Touch the DOM outside its container
- *   - Call fetch directly (must use host.call)
- *   - Access window or any global
+ *   - Make backend calls except through host.call
+ *   - Make storefront calls except through host.storefront
  *
  * Multiple App Block instances on the same page each run independently.
  */
@@ -43,7 +43,7 @@ async function mountBlock(block) {
 
   try {
     const widgetModule = await fetchWidgetModule(platformUrl, shop, appId);
-    const host = buildHost({ appId, shop, platformUrl, block });
+    const host = buildHost({ appId, shop, platformUrl });
     await widgetModule.mount(container, host);
   } catch (err) {
     console.error(`[widget-runtime] Failed to mount widget "${appId}":`, err);
@@ -52,8 +52,8 @@ async function mountBlock(block) {
 
 /**
  * Fetches the widget JS from the platform and imports it as an ES module.
- * We use a Blob URL so the browser treats it as a module without requiring
- * the platform to set special CORS headers beyond Access-Control-Allow-Origin.
+ * We use a Blob URL so the browser treats it as a module.
+ * Plain GET with no custom headers = simple CORS request, no preflight needed.
  */
 async function fetchWidgetModule(platformUrl, shop, appId) {
   const widgetUrl = `${platformUrl}/widgets/${encodeURIComponent(shop)}/${encodeURIComponent(appId)}.js`;
@@ -81,14 +81,25 @@ async function fetchWidgetModule(platformUrl, shop, appId) {
  * Builds the host API object passed to widget.mount(container, host).
  * This is the complete and only interface between the widget and the outside world.
  */
-function buildHost({ appId, shop, platformUrl, block }) {
+function buildHost({ appId, shop, platformUrl }) {
   return {
     // ── Page context ─────────────────────────────────────────────────────────
     context: {
       shop,
-      productId: block.dataset.productId ?? readShopifyContext("product-id"),
-      variantId: block.dataset.variantId ?? readShopifyContext("variant-id"),
       customerId: window.ShopifyAnalytics?.meta?.page?.customerId ?? null,
+    },
+
+    // ── Storefront API calls ──────────────────────────────────────────────────
+    // Generic proxy to Shopify's public storefront JSON endpoints.
+    // Widgets use this to read public product/collection data without going
+    // through the platform backend.
+    storefront: async (path) => {
+      const url = `https://${shop}${path}`;
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) {
+        throw new Error(`[host.storefront] ${path} failed [${res.status}]`);
+      }
+      return res.json();
     },
 
     // ── Backend calls ─────────────────────────────────────────────────────────
@@ -119,13 +130,3 @@ function buildHost({ appId, shop, platformUrl, block }) {
   };
 }
 
-/**
- * Reads Shopify-rendered page context from data attributes.
- * Shopify themes typically expose product/variant IDs on elements with
- * data-product-id / data-variant-id attributes.
- */
-function readShopifyContext(key) {
-  const camel = key.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-  const el = document.querySelector(`[data-${key}]`);
-  return el?.dataset[camel] ?? null;
-}

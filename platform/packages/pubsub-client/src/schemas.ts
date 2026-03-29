@@ -28,6 +28,8 @@ export const ProgressEventSchema = z.object({
   agent: z.enum([
     "intent",
     "schema",
+    "architect",
+    "codespec",
     "planner",
     "codegen",
     "widget_config",

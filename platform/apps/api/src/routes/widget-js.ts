@@ -5,11 +5,19 @@ import { createRequestLogger } from "@new-one-two/logger";
 // ─── Route Registration ────────────────────────────────────────────────────────
 
 export async function widgetJsRoutes(app: FastifyInstance) {
-  // CORS preflight for widget JS fetch
   app.options("/:shop/:appId.js", async (_request, reply) => {
     return reply
       .header("Access-Control-Allow-Origin", "*")
       .header("Access-Control-Allow-Methods", "GET, OPTIONS")
+      .header("Access-Control-Allow-Headers", "*")
+      .code(204)
+      .send();
+  });
+
+  app.options("/:shop/:appId/widget/*", async (_request, reply) => {
+    return reply
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Access-Control-Allow-Methods", "POST, OPTIONS")
       .header("Access-Control-Allow-Headers", "*")
       .code(204)
       .send();
@@ -34,16 +42,6 @@ export async function widgetJsRoutes(app: FastifyInstance) {
     widgetJsHandler
   );
 
-  // CORS preflight for widget proxy calls
-  app.options("/:shop/:appId/widget/*", async (_request, reply) => {
-    return reply
-      .header("Access-Control-Allow-Origin", "*")
-      .header("Access-Control-Allow-Methods", "POST, OPTIONS")
-      .header("Access-Control-Allow-Headers", "*")
-      .code(204)
-      .send();
-  });
-
   app.post<{
     Params: { shop: string; appId: string; "*": string };
   }>("/:shop/:appId/widget/*", widgetProxyHandler);
@@ -64,12 +62,14 @@ async function widgetJsHandler(
 
   if (!result) {
     log.debug({ shop, appId }, "No widget JS found");
-    return reply.code(404).send("// Widget not found");
+    return reply
+      .header("Access-Control-Allow-Origin", "*")
+      .code(404)
+      .send("// Widget not found");
   }
 
   log.debug({ shop, appId }, "Widget JS resolved");
 
-  // CORS: widget JS is fetched by the runtime from a Shopify storefront domain.
   return reply
     .header("Content-Type", "application/javascript; charset=utf-8")
     .header("Access-Control-Allow-Origin", "*")

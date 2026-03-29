@@ -12,6 +12,7 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@fastify/cors": "^9.0.1",
     "@new-one-two/crypto": "workspace:*",
     "@new-one-two/db": "workspace:*",
     "@new-one-two/deployer": "workspace:*",

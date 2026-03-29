@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import { logger } from "@new-one-two/logger";
 import {
   startSubscriptions,
@@ -24,6 +25,8 @@ export async function buildServer() {
   // Open Pub/Sub subscriptions before accepting HTTP requests.
   // The SSE fan-out and bundle persistence both depend on these being active.
   await startSubscriptions();
+
+  await app.register(cors, { origin: "*", allowedHeaders: "*" });
 
   await app.register(healthRoute, { prefix: "/health" });
   await app.register(generationRoute, { prefix: "/generation" });

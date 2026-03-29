@@ -21,6 +21,7 @@ Output: { codeSpec: { webhookPath, cronPath, widgetPath, functions } }
 
 Model: claude-sonnet-4-6
 """
+
 from __future__ import annotations
 
 import json
@@ -122,13 +123,13 @@ For host.call() bodies: write the EXACT field names the widget sends, e.g.:
 The handler step for the same path MUST destructure those exact same field names:
   "const { customerEmail, variantId, productId } = ctx.widgetBody"
 
-Allowed widget body fields — ONLY these identifiers may appear in host.call() bodies:
-  - customerEmail   (from a user-input form field — NEVER use 'email', always 'customerEmail')
-  - variantId       (from host.context)
-  - productId       (from host.context)
-  - customerId      (from host.context — null for guests)
-  NEVER include inventoryItemId — the widget cannot know it. The handler resolves it:
-    "resolve inventoryItemId: GET /variants/${variantId}.json → variant.inventory_item_id"
+Widget body fields must only contain data the widget can actually access:
+  - form inputs captured by the widget (e.g. customerEmail — NEVER use 'email', always 'customerEmail')
+  - identifiers the widget resolved from the page URL (location.pathname / location.search)
+  - identifiers the widget resolved from a host.storefront() response
+  - customerId from host.context (null for guests)
+  NEVER include server-side-only data the widget cannot know. Example: inventoryItemId is
+  resolved server-side — the handler must fetch it: GET /variants/${variantId}.json → variant.inventory_item_id
 
 Contract consistency rule — the host.call() body is the ONLY source of truth for handler fields:
   The handler's ctx.widgetBody destructuring MUST contain exactly the same fields as the
@@ -160,9 +161,12 @@ Storefront-readable data rule:
   data the widget can read directly from Shopify's public storefront endpoints.
   Only include paths in widgetApiCatalog when the handler must access the DB or Admin-only data.
   Widget steps using storefront reads look like:
-    "widget calls host.storefront('/products/' + host.context.productHandle + '.js') → productData"
-    "widget: variant = productData.variants.find(v => String(v.id) === host.context.variantId)"
+    "widget: handle = location.pathname.match(/\/products\/([^/?#]+)/)?.[1]"
+    "widget: variantId = new URLSearchParams(location.search).get('variant')"
+    "widget calls host.storefront('/products/' + handle + '.js') → productData"
+    "widget: variant = productData.variants.find(v => String(v.id) === String(variantId)) ?? productData.variants[0]"
     "widget: isOutOfStock = !variant.available"
+    "widget: productId = String(productData.id)"
 
 ALWAYS end each path's steps with a response shape line that EXACTLY matches
 widgetApiCatalog[path].responseShape, e.g.:
