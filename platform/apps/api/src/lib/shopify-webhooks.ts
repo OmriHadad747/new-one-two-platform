@@ -74,7 +74,7 @@ export async function reRegisterTenantWebhooks(params: {
 
   // Re-create each (app, topic) with the current callback URL
   for (const row of rows) {
-    const callbackUrl = `${webhookBase}/${row.tenantSlug}/${row.appSlug}`;
+    const callbackUrl = `${webhookBase}/webhook/${row.tenantSlug}/${row.appSlug}`;
     const id = await createWebhook(params.shop, params.accessToken, row.topic, callbackUrl);
     if (id !== null) {
       logger.info(

@@ -25,7 +25,7 @@ export function cloudRunServicePath(appId: string): string {
 
 export function callbackUrl(tenantSlug: string, appSlug: string): string {
   const base = process.env["WEBHOOK_BASE_URL"] ?? "http://localhost:3001";
-  return `${base}/${tenantSlug}/${appSlug}`;
+  return `${base}/webhook/${tenantSlug}/${appSlug}`;
 }
 
 export const GCP_REGION_VALUE = GCP_REGION;

@@ -96,8 +96,8 @@ export interface WebhookJobPayload {
     receivedAt: string;
 }
 export interface WebhookRouteParams {
-    tenantId: string;
-    appId: string;
+    tenantSlug: string;
+    appSlug: string;
 }
 export interface ResolvedWebhookContext {
     tenant: Tenant;

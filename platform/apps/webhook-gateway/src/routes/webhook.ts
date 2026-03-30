@@ -27,16 +27,16 @@ export async function webhookRoutes(app: FastifyInstance) {
     Params: WebhookRouteParams;
     Headers: ShopifyWebhookHeaders;
   }>(
-    "/:tenantId/:appId",
+    "/:tenantSlug/:appSlug",
     {
       config: { rawBody: true }, // required for HMAC validation
       schema: {
         params: {
           type: "object",
-          required: ["tenantId", "appId"],
+          required: ["tenantSlug", "appSlug"],
           properties: {
-            tenantId: { type: "string", minLength: 1 },
-            appId: { type: "string", minLength: 1 },
+            tenantSlug: { type: "string", minLength: 1 },
+            appSlug: { type: "string", minLength: 1 },
           },
         },
         headers: {
@@ -68,14 +68,14 @@ async function webhookHandler(
   }>,
   reply: FastifyReply
 ) {
-  const { tenantId, appId } = request.params;
+  const { tenantSlug, appSlug } = request.params;
   const topic = request.headers["x-shopify-topic"];
   const shopifyWebhookId = request.headers["x-shopify-webhook-id"];
   const hmacHeader = request.headers["x-shopify-hmac-sha256"];
 
   const log = createRequestLogger({
-    tenantId,
-    appId,
+    tenantId: tenantSlug,
+    appId: appSlug,
     requestId: request.id,
     topic,
   });
@@ -93,7 +93,7 @@ async function webhookHandler(
   // ── 2. Resolve context (tenant + app + deployed function) ──────────────────
   // This single query validates that the tenant/app exists and is active,
   // and fetches everything needed for HMAC validation and routing.
-  const ctx = await resolveWebhookContext(tenantId, appId, topic);
+  const ctx = await resolveWebhookContext(tenantSlug, appSlug, topic);
 
   if (!ctx) {
     // Don't leak whether the tenant/app exists — always 404

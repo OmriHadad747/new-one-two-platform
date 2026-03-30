@@ -167,7 +167,7 @@ export async function reRegisterTenantWebhooks(params: {
 
   // Re-create per (app, topic) — each app has its own callback URL
   for (const row of rows) {
-    const callbackUrl = `${webhookBase}/${row.tenantSlug}/${row.appSlug}`;
+    const callbackUrl = `${webhookBase}/webhook/${row.tenantSlug}/${row.appSlug}`;
     const wh = await shopifyPost(params.shop, params.accessToken, "/webhooks.json", {
       webhook: { topic: row.topic, address: callbackUrl, format: "json" },
     });
