@@ -170,3 +170,28 @@ changes, and frontend support for the Q&A step.
 **Interim** (already in place): the 5-second `max-age` keeps Postgres load manageable for low traffic. Switch to GCS before going to production scale.
 
 **Complexity:** Low — follows the existing `gcsBundlePath` pattern already used for handler bundles.
+
+---
+
+## TD-010 — Generator has no access to live Shopify API / docs
+
+**What's missing**
+The generator reasons about Shopify APIs entirely from training data. When it needs to verify a field name, check whether a feature exists in a specific API version, or resolve an ambiguity in the GraphQL schema, it has no way to look it up. This causes hallucinated field names, wrong API versions, and incorrect assumptions about scope requirements (e.g. `themeDuplicate` argument names, `ThemeDuplicatePayload` shape).
+
+**What to do**
+Add a `web_search` tool to the generator's Claude API call chain:
+
+1. **Pick a search provider** — Tavily or Brave Search (both have free tiers; Tavily returns pre-summarized results suited for LLM agents).
+2. **Define a `web_search` tool** in the Claude API request — simple schema: `{ query: string }`.
+3. **Implement the tool execution loop** — if the model returns `tool_use`, execute the search, feed results back as `tool_result`, loop until `end_turn`.
+4. **Scope it via system prompt** — instruct the model to use it when verifying Shopify API field names, argument names, scope requirements, or version availability.
+5. **Cache results** — store fetched doc pages in Redis with a TTL to avoid redundant lookups across generation runs.
+
+**Architecture choice:** implement as a pre-step (fetch relevant docs before planning, inject as context) or inline (model calls tool mid-generation). Pre-step is simpler and more predictable; inline tool use is more flexible.
+
+**Affected files (when implemented)**
+- `generator/crews/feature_generator/crew.py` — add tool loop or pre-fetch step
+- `generator/models/adapter.py` — extend to support tool use round-trips
+- `generator/subagents/` — optional: new `docs_agent.py` for the pre-step approach
+
+**Complexity:** Medium — tool loop plumbing + search provider integration + caching.

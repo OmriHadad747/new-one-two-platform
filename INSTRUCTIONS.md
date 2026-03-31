@@ -58,10 +58,12 @@ Restart the API after updating.
 
 ### Step 6 — Add App Block to your theme
 
-1. Go to Shopify Admin → Online Store → Themes → Customize
-2. Add an App Block from the **new-one-two** app
-3. In the block settings, set **App ID** to: `00000000-0000-0000-0000-000000000002`
-4. Save
+1. Go to Shopify Admin → Online Store → Themes → duplicate the published theme (creates an unpublished copy)
+2. On the duplicated theme → Customize
+3. Navigate to a product page template
+4. Add an App Block from the **new-one-two** app
+5. In the block settings, set **App ID** to: `00000000-0000-0000-0000-000000000002`
+6. Save
 
 ### Step 7 — Create app
 

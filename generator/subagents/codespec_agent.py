@@ -59,6 +59,11 @@ Atomic claims MUST be written as two explicit consecutive steps:
 State transition guards MUST be explicit:
   "if prevState === null: [skip] // never observed — cannot confirm transition"
 
+State upsert is unconditional — when a handler tracks state transitions, the DB upsert
+  that records the new state MUST NOT be gated behind any payload value check. An early
+  exit before the upsert means the baseline is never established and future transitions
+  will be silently missed.
+
 Notification pattern — claim BEFORE emitting (MANDATORY ordering):
   Step N:   "claimed = UPDATE ... SET notified_at = NOW() WHERE ... AND notified_at IS NULL RETURNING id, customer_email, ..."
   Step N+1: "if claimed.length === 0: return  // already notified — idempotency guard"
@@ -246,11 +251,17 @@ def run_codespec_agent(
     )
 
     llm = get_code_llm(max_tokens=4096)
+    current_user = user
     for attempt in range(2):
-        result = invoke(llm, CODESPEC_SYSTEM, user)
+        result = invoke(llm, CODESPEC_SYSTEM, current_user)
         raw = extract_json(result.content)
         try:
             return json.loads(raw)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             if attempt == 1:
                 raise
+            current_user = (
+                f"PREVIOUS ATTEMPT RETURNED INVALID JSON:\n  {e}\n"
+                f"Output ONLY a valid JSON object. No markdown fences, no trailing commas, "
+                f"no comments inside JSON.\n\n"
+            ) + user

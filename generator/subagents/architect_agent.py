@@ -300,11 +300,17 @@ def run_architect_agent(
     )
 
     llm = get_code_llm(max_tokens=3000)
+    current_user = user
     for attempt in range(2):
-        result = invoke(llm, ARCHITECT_SYSTEM, user)
+        result = invoke(llm, ARCHITECT_SYSTEM, current_user)
         raw = extract_json(result.content)
         try:
             return json.loads(raw)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             if attempt == 1:
                 raise
+            current_user = (
+                f"PREVIOUS ATTEMPT RETURNED INVALID JSON:\n  {e}\n"
+                f"Output ONLY a valid JSON object. No markdown fences, no trailing commas, "
+                f"no comments inside JSON.\n\n"
+            ) + user

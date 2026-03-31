@@ -116,6 +116,14 @@ ABSOLUTE RULES (violations will cause deployment failure):
 14. Never silently ignore errors from ctx.db — propagate or return early on failure
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LOGGING — use ctx.logger at key decision points:
+- On trigger entry: log { trigger: ctx.trigger } and relevant payload IDs
+- On early exit: log the reason (e.g. "no transition detected", "first observation — baseline set")
+- On state transition detected: log prevState and newState
+- On claimed rows: log how many rows were claimed
+Do NOT log email sending.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SHOPIFY API LOOP RULE — applies to every handler path:
 
 NEVER call ctx.shopify inside a per-item loop. Pre-fetch all Shopify data into a
