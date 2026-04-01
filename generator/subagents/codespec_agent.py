@@ -28,6 +28,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from models.adapter import get_code_llm, invoke, extract_json
+from templates.shopify_api_ref import SHOPIFY_API_REF
 
 
 CODESPEC_SYSTEM = """You are a senior Shopify automation engineer writing step-by-step implementation algorithms.
@@ -52,17 +53,38 @@ ABSOLUTE RULES — violations will cause codegen failures:
     Every SELECT in the cron path MUST include AND tenant_id = ${ctx.tenantId}.
     NEVER fetch rows across all tenants in a cron SELECT.
 
+DB result checks MUST use .length, never array index:
+  ALWAYS check rows.length === 0 to detect empty results — NEVER rows[0] === undefined.
+  rows[0] === undefined is always true on an empty array and masks the actual condition.
+  ✅ "if rows.length === 0: return  // no record found"
+  ❌ "const row = rows[0]; if (row === undefined): return"
+
 Atomic claims MUST be written as two explicit consecutive steps:
   "claimed = UPDATE ... WHERE ... AND state=X RETURNING id"
   "if claimed.length === 0: [skip/continue/return]  // [reason]"
 
-State transition guards MUST be explicit:
-  "if prevState === null: [skip] // never observed — cannot confirm transition"
+Guard EVERY read before using its result — applies to DB queries, Shopify API calls, and webhook payload fields:
+  After a DB SELECT:      "if rows.length === 0: return  // no record — nothing to act on"
+  After a Shopify GET:    "if !response.variant: return  // entity not found or deleted"
+  After payload access:   "if !ctx.payload.inventory_item_id: return  // required field missing"
+  After a state lookup:   "if stateRows.length === 0: initialize state and return  // never observed — no prior value to compare"
+                          "if prevState === null: skip  // sentinel — cannot confirm transition without prior observation"
+  The guard step MUST appear immediately after the read, before any logic that consumes the value.
+  A missing guard means downstream code silently operates on undefined/null data.
 
 State upsert is unconditional — when a handler tracks state transitions, the DB upsert
   that records the new state MUST NOT be gated behind any payload value check. An early
   exit before the upsert means the baseline is never established and future transitions
   will be silently missed.
+
+Webhook payload scoping — MANDATORY:
+  Every DB read and write in the webhook path MUST be scoped to the specific entity
+  from the payload (e.g. the variant_id, order_id, customer_id, inventory_item_id
+  that triggered the event). NEVER query all pending rows across all entities in a
+  webhook path — that belongs in the cron backstop path only.
+  ✅ "SELECT ... WHERE tenant_id = ${ctx.tenantId} AND entity_id = ${payloadEntityId}"
+  ❌ "SELECT ... WHERE tenant_id = ${ctx.tenantId} AND notified_at IS NULL"
+      // this fetches all pending rows — not just those for the triggering entity
 
 Notification pattern — claim BEFORE emitting (MANDATORY ordering):
   Step N:   "claimed = UPDATE ... SET notified_at = NOW() WHERE ... AND notified_at IS NULL RETURNING id, customer_email, ..."
@@ -123,8 +145,15 @@ WIDGET PATH CONTRACT
 widgetPath is the CONTRACT between the widget and the handler — both generators read it.
 Each entry covers one catalog path. Start each entry with "path /foo:"
 
-For host.call() bodies: write the EXACT field names the widget sends, e.g.:
-  "widget calls host.call('/signup', { customerEmail, variantId, productId })"
+For host.call() bodies: write the EXACT field names the widget sends as a JS object literal.
+Field names MUST be camelCase JS identifiers — no prose, no type annotations, no descriptions.
+  ✅ "widget calls host.call('/signup', { customerEmail, variantId, productId })"
+  ❌ "widget calls host.call('/signup', { String email, variant id, product identifier })"
+  ❌ "widget calls host.call('/signup', { customerEmail: String, variantId: Number })"
+Field names must be stable — use the SAME name from extraction through to host.call():
+  If a prior step assigned: "widget: variantId = URLSearchParams(...).get('variant')"
+  then the call must be: "widget calls host.call('/subscribe', { variantId, ... })"
+  NEVER rename it with a prefix: resolvedVariantId, fetchedVariantId, parsedVariantId — these are NOT the same name and will cause a validation error.
 The handler step for the same path MUST destructure those exact same field names:
   "const { customerEmail, variantId, productId } = ctx.widgetBody"
 
@@ -213,7 +242,7 @@ Feature intent:
 
 Locked architect decisions (ground truth — do not change these):
 {architect_json}
-
+{api_ref}
 Write the codeSpec algorithms. Every variable name, table name, API path, and field name must be consistent with the architect output above."""
 
 
@@ -248,6 +277,7 @@ def run_codespec_agent(
         prompt=prompt,
         intent_json=json.dumps(intent, indent=2),
         architect_json=json.dumps(architect_output, indent=2),
+        api_ref=SHOPIFY_API_REF,
     )
 
     llm = get_code_llm(max_tokens=4096)

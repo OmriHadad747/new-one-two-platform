@@ -21,9 +21,10 @@ Model: claude-sonnet-4-6
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from models.adapter import get_code_llm, invoke, extract_json
+from templates.shopify_api_ref import SHOPIFY_API_REF
 
 
 ARCHITECT_SYSTEM = """You are a senior Shopify automation architect. Your output is consumed by a CodeSpec agent that writes step-by-step algorithms — your job is structural decisions only, not algorithms.
@@ -190,67 +191,8 @@ Feature intent:
 {intent_json}
 
 App archetype: {archetype}
-{schema_section}{jit_notes}Produce the structural plan (no codeSpec)."""
-
-# ── JIT contextual notes keyed on intent resources ────────────────────────────
-
-_JIT_NOTE_INVENTORY = """
-⚠ Inventory multi-location note (inject because this feature uses inventory):
-  inventory_levels/update fires once PER LOCATION — ctx.payload.available is that
-  location's quantity only, not the store-wide total. To avoid false-positive
-  notifications (item restocked at one location but still globally zero), the
-  handler should call GET /inventory_levels.json?inventory_item_ids=<id> after
-  detecting a per-location restock, sum available across all locations, and only
-  trigger if the store-wide total transitions from 0 to positive.
-  Include this as a platformGap with the above mitigation.
-"""
-
-_JIT_NOTE_VARIANTS_CRON = """
-⚠ Variant/product cron batching note (inject because this feature uses products in a cron path):
-  Shopify has NO batch variant-by-IDs endpoint — GET /variants/{id}.json inside a loop
-  is N sequential Shopify API calls and WILL hit rate limits at scale.
-
-  Correct pattern — batch via products.json then extract variants:
-  1. Store product_id (BIGINT) in the DB table alongside variant_id.
-     Add "store product_id BIGINT alongside variant_id to support batch product fetching" to migrationGuidance.
-  2. In the cron path, collect all unique product_ids from the DB result.
-  3. Batch-fetch: GET /products.json?ids=<comma-ids>&fields=id,title,variants (max 250 per batch).
-  4. Build variantMap: Map<variant_id, {variant, product}> by iterating product.variants[].
-  5. Loop body uses variantMap only — zero Shopify calls inside the loop.
-  Set cronBatching.required = true with batchEndpoint "/products.json?ids=<comma-ids>&fields=id,title,variants"
-  and maxBatchSize 250.
-"""
-
-_JIT_NOTE_INVENTORY_CRON = """
-⚠ Inventory cron stock-check note (inject because this feature uses inventory in a cron path):
-  Do NOT use variant.inventory_quantity from /products.json — this field is unreliable for
-  multi-location stores. It can be stale or incorrect when stock exists at only some locations.
-
-  Correct pattern — batch via inventory_levels.json:
-  1. Store inventory_item_id (BIGINT) in the DB table alongside variant_id.
-     Add "store inventory_item_id BIGINT to support batch inventory level fetching" to migrationGuidance.
-  2. In the cron pre-fetch phase, collect all unique inventory_item_ids from pending DB rows.
-  3. Batch-fetch: GET /inventory_levels.json?inventory_item_ids=<comma-ids> (max 50 per batch).
-  4. Build inventoryMap: Map<inventory_item_id, storeWideTotal> by summing level.available
-     across all location entries for each inventory_item_id.
-  5. Loop body uses inventoryMap — zero Shopify inventory calls inside the loop.
-  Set cronBatching.required = true with batchEndpoint "/inventory_levels.json?inventory_item_ids=<comma-ids>"
-  and maxBatchSize 50.
-"""
-
-
-def _build_jit_notes(intent: Dict[str, Any]) -> str:
-    """Inject contextual guidance into the architect prompt based on intent resources."""
-    resources = [r.lower() for r in (intent.get("resources") or [])]
-    trigger = intent.get("triggerType", "")
-    notes: List[str] = []
-    if "inventory" in resources:
-        notes.append(_JIT_NOTE_INVENTORY)
-    if "inventory" in resources and trigger in ("cron", "both"):
-        notes.append(_JIT_NOTE_INVENTORY_CRON)
-    if "products" in resources and trigger in ("cron", "both"):
-        notes.append(_JIT_NOTE_VARIANTS_CRON)
-    return "".join(notes)
+{schema_section}{api_ref}
+Produce the structural plan (no codeSpec)."""
 
 
 def run_architect_agent(
@@ -288,15 +230,13 @@ def run_architect_agent(
         else ""
     )
 
-    jit_notes = _build_jit_notes(intent)
-
     user = _ARCHITECT_USER_TEMPLATE.format(
         error_block=error_block,
         prompt=prompt,
         intent_json=json.dumps(intent, indent=2),
         archetype=app_archetype,
         schema_section=schema_section,
-        jit_notes=jit_notes,
+        api_ref=SHOPIFY_API_REF,
     )
 
     llm = get_code_llm(max_tokens=3000)

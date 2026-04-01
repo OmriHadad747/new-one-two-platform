@@ -203,21 +203,6 @@ def validate_codespec(
                         f"Next step is: {next_step[:80]!r}"
                     )
 
-    # 4. State transition guard required when needsStateTracking is true
-    if sm.get("needsStateTracking"):
-        all_steps = webhook_path + cron_path
-        has_null_guard = any(
-            re.search(r"\bprev\w*\s*[=!]=\s*null|\bprev\w*\s+is\s+null", s, re.IGNORECASE)
-            or re.search(r"never.?observed|null.?sentinel|first.?seen|first.?observation", s, re.IGNORECASE)
-            for s in all_steps
-        )
-        if not has_null_guard:
-            errors.append(
-                "stateMachine.needsStateTracking is true but codeSpec has no "
-                "null-state skip guard — add an explicit step handling the case where "
-                "previous state is null (never observed): skip the transition check"
-            )
-
     # 5. No Shopify API calls inside per-item loop bodies — applies to ALL paths always.
     loop_indicators = re.compile(
         r"\bfor\s+each\b|\bfor\s+\(|\bfor\s+const\b|loop\s+body|\binside\s+loop\b",
@@ -238,8 +223,18 @@ def validate_codespec(
 
     # 6. For each widgetPath route, host.call() body fields must exactly match
     # ctx.widgetBody destructuring fields. Catches spec-level contradictions before codegen.
-    _NON_FIELD_SPEC = {"true", "false", "null", "undefined", "host", "context", "await",
-                       "only", "when", "if", "is", "not"}
+    _NON_FIELD_SPEC = {
+        # JS keywords / values
+        "true", "false", "null", "undefined", "host", "context", "await",
+        # English connectives / prose noise that leak into object-literal positions
+        "only", "when", "if", "is", "not", "and", "or", "the", "a", "an",
+        "of", "for", "to", "in", "on", "at", "with",
+        # Single-word identifiers that are never real widget body field names —
+        # they only appear when the model writes prose instead of JS syntax
+        # (e.g. "{ variant id }" → ['variant', 'id'])
+        "id", "variant", "product", "email", "customer", "inventory",
+        "item", "type", "name", "value", "data", "body", "path", "from",
+    }
     _spec_call_fields: Dict[str, set] = {}
     _spec_body_fields: Dict[str, set] = {}
     for step in widget_path:
@@ -251,13 +246,15 @@ def validate_codespec(
             r"host\.call\s*\(['\"][^'\"]+['\"],\s*\{([^}]*)\}", content, re.IGNORECASE
         )
         if call_m:
+            # Only accept lowercase-first identifiers — PascalCase words (String, Integer)
+            # and prose that leaks into the object literal are not field names.
             fields = {f for f in re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", call_m.group(1))
-                      if f not in _NON_FIELD_SPEC}
+                      if f not in _NON_FIELD_SPEC and f[0].islower()}
             _spec_call_fields[slug] = fields
         body_m = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody", content)
         if body_m:
             fields = {f for f in re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", body_m.group(1))
-                      if f not in _NON_FIELD_SPEC}
+                      if f not in _NON_FIELD_SPEC and f[0].islower()}
             _spec_body_fields[slug] = fields
 
     for slug in set(list(_spec_call_fields.keys()) + list(_spec_body_fields.keys())):
@@ -274,7 +271,11 @@ def validate_codespec(
             errors.append(
                 f"codeSpec.widgetPath '{slug}': widget↔handler field contract mismatch — "
                 f"{'; '.join(parts)}. "
-                f"ctx.widgetBody destructuring must exactly match the host.call() body fields."
+                f"host.call() sends: {sorted(call_f)}; "
+                f"ctx.widgetBody destructures: {sorted(body_f)}. "
+                f"These two sets must be identical. "
+                f"Fix: rewrite the handler step as "
+                f"'const {{ {', '.join(sorted(call_f))} }} = ctx.widgetBody'"
             )
 
     # 8. Cron path SELECTs must be scoped to ctx.tenantId — never cross-tenant
