@@ -19,6 +19,6 @@ export const useSessionStore = create<SessionState>()(
         set({ tenantId, shopDomain, plan }),
       clear: () => set({ tenantId: null, shopDomain: null, plan: "starter" }),
     }),
-    { name: "appforge-session" }
+    { name: "new-one-two-session" }
   )
 );

@@ -1002,6 +1002,148 @@ export async function updateAppArchetype(
 }
 
 /**
+ * Returns all apps for a tenant, newest first.
+ */
+export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
+  const rows = await sql<
+    Array<{
+      id: string;
+      tenantId: string;
+      slug: string;
+      name: string;
+      status: string;
+      appArchetype: string;
+      widgetJs: string | null;
+      shopifyClientId: string;
+      shopifySecretName: string;
+      shopifyAccessTokenSecretName: string | null;
+      shopDomain: string;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  >`
+    SELECT
+      id,
+      tenant_id                            AS "tenantId",
+      slug,
+      name,
+      status,
+      app_archetype                        AS "appArchetype",
+      widget_js                            AS "widgetJs",
+      shopify_client_id                    AS "shopifyClientId",
+      shopify_secret_name                  AS "shopifySecretName",
+      shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
+      shop_domain                          AS "shopDomain",
+      created_at                           AS "createdAt",
+      updated_at                           AS "updatedAt"
+    FROM apps
+    WHERE tenant_id = ${tenantId}
+      AND status != 'deleted'
+    ORDER BY updated_at DESC
+  `;
+  return rows.map((row) => ({
+    id: row.id,
+    tenantId: row.tenantId,
+    slug: row.slug,
+    name: row.name,
+    status: row.status as App["status"],
+    appArchetype: row.appArchetype as AppArchetype,
+    widgetJs: row.widgetJs,
+    shopifyClientId: row.shopifyClientId,
+    shopifySecretName: row.shopifySecretName,
+    shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
+    shopDomain: row.shopDomain,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
+}
+
+/**
+ * Returns the most recent execution logs across all apps for a tenant.
+ */
+export async function getRecentExecutionLogs(
+  tenantId: string,
+  limit = 20
+): Promise<
+  Array<{
+    id: string;
+    appId: string;
+    appName: string;
+    topic: string;
+    status: string;
+    durationMs: number | null;
+    errorMessage: string | null;
+    queuedAt: Date;
+  }>
+> {
+  return sql<
+    Array<{
+      id: string;
+      appId: string;
+      appName: string;
+      topic: string;
+      status: string;
+      durationMs: number | null;
+      errorMessage: string | null;
+      queuedAt: Date;
+    }>
+  >`
+    SELECT
+      el.id,
+      el.app_id          AS "appId",
+      a.name             AS "appName",
+      el.topic,
+      el.status,
+      el.duration_ms     AS "durationMs",
+      el.error_message   AS "errorMessage",
+      el.queued_at       AS "queuedAt"
+    FROM execution_logs el
+    JOIN apps a ON a.id = el.app_id
+    WHERE el.tenant_id = ${tenantId}
+    ORDER BY el.queued_at DESC
+    LIMIT ${limit}
+  `;
+}
+
+/**
+ * Returns dashboard stats for a tenant: app counts and execution metrics for current month.
+ */
+export async function getTenantStats(tenantId: string): Promise<{
+  totalApps: number;
+  liveApps: number;
+  apiCallsThisMonth: number;
+  avgResponseMs: number;
+}> {
+  const [appStats, execStats] = await Promise.all([
+    sql<Array<{ total: string; live: string }>>`
+      SELECT
+        COUNT(*)                                                      AS "total",
+        COUNT(*) FILTER (WHERE status = 'active')                    AS "live"
+      FROM apps
+      WHERE tenant_id = ${tenantId} AND status != 'deleted'
+    `,
+    sql<Array<{ calls: string; avgMs: string | null }>>`
+      SELECT
+        COUNT(*)                           AS "calls",
+        AVG(duration_ms)                   AS "avgMs"
+      FROM execution_logs
+      WHERE tenant_id  = ${tenantId}
+        AND queued_at >= date_trunc('month', NOW())
+    `,
+  ]);
+
+  const appRow = appStats[0] ?? { total: "0", live: "0" };
+  const execRow = execStats[0] ?? { calls: "0", avgMs: null };
+
+  return {
+    totalApps: parseInt(appRow.total, 10),
+    liveApps: parseInt(appRow.live, 10),
+    apiCallsThisMonth: parseInt(execRow.calls, 10),
+    avgResponseMs: execRow.avgMs ? Math.round(parseFloat(execRow.avgMs)) : 0,
+  };
+}
+
+/**
  * Creates or replaces a webhook subscription for an (app, topic) pair.
  * Uses RLS — must be called within withTenantContext.
  */

@@ -1,6 +1,8 @@
 import type {
   Tenant,
   App,
+  TenantStats,
+  ExecutionLogEntry,
   StartGenerationRequest,
   StartGenerationResponse,
 } from "@/types/dashboard";
@@ -25,9 +27,15 @@ export const api = {
       request<Tenant>(`/tenants/${tenantId}`),
     create: (body: { slug: string; name: string; plan?: string }) =>
       request<Tenant>("/tenants", { method: "POST", body: JSON.stringify(body) }),
+    stats: (tenantId: string) =>
+      request<TenantStats>(`/tenants/${tenantId}/stats`),
+    logs: (tenantId: string, limit = 20) =>
+      request<ExecutionLogEntry[]>(`/tenants/${tenantId}/logs?limit=${limit}`),
   },
 
   apps: {
+    list: (tenantId: string) =>
+      request<App[]>(`/tenants/${tenantId}/apps`),
     get: (tenantId: string, appId: string) =>
       request<App>(`/tenants/${tenantId}/apps/${appId}`),
     create: (tenantId: string, body: { slug: string; name: string }) =>

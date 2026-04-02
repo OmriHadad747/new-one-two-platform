@@ -1,13 +1,24 @@
 /**
  * Tenant management routes.
  *
- * POST   /tenants                          — Create a tenant
- * GET    /tenants/:tenantId                — Get a tenant by ID
- * POST   /tenants/:tenantId/apps           — Create an app under a tenant
- * GET    /tenants/:tenantId/apps/:appId    — Get an app by ID
+ * POST   /tenants                                  — Create a tenant
+ * GET    /tenants/:tenantId                        — Get a tenant by ID
+ * GET    /tenants/:tenantId/stats                  — Dashboard stats (app counts + exec metrics)
+ * GET    /tenants/:tenantId/apps                   — List all apps for a tenant
+ * POST   /tenants/:tenantId/apps                   — Create an app under a tenant
+ * GET    /tenants/:tenantId/apps/:appId            — Get an app by ID
+ * GET    /tenants/:tenantId/logs                   — Recent execution logs (all apps)
  */
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
-import { createTenant, getTenantById, createApp, getAppById } from "@new-one-two/db";
+import {
+  createTenant,
+  getTenantById,
+  createApp,
+  getAppById,
+  getAppsByTenantId,
+  getRecentExecutionLogs,
+  getTenantStats,
+} from "@new-one-two/db";
 import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
 
 export const tenantsRoute: FastifyPluginAsync = async (app) => {
@@ -46,6 +57,36 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
     }
   );
 
+  // ─── GET /tenants/:tenantId/stats ───────────────────────────────────────────
+
+  app.get<{ Params: { tenantId: string } }>(
+    "/:tenantId/stats",
+    async (req: FastifyRequest<{ Params: { tenantId: string } }>, reply: FastifyReply) => {
+      const { tenantId } = req.params;
+      const tenant = await getTenantById(tenantId);
+      if (!tenant) {
+        return reply.status(404).send({ error: "Tenant not found" });
+      }
+      const stats = await getTenantStats(tenantId);
+      return reply.send(stats);
+    }
+  );
+
+  // ─── GET /tenants/:tenantId/apps ────────────────────────────────────────────
+
+  app.get<{ Params: { tenantId: string } }>(
+    "/:tenantId/apps",
+    async (req: FastifyRequest<{ Params: { tenantId: string } }>, reply: FastifyReply) => {
+      const { tenantId } = req.params;
+      const tenant = await getTenantById(tenantId);
+      if (!tenant) {
+        return reply.status(404).send({ error: "Tenant not found" });
+      }
+      const apps = await getAppsByTenantId(tenantId);
+      return reply.send(apps);
+    }
+  );
+
   // ─── POST /tenants/:tenantId/apps ───────────────────────────────────────────
 
   app.post<{ Params: { tenantId: string }; Body: CreateAppRequest }>(
@@ -67,7 +108,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       }
 
       if (!tenant.shopDomain) {
-        return reply.status(409).send({ error: "Tenant has no shop domain — complete OAuth installation first" });
+        return reply
+          .status(409)
+          .send({ error: "Tenant has no shop domain — complete OAuth installation first" });
       }
 
       const shopifyClientId = process.env["SHOPIFY_CLIENT_ID"];
@@ -100,6 +143,30 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
         return reply.status(404).send({ error: "App not found" });
       }
       return reply.send(foundApp);
+    }
+  );
+
+  // ─── GET /tenants/:tenantId/logs ────────────────────────────────────────────
+
+  app.get<{ Params: { tenantId: string }; Querystring: { limit?: string } }>(
+    "/:tenantId/logs",
+    async (
+      req: FastifyRequest<{
+        Params: { tenantId: string };
+        Querystring: { limit?: string };
+      }>,
+      reply: FastifyReply
+    ) => {
+      const { tenantId } = req.params;
+      const limit = Math.min(parseInt(req.query.limit ?? "20", 10), 100);
+
+      const tenant = await getTenantById(tenantId);
+      if (!tenant) {
+        return reply.status(404).send({ error: "Tenant not found" });
+      }
+
+      const logs = await getRecentExecutionLogs(tenantId, limit);
+      return reply.send(logs);
     }
   );
 };

@@ -24,10 +24,10 @@ export function Sidebar() {
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-5 py-[22px] border-b border-white/7">
         <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-teal flex items-center justify-center text-[13px] font-extrabold text-white leading-none select-none">
-          A
+          N
         </div>
         <span className="text-[15px] font-bold text-ink tracking-tight">
-          App<span className="text-accent">Forge</span>
+          New One<span className="text-accent"> Two</span>
         </span>
       </div>
 
@@ -60,14 +60,14 @@ export function Sidebar() {
 
       {/* Store pill */}
       <div className="px-2.5 py-3.5 border-t border-white/7">
-        <div className="flex items-center gap-2 px-2.5 py-2 bg-white/[0.03] rounded-lg border border-white/7 cursor-pointer">
-          <span className="w-2 h-2 rounded-full bg-teal shrink-0" />
+        <div className="flex items-center gap-2 px-2.5 py-2 bg-white/[0.03] rounded-lg border border-white/7">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${shopDomain ? "bg-teal" : "bg-faint"}`} />
           <div className="min-w-0">
             <div className="text-xs font-semibold text-ink truncate">
-              {shopDomain ?? "demo-store.myshopify"}
+              {shopDomain ?? "Not connected"}
             </div>
             <div className="text-[10px] text-faint capitalize">
-              Connected · {plan} Plan
+              {shopDomain ? `Connected · ${plan} Plan` : "Complete OAuth to connect"}
             </div>
           </div>
         </div>

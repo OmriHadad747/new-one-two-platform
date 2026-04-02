@@ -30,6 +30,42 @@ export interface App {
   updatedAt: string;
 }
 
+// ─── Dashboard UI helpers ─────────────────────────────────────────────────────
+
+/** Computed from TenantStats — kept for StatsGrid component compatibility. */
+export type DashboardStats = TenantStats;
+
+export interface ActivityItem {
+  id: string;
+  icon: string;
+  text: string;
+  time: string;
+  tag: string;
+  tagVariant: "purple" | "teal";
+}
+
+// ─── Execution Logs ───────────────────────────────────────────────────────────
+
+export interface ExecutionLogEntry {
+  id: string;
+  appId: string;
+  appName: string;
+  topic: string;
+  status: "queued" | "running" | "success" | "failed" | "timeout";
+  durationMs: number | null;
+  errorMessage: string | null;
+  queuedAt: string;
+}
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
+
+export interface TenantStats {
+  totalApps: number;
+  liveApps: number;
+  apiCallsThisMonth: number;
+  avgResponseMs: number;
+}
+
 // ─── Generation ──────────────────────────────────────────────────────────────
 
 export interface StartGenerationRequest {
@@ -82,22 +118,4 @@ export interface GenerationState {
   events: ProgressEvent[];
   completedEvent: CompletedEvent | null;
   error: string | null;
-}
-
-// ─── Dashboard UI ─────────────────────────────────────────────────────────────
-
-export interface DashboardStats {
-  totalApps: number;
-  liveApps: number;
-  apiCallsThisMonth: number;
-  avgResponseMs: number;
-}
-
-export interface ActivityItem {
-  id: string;
-  icon: string;
-  text: string;
-  time: string;
-  tag: string;
-  tagVariant: "purple" | "teal";
 }
