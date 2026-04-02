@@ -2,7 +2,7 @@
 FeatureGenerator crew — orchestrates all agents for a single generation request.
 
 Pipeline:
-  Agent 1  Intent       — parse merchant prompt into structured intent
+  Agent 1  Product      — translate merchant prompt into product feature spec
   Agent 2  Architect    — structural decisions: webhooks, state machine, catalog, gaps
            validate_architect — rule-based gate (topics, cron syntax, catalog paths, sentinel)
            (retry Architect once on validation failure before failing the job)
@@ -41,9 +41,9 @@ from contract.validators import (
     AgentTraceEntry,
 )
 from crews.feature_generator.agents import (
-    load_schema_fragments,
+    fetch_api_context,
     run_explanation_agent,
-    run_intent_agent,
+    run_product_agent,
 )
 from subagents.base import CodegenContext, Generator
 from subagents.architect_agent import run_architect_agent
@@ -92,21 +92,24 @@ def run_feature_generation(request: GenerationRequest) -> None:
     agent_trace: List[AgentTraceEntry] = []
 
     try:
-        # ── Agent 1: Intent ──────────────────────────────────────────────────
-        _emit(request, "intent", "running", "Understanding your request…")
+        # ── Agent 1: Product ─────────────────────────────────────────────────
+        _emit(request, "product", "running", "Understanding your request…")
         t0 = _now_ms()
-        intent = run_intent_agent(request.prompt)
+        intent = run_product_agent(request.prompt)
         agent_trace.append(
-            AgentTraceEntry(agent="intent", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
+            AgentTraceEntry(agent="product", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
         )
-        _emit(request, "intent", "completed", "Feature spec ready")
+        _emit(request, "product", "completed", "Feature spec ready")
         log.info("job=%s intent=%s", request.jobId, intent)
 
         # ── Agent 2: Architect (+ validate_architect gate) ───────────────────
         _emit(request, "architect", "running", "Planning Shopify API surface…")
         t0 = _now_ms()
 
-        schema_fragments = load_schema_fragments(intent.get("resources", []))
+        api_context = fetch_api_context(
+            intent.get("resources", []),
+            intent_description=intent.get("desiredOutcome", ""),
+        )
         architect_output: Optional[Dict] = None
         arch_errors: List[str] = []
 
@@ -115,7 +118,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
                 prompt=request.prompt,
                 intent=intent,
                 app_archetype=request.appArchetype,
-                schema_fragments=schema_fragments,
+                api_context=api_context,
                 validation_errors=arch_errors if arch_attempt > 1 else None,
             )
             arch_errors = validate_architect(architect_output, app_archetype=request.appArchetype)
@@ -177,6 +180,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
                 prompt=request.prompt,
                 intent=intent,
                 architect_output=architect_output,
+                api_context=api_context,
                 validation_errors=cs_errors if cs_attempt > 1 else None,
             )
             cs_errors = validate_codespec(codespec_output, architect_output)

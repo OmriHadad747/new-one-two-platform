@@ -22,24 +22,89 @@ actual checks. This file contains:
 
 from __future__ import annotations
 
+import json
 import re
+import time
+from pathlib import Path
 from typing import Any, Dict, List
 
-VALID_WEBHOOK_TOPICS = {
+# ── Webhook topic registry ────────────────────────────────────────────────────
+#
+# Primary source: mcp/cache/webhook_topics.json — populated by mcp.client
+#   prefetch_for_run() before each pipeline run (24 h TTL).
+# Fallback: hardcoded set below — covers the most common topics so validation
+#   never fails with a false-positive on a cache miss or MCP outage.
+#
+# validate_architect() and validate_handler() call _get_valid_webhook_topics()
+# at validation time (not at import time) so they always see the freshest cache.
+
+_FALLBACK_WEBHOOK_TOPICS: frozenset[str] = frozenset({
     "orders/create",
     "orders/updated",
     "orders/cancelled",
     "orders/paid",
+    "orders/fulfilled",
+    "orders/partially_fulfilled",
     "products/create",
     "products/update",
     "products/delete",
     "customers/create",
     "customers/update",
     "customers/delete",
+    "customers/enable",
+    "customers/disable",
     "inventory_levels/update",
+    "inventory_levels/connect",
+    "inventory_levels/disconnect",
+    "inventory_items/create",
     "inventory_items/update",
+    "inventory_items/delete",
     "app/uninstalled",
-}
+    "app/subscriptions/update",
+    "collections/create",
+    "collections/update",
+    "collections/delete",
+    "draft_orders/create",
+    "draft_orders/update",
+    "fulfillments/create",
+    "fulfillments/update",
+    "refunds/create",
+    "checkouts/create",
+    "checkouts/update",
+    "checkouts/delete",
+    "carts/create",
+    "carts/update",
+    "disputes/create",
+    "disputes/redacted",
+})
+
+_MCP_TOPICS_CACHE = Path(__file__).parent.parent / "mcp" / "cache" / "webhook_topics.json"
+_TOPICS_CACHE_TTL = 24 * 60 * 60
+
+
+def _get_valid_webhook_topics() -> frozenset[str]:
+    """
+    Return the current set of valid webhook topics.
+
+    Reads from the MCP cache file if fresh; falls back to the hardcoded set.
+    Called at validation time so every run sees the latest cached data without
+    requiring a module reload.
+    """
+    try:
+        if _MCP_TOPICS_CACHE.exists():
+            entry = json.loads(_MCP_TOPICS_CACHE.read_text(encoding="utf-8"))
+            if time.time() - entry.get("fetched_at", 0) < entry.get("ttl_seconds", _TOPICS_CACHE_TTL):
+                live = frozenset(entry.get("data") or [])
+                if live:
+                    return live
+    except Exception:
+        pass
+    return _FALLBACK_WEBHOOK_TOPICS
+
+
+# Keep a module-level alias for code that still does `from validation import VALID_WEBHOOK_TOPICS`.
+# This snapshot is taken at import time; prefer _get_valid_webhook_topics() in validators.
+VALID_WEBHOOK_TOPICS = _get_valid_webhook_topics()
 
 
 def _is_valid_cron(expr: str) -> bool:
@@ -69,11 +134,12 @@ def validate_architect(
     impl = architect_output.get("implementationSpec") or {}
 
     # 1. Webhook topics must be known
+    valid_topics = _get_valid_webhook_topics()
     for topic in shopify.get("webhookTopics") or []:
-        if topic not in VALID_WEBHOOK_TOPICS:
+        if topic not in valid_topics:
             errors.append(
                 f"unknown webhook topic {topic!r} — "
-                f"valid topics: {sorted(VALID_WEBHOOK_TOPICS)}"
+                f"valid topics: {sorted(valid_topics)}"
             )
 
     # 2. cronSchedule must be a valid 5-field expression if present
@@ -499,7 +565,7 @@ def validate_handler(code: str, api_plan_topics: List[str]) -> List[str]:
         raw_topics = topic_match.group(1)
         declared = set(re.findall(r"""['"]([^'"]+)['"]""", raw_topics))
 
-        unknown = declared - VALID_WEBHOOK_TOPICS
+        unknown = declared - _get_valid_webhook_topics()
         if unknown:
             errors.append(f"unknown webhook topics: {sorted(unknown)}")
 

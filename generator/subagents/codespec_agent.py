@@ -28,7 +28,6 @@ import json
 from typing import Any, Dict, List, Optional
 
 from models.adapter import get_code_llm, invoke, extract_json
-from templates.shopify_api_ref import SHOPIFY_API_REF
 
 
 CODESPEC_SYSTEM = """You are a senior Shopify automation engineer writing step-by-step implementation algorithms.
@@ -242,7 +241,7 @@ Feature intent:
 
 Locked architect decisions (ground truth — do not change these):
 {architect_json}
-{api_ref}
+{api_context_section}
 Write the codeSpec algorithms. Every variable name, table name, API path, and field name must be consistent with the architect output above."""
 
 
@@ -250,19 +249,29 @@ def run_codespec_agent(
     prompt: str,
     intent: Dict[str, Any],
     architect_output: Dict[str, Any],
+    api_context: str = "",
     validation_errors: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     CodeSpec Agent: writes codeSpec against the locked architect decisions.
 
-    Args:
-        prompt:            Original merchant prompt (gives full context).
-        intent:            Parsed intent from run_intent_agent().
-        architect_output:  Full architect output (shopifyPlan + implementationSpec without codeSpec).
-        validation_errors: Errors from validate_codespec() on a prior attempt, or None.
+    Parameters
+    ----------
+    prompt:
+        Original merchant prompt (gives full context).
+    intent:
+        Parsed intent from run_intent_agent().
+    architect_output:
+        Full architect output (shopifyPlan + implementationSpec without codeSpec).
+    api_context:
+        Live Shopify API context from fetch_api_context() — used to resolve
+        exact field names and batch endpoint constraints. Empty string if unavailable.
+    validation_errors:
+        Errors from validate_codespec() on a prior attempt, or None.
 
-    Returns:
-        dict with key: codeSpec { webhookPath, cronPath, widgetPath, functions }
+    Returns
+    -------
+    dict with key: codeSpec { webhookPath, cronPath, widgetPath, functions }
     """
     error_block = ""
     if validation_errors:
@@ -272,12 +281,19 @@ def run_codespec_agent(
             f"Fix ALL listed errors in this attempt.\n\n"
         )
 
+    api_context_section = (
+        f"\nShopify API context (use for exact field names, response shapes, and batch limits):\n"
+        f"{api_context}\n"
+        if api_context
+        else ""
+    )
+
     user = _CODESPEC_USER_TEMPLATE.format(
         error_block=error_block,
         prompt=prompt,
         intent_json=json.dumps(intent, indent=2),
         architect_json=json.dumps(architect_output, indent=2),
-        api_ref=SHOPIFY_API_REF,
+        api_context_section=api_context_section,
     )
 
     llm = get_code_llm(max_tokens=4096)

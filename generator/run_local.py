@@ -2,7 +2,7 @@
 """
 Local generation runner — fast iteration without any infrastructure.
 
-Runs the full pipeline (intent → architect → codespec → codegen → validate →
+Runs the full pipeline (product → architect → codespec → codegen → validate →
 explanation) and appends the result to generator/results.json.
 No Pub/Sub, no GCP, no API server needed — just ANTHROPIC_API_KEY.
 
@@ -10,7 +10,7 @@ USAGE
 -----
   python run_local.py "notify me when a product is back in stock"
   python run_local.py --file prompt.txt
-  python run_local.py "my prompt" --stop-after architect
+  python run_local.py "my prompt" --stop-after product
 
 OUTPUT
 ------
@@ -35,7 +35,7 @@ _HERE = Path(__file__).parent
 os.chdir(_HERE)
 sys.path.insert(0, str(_HERE))
 
-from crews.feature_generator.agents import load_schema_fragments, run_explanation_agent, run_intent_agent
+from crews.feature_generator.agents import fetch_api_context, run_explanation_agent, run_product_agent
 from subagents.architect_agent import run_architect_agent
 from subagents.codespec_agent import run_codespec_agent
 from subagents.base import CodegenContext
@@ -144,7 +144,8 @@ def _save_report(result: Dict[str, Any]) -> Path:
     def architect_notes() -> str:
         topics = shopify.get("webhookTopics") or []
         cron = shopify.get("cronSchedule") or "—"
-        return f"topics={topics}  cron={cron}  stateMachine={'yes' if impl.get('stateMachine') else 'no'}"
+        complexity = impl.get("complexity", "?")
+        return f"complexity={complexity}  topics={topics}  cron={cron}  stateMachine={'yes' if impl.get('stateMachine') else 'no'}"
 
     def codespec_notes() -> str:
         return (
@@ -166,7 +167,7 @@ def _save_report(result: Dict[str, Any]) -> Path:
         return "  ".join(parts)
 
     agent_rows = [
-        ("Intent",      "intent"      in stages, ms_str("intent"),      intent_notes()),
+        ("Product",     "product"     in stages, ms_str("product"),     intent_notes()),
         ("Architect",   "architect"   in stages, ms_str("architect"),   architect_notes()),
         ("CodeSpec",    "codespec"    in stages, ms_str("codespec"),    codespec_notes()),
         ("CodeGen",     "codegen"     in stages, ms_str("codegen"),     codegen_notes()),
@@ -177,11 +178,11 @@ def _save_report(result: Dict[str, Any]) -> Path:
         icon = "✓" if ok else "—"
         lines.append(f"| {name:<11} | {icon:<6} | {t:<10} | {notes} |")
 
-    # Intent detail
+    # Product detail
     if intent:
         lines += [
             f"",
-            f"## Intent",
+            f"## Product Spec",
             f"",
             f"```json",
             json.dumps(intent, indent=2),
@@ -348,29 +349,32 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
     total_start = time.monotonic()
 
     try:
-        # ── Intent ────────────────────────────────────────────────────────────
-        _spinner("Intent")
+        # ── Product ───────────────────────────────────────────────────────────
+        _spinner("Product")
         t0 = time.monotonic()
-        intent = run_intent_agent(prompt)
+        intent = run_product_agent(prompt)
         ms = int((time.monotonic() - t0) * 1000)
-        result["stages"]["intent"] = {"ms": ms}
+        result["stages"]["product"] = {"ms": ms}
         result["intent"] = intent
 
         archetype: str = intent.get("appArchetype") or "backend_only"
         result["archetype"] = archetype
-        _agent_line("Intent", ok=True, ms=ms,
+        _agent_line("Product", ok=True, ms=ms,
                     notes=f"archetype={archetype}  trigger={intent.get('triggerType')}")
 
-        if stop_after == "intent":
+        if stop_after == "product":
             return
 
         # ── Architect ─────────────────────────────────────────────────────────
-        schema_fragments = load_schema_fragments(intent.get("resources", []))
+        api_context = fetch_api_context(
+            intent.get("resources", []),
+            intent_description=intent.get("desiredOutcome", ""),
+        )
         architect_output, arch_ms = _run_with_retry(
             label="Architect",
             run_fn=run_architect_agent,
             validate_fn=lambda out: validate_architect(out, app_archetype=archetype),
-            run_args=(prompt, intent, archetype, schema_fragments),
+            run_args=(prompt, intent, archetype, api_context),
         )
         result["stages"]["architect"] = {"ms": arch_ms}
         result["architect"] = architect_output
@@ -378,7 +382,8 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
         shopify = architect_output.get("shopifyPlan") or {}
         impl = architect_output.get("implementationSpec") or {}
         _agent_line("Architect", ok=True, ms=arch_ms,
-                    notes=f"topics={shopify.get('webhookTopics')}  "
+                    notes=f"complexity={impl.get('complexity', '?')}  "
+                          f"topics={shopify.get('webhookTopics')}  "
                           f"cron={shopify.get('cronSchedule') or '—'}  "
                           f"stateMachine={'yes' if impl.get('stateMachine') else 'no'}")
 
@@ -390,7 +395,7 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
             label="CodeSpec",
             run_fn=run_codespec_agent,
             validate_fn=lambda out: validate_codespec(out, architect_output),
-            run_args=(prompt, intent, architect_output),
+            run_args=(prompt, intent, architect_output, api_context),
         )
         result["stages"]["codespec"] = {"ms": cs_ms}
         result["codespec"] = codespec_output
@@ -521,9 +526,9 @@ def main() -> None:
     parser.add_argument("--file", "-f", metavar="PATH",
                         help="Read prompt from a text file.")
     parser.add_argument("--stop-after",
-                        choices=["intent", "architect", "codespec", "codegen"],
+                        choices=["product", "architect", "codespec", "codegen"],
                         metavar="STAGE",
-                        help="Stop after STAGE. Choices: intent, architect, codespec, codegen")
+                        help="Stop after STAGE. Choices: product, architect, codespec, codegen")
 
     args = parser.parse_args()
 

@@ -190,6 +190,7 @@ export interface HandlerContext {
   shopify: {
     get(path: string): Promise<unknown>;
     post(path: string, body: unknown): Promise<unknown>;
+    graphql(query: string, variables?: Record<string, unknown>): Promise<unknown>;
   };
   db: unknown; // postgres.TransactionSql — typed loosely to avoid hard dep on postgres lib
   payload: Record<string, unknown>;

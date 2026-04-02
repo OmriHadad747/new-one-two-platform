@@ -1,7 +1,7 @@
 """
 Agent definitions for the FeatureGenerator crew.
 
-Agent 1 — Intent Agent         (run_intent_agent)
+Agent 1 — Product Agent        (run_product_agent)
 Agent 6 — Explanation Agent    (run_explanation_agent)
 
 Agents 2–3 (Architect + CodeSpec) live in subagents/architect_agent.py and
@@ -17,43 +17,44 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from models.adapter import get_llm, invoke, extract_json
+from mcp import client as mcp_client
 
-# ─── Schema fragment loader ───────────────────────────────────────────────────
-
-FRAGMENTS_DIR = Path(__file__).parent.parent.parent / "templates" / "schema_fragments"
-
-RESOURCE_MAP = {
-    "inventory": "inventory.json",
-    "orders": "orders.json",
-    "customers": "customers.json",
-    "products": "products.json",
-    "discounts": "discounts.json",
-}
+# ─── API context loader ───────────────────────────────────────────────────────
 
 
-def load_schema_fragments(resources: List[str]) -> str:
-    fragments = []
-    for resource in resources:
-        filename = RESOURCE_MAP.get(resource.lower())
-        if filename:
-            path = FRAGMENTS_DIR / filename
-            if path.exists():
-                fragments.append(path.read_text())
-    return "\n\n".join(fragments) if fragments else ""
+def fetch_api_context(resources: List[str], intent_description: str = "") -> str:
+    """
+    Return live Shopify API context for the given resources via the Dev MCP server.
+
+    Calls the Shopify Dev MCP server (via npx) to fetch REST endpoint docs,
+    GraphQL schema types, and webhook payload shapes for each resource.
+    Results are cached to mcp/cache/ for 24 hours.
+    Returns an empty string if MCP is unavailable — agents proceed without context.
+    Never raises.
+
+    Parameters
+    ----------
+    resources:
+        Resource names from Intent output (e.g. ["orders", "inventory"]).
+    intent_description:
+        Optional one-liner from Intent.desiredOutcome — improves doc relevance.
+    """
+    if not resources:
+        return ""
+    return mcp_client.prefetch_for_run(resources, intent_description)
 
 
 # ─── Agent 1: Intent ──────────────────────────────────────────────────────────
 
-INTENT_SYSTEM = """You are an expert at understanding merchant requirements for Shopify store automation.
+PRODUCT_SYSTEM = """You are a senior product manager specializing in Shopify store automation.
 
-Your job: parse the merchant's prompt into a structured feature specification.
+Your job: translate the merchant's request into a precise product feature specification — what it does, who it serves, what Shopify resources it touches, and how complex it is to build.
 
 OUTPUT FORMAT — respond ONLY with this JSON object (no markdown fences):
 {
   "triggerType": "webhook" | "cron" | "both",
   "resources": ["inventory", "orders", "customers", "products", "discounts"],
-  "desiredOutcome": "one sentence describing the feature",
-  "complexity": "low" | "medium" | "high",
+  "desiredOutcome": "one sentence describing the merchant-visible behavior",
   "cronSchedule": null | "cron expression",
   "appArchetype": "storefront_ui" | "backend_only"
 }
@@ -61,17 +62,17 @@ OUTPUT FORMAT — respond ONLY with this JSON object (no markdown fences):
 Rules:
 - triggerType is "webhook" if the feature reacts to Shopify events
 - triggerType is "cron" if it runs on a schedule
-- resources: only include what the feature actually touches
-- desiredOutcome: be specific, name the user-facing behavior
+- resources: only include what the feature actually reads or writes
+- desiredOutcome: describe the outcome from the merchant's or customer's perspective, not the implementation
 - cronSchedule: set to a cron string only if triggerType is "cron" or "both"
 - appArchetype is "storefront_ui" if the feature requires a customer-facing UI element embedded in the storefront (e.g. a signup form, widget, or button on a product/cart page); otherwise "backend_only"
 - Output ONLY the JSON object"""
 
 
-def run_intent_agent(prompt: str) -> Dict[str, Any]:
-    """Agent 1: Parse merchant prompt into StructuredIntent."""
+def run_product_agent(prompt: str) -> Dict[str, Any]:
+    """Agent 1: Parse merchant prompt into a product feature specification."""
     llm = get_llm(max_tokens=512)
-    result = invoke(llm, INTENT_SYSTEM, f"Merchant request: {prompt}")
+    result = invoke(llm, PRODUCT_SYSTEM, f"Merchant request: {prompt}")
     raw = extract_json(result.content)
     return json.loads(raw)
 
@@ -159,4 +160,7 @@ def run_explanation_agent(
             if attempt == 1:
                 raise
             # Retry with a hint — most common cause is unescaped quotes in merchantFacing
-            user = user + "\n\nPREVIOUS ATTEMPT RETURNED INVALID JSON. Ensure all double quotes inside string values are escaped as \\\"."
+            user = (
+                user
+                + '\n\nPREVIOUS ATTEMPT RETURNED INVALID JSON. Ensure all double quotes inside string values are escaped as \\".'
+            )

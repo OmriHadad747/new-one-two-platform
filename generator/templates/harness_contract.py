@@ -16,14 +16,40 @@ HARNESS_BASE = """
 HARNESS CONTRACT — the only APIs available inside handler():
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+── Shopify REST ──────────────────────────────────────────────
+
 ctx.shopify.get(path: string) → Promise<any>
-  Shopify REST GET. Path is relative to /admin/api/2026-01
+  Shopify Admin REST GET. Path is relative to /admin/api/2026-01.
   Example: await ctx.shopify.get('/orders.json?status=any&limit=10')
 
 ctx.shopify.post(path: string, body: object) → Promise<any>
-  Shopify REST POST/PUT. Use for mutations.
+  Shopify Admin REST POST/PUT. Use for REST mutations.
   Example: await ctx.shopify.post('/customers/456.json', { customer: { id: 456, tags: 'VIP' } })
   Note: Shopify PUT endpoints also use shopify.post() — the harness always sends POST.
+
+── Shopify GraphQL ───────────────────────────────────────────
+
+ctx.shopify.graphql(query: string, variables?: object) → Promise<any>
+  Shopify Admin GraphQL API — POST to /admin/api/2026-01/graphql.json.
+  The harness throws on GraphQL errors — no need to check result.errors.
+  The harness unwraps { data: ... } — access fields directly on the result.
+  IDs MUST use Shopify Global ID (GID) format: `gid://shopify/TypeName/${numericId}`
+    The type name matches the GraphQL schema type: Order, Product, Customer, etc.
+    Convert numeric IDs from webhooks and REST responses before use in variables.
+  Example:
+    const order = await ctx.shopify.graphql(
+      `query GetOrder($id: ID!) {
+        order(id: $id) {
+          id
+          fulfillments { trackingInfo { number company } }
+          lineItems(first: 50) { nodes { title quantity } }
+        }
+      }`,
+      { id: `gid://shopify/Order/${orderId}` }
+    )
+    const { fulfillments, lineItems } = order.order
+  Pagination: GraphQL uses cursor-based pagination — use edges/node or nodes pattern
+    with pageInfo { hasNextPage endCursor } and a variables-based loop.
 
 ctx.db  — postgres.js tagged template (RLS-scoped to this tenant)
   Example: const rows = await ctx.db`SELECT * FROM my_table WHERE id = ${someId}`
@@ -106,14 +132,16 @@ ABSOLUTE RULES (violations will cause deployment failure):
 6.  NO process.exit(), process.kill(), or process.env access
 7.  NO global variable mutation
 8.  Handle errors with try/catch — never let the handler throw uncaught exceptions
-9.  All ctx.shopify paths MUST be relative (e.g. '/orders.json') — NEVER full URLs
+9.  ctx.shopify.get/post paths MUST be relative (e.g. '/orders.json') — NEVER full URLs
 10. NEVER include any http:// or https:// URL anywhere — not in code, not in comments, not in strings.
     This includes ctx.email calls: do NOT put provider URLs in templateId or data fields.
     templateId is a short opaque string like 'd-abc123', never a URL.
 11. webhookTopics must exactly match what is listed in the plan
-12. For Shopify PUT endpoints (update), use ctx.shopify.post() — not a separate PUT method
+12. For Shopify REST PUT endpoints (update), use ctx.shopify.post() — not a separate PUT method
 13. Every INSERT into a tenant table must include tenant_id: use ctx.tenantId
 14. Never silently ignore errors from ctx.db — propagate or return early on failure
+15. For ctx.shopify.graphql, IDs MUST use GID format: `gid://shopify/TypeName/${numericId}`
+    NEVER pass raw numeric IDs as GraphQL ID variables.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 LOGGING — use ctx.logger at key decision points:

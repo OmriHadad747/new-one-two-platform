@@ -3,6 +3,7 @@ import { getSecret } from "@new-one-two/crypto";
 interface ShopifyClient {
   get(path: string): Promise<unknown>;
   post(path: string, body: unknown): Promise<unknown>;
+  graphql(query: string, variables?: Record<string, unknown>): Promise<unknown>;
   readonly callCount: number;
 }
 
@@ -71,6 +72,11 @@ export async function buildShopifyClient(
         console.warn(`[shopify stub] POST ${path} — no client credentials configured`);
         return {};
       },
+      graphql: async (query: string) => {
+        callCount++;
+        console.warn(`[shopify stub] graphql — no client credentials configured\n${query}`);
+        return {};
+      },
       get callCount() { return callCount; },
     };
   }
@@ -97,6 +103,19 @@ export async function buildShopifyClient(
       });
       if (!res.ok) throw new Error(`Shopify POST ${path} failed: ${res.status}`);
       return res.json();
+    },
+    async graphql(query: string, variables?: Record<string, unknown>): Promise<unknown> {
+      callCount++;
+      const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+      const res = await fetch(`${baseUrl}/graphql.json`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
+        body: JSON.stringify({ query, variables }),
+      });
+      if (!res.ok) throw new Error(`Shopify GraphQL failed: ${res.status}`);
+      const json = (await res.json()) as { data?: unknown; errors?: unknown[] };
+      if (json.errors?.length) throw new Error(`Shopify GraphQL errors: ${JSON.stringify(json.errors)}`);
+      return json.data;
     },
     get callCount() { return callCount; },
   };
