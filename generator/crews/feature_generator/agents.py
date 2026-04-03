@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
-from models.adapter import get_llm, invoke, extract_json
+from models.adapter import get_llm, invoke, invoke_conversation, extract_json
 from mcp import client as mcp_client
 
 # ─── API context loader ───────────────────────────────────────────────────────
@@ -44,7 +44,7 @@ def fetch_api_context(resources: List[str], intent_description: str = "") -> str
     return mcp_client.prefetch_for_run(resources, intent_description)
 
 
-# ─── Agent 1: Intent ──────────────────────────────────────────────────────────
+# ─── Agent 1: Product ──────────────────────────────────────────────────────────
 
 PRODUCT_SYSTEM = """You are a senior product manager specializing in Shopify store automation.
 
@@ -52,20 +52,26 @@ Your job: translate the merchant's request into a precise product feature specif
 
 OUTPUT FORMAT — respond ONLY with this JSON object (no markdown fences):
 {
-  "triggerType": "webhook" | "cron" | "both",
+  "triggerTypes": ["webhook", "cron", "admin", "widget"],
   "resources": ["inventory", "orders", "customers", "products", "discounts"],
   "desiredOutcome": "one sentence describing the merchant-visible behavior",
   "cronSchedule": null | "cron expression",
-  "appArchetype": "storefront_ui" | "backend_only"
+  "appCategory": "storefront_backend" | "storefront_backend_admin" | "backend"
 }
 
 Rules:
-- triggerType is "webhook" if the feature reacts to Shopify events
-- triggerType is "cron" if it runs on a schedule
-- resources: only include what the feature actually reads or writes
-- desiredOutcome: describe the outcome from the merchant's or customer's perspective, not the implementation
-- cronSchedule: set to a cron string only if triggerType is "cron" or "both"
-- appArchetype is "storefront_ui" if the feature requires a customer-facing UI element embedded in the storefront (e.g. a signup form, widget, or button on a product/cart page); otherwise "backend_only"
+- triggerTypes: An array containing one or more triggers that apply to this feature.
+    - "webhook" if it reacts to Shopify events in the background.
+    - "cron" if it runs on a schedule.
+    - "admin" if the merchant manually triggers it via a button in their Shopify Admin UI.
+    - "widget" if a customer interacts with it on the storefront.
+- resources: only include what the feature actually reads or writes.
+- desiredOutcome: describe the outcome from the merchant's or customer's perspective, not the implementation.
+- cronSchedule: set to a cron string only if "cron" is in triggerTypes.
+- appCategory:
+    - "storefront_backend": Widget on the storefront. Backend stores config or processes webhook events into DB. No Admin UI.
+    - "storefront_backend_admin": Widget on the storefront for customer interaction, plus a merchant-facing dashboard embedded in the Shopify Admin.
+    - "backend": No storefront widget. Apps are fully automatic (webhook/cron) or admin-triggered via a Polaris UI.
 - Output ONLY the JSON object"""
 
 
@@ -73,6 +79,54 @@ def run_product_agent(prompt: str) -> Dict[str, Any]:
     """Agent 1: Parse merchant prompt into a product feature specification."""
     llm = get_llm(max_tokens=512)
     result = invoke(llm, PRODUCT_SYSTEM, f"Merchant request: {prompt}")
+    raw = extract_json(result.content)
+    return json.loads(raw)
+
+
+# ─── Product Agent: interactive analyze mode ──────────────────────────────────
+
+PRODUCT_ANALYZE_SYSTEM = """You are a senior product manager for Shopify store automation.
+
+Your job: understand the merchant's request and either ask a single clarification question or produce a complete feature specification.
+
+OUTPUT FORMAT — respond ONLY with one of these JSON objects (no markdown fences):
+
+If you need clarification:
+{
+  "status": "needs_clarification",
+  "question": "Your specific question here"
+}
+
+If you understand the request:
+{
+  "status": "ready",
+  "summary": "2-3 sentence plain-English description for the merchant: what triggers it, what it does, what the merchant or customer will notice.",
+  "intent": {
+    "triggerTypes": ["webhook", "cron", "admin", "widget"],
+    "resources": ["orders", "inventory", "customers", "products", "discounts"],
+    "desiredOutcome": "one sentence",
+    "cronSchedule": null,
+    "appCategory": "storefront_backend | storefront_backend_admin | backend"
+  }
+}
+
+Rules:
+- Ask clarification ONLY if you cannot determine the trigger, desired outcome, or main Shopify resource. One question per response, never more.
+- Off-topic or non-Shopify requests: guide the merchant with a clarifying question toward a concrete Shopify app concept.
+- When the request is clear, go directly to "ready" — do not ask unnecessary questions.
+- triggerTypes: "webhook" = reacts to Shopify events; "cron" = runs on schedule; "admin" = merchant triggers it manually; "widget" = customer interacts on storefront.
+- appCategory: "storefront_backend" = widget + backend, no Admin UI; "storefront_backend_admin" = widget + backend + Admin UI; "backend" = no widget."""
+
+
+def run_product_agent_analyze(history: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Multi-turn product agent for the interactive analyze endpoint.
+    history: list of {"role": "user"|"assistant", "content": str}
+    Returns either {"status": "needs_clarification", "question": "..."} or
+    {"status": "ready", "summary": "...", "intent": {...}}.
+    """
+    llm = get_llm(max_tokens=512)
+    result = invoke_conversation(llm, PRODUCT_ANALYZE_SYSTEM, history)
     raw = extract_json(result.content)
     return json.loads(raw)
 

@@ -14,9 +14,10 @@ interface ChatInputProps {
   onSubmit: () => void;
   disabled?: boolean;
   placeholder?: string;
+  onStop?: () => void;
 }
 
-export function ChatInput({ value, onChange, onSubmit, disabled, placeholder }: ChatInputProps) {
+export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, onStop }: ChatInputProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -56,14 +57,24 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder }: 
           placeholder={placeholder ?? "Describe the feature you want to build..."}
           className="flex-1 bg-transparent border-0 outline-none resize-none font-sans text-sm text-ink placeholder:text-faint min-h-[22px] max-h-[120px] leading-relaxed disabled:opacity-50"
         />
-        <button
-          type="button"
-          onClick={onSubmit}
-          disabled={disabled || !value.trim()}
-          className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white text-sm transition-all duration-150 hover:bg-accent-hi disabled:opacity-40 disabled:cursor-not-allowed shrink-0 border-0 cursor-pointer"
-        >
-          ↑
-        </button>
+        {disabled && onStop ? (
+          <button
+            type="button"
+            onClick={onStop}
+            className="w-8 h-8 rounded-lg bg-red-500/20 border border-red-500/40 flex items-center justify-center transition-all duration-150 hover:bg-red-500/30 shrink-0 cursor-pointer"
+          >
+            <span className="w-3 h-3 bg-red-400 rounded-sm block" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={disabled || !value.trim()}
+            className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white text-sm transition-all duration-150 hover:bg-accent-hi disabled:opacity-40 disabled:cursor-not-allowed shrink-0 border-0 cursor-pointer"
+          >
+            ↑
+          </button>
+        )}
       </div>
     </div>
   );

@@ -59,12 +59,23 @@ class CodegenContext:
                         need to guard against None.
     previous_errors     Validation errors from the prior attempt on THIS generator.
                         None on the first attempt. Used to build a retry prompt.
+    prior_handler_code  The currently deployed handler.js code, present only on
+                        revision runs. Agents should treat this as the starting point
+                        and apply the merchant's feedback as a diff, not a rewrite.
+    prior_widget_code   The currently deployed widget ES module, present only on
+                        revision runs for storefront_ui apps.
+    prior_migration_sql The DDL that was already applied to the DB, present only on
+                        revision runs. The migration agent must only emit incremental
+                        DDL (new tables or ADD COLUMN) — never recreate existing tables.
     """
 
     intent: Dict[str, Any]
     plan: Dict[str, Any]
     platform_api_catalog: List[Dict[str, str]] = field(default_factory=list)
     previous_errors: Optional[List[str]] = None
+    prior_handler_code: Optional[str] = None
+    prior_widget_code: Optional[str] = None
+    prior_migration_sql: Optional[str] = None
 
 
 class Generator(ABC):

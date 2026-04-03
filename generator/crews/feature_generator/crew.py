@@ -93,14 +93,19 @@ def run_feature_generation(request: GenerationRequest) -> None:
 
     try:
         # ── Agent 1: Product ─────────────────────────────────────────────────
-        _emit(request, "product", "running", "Understanding your request…")
-        t0 = _now_ms()
-        intent = run_product_agent(request.prompt)
-        agent_trace.append(
-            AgentTraceEntry(agent="product", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
-        )
-        _emit(request, "product", "completed", "Feature spec ready")
-        log.info("job=%s intent=%s", request.jobId, intent)
+        if request.preComputedIntent:
+            intent = request.preComputedIntent
+            _emit(request, "product", "completed", "Feature spec ready")
+            log.info("job=%s intent=%s (pre-computed)", request.jobId, intent)
+        else:
+            _emit(request, "product", "running", "Understanding your request…")
+            t0 = _now_ms()
+            intent = run_product_agent(request.prompt)
+            agent_trace.append(
+                AgentTraceEntry(agent="product", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
+            )
+            _emit(request, "product", "completed", "Feature spec ready")
+            log.info("job=%s intent=%s", request.jobId, intent)
 
         # ── Agent 2: Architect (+ validate_architect gate) ───────────────────
         _emit(request, "architect", "running", "Planning Shopify API surface…")
@@ -249,10 +254,23 @@ def run_feature_generation(request: GenerationRequest) -> None:
         archetype = intent.get("appArchetype") or request.appArchetype
         is_storefront = archetype == "storefront_ui"
 
+        # ── Extract prior artifacts for revision context ─────────────────────
+        prior_bundle = request.priorBundle or {}
+        prior_handler_code: Optional[str] = (
+            (prior_bundle.get("handlerModule") or {}).get("code") or None
+        )
+        prior_widget_code: Optional[str] = prior_bundle.get("widgetModule") or None
+        prior_migration_sql: Optional[str] = (
+            (prior_bundle.get("dbMigration") or {}).get("sql") or None
+        )
+
         base_ctx = CodegenContext(
             intent=intent,
             plan=plan,
             platform_api_catalog=catalog_dicts,
+            prior_handler_code=prior_handler_code,
+            prior_widget_code=prior_widget_code,
+            prior_migration_sql=prior_migration_sql,
         )
 
         artifacts: Dict[str, str] = {}
@@ -434,6 +452,9 @@ def _run_codegen_parallel(
                     plan=base_ctx.plan,
                     platform_api_catalog=base_ctx.platform_api_catalog,
                     previous_errors=error_map.get(gen.name),
+                    prior_handler_code=base_ctx.prior_handler_code,
+                    prior_widget_code=base_ctx.prior_widget_code,
+                    prior_migration_sql=base_ctx.prior_migration_sql,
                 ),
             )
             for gen in to_run

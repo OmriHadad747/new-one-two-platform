@@ -72,6 +72,21 @@ export interface StartGenerationRequest {
   appId: string;
   tenantId: string;
   prompt: string;
+  preComputedIntent?: Record<string, unknown>;
+}
+
+// ─── Product Agent Analyze ────────────────────────────────────────────────────
+
+export interface AnalyzeMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AnalyzeResult {
+  status: "needs_clarification" | "ready";
+  question?: string;
+  summary?: string;
+  intent?: Record<string, unknown>;
 }
 
 export interface StartGenerationResponse {

@@ -20,6 +20,7 @@ import {
   updateGenerationSession,
   getSessionByJobId,
   storeBundleInSession,
+  cancelGenerationSession,
 } from "@new-one-two/db";
 import { deployFeatureBundle, deployAppVersion } from "@new-one-two/deployer";
 import type {
@@ -38,13 +39,16 @@ import type {
  * accepts POST with X-Shop-Domain + X-App-Id headers for tenant resolution.
  */
 
+/** In-process registry so the cancel endpoint can push a close event to open SSE connections. */
+const cancelCallbacks = new Map<string, (reason: string) => void>();
+
 export const generationRoute: FastifyPluginAsync = async (app) => {
   // ─── POST /generation ──────────────────────────────────────────────────────
 
   app.post<{ Body: StartGenerationRequest }>(
     "/",
     async (req: FastifyRequest<{ Body: StartGenerationRequest }>, reply: FastifyReply) => {
-      const { appId, tenantId, prompt } = req.body;
+      const { appId, tenantId, prompt, preComputedIntent } = req.body as StartGenerationRequest & { preComputedIntent?: Record<string, unknown> };
 
       if (!appId || !tenantId || !prompt) {
         return reply
@@ -63,7 +67,7 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       await updateGenerationSession(sessionId, { jobId, status: "running" });
 
-      await publishGenerationRequest({ jobId, tenantId, appId, prompt });
+      await publishGenerationRequest({ jobId, tenantId, appId, prompt, preComputedIntent });
 
       // Register a persistent completed listener that writes the bundle to DB.
       // This runs regardless of whether any SSE client is connected.
@@ -144,7 +148,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         clearInterval(pingInterval);
         unsubProgress();
         unsubCompleted();
+        cancelCallbacks.delete(jobId);
       };
+
+      cancelCallbacks.set(jobId, (reason: string) => {
+        sendEvent({ type: "completed", status: "cancelled", error: reason });
+        cleanup();
+        reply.raw.end();
+      });
 
       req.raw.on("close", cleanup);
     }
@@ -300,6 +311,39 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         "Revision GenerationRequest published"
       );
       return reply.status(202).send({ jobId: newJobId, sessionId: newSessionId });
+    }
+  );
+
+  // ─── POST /generation/:jobId/cancel ────────────────────────────────────────
+
+  app.post<{ Params: { jobId: string } }>(
+    "/:jobId/cancel",
+    async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+      const { jobId } = req.params;
+      await cancelGenerationSession(jobId);
+      const cancel = cancelCallbacks.get(jobId);
+      if (cancel) cancel("Generation cancelled by user");
+      return reply.status(200).send({ ok: true });
+    }
+  );
+
+  // ─── POST /generation/analyze ──────────────────────────────────────────────
+
+  app.post<{ Body: { history: Array<{ role: string; content: string }> } }>(
+    "/analyze",
+    async (req: FastifyRequest<{ Body: { history: Array<{ role: string; content: string }> } }>, reply: FastifyReply) => {
+      const generatorUrl = process.env.GENERATOR_URL ?? "http://localhost:8001";
+      const upstream = await fetch(`${generatorUrl}/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req.body),
+      });
+      if (!upstream.ok) {
+        logger.error({ status: upstream.status }, "Generator /analyze failed");
+        return reply.status(502).send({ error: "Analyze failed" });
+      }
+      const data = await upstream.json();
+      return reply.send(data);
     }
   );
 };

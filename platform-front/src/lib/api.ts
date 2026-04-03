@@ -6,6 +6,8 @@ import type {
   StartGenerationRequest,
   StartGenerationResponse,
   GenerationResult,
+  AnalyzeMessage,
+  AnalyzeResult,
 } from "@/types/dashboard";
 
 const BASE = "/api";
@@ -66,6 +68,13 @@ export const api = {
       }),
     progressStream: (jobId: string) =>
       new EventSource(`${BASE}/generation/${jobId}/progress`),
+    analyze: (history: AnalyzeMessage[]) =>
+      request<AnalyzeResult>("/generation/analyze", {
+        method: "POST",
+        body: JSON.stringify({ history }),
+      }),
+    cancel: (jobId: string) =>
+      request<{ ok: boolean }>(`/generation/${jobId}/cancel`, { method: "POST", body: "{}" }),
   },
   widgets: {
     /**

@@ -4,31 +4,28 @@ import { useSessionStore } from "@/stores/session";
 
 const INSTALL_URL = "/api/oauth/install";
 
-function normalizeShop(raw: string): string | null {
-  const trimmed = raw.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/$/, "");
-  if (!trimmed) return null;
-  if (trimmed.endsWith(".myshopify.com")) return trimmed;
-  if (/^[a-z0-9-]+$/.test(trimmed)) return `${trimmed}.myshopify.com`;
-  return null;
+function prefixFromDomain(domain: string | null): string {
+  if (!domain) return "";
+  return domain.replace(/\.myshopify\.com$/, "");
 }
 
 export function InstallPage() {
   const navigate = useNavigate();
   const { shopDomain } = useSessionStore();
 
-  const [shop, setShop] = useState(shopDomain ?? "");
+  const [prefix, setPrefix] = useState(prefixFromDomain(shopDomain));
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleInstall = () => {
-    const normalized = normalizeShop(shop);
-    if (!normalized) {
-      setError("Enter a valid Shopify store URL — e.g. my-store.myshopify.com");
+    const clean = prefix.trim().toLowerCase().replace(/\s+/g, "-");
+    if (!clean || !/^[a-z0-9-]+$/.test(clean)) {
+      setError("Store name can only contain letters, numbers, and hyphens");
       inputRef.current?.focus();
       return;
     }
     setError(null);
-    window.location.href = `${INSTALL_URL}?shop=${encodeURIComponent(normalized)}`;
+    window.location.href = `${INSTALL_URL}?shop=${encodeURIComponent(`${clean}.myshopify.com`)}`;
   };
 
   const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -56,19 +53,42 @@ export function InstallPage() {
       <div className="flex-1 flex items-center justify-center px-6 py-16">
         <div className="w-full max-w-md space-y-8">
 
-          {/* Icon + headline */}
-          <div className="text-center space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent to-teal mx-auto flex items-center justify-center">
-              <span
-                className="material-symbols-outlined text-white text-[32px]"
-                style={{ fontVariationSettings: "'FILL' 1" }}
-              >
-                store
-              </span>
+          {/* Connection header */}
+          <div className="text-center space-y-6">
+            <div className="flex items-center justify-center gap-5">
+              {/* App logo */}
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="w-14 h-14 bg-elevated rounded-xl flex items-center justify-center" style={{ boxShadow: "0 0 20px rgba(167,139,250,0.1)" }}>
+                  <span className="font-bold text-accent text-xl tracking-tighter">N12</span>
+                </div>
+                <span className="text-[10px] uppercase tracking-[0.2em] text-faint">NewOneTwo</span>
+              </div>
+
+              {/* Link connector */}
+              <div className="flex items-center justify-center h-14">
+                <div className="relative h-px w-8 bg-gradient-to-r from-accent/20 via-accent/60 to-accent/20">
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="material-symbols-outlined text-accent bg-surface px-0.5" style={{ fontSize: 16 }}>link</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Shopify logo */}
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="w-14 h-14 bg-elevated rounded-xl flex items-center justify-center">
+                  <svg viewBox="0 0 109 124" className="w-8 h-8" xmlns="http://www.w3.org/2000/svg" fill="#96bf47">
+                    <path d="M74.7 14.8c-.1-.6-.6-1-1.1-1-.5 0-9.4-.2-9.4-.2s-7.5-7.3-8.2-8c-.8-.7-2.3-.5-2.9-.3l-4 1.2C47.5 4.3 45.3 3 42.8 3c-16.8 0-24.9 21-27.4 31.7l-11.7 3.6c-3.6 1.1-3.7 1.2-4.2 4.7L0 93.5l54.2 9.4 29.4-6.4L74.7 14.8zM55.4 11.3l-6.5 2c1.7-6.5 4.9-9.7 7.8-10.9.6 2.3.9 5.3-1.3 8.9zm-9.8 3l-13.3 4.1c2.6-9.8 7.4-14.6 11.6-16.4 1 2.7 1.5 6.7 1.7 12.3zm2.8-13.8c.8 0 1.5.2 2.2.7-5.4 2.5-11.2 8.9-13.6 21.6l-10.3 3.2C29 16.9 35.8 .5 48.4.5z"/>
+                    <path d="M73.6 13.8c-.5 0-9.4-.2-9.4-.2s-7.5-7.3-8.2-8c-.3-.3-.7-.4-1-.5l-1.7 87.3 29.4-6.4L74.7 14.8c-.2-.6-.7-1-1.1-1z" opacity=".4"/>
+                    <path d="M42.5 43.7l-3.6 10.7s-3.2-1.7-7-1.7c-5.6 0-5.9 3.5-5.9 4.4 0 4.8 12.5 6.6 12.5 17.9 0 8.8-5.6 14.5-13.2 14.5-9.1 0-13.7-5.7-13.7-5.7l2.4-8s4.8 4.1 8.8 4.1c2.6 0 3.7-2.1 3.7-3.6 0-6.3-10.2-6.6-10.2-16.9 0-8.7 6.2-17.1 18.8-17.1 4.8 0 7.4 1.4 7.4 1.4z"/>
+                  </svg>
+                </div>
+                <span className="text-[10px] uppercase tracking-[0.2em] text-faint">Shopify</span>
+              </div>
             </div>
+
             <div className="space-y-2">
               <h1 className="text-3xl font-bold text-ink tracking-tight">
-                Connect your store
+                Connect NewOneTwo<br />to Your Store
               </h1>
               <p className="text-muted text-sm leading-relaxed">
                 You'll be redirected to Shopify to approve access.
@@ -88,33 +108,27 @@ export function InstallPage() {
                 Shopify store URL
               </label>
               <p className="text-[11px] text-faint mb-4">
-                Your store's unique Shopify address
+                Enter your store name — the part before .myshopify.com
               </p>
 
-              <div className="relative">
+              <div className="flex items-stretch bg-raised border border-white/[0.12] rounded-xl overflow-hidden focus-within:border-accent transition-colors">
                 <input
                   ref={inputRef}
                   id="shop-input"
                   type="text"
-                  value={shop}
+                  value={prefix}
                   onChange={(e) => {
-                    setShop(e.target.value);
+                    setPrefix(e.target.value);
                     setError(null);
                   }}
                   onKeyDown={handleKey}
-                  placeholder="my-store.myshopify.com"
+                  placeholder="my-store"
                   autoFocus
-                  className="w-full bg-raised border border-white/[0.12] rounded-xl px-4 py-3.5 text-sm text-ink placeholder:text-faint outline-none focus:border-accent transition-colors font-mono"
+                  className="flex-1 min-w-0 bg-transparent px-4 py-3.5 text-sm text-ink placeholder:text-faint outline-none font-mono"
                 />
-                {shop && (
-                  <button
-                    type="button"
-                    onClick={() => setShop("")}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-muted text-xs bg-transparent border-0 cursor-pointer w-5 h-5 flex items-center justify-center"
-                  >
-                    <span className="material-symbols-outlined text-[16px]">close</span>
-                  </button>
-                )}
+                <span className="flex items-center pr-4 text-sm text-faint font-mono select-none whitespace-nowrap border-l border-white/[0.08] pl-3">
+                  .myshopify.com
+                </span>
               </div>
 
               {error && (

@@ -97,15 +97,17 @@ class WidgetJsGenerator(Generator):
         ux_block = _format_ux_guidance(ctx.plan)
         catalog_desc = _format_catalog(ctx.platform_api_catalog)
         widget_spec_block = _format_widget_spec(ctx.plan)
+        prior_block = _format_prior_widget(ctx.prior_widget_code)
 
         return (
             f"{retry_block}"
             f"Feature to build: {ctx.intent.get('desiredOutcome', '')}\n"
-            f"Trigger type: {ctx.intent.get('triggerType', '')}\n\n"
+            f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
             f"Platform API catalog (the ONLY paths the widget may call via host.call()):\n"
             f"{catalog_desc}\n"
             f"{widget_spec_block}"
             f"{ux_block}"
+            f"{prior_block}"
             "Generate the widget ES module. Output ONLY the raw JavaScript."
         )
 
@@ -125,6 +127,24 @@ class WidgetJsGenerator(Generator):
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────
+
+
+def _format_prior_widget(prior_code: Any) -> str:
+    """
+    Inject the currently deployed widget as context for revision runs.
+    The model should apply targeted changes, not regenerate the whole widget.
+    """
+    if not prior_code:
+        return ""
+    return (
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "REVISION RUN — currently deployed widget module:\n"
+        "(Apply the merchant feedback above as targeted changes to this code.\n"
+        " Preserve all mount() logic and host.call() paths that are NOT being changed.)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{prior_code}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
 
 
 def _format_catalog(catalog: List[Dict[str, Any]]) -> str:

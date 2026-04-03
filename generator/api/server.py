@@ -15,14 +15,27 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from typing import List, Literal
+
 from fastapi import BackgroundTasks, FastAPI
+from pydantic import BaseModel
 
 from config import get_settings
 from contract.subscriber import subscribe_and_process
 from contract.validators import GenerationRequest
+from crews.feature_generator.agents import run_product_agent_analyze
 from crews.feature_generator.crew import run_feature_generation
 
 log = logging.getLogger(__name__)
+
+
+class AnalyzeMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class AnalyzeRequest(BaseModel):
+    history: List[AnalyzeMessage]
 
 
 def create_app() -> FastAPI:
@@ -54,6 +67,16 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok", "service": "generator"}
+
+    @app.post("/analyze")
+    def analyze(request: AnalyzeRequest) -> dict:
+        """
+        Synchronous product agent conversation.
+        Returns {"status": "needs_clarification", "question": "..."} or
+        {"status": "ready", "summary": "...", "intent": {...}}.
+        """
+        history_dicts = [msg.model_dump() for msg in request.history]
+        return run_product_agent_analyze(history_dicts)
 
     @app.post("/trigger", status_code=202)
     def trigger(request: GenerationRequest, background_tasks: BackgroundTasks) -> dict:

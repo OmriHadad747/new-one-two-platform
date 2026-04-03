@@ -19,6 +19,7 @@ export const GenerationRequestSchema = z.object({
   appArchetype: z.enum(["storefront_ui", "backend_only"]).default("backend_only"),
   existingFeatures: z.array(z.string()).default([]),
   priorBundle: z.record(z.unknown()).nullable().optional(),
+  preComputedIntent: z.record(z.unknown()).nullable().optional(),
 });
 
 // ─── ProgressEvent ────────────────────────────────────────────────────────────

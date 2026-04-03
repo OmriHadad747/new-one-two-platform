@@ -550,6 +550,14 @@ export async function updateGenerationSession(
   `;
 }
 
+export async function cancelGenerationSession(jobId: string): Promise<void> {
+  await sql`
+    UPDATE generation_sessions
+    SET status = 'cancelled', updated_at = NOW()
+    WHERE job_id = ${jobId}
+  `;
+}
+
 export async function insertGenerationEvent(params: {
   sessionId: string;
   agentName: string;

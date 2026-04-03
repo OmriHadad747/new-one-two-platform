@@ -19,7 +19,6 @@
       "@new-one-two/crypto": ["./packages/crypto/src/index.ts"],
       "@new-one-two/logger": ["./packages/logger/src/index.ts"],
       "@new-one-two/deployer": ["./packages/deployer/src/index.ts"],
-      "@new-one-two/model-adapter": ["./packages/model-adapter/src/index.ts"],
       "@new-one-two/pubsub-client": ["./packages/pubsub-client/src/index.ts"]
     }
   }

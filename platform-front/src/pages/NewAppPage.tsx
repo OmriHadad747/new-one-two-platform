@@ -9,22 +9,20 @@ import { useGeneration } from "@/hooks/useGeneration";
 import { useSessionStore } from "@/stores/session";
 import { useApps, useApp } from "@/hooks/useApps";
 import { api } from "@/lib/api";
-import type { GenerationBundle } from "@/types/dashboard";
+import type { GenerationBundle, AnalyzeMessage } from "@/types/dashboard";
 
 const WELCOME: ChatMessage = {
   id: "welcome",
   role: "ai",
-  text: "Hey! Describe the Shopify feature you want to build. New One Two will generate the widget, backend handler, and any DB migrations — then deploy it to your store.",
+  text: "Hey! Describe the Shopify feature you want to build and I'll make sure I understand it before we generate anything.",
 };
 
-/** Derives a human-readable app name from the first ~40 chars of the prompt. */
 function nameFromPrompt(prompt: string): string {
   const clean = prompt.replace(/[^a-zA-Z0-9 ]/g, " ").trim();
   const words = clean.split(/\s+/).slice(0, 5).join(" ");
   return words.charAt(0).toUpperCase() + words.slice(1) || "New App";
 }
 
-/** Derives a URL-safe slug and appends a short random suffix to ensure uniqueness. */
 function slugFromName(name: string): string {
   return (
     name
@@ -55,23 +53,27 @@ export function NewAppPage() {
   const [deploying, setDeploying] = useState(false);
   const [bundle, setBundle] = useState<GenerationBundle | null>(null);
 
-  const { state: gen, start, startRevision, reset } = useGeneration();
+  // Analyze conversation state
+  const [analyzeHistory, setAnalyzeHistory] = useState<AnalyzeMessage[]>([]);
+  const [analyzePhase, setAnalyzePhase] = useState<"idle" | "thinking" | "awaiting_confirm">("idle");
+  const [pendingIntent, setPendingIntent] = useState<Record<string, unknown> | null>(null);
+
+  const { state: gen, start, startRevision, reset, cancel } = useGeneration();
   const isStreaming = gen.status === "running";
+  const isAnalyzing = analyzePhase === "thinking";
 
   const activeAppQuery = useApp(tenantId, selectedAppId);
   const activeApp = activeAppQuery.data ?? null;
 
-  // Auto-select first existing app (for re-generation against an existing one)
   useEffect(() => {
     if (!selectedAppId && apps.length > 0 && apps[0]) {
       setSelectedAppId(apps[0].id);
     }
   }, [apps, selectedAppId]);
 
-  // Scroll to bottom on new messages / streaming events
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isStreaming, gen.events.length]);
+  }, [messages, isAnalyzing]);
 
   // React to generation status transitions
   useEffect(() => {
@@ -91,15 +93,118 @@ export function NewAppPage() {
         {
           id: crypto.randomUUID(),
           role: "ai",
-          text: `Generation failed: ${gen.error ?? "Unknown error. Please try again."}`,
+          text: gen.error === "Cancelled"
+            ? "Generation cancelled."
+            : `Generation failed: ${gen.error ?? "Unknown error. Please try again."}`,
         },
       ]);
     }
     prevStatus.current = gen.status;
   }, [gen.status, gen.error]);
 
+  /** Run the /analyze conversation step with the current history. */
+  const runAnalyze = useCallback(async (history: AnalyzeMessage[], appIdForGen: string | null) => {
+    setAnalyzePhase("thinking");
+    let result;
+    try {
+      result = await api.generation.analyze(history);
+    } catch (err) {
+      setAnalyzePhase("idle");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "ai",
+          text: `Couldn't analyze your request: ${err instanceof Error ? err.message : "Unknown error"}`,
+        },
+      ]);
+      return;
+    }
+
+    if (result.status === "needs_clarification") {
+      const question = result.question ?? "Could you tell me more about what you want to build?";
+      const updatedHistory: AnalyzeMessage[] = [...history, { role: "assistant", content: question }];
+      setAnalyzeHistory(updatedHistory);
+      setAnalyzePhase("idle");
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "ai", text: question },
+      ]);
+    } else {
+      // ready
+      const summary = result.summary ?? "I understand your request. Ready to generate.";
+      const intent = result.intent ?? {};
+      setPendingIntent(intent);
+
+      const confirmMsgId = crypto.randomUUID();
+      setAnalyzePhase("awaiting_confirm");
+
+      const handleConfirm = async () => {
+        // Remove the action buttons from the confirm message
+        setMessages((prev) =>
+          prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m))
+        );
+
+        let appId = appIdForGen;
+        if (!appId) {
+          const originalPrompt = history[0]?.content ?? "New App";
+          const name = nameFromPrompt(originalPrompt);
+          const slug = slugFromName(name);
+          try {
+            const newApp = await api.apps.create(tenantId!, { slug, name });
+            appId = newApp.id;
+            setSelectedAppId(newApp.id);
+            await appsQuery.refetch();
+          } catch (err) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "ai",
+                text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}`,
+              },
+            ]);
+            setAnalyzePhase("idle");
+            return;
+          }
+        }
+
+        const originalPrompt = history[0]?.content ?? "";
+        setAnalyzePhase("idle");
+        setPendingIntent(null);
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "ai", text: "Your app is being built — follow the progress on the right →" },
+        ]);
+        await start({ appId, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: intent });
+      };
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: confirmMsgId,
+          role: "ai",
+          text: summary,
+          actions: [
+            { label: "Generate →", onClick: handleConfirm },
+            {
+              label: "Change request",
+              variant: "ghost" as const,
+              onClick: () => {
+                setMessages((prev) => prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m)));
+                setAnalyzePhase("idle");
+                setAnalyzeHistory([]);
+                setPendingIntent(null);
+              },
+            },
+          ],
+        },
+      ]);
+    }
+  }, [tenantId, appsQuery, start]);
+
   const handleSend = useCallback(async () => {
-    if (!input.trim() || isStreaming || deploying) return;
+    if (!input.trim() || isStreaming || isAnalyzing || deploying) return;
     if (!tenantId) return;
 
     const prompt = input.trim();
@@ -129,68 +234,50 @@ export function NewAppPage() {
       return;
     }
 
-    // ── Fresh generation ──────────────────────────────────────────────────
+    // ── Analyze conversation ──────────────────────────────────────────────
     setMessages((prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: "user", text: prompt },
     ]);
 
-    // If no app exists yet, create one automatically
-    let appId = selectedAppId;
-    if (!appId) {
-      const name = nameFromPrompt(prompt);
-      const slug = slugFromName(name);
-      try {
-        const newApp = await api.apps.create(tenantId, { slug, name });
-        appId = newApp.id;
-        setSelectedAppId(newApp.id);
-        await appsQuery.refetch();
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "ai",
-            text: `Created app "${newApp.name}". Generating now...`,
-          },
-        ]);
-      } catch (err) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "ai",
-            text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}`,
-          },
-        ]);
-        return;
-      }
+    const newHistory: AnalyzeMessage[] = [...analyzeHistory, { role: "user", content: prompt }];
+    setAnalyzeHistory(newHistory);
+
+    // If user typed while awaiting confirm, treat as a new request
+    if (analyzePhase === "awaiting_confirm") {
+      setPendingIntent(null);
+      setAnalyzeHistory(newHistory);
     }
 
-    await start({ appId, tenantId, prompt });
+    await runAnalyze(newHistory, selectedAppId);
   }, [
     input,
     isStreaming,
+    isAnalyzing,
     deploying,
     tenantId,
     selectedAppId,
     gen.jobId,
     gen.status,
     deployed,
-    start,
+    analyzeHistory,
+    analyzePhase,
     startRevision,
-    appsQuery,
+    runAnalyze,
   ]);
+
+  const handleStop = useCallback(() => {
+    if (gen.jobId) void cancel(gen.jobId);
+  }, [gen.jobId, cancel]);
 
   const handleDeploy = useCallback(async () => {
     if (!gen.jobId) return;
     setDeploying(true);
     try {
       await api.generation.approve(gen.jobId);
-      // Fetch the result bundle for testing instructions
       const result = await api.generation.result(gen.jobId);
       setBundle(result.bundle ?? null);
       setDeployed(true);
-      // Refresh the app data so status shows "active"
       void activeAppQuery.refetch();
       setMessages((prev) => [
         ...prev,
@@ -220,6 +307,9 @@ export function NewAppPage() {
     setDeployed(false);
     setBundle(null);
     setMessages([WELCOME]);
+    setAnalyzeHistory([]);
+    setAnalyzePhase("idle");
+    setPendingIntent(null);
     prevStatus.current = "idle";
   };
 
@@ -227,7 +317,9 @@ export function NewAppPage() {
     ? "Describe what's wrong to revise and redeploy..."
     : gen.status === "completed"
       ? "Ask for a change before deploying..."
-      : undefined;
+      : analyzePhase === "awaiting_confirm"
+        ? "Or type here to change your request..."
+        : undefined;
 
   return (
     <>
@@ -274,15 +366,15 @@ export function NewAppPage() {
           <ChatMessages
             ref={bottomRef}
             messages={messages}
-            isStreaming={isStreaming}
-            streamingEvents={gen.events}
+            isAnalyzing={isAnalyzing}
           />
           <ChatInput
             value={input}
             onChange={setInput}
             onSubmit={handleSend}
-            disabled={isStreaming || deploying}
+            disabled={isStreaming || isAnalyzing || deploying}
             placeholder={chatPlaceholder}
+            onStop={isStreaming ? handleStop : undefined}
           />
         </div>
 

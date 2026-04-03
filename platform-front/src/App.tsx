@@ -9,6 +9,7 @@ import { MerchantCallbackPage } from "@/pages/MerchantCallbackPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { NewAppPage } from "@/pages/NewAppPage";
 import { AppsPage } from "@/pages/AppsPage";
+import { AppDetailPage } from "@/pages/AppDetailPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 
 const queryClient = new QueryClient({
@@ -40,7 +41,7 @@ const router = createBrowserRouter([
           { index: true, element: <DashboardPage /> },
           { path: "new", element: <NewAppPage /> },
           { path: "apps", element: <AppsPage /> },
-          { path: "apps/:appId", element: <AppsPage /> },
+          { path: "apps/:appId", element: <AppDetailPage /> },
           { path: "settings", element: <SettingsPage /> },
         ],
       },

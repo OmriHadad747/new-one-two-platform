@@ -1,179 +1,161 @@
-import { useState, useEffect } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useNavigate } from "react-router";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
-import { AppSwitcher } from "@/components/features/apps/AppSwitcher";
-import { CodeView } from "@/components/features/apps/detail/CodeView";
-import { PreviewView } from "@/components/features/apps/detail/PreviewView";
-import { AppSettingsView } from "@/components/features/apps/detail/AppSettingsView";
-import { LoadingSpinner, ErrorMessage, EmptyApps } from "@/components/ui/StateViews";
 import { cn } from "@/lib/cn";
 import { useSessionStore } from "@/stores/session";
-import { useApps, useApp } from "@/hooks/useApps";
+import { useApps } from "@/hooks/useApps";
 import type { App } from "@/types/dashboard";
-
-type Tab = "code" | "preview" | "settings";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
+  if (diff < 3_600_000)  return `${Math.round(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
   return `${Math.round(diff / 86_400_000)}d ago`;
 }
 
-function appIcon(name: string): string {
-  const lower = name.toLowerCase();
-  if (lower.includes("notify") || lower.includes("stock")) return "🔔";
-  if (lower.includes("upsell") || lower.includes("recommend")) return "⚡";
-  if (lower.includes("review") || lower.includes("rating")) return "⭐";
-  if (lower.includes("email") || lower.includes("notify")) return "✉️";
-  return "◈";
+function StatusBadge({ status }: { status: App["status"] }) {
+  const cfg = {
+    active:   { label: "Live",     cls: "bg-teal/12 text-teal"            },
+    inactive: { label: "Inactive", cls: "bg-white/[0.06] text-faint"      },
+    deleted:  { label: "Deleted",  cls: "bg-danger/12 text-danger"        },
+  }[status] ?? { label: status, cls: "bg-white/[0.06] text-faint" };
+
+  return (
+    <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide", cfg.cls)}>
+      {cfg.label}
+    </span>
+  );
+}
+
+function ArchetypeBadge({ archetype }: { archetype: App["appArchetype"] }) {
+  const label = archetype === "storefront_ui" ? "Widget + Backend" : "Backend only";
+  return (
+    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-accent/8 text-accent">
+      {label}
+    </span>
+  );
 }
 
 export function AppsPage() {
-  const { appId: paramAppId } = useParams();
   const navigate = useNavigate();
   const { tenantId } = useSessionStore();
-  const [activeAppId, setActiveAppId] = useState<string | null>(paramAppId ?? null);
-  const [tab, setTab] = useState<Tab>("code");
-
   const appsQuery = useApps(tenantId);
-  const appQuery = useApp(tenantId, activeAppId);
-
   const apps = appsQuery.data ?? [];
-
-  // When app list loads, auto-select first if no param
-  useEffect(() => {
-    if (!activeAppId && apps.length > 0 && apps[0]) {
-      setActiveAppId(apps[0].id);
-    }
-  }, [apps, activeAppId]);
-
-  // Sync URL param → active app
-  useEffect(() => {
-    if (paramAppId) setActiveAppId(paramAppId);
-  }, [paramAppId]);
-
-  const activeApp: App | null = appQuery.data ?? null;
-
-  const statusVariant =
-    activeApp?.status === "active"
-      ? "live"
-      : activeApp?.status === "inactive"
-        ? "draft"
-        : "failed";
-
-  if (appsQuery.isLoading) {
-    return (
-      <>
-        <TopBar title="My Apps" />
-        <LoadingSpinner message="Loading apps…" />
-      </>
-    );
-  }
-
-  if (appsQuery.isError) {
-    return (
-      <>
-        <TopBar title="My Apps" />
-        <ErrorMessage
-          message="Failed to load apps"
-          onRetry={() => void appsQuery.refetch()}
-        />
-      </>
-    );
-  }
-
-  if (apps.length === 0) {
-    return (
-      <>
-        <TopBar title="My Apps" />
-        <EmptyApps onNew={() => navigate("/app/new")} />
-      </>
-    );
-  }
 
   return (
     <>
       <TopBar
         title="My Apps"
-        subtitle={activeApp?.name}
         actions={
-          <>
-            <Button variant="ghost" size="sm">
-              ↗ View on Store
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => navigate("/app/new")}
-            >
-              ↺ Regenerate
-            </Button>
-          </>
+          <Button variant="primary" size="sm" onClick={() => navigate("/app/new")}>
+            ✦ New App
+          </Button>
         }
       />
-      <main className="flex-1 overflow-y-auto p-7">
-        <AppSwitcher
-          apps={apps}
-          activeId={activeAppId ?? ""}
-          onSelect={(app) => {
-            setActiveAppId(app.id);
-            navigate(`/app/apps/${app.id}`, { replace: true });
-          }}
-        />
 
-        {appQuery.isLoading && <LoadingSpinner message="Loading app…" />}
+      <main className="flex-1 overflow-y-auto p-7 max-w-[960px]">
 
-        {activeApp && (
-          <>
-            {/* Hero */}
-            <div className="bg-raised border border-white/7 rounded-xl px-7 py-6 mb-6 flex items-center gap-5">
-              <div className="w-14 h-14 rounded-xl bg-accent/15 flex items-center justify-center text-2xl shrink-0">
-                {appIcon(activeApp.name)}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[22px] font-extrabold text-ink tracking-tight">
-                  {activeApp.name}
-                </div>
-                <div className="text-[13px] text-faint mt-1 font-mono truncate">
-                  {activeApp.slug}
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-2 shrink-0">
-                <Badge variant={statusVariant}>
-                  {activeApp.status === "active" ? "live" : activeApp.status}
-                </Badge>
-                <span className="text-[11px] text-faint">
-                  Updated {timeAgo(activeApp.updatedAt)}
-                </span>
-              </div>
+        {/* Loading */}
+        {appsQuery.isLoading && (
+          <div className="space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-16 bg-white/[0.03] rounded-xl animate-pulse-subtle border border-white/[0.06]" />
+            ))}
+          </div>
+        )}
+
+        {/* Error */}
+        {appsQuery.isError && (
+          <div className="text-sm text-danger py-8 text-center">
+            Failed to load apps.{" "}
+            <button
+              type="button"
+              onClick={() => void appsQuery.refetch()}
+              className="underline text-accent bg-transparent border-0 cursor-pointer"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Empty */}
+        {!appsQuery.isLoading && !appsQuery.isError && apps.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
+              <span className="material-symbols-outlined text-faint text-[28px]">widgets</span>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-faint">No apps yet</p>
+              <p className="text-[12px] text-faint mt-1 opacity-60">Describe your first feature and the AI will build it.</p>
+            </div>
+            <Button variant="primary" onClick={() => navigate("/app/new")}>
+              Build your first app
+            </Button>
+          </div>
+        )}
+
+        {/* List */}
+        {apps.length > 0 && (
+          <div className="bg-surface border border-white/[0.07] rounded-xl overflow-hidden">
+            {/* Table header */}
+            <div className="grid grid-cols-[1fr_140px_100px_100px_80px] gap-4 px-5 py-2.5 border-b border-white/[0.07] bg-white/[0.02]">
+              <span className="text-[10px] font-bold text-faint uppercase tracking-wider">App</span>
+              <span className="text-[10px] font-bold text-faint uppercase tracking-wider">Type</span>
+              <span className="text-[10px] font-bold text-faint uppercase tracking-wider">Status</span>
+              <span className="text-[10px] font-bold text-faint uppercase tracking-wider">Updated</span>
+              <span className="text-[10px] font-bold text-faint uppercase tracking-wider text-right">Actions</span>
             </div>
 
-            {/* Tabs */}
-            <div className="flex border-b border-white/7 mb-5">
-              {(["code", "preview", "settings"] as Tab[]).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setTab(t)}
-                  className={cn(
-                    "text-[13px] font-semibold px-4 py-2.5 cursor-pointer transition-all duration-150 border-b-2 -mb-px bg-transparent",
-                    tab === t
-                      ? "text-accent border-accent"
-                      : "text-faint border-transparent hover:text-muted"
-                  )}
-                >
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
-                </button>
-              ))}
-            </div>
+            {apps.map((app, i) => (
+              <div
+                key={app.id}
+                className={cn(
+                  "grid grid-cols-[1fr_140px_100px_100px_80px] gap-4 px-5 py-3.5 items-center transition-colors hover:bg-white/[0.02] cursor-pointer",
+                  i < apps.length - 1 && "border-b border-white/[0.05]"
+                )}
+                onClick={() => navigate(`/app/apps/${app.id}`)}
+              >
+                {/* Name */}
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-ink truncate">{app.name}</div>
+                  <div className="text-[11px] text-faint font-mono truncate mt-0.5">{app.slug}</div>
+                </div>
 
-            {tab === "code" && <CodeView app={activeApp} />}
-            {tab === "preview" && <PreviewView app={activeApp} />}
-            {tab === "settings" && <AppSettingsView />}
-          </>
+                {/* Archetype */}
+                <div>
+                  <ArchetypeBadge archetype={app.appArchetype} />
+                </div>
+
+                {/* Status */}
+                <div>
+                  <StatusBadge status={app.status} />
+                </div>
+
+                {/* Updated */}
+                <div className="text-[12px] text-faint">{timeAgo(app.updatedAt)}</div>
+
+                {/* Actions */}
+                <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => navigate("/app/new")}
+                    title="Edit in AI"
+                    className="w-7 h-7 rounded-md flex items-center justify-center text-faint hover:text-accent hover:bg-accent/10 transition-colors bg-transparent border-0 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[15px]">edit</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/app/apps/${app.id}`)}
+                    title="View details"
+                    className="w-7 h-7 rounded-md flex items-center justify-center text-faint hover:text-ink hover:bg-white/[0.06] transition-colors bg-transparent border-0 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[15px]">arrow_forward</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </main>
     </>

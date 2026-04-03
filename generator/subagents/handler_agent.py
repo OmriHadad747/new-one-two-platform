@@ -49,6 +49,7 @@ class HandlerGenerator(Generator):
         spec_block = _format_code_spec(ctx.plan)
         gaps_block = _format_platform_gaps(ctx.plan)
         catalog_block = _format_widget_catalog(ctx.platform_api_catalog)
+        prior_block = _format_prior_handler(ctx.prior_handler_code)
 
         return (
             f"{retry_block}"
@@ -58,6 +59,7 @@ class HandlerGenerator(Generator):
             f"{gaps_block}"
             f"{catalog_block}"
             f"{spec_block}"
+            f"{prior_block}"
             "Generate the handler.js module. Output ONLY the JavaScript code."
         )
 
@@ -171,6 +173,25 @@ def _format_widget_catalog(catalog: List[Dict[str, Any]]) -> str:
         "\nWidget API catalog (handler MUST return the exact responseShape for each path):\n"
         + "\n".join(lines)
         + "\n"
+    )
+
+
+def _format_prior_handler(prior_code: Any) -> str:
+    """
+    Inject the currently deployed handler as context for revision runs.
+    The model should treat the feedback-augmented prompt as a diff spec and
+    apply targeted changes — not regenerate from scratch.
+    """
+    if not prior_code:
+        return ""
+    return (
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "REVISION RUN — currently deployed handler.js:\n"
+        "(Apply the merchant feedback above as targeted changes to this code.\n"
+        " Preserve all logic that is NOT related to the reported issue.)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{prior_code}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
 
 

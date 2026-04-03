@@ -69,7 +69,7 @@ export function useGeneration() {
 
   /** Start a brand-new generation job. */
   const start = useCallback(
-    async (params: { appId: string; tenantId: string; prompt: string }) => {
+    async (params: { appId: string; tenantId: string; prompt: string; preComputedIntent?: Record<string, unknown> }) => {
       esRef.current?.close();
       setState({ ...INITIAL, status: "running" });
 
@@ -125,5 +125,16 @@ export function useGeneration() {
     []
   );
 
-  return { state, start, startRevision, reset, approve };
+  const cancel = useCallback(async (jobId: string) => {
+    esRef.current?.close();
+    esRef.current = null;
+    try {
+      await api.generation.cancel(jobId);
+    } catch {
+      // ignore — we already closed the stream client-side
+    }
+    setState((s) => ({ ...s, status: "failed", error: "Cancelled" }));
+  }, []);
+
+  return { state, start, startRevision, reset, approve, cancel };
 }

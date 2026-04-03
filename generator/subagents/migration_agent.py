@@ -85,19 +85,34 @@ class MigrationGenerator(Generator):
         retry_block = self.format_retry_block(ctx.previous_errors)
         schema_block = _format_schema_guidance(ctx.plan)
         sql_steps = _extract_codespec_sql_steps(ctx.plan)
-
         sql_block = "\n".join(f"  {s}" for s in sql_steps) if sql_steps else "  (none)"
+        prior_block = _format_prior_migration(ctx.prior_migration_sql)
+
+        if ctx.prior_migration_sql:
+            closing = (
+                "Generate ONLY the incremental DDL needed for this revision.\n"
+                "Do NOT recreate tables that already exist in the schema above.\n"
+                "Use ALTER TABLE ... ADD COLUMN IF NOT EXISTS for new columns on existing tables.\n"
+                "New tables must still follow the full tenant isolation pattern.\n"
+                "If no schema change is needed, output nothing at all.\n"
+                "Output ONLY raw SQL (no markdown fences)."
+            )
+        else:
+            closing = (
+                "Generate the PostgreSQL DDL migration for this feature.\n"
+                "Follow the tenant isolation pattern exactly.\n"
+                "Output ONLY raw SQL (no markdown fences)."
+            )
 
         return (
             f"{retry_block}"
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n"
-            f"Trigger: {ctx.intent.get('triggerType', '')}\n\n"
+            f"Triggers: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
             f"DB operations from codeSpec (ground truth for required tables and columns):\n"
             f"{sql_block}\n"
             f"{schema_block}"
-            "Generate the PostgreSQL DDL migration for this feature.\n"
-            "Follow the tenant isolation pattern exactly.\n"
-            "Output ONLY raw SQL (no markdown fences)."
+            f"{prior_block}"
+            f"{closing}"
         )
 
     def parse(self, raw: str) -> str:
@@ -115,6 +130,24 @@ class MigrationGenerator(Generator):
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────
+
+
+def _format_prior_migration(prior_sql: Any) -> str:
+    """
+    Show the already-applied schema for revision runs so the agent only emits
+    incremental DDL (new tables or ADD COLUMN) instead of recreating everything.
+    """
+    if not prior_sql:
+        return ""
+    return (
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "REVISION RUN — schema already applied to the database:\n"
+        "(These tables and columns ALREADY EXIST. Do NOT recreate them.\n"
+        " Only emit DDL for new tables or new columns on existing tables.)\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{prior_sql}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
 
 
 def _format_schema_guidance(plan: Dict[str, Any]) -> str:

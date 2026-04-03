@@ -21,6 +21,7 @@ class GenerationRequest(BaseModel):
     appArchetype: Literal["storefront_ui", "backend_only"] = "backend_only"
     existingFeatures: List[str] = Field(default_factory=list)
     priorBundle: Optional[Dict[str, Any]] = None
+    preComputedIntent: Optional[Dict[str, Any]] = None
 
 
 # ─── ProgressEvent ────────────────────────────────────────────────────────────

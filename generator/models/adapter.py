@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from config import get_settings
 
@@ -66,6 +66,40 @@ def invoke(llm: ChatAnthropic, system: str, user: str) -> LLMResponse:
     content = response.content
     if not isinstance(content, str):
         # ChatAnthropic may return a list of content blocks
+        content = "".join(
+            block["text"] if isinstance(block, dict) else str(block)
+            for block in content
+        )
+
+    usage = getattr(response, "usage_metadata", None) or {}
+    return LLMResponse(
+        content=content,
+        input_tokens=usage.get("input_tokens", 0) if usage else 0,
+        output_tokens=usage.get("output_tokens", 0) if usage else 0,
+        latency_ms=latency_ms,
+    )
+
+
+def invoke_conversation(
+    llm: ChatAnthropic, system: str, messages: list[dict]
+) -> LLMResponse:
+    """
+    Multi-turn conversation call.
+    messages: list of {"role": "user"|"assistant", "content": str}
+    """
+    start = time.monotonic()
+    lc_messages: list = [SystemMessage(content=system)]
+    for msg in messages:
+        if msg["role"] == "user":
+            lc_messages.append(HumanMessage(content=msg["content"]))
+        else:
+            lc_messages.append(AIMessage(content=msg["content"]))
+
+    response = llm.invoke(lc_messages)
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    content = response.content
+    if not isinstance(content, str):
         content = "".join(
             block["text"] if isinstance(block, dict) else str(block)
             for block in content
