@@ -12,7 +12,14 @@ import {
 import { dockerImageName, callbackUrl } from "./service-namer.js";
 import { registerShopifyWebhooks } from "./shopify-webhook-registrar.js";
 import { runTenantMigration, rollbackTenantMigration } from "./migration-runner.js";
-import { createDraftAppVersion, updateGenerationSession, updateAppWidgetJs, updateAppAdminUiJs, updateAppArchetype } from "@new-one-two/db";
+import {
+  createDraftAppVersion,
+  updateGenerationSession,
+  updateAppWidgetJs,
+  updateAppAdminUiJs,
+  updateAppArchetype,
+  updateAppStatus,
+} from "@new-one-two/db";
 import type { FeatureBundle } from "@new-one-two/types";
 
 const DEPLOY_MODE = process.env["DEPLOY_MODE"] ?? "cloudrun";
@@ -250,7 +257,10 @@ export async function deployFeatureBundle(params: {
     // Steps 4-6: reuse existing deployAppVersion pipeline
     const result = await deployAppVersion(appVersionId);
 
-    // Step 7: Link session to the deployed version
+    // Step 7: Mark app as active
+    await updateAppStatus(appId, "active");
+
+    // Step 8: Link session to the deployed version
     await updateGenerationSession(sessionId, {
       appVersionId,
       status: "completed",

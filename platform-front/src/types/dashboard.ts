@@ -2,7 +2,7 @@
 // Keep in sync with platform/packages/types/src/index.ts manually or via codegen.
 
 export type TenantStatus = "active" | "suspended" | "pending";
-export type AppStatus = "active" | "inactive" | "deleted";
+export type AppStatus = "active" | "inactive" | "deleted" | "draft";
 export type VersionStatus = "draft" | "building" | "ready" | "failed" | "archived";
 export type AppArchetype = "storefront_backend" | "storefront_backend_admin" | "backend";
 

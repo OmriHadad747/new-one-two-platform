@@ -16,6 +16,7 @@ function timeAgo(iso: string): string {
 function StatusBadge({ status }: { status: App["status"] }) {
   const cfg = {
     active:   { label: "Live",     cls: "bg-teal/12 text-teal"            },
+    draft:    { label: "Draft",    cls: "bg-amber/12 text-amber"          },
     inactive: { label: "Inactive", cls: "bg-white/[0.06] text-faint"      },
     deleted:  { label: "Deleted",  cls: "bg-danger/12 text-danger"        },
   }[status] ?? { label: status, cls: "bg-white/[0.06] text-faint" };

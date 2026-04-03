@@ -4,7 +4,9 @@ import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { useSessionStore } from "@/stores/session";
 import { useApp, useAppLogs } from "@/hooks/useApps";
+import { useLatestSession, useGeneration } from "@/hooks/useGeneration";
 import type { ExecutionLogEntry, App } from "@/types/dashboard";
+import { useState } from "react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +95,7 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 function StatusPill({ status }: { status: App["status"] }) {
   const cfg = {
     active: { label: "Live", cls: "bg-teal/12 text-teal" },
+    draft: { label: "Draft", cls: "bg-amber/12 text-amber" },
     inactive: { label: "Inactive", cls: "bg-white/[0.06] text-faint" },
     deleted: { label: "Deleted", cls: "bg-danger/12 text-danger" },
   }[status] ?? { label: status, cls: "bg-white/[0.06] text-faint" };
@@ -112,9 +115,27 @@ export function AppDetailPage() {
 
   const appQuery = useApp(tenantId, appId ?? null);
   const logsQuery = useAppLogs(tenantId, appId ?? null, true);
+  const latestSessionQuery = useLatestSession(appId ?? null);
+  const { approve } = useGeneration();
+
+  const [deploying, setDeploying] = useState(false);
 
   const app = appQuery.data ?? null;
   const logs = logsQuery.data ?? [];
+  const latestSession = latestSessionQuery.data ?? null;
+
+  const handleDeployDraft = async () => {
+    if (!latestSession?.jobId) return;
+    setDeploying(true);
+    try {
+      await approve(latestSession.jobId);
+      await appQuery.refetch();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Deployment failed");
+    } finally {
+      setDeploying(false);
+    }
+  };
 
   return (
     <>
@@ -146,123 +167,159 @@ export function AppDetailPage() {
           <p className="text-sm text-faint">App not found.</p>
         </main>
       ) : (
-        <div className="flex-1 overflow-hidden flex">
-
-          {/* ── Left: Logs ──────────────────────────────────────────────────── */}
-          <main className="flex-1 overflow-y-auto p-7 min-w-0">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-bold text-ink">Execution Logs</h2>
-              <div className="flex items-center gap-2">
-                {logsQuery.isFetching && (
-                  <span className="text-[10px] text-faint">Refreshing…</span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void logsQuery.refetch()}
-                  className="text-[11px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer underline"
-                >
-                  Refresh
-                </button>
+        <div className="flex-1 overflow-hidden flex flex-col">
+          {/* ── Draft Banner ────────────────────────────────────────────────── */}
+          {app.status === "draft" && latestSession?.status === "completed" && (
+            <div className="bg-amber/5 border-b border-amber/15 px-7 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-amber text-[20px]">info</span>
+                <div>
+                  <p className="text-[13px] font-bold text-ink">Draft ready for deployment</p>
+                  <p className="text-[11px] text-faint">Your AI-generated feature is ready to go live on your store.</p>
+                </div>
               </div>
+              <Button
+                variant="primary"
+                size="sm"
+                className="bg-amber text-black hover:bg-amber/90"
+                onClick={handleDeployDraft}
+                disabled={deploying}
+              >
+                {deploying ? "Deploying..." : "🚀 Deploy Now"}
+              </Button>
             </div>
+          )}
 
-            {logsQuery.isError && (
-              <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>
-            )}
-
-            {!logsQuery.isError && logs.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
-                <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
-                  <span className="material-symbols-outlined text-faint text-[20px]">receipt_long</span>
-                </div>
-                <p className="text-sm text-faint">No executions yet</p>
-                <p className="text-[11px] text-faint opacity-60">
-                  Logs appear here once your app processes events.
-                </p>
-              </div>
-            )}
-
-            {logs.length > 0 && (
-              <div className="bg-surface border border-white/[0.07] rounded-xl overflow-hidden">
-                {/* Header */}
-                <div className="grid grid-cols-[16px_1fr_100px] gap-4 px-5 py-2.5 border-b border-white/[0.07] bg-white/[0.02]">
-                  <span />
-                  <span className="text-[10px] font-bold text-faint uppercase tracking-wider">Event / Error</span>
-                  <span className="text-[10px] font-bold text-faint uppercase tracking-wider text-right">Duration</span>
-                </div>
-                {logs.map((entry, i) => (
-                  <LogRow key={entry.id} entry={entry} last={i === logs.length - 1} />
-                ))}
-              </div>
-            )}
-          </main>
-
-          {/* ── Right: Sidebar ──────────────────────────────────────────────── */}
-          <aside className="w-[260px] shrink-0 border-l border-white/[0.07] overflow-y-auto p-5">
-
-            <SidebarSection title="App Info">
-              <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-1">
-                <InfoRow label="Status" value={<StatusPill status={app.status} />} />
-                <InfoRow
-                  label="Type"
-                  value={
-                    app.appArchetype === "backend"
-                      ? "Backend only"
-                      : app.appArchetype === "storefront_backend"
-                      ? "Widget + Backend"
-                      : "Widget + Backend + Admin"
-                  }
-                />
-                <InfoRow label="Created" value={formatDate(app.createdAt)} />
-                <InfoRow label="Updated" value={timeAgo(app.updatedAt)} />
-              </div>
-            </SidebarSection>
-
-            <SidebarSection title="Store">
-              <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-1">
-                <InfoRow
-                  label="Domain"
-                  value={
-                    <span className="font-mono text-[11px] truncate max-w-[120px] block">
-                      {app.shopDomain}
-                    </span>
-                  }
-                />
-              </div>
-            </SidebarSection>
-
-            <SidebarSection title="Actions">
-              <div className="space-y-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() => navigate("/app/new")}
-                >
-                  <span className="material-symbols-outlined text-[15px] mr-2">edit</span>
-                  Edit in AI
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() => navigate("/app/new")}
-                >
-                  <span className="material-symbols-outlined text-[15px] mr-2">rocket_launch</span>
-                  Redeploy
-                </Button>
-                <div className="border-t border-white/[0.06] mt-3 pt-3">
+          <div className="flex-1 overflow-hidden flex">
+            {/* ── Left: Logs ──────────────────────────────────────────────────── */}
+            <main className="flex-1 overflow-y-auto p-7 min-w-0">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-bold text-ink">Execution Logs</h2>
+                <div className="flex items-center gap-2">
+                  {logsQuery.isFetching && (
+                    <span className="text-[10px] text-faint">Refreshing…</span>
+                  )}
                   <button
                     type="button"
-                    className="w-full text-left text-[12px] text-danger hover:text-danger/80 transition-colors bg-transparent border-0 cursor-pointer py-1"
+                    onClick={() => void logsQuery.refetch()}
+                    className="text-[11px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer underline"
                   >
-                    Delete app…
+                    Refresh
                   </button>
                 </div>
               </div>
-            </SidebarSection>
 
-          </aside>
+              {logsQuery.isError && (
+                <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>
+              )}
+
+              {!logsQuery.isError && logs.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
+                  <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
+                    <span className="material-symbols-outlined text-faint text-[20px]">receipt_long</span>
+                  </div>
+                  <p className="text-sm text-faint">No executions yet</p>
+                  <p className="text-[11px] text-faint opacity-60">
+                    Logs appear here once your app processes events.
+                  </p>
+                </div>
+              )}
+
+              {logs.length > 0 && (
+                <div className="bg-surface border border-white/[0.07] rounded-xl overflow-hidden">
+                  {/* Header */}
+                  <div className="grid grid-cols-[16px_1fr_100px] gap-4 px-5 py-2.5 border-b border-white/[0.07] bg-white/[0.02]">
+                    <span />
+                    <span className="text-[10px] font-bold text-faint uppercase tracking-wider">Event / Error</span>
+                    <span className="text-[10px] font-bold text-faint uppercase tracking-wider text-right">Duration</span>
+                  </div>
+                  {logs.map((entry, i) => (
+                    <LogRow key={entry.id} entry={entry} last={i === logs.length - 1} />
+                  ))}
+                </div>
+              )}
+            </main>
+
+            {/* ── Right: Sidebar ──────────────────────────────────────────────── */}
+            <aside className="w-[260px] shrink-0 border-l border-white/[0.07] overflow-y-auto p-5">
+
+              <SidebarSection title="App Info">
+                <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-1">
+                  <InfoRow label="Status" value={<StatusPill status={app.status} />} />
+                  <InfoRow
+                    label="Type"
+                    value={
+                      app.appArchetype === "backend"
+                        ? "Backend only"
+                        : app.appArchetype === "storefront_backend"
+                        ? "Widget + Backend"
+                        : "Widget + Backend + Admin"
+                    }
+                  />
+                  <InfoRow label="Created" value={formatDate(app.createdAt)} />
+                  <InfoRow label="Updated" value={timeAgo(app.updatedAt)} />
+                </div>
+              </SidebarSection>
+
+              <SidebarSection title="Store">
+                <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-1">
+                  <InfoRow
+                    label="Domain"
+                    value={
+                      <span className="font-mono text-[11px] truncate max-w-[120px] block">
+                        {app.shopDomain}
+                      </span>
+                    }
+                  />
+                </div>
+              </SidebarSection>
+
+              <SidebarSection title="Actions">
+                <div className="space-y-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start"
+                    onClick={() => navigate("/app/new")}
+                  >
+                    <span className="material-symbols-outlined text-[15px] mr-2">edit</span>
+                    Edit in AI
+                  </Button>
+                  {app.status === "draft" ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start text-amber hover:bg-amber/10"
+                      onClick={handleDeployDraft}
+                      disabled={deploying}
+                    >
+                      <span className="material-symbols-outlined text-[15px] mr-2">rocket_launch</span>
+                      {deploying ? "Deploying..." : "Deploy Draft"}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start"
+                      onClick={() => navigate("/app/new")}
+                    >
+                      <span className="material-symbols-outlined text-[15px] mr-2">rocket_launch</span>
+                      Redeploy
+                    </Button>
+                  )}
+                  <div className="border-t border-white/[0.06] mt-3 pt-3">
+                    <button
+                      type="button"
+                      className="w-full text-left text-[12px] text-danger hover:text-danger/80 transition-colors bg-transparent border-0 cursor-pointer py-1"
+                    >
+                      Delete app…
+                    </button>
+                  </div>
+                </div>
+              </SidebarSection>
+
+            </aside>
+          </div>
         </div>
       )}
     </>

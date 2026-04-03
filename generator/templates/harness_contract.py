@@ -446,6 +446,10 @@ When ctx.trigger === 'admin', the embedded Admin UI panel called bridge.call(pat
   ctx.widgetPath — the path the panel called (e.g. '/list', '/run', '/config/save')
   ctx.widgetBody — the body the panel sent (object, or {} for body-less calls)
 
+CRITICAL RULE: Every path listed in the adminApiCatalog MUST have a corresponding
+  `ctx.widgetPath === '<path>'` branch inside the `ctx.trigger === 'admin'` block.
+  Missing even one path is a validation error. The catalog is the contract — implement all of it.
+
 Rule: Route on ctx.widgetPath inside the admin branch. Always return a value.
   ✅ if (ctx.trigger === 'admin') {
        if (ctx.widgetPath === '/list') {

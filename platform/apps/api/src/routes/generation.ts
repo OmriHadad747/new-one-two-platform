@@ -21,6 +21,7 @@ import {
   getSessionByJobId,
   storeBundleInSession,
   cancelGenerationSession,
+  getLatestSessionForApp,
 } from "@new-one-two/db";
 import { deployFeatureBundle, deployAppVersion } from "@new-one-two/deployer";
 import type {
@@ -158,6 +159,20 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       });
 
       req.raw.on("close", cleanup);
+    }
+  );
+
+  // ─── GET /generation/app/:appId/latest ─────────────────────────────────────
+
+  app.get<{ Params: { appId: string } }>(
+    "/app/:appId/latest",
+    async (req: FastifyRequest<{ Params: { appId: string } }>, reply: FastifyReply) => {
+      const { appId } = req.params;
+      const session = await getLatestSessionForApp(appId);
+      if (!session) {
+        return reply.status(404).send({ error: "No session found for this app" });
+      }
+      return reply.send(session);
     }
   );
 

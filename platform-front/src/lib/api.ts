@@ -56,6 +56,8 @@ export const api = {
       }),
     result: (jobId: string) =>
       request<GenerationResult>(`/generation/${jobId}/result`),
+    latestSession: (appId: string) =>
+      request<GenerationResult & { jobId: string }>(`/generation/app/${appId}/latest`),
     approve: (jobId: string) =>
       request<{ deployed: boolean }>(`/generation/${jobId}/approve`, {
         method: "POST",

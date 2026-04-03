@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TenantStatus = "active" | "suspended" | "pending";
-export type AppStatus = "active" | "inactive" | "deleted";
+export type AppStatus = "active" | "inactive" | "deleted" | "draft";
 export type VersionStatus = "draft" | "building" | "ready" | "failed" | "archived";
 export type DeployedFunctionRuntime = "nodejs20" | "nodejs18";
 export type WebhookTopic =

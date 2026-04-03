@@ -629,6 +629,49 @@ export interface GenerationSessionWithBundle extends GenerationSessionRow {
 }
 
 /**
+ * Returns the most recent generation session for an app.
+ */
+export async function getLatestSessionForApp(
+  appId: string
+): Promise<GenerationSessionWithBundle | null> {
+  const rows = await sql<
+    Array<{
+      id: string;
+      appId: string | null;
+      tenantId: string | null;
+      prompt: string;
+      status: string;
+      intent: Record<string, unknown> | null;
+      apiPlan: Record<string, unknown> | null;
+      generatedCode: string | null;
+      explanation: string | null;
+      webhookTopics: string[];
+      cronSchedule: string | null;
+      attemptCount: number;
+      appVersionId: string | null;
+      errorMessage: string | null;
+      jobId: string | null;
+      bundle: Record<string, unknown> | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  >`
+    SELECT
+      id, app_id AS "appId", tenant_id AS "tenantId", prompt, status,
+      intent, api_plan AS "apiPlan", generated_code AS "generatedCode",
+      explanation, webhook_topics AS "webhookTopics", cron_schedule AS "cronSchedule",
+      attempt_count AS "attemptCount", app_version_id AS "appVersionId",
+      error_message AS "errorMessage", job_id AS "jobId", bundle,
+      created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM generation_sessions
+    WHERE app_id = ${appId}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
+/**
  * Looks up a generation session by Pub/Sub job_id.
  */
 export async function getSessionByJobId(
@@ -1050,8 +1093,22 @@ export async function getAppById(
 }
 
 /**
+ * Updates the status of an app.
+ */
+export async function updateAppStatus(
+  appId: string,
+  status: App["status"]
+): Promise<void> {
+  await sql`
+    UPDATE apps
+    SET status = ${status},
+        updated_at = NOW()
+    WHERE id = ${appId}
+  `;
+}
+
+/**
  * Stores the storefront widget JS for a platform app.
- * Called by the deployer after a successful bundle deployment.
  */
 export async function updateAppWidgetJs(
   appId: string,

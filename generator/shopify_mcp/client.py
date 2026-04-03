@@ -114,20 +114,48 @@ def _write_cache(key: str, data: Any, ttl: int = _CACHE_TTL_SECONDS) -> None:
 async def _run_session_async(calls: list[tuple[str, dict[str, Any]]]) -> list[Any]:
     """
     Spawn the MCP server exactly once and execute all tool calls in order.
-    Returns results in the same order as calls.
+
+    Always calls learn_shopify_api first to obtain a conversationId, then
+    injects it into every subsequent call that requires it.
+
+    Returns results in the same order as the input calls list (learn_shopify_api
+    result is NOT included in the returned list).
     """
     server_params = StdioServerParameters(
         command="npx",
         args=["--yes", "@shopify/dev-mcp@latest"],
-        env={**os.environ},
+        env={**os.environ, "npm_config_loglevel": "silent"},
     )
     results: list[Any] = []
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
+
+            # Step 1: obtain conversationId
+            conversation_id: str | None = None
+            try:
+                learn_result = await session.call_tool(
+                    "learn_shopify_api",
+                    {"api": "admin", "model": "claude-sonnet-4-6"},
+                )
+                learn_text = _extract_text(learn_result)
+                # The conversationId is returned in the result content
+                cid_match = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", learn_text, re.IGNORECASE)
+                if cid_match:
+                    conversation_id = cid_match.group(0)
+                    log.debug("MCP conversationId: %s", conversation_id)
+                else:
+                    log.warning("MCP: could not extract conversationId from learn_shopify_api response")
+            except Exception as exc:
+                log.warning("MCP learn_shopify_api failed: %s", exc)
+
+            # Step 2: run the actual calls, injecting conversationId where needed
             for tool_name, tool_args in calls:
+                enriched = dict(tool_args)
+                if conversation_id and "conversationId" not in enriched:
+                    enriched["conversationId"] = conversation_id
                 try:
-                    result = await session.call_tool(tool_name, tool_args)
+                    result = await session.call_tool(tool_name, enriched)
                     results.append(result)
                 except Exception as exc:
                     log.warning("MCP tool %r failed: %s", tool_name, exc)
@@ -278,18 +306,18 @@ def prefetch_for_run(resources: list[str], intent_description: str = "") -> str:
 
     if need_topics:
         calls.append(("introspect_graphql_schema", {
-            "api_type": "admin",
+            "api": "admin",
             "query": "WebhookSubscriptionTopic",
         }))
 
     if need_context and resources:
         # One search-docs call per resource (REST docs + webhook payloads)
         for resource in resources:
-            query = (
+            prompt = (
                 f"Shopify {resource} REST API endpoints fields webhook payload"
                 + (f" for: {intent_description}" if intent_description else "")
             )
-            calls.append(("search_docs_chunks", {"query": query}))
+            calls.append(("search_docs_chunks", {"prompt": prompt, "api_name": "admin"}))
 
 
     if not calls:
@@ -349,5 +377,5 @@ def search_docs(query: str) -> str:
     prefetch_for_run (e.g. obscure resources, Shopify Functions, B2B APIs).
     Results are NOT cached since queries are dynamic.
     """
-    results = _call_mcp([("search_docs_chunks", {"query": query})])
+    results = _call_mcp([("search_docs_chunks", {"prompt": query, "api_name": "admin"})])
     return _extract_text(results[0]) if results else ""

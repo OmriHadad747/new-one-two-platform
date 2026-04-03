@@ -54,7 +54,7 @@ from subagents.validation import (
 RESULTS_FILE = _HERE / "results.json"
 TEST_RESULTS_DIR = _HERE / "test_results"
 
-_W = 56
+_W = 100
 
 
 # ── Console output ────────────────────────────────────────────────────────────
@@ -118,6 +118,7 @@ def _save_report(result: Dict[str, Any]) -> Path:
         "storefront_backend",
         "storefront_backend_admin",
     )
+    is_admin_ui = result.get("archetype") == "storefront_backend_admin"
 
     def ms_str(stage: str) -> str:
         return f"{stages[stage]['ms']}ms" if stage in stages else "—"
@@ -131,7 +132,9 @@ def _save_report(result: Dict[str, Any]) -> Path:
     val_errors = val_attempts[-1].get("errors") if val_attempts else {}
 
     def artifact_status(name: str) -> str:
-        if not is_storefront and name == "widget_js":
+        if name == "widget_js" and not is_storefront:
+            return "n/a"
+        if name == "admin_ui" and not is_admin_ui:
             return "n/a"
         return "✓" if artifacts.get(name) else "✗"
 
@@ -173,6 +176,8 @@ def _save_report(result: Dict[str, Any]) -> Path:
         parts.append(f"migration {artifact_status('migration')}")
         if is_storefront:
             parts.append(f"widget_js {artifact_status('widget_js')}")
+        if is_admin_ui:
+            parts.append(f"admin_ui {artifact_status('admin_ui')}")
         if val_errors:
             parts.append(f"errors: {list(val_errors.keys())}")
         return "  ".join(parts)
@@ -256,6 +261,16 @@ def _save_report(result: Dict[str, Any]) -> Path:
                 f"",
             ]
 
+        if is_admin_ui and artifacts.get("admin_ui"):
+            lines += [
+                f"### admin_ui.js",
+                f"",
+                f"```javascript",
+                artifacts["admin_ui"],
+                f"```",
+                f"",
+            ]
+
     # Explanation
     explanation = result.get("explanation")
     if explanation:
@@ -294,7 +309,7 @@ def _run_with_retry(
         if not errors:
             return output, ms
 
-        retry_note = f"attempt {attempt}/{max_attempts} — {errors[0][:40]}"
+        retry_note = f"attempt {attempt}/{max_attempts} — {errors[0][:80]}"
         _agent_line(label, ok=False, ms=ms, notes=retry_note)
 
         if attempt == max_attempts:
@@ -522,6 +537,7 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
                     for n in (
                         ["handler", "migration"]
                         + (["widget_js"] if is_storefront else [])
+                        + (["admin_ui"] if is_admin_ui else [])
                     )
                     if artifacts.get(n)
                 )
@@ -539,7 +555,7 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
                 break
 
             error_summary = "  ".join(
-                f"{n}:{errs[0][:30]}" for n, errs in error_map.items()
+                f"{n}:{errs[0][:60]}" for n, errs in error_map.items()
             )
             _agent_line(
                 "CodeGen",
@@ -558,6 +574,7 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
                     "handler": artifacts.get("handler", ""),
                     "migration": artifacts.get("migration", ""),
                     "widget_js": artifacts.get("widget_js") if is_storefront else None,
+                    "admin_ui": artifacts.get("admin_ui") if is_admin_ui else None,
                 }
                 raise StageError(
                     f"validation failed after {MAX_RETRIES} attempts: {error_map}"
@@ -567,6 +584,7 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
             "handler": artifacts.get("handler", ""),
             "migration": artifacts.get("migration", ""),
             "widget_js": artifacts.get("widget_js") if is_storefront else None,
+            "admin_ui": artifacts.get("admin_ui") if is_admin_ui else None,
         }
 
         if stop_after == "codegen":

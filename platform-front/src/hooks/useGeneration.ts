@@ -1,10 +1,12 @@
 import { useState, useCallback, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type {
   GenerationState,
   GenerationSSEEvent,
   ProgressEvent,
   CompletedEvent,
+  GenerationBundle,
 } from "@/types/dashboard";
 
 const INITIAL: GenerationState = {
@@ -137,4 +139,27 @@ export function useGeneration() {
   }, []);
 
   return { state, start, startRevision, reset, approve, cancel };
+}
+
+/** Fetches the latest session for an app. */
+export function useLatestSession(appId: string | null) {
+  return useQuery({
+    queryKey: ["latest-session", appId],
+    queryFn: () => api.generation.latestSession(appId!),
+    enabled: !!appId,
+    retry: false,
+  });
+}
+
+/** Polls for the final bundle once generation is complete. */
+export function useGenerationResult(tenantId: string | null, jobId: string | null) {
+  return useQuery({
+    queryKey: ["generation-result", tenantId, jobId],
+    queryFn: async () => {
+      const res = await api.generation.result(jobId!);
+      return res.bundle as GenerationBundle;
+    },
+    enabled: !!tenantId && !!jobId,
+    refetchInterval: (query) => (query.state.data ? false : 2000),
+  });
 }

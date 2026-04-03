@@ -45,3 +45,5 @@ shopify.app.toml
 scripts/
 
 handler.js
+
+shopify_mcp/cache/
