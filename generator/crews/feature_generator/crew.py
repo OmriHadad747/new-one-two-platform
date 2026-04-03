@@ -251,8 +251,13 @@ def run_feature_generation(request: GenerationRequest) -> None:
         # widgetApiCatalog is decided by the Architect agent based on what this
         # specific feature needs — not hardcoded by the platform.
         catalog_dicts = (plan.get("implementationSpec") or {}).get("widgetApiCatalog") or []
-        archetype = intent.get("appArchetype") or request.appArchetype
-        is_storefront = archetype == "storefront_ui"
+
+        # appCategory (product agent) and appArchetype (GenerationRequest) share
+        # the same vocabulary — use appCategory when present, fall back to request.
+        archetype = intent.get("appCategory") or request.appArchetype
+
+        is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
+        is_admin_ui = archetype == "storefront_backend_admin"
 
         # ── Extract prior artifacts for revision context ─────────────────────
         prior_bundle = request.priorBundle or {}
@@ -263,6 +268,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
         prior_migration_sql: Optional[str] = (
             (prior_bundle.get("dbMigration") or {}).get("sql") or None
         )
+        prior_admin_ui_code: Optional[str] = prior_bundle.get("adminUiModule") or None
 
         base_ctx = CodegenContext(
             intent=intent,
@@ -271,6 +277,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
             prior_handler_code=prior_handler_code,
             prior_widget_code=prior_widget_code,
             prior_migration_sql=prior_migration_sql,
+            prior_admin_ui_code=prior_admin_ui_code,
         )
 
         artifacts: Dict[str, str] = {}
@@ -280,6 +287,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
             artifacts = _run_codegen_parallel(
                 base_ctx,
                 is_storefront=is_storefront,
+                is_admin_ui=is_admin_ui,
                 error_map=error_map,
                 artifacts=artifacts,
             )
@@ -296,7 +304,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
                 _emit(request, "codegen", "completed", "Code generation complete")
                 _emit(request, "validation", "running", "Validating generated artifacts…")
 
-            error_map = _validate_artifacts(artifacts, base_ctx, is_storefront)
+            error_map = _validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
 
             if not error_map:
                 break
@@ -364,6 +372,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
 
         bundle = Bundle(
             widgetModule=artifacts.get("widget_js") if is_storefront else None,
+            adminUiModule=artifacts.get("admin_ui") if is_admin_ui else None,
             handlerModule=HandlerModule(
                 code=artifacts.get("handler", ""),
                 webhookTopics=shopify_plan.get("webhookTopics", []),
@@ -420,6 +429,7 @@ def _run_codegen_parallel(
     base_ctx: CodegenContext,
     *,
     is_storefront: bool,
+    is_admin_ui: bool,
     error_map: Dict[str, List[str]],
     artifacts: Dict[str, str],
 ) -> Dict[str, str]:
@@ -436,6 +446,8 @@ def _run_codegen_parallel(
     to_run: List[Generator] = []
     for name, gen in GENERATORS.items():
         if name == "widget_js" and not is_storefront:
+            continue
+        if name == "admin_ui" and not is_admin_ui:
             continue
         if name in error_map or name not in artifacts:
             to_run.append(gen)
@@ -455,6 +467,7 @@ def _run_codegen_parallel(
                     prior_handler_code=base_ctx.prior_handler_code,
                     prior_widget_code=base_ctx.prior_widget_code,
                     prior_migration_sql=base_ctx.prior_migration_sql,
+                    prior_admin_ui_code=base_ctx.prior_admin_ui_code,
                 ),
             )
             for gen in to_run
@@ -469,6 +482,7 @@ def _validate_artifacts(
     artifacts: Dict[str, str],
     ctx: CodegenContext,
     is_storefront: bool,
+    is_admin_ui: bool,
 ) -> Dict[str, List[str]]:
     """
     Run each generator's validate() on its artifact, then run cross-artifact checks.
@@ -479,6 +493,8 @@ def _validate_artifacts(
     error_map: Dict[str, List[str]] = {}
     for name, gen in GENERATORS.items():
         if name == "widget_js" and not is_storefront:
+            continue
+        if name == "admin_ui" and not is_admin_ui:
             continue
         errs = gen.validate(artifacts.get(name, ""), ctx)
         if errs:

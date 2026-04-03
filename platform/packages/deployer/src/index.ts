@@ -12,7 +12,7 @@ import {
 import { dockerImageName, callbackUrl } from "./service-namer.js";
 import { registerShopifyWebhooks } from "./shopify-webhook-registrar.js";
 import { runTenantMigration, rollbackTenantMigration } from "./migration-runner.js";
-import { createDraftAppVersion, updateGenerationSession, updateAppWidgetJs, updateAppArchetype } from "@new-one-two/db";
+import { createDraftAppVersion, updateGenerationSession, updateAppWidgetJs, updateAppAdminUiJs, updateAppArchetype } from "@new-one-two/db";
 import type { FeatureBundle } from "@new-one-two/types";
 
 const DEPLOY_MODE = process.env["DEPLOY_MODE"] ?? "cloudrun";
@@ -23,6 +23,7 @@ function buildHarnessEnvVars(params: {
   shopDomain: string;
   clientId: string;
   clientSecretName: string;
+  storefrontTokenSecretName: string | null;
 }): Record<string, string> {
   // When deploying locally, the harness runs inside Docker but the DB/Redis
   // are on the host. Rewrite localhost → host.docker.internal so the container
@@ -43,6 +44,12 @@ function buildHarnessEnvVars(params: {
     LOG_LEVEL: process.env["LOG_LEVEL"] ?? "info",
     SERVICE_NAME: `harness-${params.appId}`,
   };
+
+  // Storefront API token — fetched lazily by the harness from Secret Manager.
+  // Only injected when a storefront token was provisioned during OAuth.
+  if (params.storefrontTokenSecretName) {
+    envVars["STOREFRONT_TOKEN_SECRET_NAME"] = params.storefrontTokenSecretName;
+  }
 
   // Pass dev escape hatches through to the harness container
   if (process.env["SM_DEV_SECRETS"]) {
@@ -89,6 +96,7 @@ export async function deployAppVersion(appVersionId: string): Promise<{
       shopDomain: app.shopDomain,
       clientId: app.shopifyClientId,
       clientSecretName: app.shopifySecretName,
+      storefrontTokenSecretName: tenant.storefrontAccessTokenSecretName ?? null,
     });
 
     const { functionUrl } =
@@ -213,12 +221,17 @@ export async function deployFeatureBundle(params: {
       migrationRan = true;
     }
 
-    // Step 2: Store widget JS on the app record + set its archetype.
-    // Served at GET /widgets/:shop/:appId.js and loaded by the thin runtime at storefront page load.
-    const archetype = bundle.widgetModule !== null ? "storefront_ui" : "backend_only";
+    // Step 2: Set archetype, store widget JS and admin UI JS.
+    const archetype =
+      bundle.adminUiModule !== null ? "storefront_backend_admin" :
+      bundle.widgetModule !== null  ? "storefront_backend" :
+      "backend";
     await updateAppArchetype(appId, archetype);
     if (bundle.widgetModule !== null) {
       await updateAppWidgetJs(appId, bundle.widgetModule);
+    }
+    if (bundle.adminUiModule !== null) {
+      await updateAppAdminUiJs(appId, bundle.adminUiModule);
     }
 
     // Step 3: Create draft AppVersion from handler code + metadata

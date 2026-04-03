@@ -26,8 +26,12 @@ export type LogLevel = "info" | "warn" | "error" | "debug";
 export type ExecutionStatus = "queued" | "running" | "success" | "failed" | "timeout";
 
 // ─── App Archetype ────────────────────────────────────────────────────────────
+// Unified vocabulary shared between generator (appCategory) and platform (appArchetype).
+//   backend                — webhook/cron handler only, no storefront widget
+//   storefront_backend     — handler + storefront widget
+//   storefront_backend_admin — handler + storefront widget + admin UI panel
 
-export type AppArchetype = "storefront_ui" | "backend_only";
+export type AppArchetype = "storefront_backend" | "storefront_backend_admin" | "backend";
 
 // ─── Tenant ──────────────────────────────────────────────────────────────────
 
@@ -39,7 +43,8 @@ export interface Tenant {
   plan: string;                 // "starter" | "pro" | "enterprise"
   kmsKeyName: string;           // GCP KMS key resource name for this tenant
   shopDomain: string | null;    // mystore.myshopify.com — set on OAuth install
-  shopifyAccessTokenSecretName: string | null; // GCP Secret Manager path for OAuth access token
+  shopifyAccessTokenSecretName: string | null;    // GCP Secret Manager path for Admin API OAuth token
+  storefrontAccessTokenSecretName: string | null; // GCP Secret Manager path for Storefront API token
   createdAt: Date;
   updatedAt: Date;
 }
@@ -52,8 +57,9 @@ export interface App {
   slug: string;                          // unique within tenant
   name: string;
   status: AppStatus;
-  appArchetype: AppArchetype;            // storefront_ui | backend_only
-  widgetJs: string | null;              // raw JS ES module source; null for backend_only
+  appArchetype: AppArchetype;
+  widgetJs: string | null;              // storefront widget ES module; null for backend
+  adminUiJs: string | null;             // admin UI ES module; null unless storefront_backend_admin
   shopifyClientId: string;
   shopifySecretName: string;             // GCP Secret Manager resource name (HMAC signing secret)
   shopifyAccessTokenSecretName: string | null; // GCP Secret Manager resource name (OAuth access token)
@@ -185,6 +191,67 @@ export interface EmailClient {
   send(params: EmailSendParams): Promise<void>;
 }
 
+// ─── ctx.http ─────────────────────────────────────────────────────────────────
+// Thin authenticated fetch wrapper. All calls are logged with tenant context.
+export interface HttpClient {
+  call(url: string, options?: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: unknown;
+  }): Promise<unknown>;
+}
+
+// ─── ctx.storefront ───────────────────────────────────────────────────────────
+// Shopify Storefront API (GraphQL). Uses the Storefront Access Token stored at
+// OAuth time — no additional auth needed. Returns unwrapped data{} layer.
+export interface StorefrontClient {
+  graphql(query: string, variables?: Record<string, unknown>): Promise<unknown>;
+}
+
+// ─── ctx.shop ─────────────────────────────────────────────────────────────────
+export interface ShopInfo {
+  domain: string; // e.g. "example.myshopify.com"
+}
+
+// ─── ctx.services ─────────────────────────────────────────────────────────────
+
+export interface SmsSendParams {
+  to: string;   // E.164 phone number, e.g. "+15551234567"
+  body: string; // SMS message text
+}
+
+export interface SmsClient {
+  send(params: SmsSendParams): Promise<void>;
+}
+
+export interface PdfClient {
+  /** Renders an HTML string to a PDF buffer. Phase 3: real PDFKit impl. */
+  generate(html: string): Promise<Buffer>;
+}
+
+export interface CsvClient {
+  /** Serialises rows to a CSV string. Pure in-process — always real. */
+  generate(rows: Record<string, unknown>[], headers?: string[]): string;
+}
+
+export interface FilesClient {
+  /**
+   * Uploads content to object storage. Phase 3: real GCS impl.
+   * Returns a signed URL valid for 1 hour.
+   */
+  upload(name: string, content: Buffer | string, mimeType?: string): Promise<string>;
+}
+
+export interface ServicesClient {
+  email: EmailClient;
+  sms: SmsClient;
+  pdf: PdfClient;
+  csv: CsvClient;
+  files: FilesClient;
+}
+
+// ─── HandlerContext ───────────────────────────────────────────────────────────
+
 // The context injected into every tenant handler call
 export interface HandlerContext {
   shopify: {
@@ -196,15 +263,28 @@ export interface HandlerContext {
   payload: Record<string, unknown>;
   logger: HandlerLogger;
   tenantId: string; // UUID of the current tenant — use in all INSERT statements
+  /** Shopify store information */
+  shop: ShopInfo;
+  /** Legacy email shortcut — same as ctx.services.email */
   email: EmailClient;
+  /** All platform services (email, sms, pdf, csv, files) */
+  services: ServicesClient;
+  /** External HTTP client — for calling third-party APIs */
+  http: HttpClient;
+  /** Shopify Storefront API — public GraphQL with Storefront Access Token */
+  storefront: StorefrontClient;
   /** How the handler was invoked. Use this instead of inspecting ctx.payload. */
-  trigger: "webhook" | "cron" | "widget";
+  trigger: "webhook" | "cron" | "widget" | "admin";
   /** Set when trigger === "widget". The path segment after /widget (e.g. "/signup"). */
   widgetPath?: string;
   /** Set when trigger === "widget". Parsed request body from the storefront. */
   widgetBody?: Record<string, unknown>;
   /** Set when trigger === "widget". Shopify customer ID from the storefront session, null for guests. */
   customerId?: string | null;
+  /** Set when trigger === "admin". The path the admin UI called via bridge.call() (e.g. "/subscribers"). */
+  adminPath?: string;
+  /** Set when trigger === "admin". Parsed request body from the admin UI bridge.call(). */
+  adminBody?: Record<string, unknown>;
 }
 
 // The contract every generated app module must export
@@ -331,7 +411,7 @@ export interface GenerationRequestMessage {
   tenantId: string;
   appId: string;
   prompt: string;
-  appArchetype?: AppArchetype;         // default: "backend_only" (set by Zod/Pydantic)
+  appArchetype?: AppArchetype;         // default: "backend" (set by Zod/Pydantic)
   existingFeatures?: string[];         // default: [] (set by Zod/Pydantic)
   priorBundle?: Record<string, unknown> | null;
 }
@@ -380,7 +460,8 @@ export interface FeatureExplanation {
 
 /** The complete validated feature bundle produced by the Python generator. */
 export interface FeatureBundle {
-  widgetModule: string | null; // raw JS ES module source; null for backend_only apps
+  widgetModule: string | null;   // storefront widget ES module; null for backend apps
+  adminUiModule: string | null;  // admin UI ES module; null unless storefront_backend_admin
   handlerModule: HandlerModule;
   dbMigration: DbMigration;
   explanation: FeatureExplanation;

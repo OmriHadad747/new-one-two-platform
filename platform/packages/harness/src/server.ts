@@ -1,8 +1,9 @@
 import Fastify from "fastify";
 import { logger } from "@new-one-two/logger";
 import type { HarnessInvokeRequest } from "@new-one-two/types";
-import { handleInvoke } from "./invoke-handler.js";
+import { handleWebhookInvoke } from "./webhook-handler.js";
 import { handleWidgetInvoke } from "./widget-handler.js";
+import { handleAdminInvoke } from "./admin-handler.js";
 import { loadModule } from "./module-loader.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "8080", 10);
@@ -13,6 +14,25 @@ const app = Fastify({
 });
 
 app.get("/health", async () => ({ status: "ok" }));
+
+app.post<{ Params: { "*": string }; Body: Record<string, unknown> }>(
+  "/admin/*",
+  async (request, reply) => {
+    const adminPath = "/" + request.params["*"];
+    const tenantId = request.headers["x-tenant-id"] as string | undefined;
+
+    if (!tenantId) {
+      return reply.status(400).send({ error: "missing_tenant_id" });
+    }
+
+    const { status, data } = await handleAdminInvoke(
+      tenantId,
+      adminPath,
+      (request.body ?? {}) as Record<string, unknown>
+    );
+    return reply.status(status).send(data);
+  }
+);
 
 app.post<{ Params: { "*": string }; Body: Record<string, unknown> }>(
   "/widget/*",
@@ -45,7 +65,7 @@ app.post<{ Body: HarnessInvokeRequest }>("/invoke", async (request, reply) => {
     "invoke started"
   );
 
-  const result = await handleInvoke(body);
+  const result = await handleWebhookInvoke(body);
 
   logger.info(
     { executionLogId: body.executionLogId, status: result.status, durationMs: result.durationMs },

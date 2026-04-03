@@ -16,6 +16,7 @@ import {
   createTenant,
   getTenantByShopDomain,
   updateTenantAccessToken,
+  updateTenantStorefrontToken,
 } from "@new-one-two/db";
 import { reRegisterTenantWebhooks } from "../lib/shopify-webhooks.js";
 
@@ -124,6 +125,17 @@ export const oauthRoute: FastifyPluginAsync = async (app) => {
       } catch (err) {
         logger.error({ err, shop }, "Failed to persist tenant after OAuth");
         return reply.status(500).send({ error: "Internal error during install" });
+      }
+
+      // 5b. Create and persist a Storefront API token for this shop.
+      //     Non-fatal — apps that don't use ctx.storefront will still work.
+      try {
+        const storefrontToken = await createStorefrontToken(shop, accessToken);
+        const storefrontSecretName = await storeStorefrontToken(shop, storefrontToken);
+        await updateTenantStorefrontToken(tenantId, storefrontSecretName);
+        logger.info({ shop, tenantId }, "Storefront token created and stored");
+      } catch (err) {
+        logger.warn({ err, shop, tenantId }, "Failed to create Storefront token — ctx.storefront will be unavailable until re-install");
       }
 
       // 6. Re-register all active webhooks with the current WEBHOOK_BASE_URL.
@@ -287,6 +299,59 @@ async function storeAccessToken(shop: string, accessToken: string): Promise<stri
   const secretId = `${shop.replace(".myshopify.com", "").replace(/[^a-z0-9]/g, "-")}-shopify-token`;
   const secretName = await storeSecret(secretId, accessToken);
   return secretName;
+}
+
+/**
+ * Creates a Shopify Storefront API access token for this shop via the Admin API.
+ * The token is long-lived and scoped to unauthenticated storefront reads.
+ * Shopify is idempotent on the title — re-installs will return a new token.
+ */
+async function createStorefrontToken(shop: string, adminAccessToken: string): Promise<string> {
+  const res = await fetch(
+    `https://${shop}/admin/api/2026-01/storefront_access_tokens.json`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": adminAccessToken,
+      },
+      body: JSON.stringify({
+        storefront_access_token: { title: "new-one-two-platform" },
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Shopify storefront token creation failed [${res.status}]: ${body}`);
+  }
+
+  const data = (await res.json()) as {
+    storefront_access_token?: { access_token?: string };
+  };
+  const token = data.storefront_access_token?.access_token;
+  if (!token) throw new Error("No access_token in Shopify storefront token response");
+  return token;
+}
+
+/**
+ * Stores the Storefront API token in GCP Secret Manager (or dev env).
+ * Returns the secret resource name.
+ */
+async function storeStorefrontToken(shop: string, token: string): Promise<string> {
+  if (process.env["NODE_ENV"] !== "production") {
+    const secretName = `projects/local/secrets/${shop.replace(".myshopify.com", "")}-storefront-token/versions/latest`;
+    logger.info(
+      { shop, secretName },
+      "[dev] Storefront token not persisted to Secret Manager. " +
+      `Add to SM_DEV_SECRETS in platform/.env: "${secretName}":"${token}"`
+    );
+    return secretName;
+  }
+
+  const { storeSecret } = await import("@new-one-two/crypto");
+  const secretId = `${shop.replace(".myshopify.com", "").replace(/[^a-z0-9]/g, "-")}-storefront-token`;
+  return storeSecret(secretId, token);
 }
 
 /**

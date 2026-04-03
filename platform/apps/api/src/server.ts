@@ -9,6 +9,7 @@ import { generationRoute } from "./routes/generation.js";
 import { healthRoute } from "./routes/health.js";
 import { tenantsRoute } from "./routes/tenants.js";
 import { widgetJsRoutes } from "./routes/widget-js.js";
+import { adminUiRoutes } from "./routes/admin-ui.js";
 import { oauthRoute } from "./routes/oauth.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3002", 10);
@@ -32,6 +33,7 @@ export async function buildServer() {
   await app.register(generationRoute, { prefix: "/generation" });
   await app.register(tenantsRoute, { prefix: "/tenants" });
   await app.register(widgetJsRoutes, { prefix: "/widgets" });
+  await app.register(adminUiRoutes, { prefix: "/admin-ui" });
   await app.register(oauthRoute, { prefix: "/oauth" });
 
   app.setErrorHandler((err, _req, reply) => {

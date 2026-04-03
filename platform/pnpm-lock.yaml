@@ -251,22 +251,6 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
-  packages/model-adapter:
-    dependencies:
-      '@anthropic-ai/sdk':
-        specifier: ^0.39.0
-        version: 0.39.0
-      '@new-one-two/db':
-        specifier: workspace:*
-        version: link:../db
-      '@new-one-two/logger':
-        specifier: workspace:*
-        version: link:../logger
-    devDependencies:
-      typescript:
-        specifier: ^5.4.0
-        version: 5.9.3
-
   packages/pubsub-client:
     dependencies:
       '@google-cloud/pubsub':

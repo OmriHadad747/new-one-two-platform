@@ -218,6 +218,27 @@ This rule applies whenever two or more boolean flags can be simultaneously true 
 meanings — always check the narrowest condition first.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ADMIN PATH CONTRACT (storefront_ui_admin and admin-triggered apps)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+adminPath is the CONTRACT between the Admin UI panel and the handler.
+The handler receives ctx.trigger === 'admin', ctx.widgetPath, and ctx.widgetBody
+(same mechanism as widget routing — the admin panel uses the same bridge.call() proxy).
+
+For each adminApiCatalog path, write steps in this format:
+  "path /list: admin panel calls bridge.call('/list') with no body"
+  "path /list: handler: check ctx.trigger === 'admin', then SELECT from DB, return { total: N, rows: [...] }"
+  "path /list: handler returns { total: int, rows: [{ id, customerEmail, ... }] }; panel renders table"
+
+Rules:
+  - Each adminPath entry starts with "path /slug:"
+  - Describe what the admin panel sends and what the handler returns for each path
+  - GET-style paths (list, config): no body needed (or a simple filter); handler SELECTs and returns
+  - POST-style paths (trigger, save): admin panel sends a body; handler performs the action
+  - Always scope DB reads to ctx.tenantId
+  - Follow the same atomic claim and error-guard rules as webhookPath/cronPath
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):
 {
   "codeSpec": {
@@ -227,6 +248,11 @@ OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanatio
       "path /signup: widget calls host.call('/signup', { customerEmail, variantId, productId })",
       "path /signup: handler: const { customerEmail, variantId, productId } = ctx.widgetBody",
       "path /signup: handler returns { ok: true } on success; widget checks result.ok"
+    ],
+    "adminPath": [
+      "path /subscribers: admin panel calls bridge.call('/subscribers') with no body",
+      "path /subscribers: handler SELECTs rows WHERE tenant_id = ctx.tenantId ORDER BY created_at DESC LIMIT 50",
+      "path /subscribers: handler returns { total: int, rows: [{ id, customerEmail, variantId, createdAt }] }; panel renders table"
     ],
     "functions": [
       { "name": "fnName", "steps": ["step 1", "step 2"] }

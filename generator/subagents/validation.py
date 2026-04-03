@@ -455,8 +455,10 @@ def validate_cross_artifact(
 
 FORBIDDEN_HANDLER_PATTERNS = [
     (r"\brequire\s*\(", "require() calls are not allowed"),
-    (r"\bfetch\s*\(", "raw fetch() calls are not allowed — use ctx.shopify"),
-    (r"https?://", "raw HTTP URLs are not allowed — use ctx.shopify"),
+    (r"\bfetch\s*\(", "raw fetch() calls are not allowed — use ctx.shopify or ctx.http.call()"),
+    # URLs are allowed ONLY inside ctx.http.call() — anywhere else they are forbidden.
+    # The validator checks for standalone URLs not preceded by ctx.http.call pattern.
+    (r"(?<!ctx\.http\.call\(['\"])https?://", "raw HTTP URLs are not allowed outside ctx.http.call() — use ctx.shopify for Shopify API, ctx.http.call(url) for external APIs"),
     (r"\beval\s*\(", "eval() is not allowed"),
     (r"\bprocess\.exit\b", "process.exit is not allowed"),
     (r"\bprocess\.kill\b", "process.kill is not allowed"),
@@ -723,6 +725,73 @@ def validate_widget_js(
             "widget has a submit action but never calls host.call() — collected data "
             "is silently discarded. Add a POST endpoint to platformApiCatalog and call "
             "it via host.call(path, data) to persist the submission"
+        )
+
+    return errors
+
+
+# ── Admin UI validator ─────────────────────────────────────────────────────────
+
+FORBIDDEN_ADMIN_UI_PATTERNS = [
+    (r"\bfetch\s*\(", "raw fetch() not allowed — use bridge.call() for backend requests"),
+    (r"\bXMLHttpRequest\b", "XMLHttpRequest not allowed — use bridge.call()"),
+    (r"\beval\s*\(", "eval() is not allowed"),
+    (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
+    (r"\bwindow\.", "window.* access is not allowed"),
+    (r"https?://", "hardcoded URLs are not allowed — use bridge.call() with catalog paths"),
+    (r"\bsetInterval\s*\(", "setInterval is not allowed"),
+]
+
+
+def validate_admin_ui(
+    admin_ui_js: str,
+    admin_api_catalog: List[Dict[str, str]],
+) -> List[str]:
+    """Validate the generated Admin UI ES module."""
+    errors: List[str] = []
+
+    if not admin_ui_js or not admin_ui_js.strip():
+        return errors
+
+    # Must export a mount function
+    if not re.search(r"\bexport\s+function\s+mount\b", admin_ui_js):
+        errors.append(
+            "must export a named mount function: export function mount(container, bridge) { ... }"
+        )
+
+    # Forbidden patterns
+    for pattern, message in FORBIDDEN_ADMIN_UI_PATTERNS:
+        if re.search(pattern, admin_ui_js):
+            errors.append(message)
+
+    # bridge.call() paths must be in the admin API catalog
+    if admin_api_catalog:
+        catalog_paths = {entry["path"] for entry in admin_api_catalog}
+        called_paths = re.findall(r"""bridge\.call\s*\(\s*['"]([^'"]+)['"]""", admin_ui_js)
+        for path in called_paths:
+            if path not in catalog_paths:
+                errors.append(
+                    f"bridge.call() references unlisted path '{path}'. "
+                    f"Allowed: {sorted(catalog_paths)}"
+                )
+
+    # No hardcoded tenant IDs
+    if re.search(r"\btenant[_-]?id\s*[:=]\s*['\"]", admin_ui_js, re.IGNORECASE):
+        errors.append("hardcoded tenant_id detected — read from bridge.context.tenantId instead")
+
+    # Admin UI with a submit action must call bridge.call() — not silently discard data
+    has_submit = bool(
+        re.search(
+            r"type=[\"']submit[\"']|addEventListener\([\"']submit|\.submit\s*\(",
+            admin_ui_js,
+        )
+    )
+    has_bridge_call = bool(re.search(r"\bbridge\.call\s*\(", admin_ui_js))
+    if has_submit and not has_bridge_call:
+        errors.append(
+            "admin UI has a submit action but never calls bridge.call() — collected data "
+            "is silently discarded. Add a POST endpoint to adminApiCatalog and call it "
+            "via bridge.call(path, data)."
         )
 
     return errors

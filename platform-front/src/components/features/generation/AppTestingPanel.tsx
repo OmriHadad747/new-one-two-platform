@@ -67,7 +67,7 @@ function GeneratingPanel({ events }: { events: ProgressEvent[] }) {
                   {status === "retrying" && (
                     <span className="material-symbols-outlined text-amber text-[16px] animate-spin">refresh</span>
                   )}
-                  {status === "waiting" && (
+                  {!["completed", "running", "failed", "retrying"].includes(status) && (
                     <span className="w-2 h-2 rounded-full bg-white/10 block" />
                   )}
                 </div>

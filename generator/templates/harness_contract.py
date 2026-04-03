@@ -88,14 +88,90 @@ ctx.logger.warn(msg)
 ctx.logger.error(msg)
   Example: ctx.logger.info({ orderId: 123 }, 'Processing order')
 
+ctx.shop — Shopify store info
+  ctx.shop.domain  — the store's myshopify.com domain, e.g. "example.myshopify.com"
+
+── Email ─────────────────────────────────────────────────────
+
 ctx.email.send({ to, subject, templateId?, data? }) → Promise<void>
-  Send a transactional email to a customer.
+  Send a transactional email to a customer. Also available as ctx.services.email.send().
     to:         recipient email address (string)
     subject:    email subject line (string)
-    templateId: optional provider template ID
+    templateId: optional provider template ID (short opaque string like 'd-abc123', NEVER a URL)
     data:       optional template variables, e.g. { firstName, productTitle, price, variantTitle }
-  Use this whenever the feature must notify a customer by email.
   Example: await ctx.email.send({ to: entry.customer_email, subject: 'Back in stock!', data: { productTitle, price } })
+
+── SMS ───────────────────────────────────────────────────────
+
+ctx.services.sms.send({ to, body }) → Promise<void>
+  Send an SMS notification. Currently a log stub — logs SMS_SENT; real Twilio integration in Phase 3.
+    to:   E.164 phone number, e.g. "+15551234567"
+    body: message text (max 160 chars for a single SMS segment)
+  Example: await ctx.services.sms.send({ to: customer.phone, body: `Your cart is waiting! ${checkoutUrl}` })
+  Note: Always log a human-readable description alongside — the stub does not deliver the message.
+
+── PDF ───────────────────────────────────────────────────────
+
+ctx.services.pdf.generate(html: string) → Promise<Buffer>
+  Render an HTML string to a PDF buffer. Currently a log stub — logs PDF_GENERATED; real PDFKit in Phase 3.
+  Example:
+    const html = `<h1>Order #${order.order_number}</h1><p>${order.line_items.map(i => i.title).join(', ')}</p>`
+    const pdfBuffer = await ctx.services.pdf.generate(html)
+    // then upload via ctx.services.files or return as a data URI
+
+── CSV ───────────────────────────────────────────────────────
+
+ctx.services.csv.generate(rows, headers?) → string
+  Serialize an array of objects to a CSV string. Pure in-process — always real.
+    rows:    array of plain objects (one row each)
+    headers: optional column ordering; defaults to Object.keys(rows[0])
+  Returns the CSV as a string. RFC 4180 compliant — commas and quotes in values are escaped.
+  Example:
+    const csv = ctx.services.csv.generate(orders, ['id', 'customer_email', 'total_price', 'created_at'])
+    // csv is a complete CSV string ready to return or upload
+
+── Files ─────────────────────────────────────────────────────
+
+ctx.services.files.upload(name, content, mimeType?) → Promise<string>
+  Upload a file to object storage. Currently a log stub — logs FILE_UPLOADED; real GCS in Phase 3.
+  Returns a signed URL valid for 1 hour (stub returns a placeholder URL).
+    name:     filename, e.g. "orders-2024-01.csv"
+    content:  Buffer or string
+    mimeType: optional MIME type, e.g. "text/csv", "application/pdf"
+  Example:
+    const url = await ctx.services.files.upload('orders.csv', csv, 'text/csv')
+    // return the URL to the admin UI for download
+
+── External HTTP ─────────────────────────────────────────────
+
+ctx.http.call(url, options?) → Promise<any>
+  Make an authenticated HTTP call to an external API. All calls are logged with tenant context.
+    url:            full URL (https:// is ALLOWED here — ctx.http is the only place)
+    options.method: HTTP method (default "GET")
+    options.headers: additional headers
+    options.body:   request body — serialized to JSON automatically
+  Throws on non-2xx responses.
+  Example:
+    const result = await ctx.http.call('https://api.example.com/compress', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer TOKEN' },
+      body: { imageUrl: originalUrl }
+    })
+
+── Storefront API ────────────────────────────────────────────
+
+ctx.storefront.graphql(query, variables?) → Promise<any>
+  Shopify Storefront API (public GraphQL). Uses the Storefront Access Token stored at OAuth time.
+  The harness unwraps { data: ... } — access fields directly on the result.
+  Use this for publicly available storefront data the handler needs server-side.
+  Note: Widget code uses host.storefront() for client-side reads — ctx.storefront is for the handler.
+  Example:
+    const data = await ctx.storefront.graphql(
+      `query GetProduct($handle: String!) {
+        productByHandle(handle: $handle) { id title variants(first: 10) { nodes { id availableForSale } } }
+      }`,
+      { handle: productHandle }
+    )
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SHOPIFY API PATTERNS — use these exact approaches:
@@ -133,9 +209,10 @@ ABSOLUTE RULES (violations will cause deployment failure):
 7.  NO global variable mutation
 8.  Handle errors with try/catch — never let the handler throw uncaught exceptions
 9.  ctx.shopify.get/post paths MUST be relative (e.g. '/orders.json') — NEVER full URLs
-10. NEVER include any http:// or https:// URL anywhere — not in code, not in comments, not in strings.
-    This includes ctx.email calls: do NOT put provider URLs in templateId or data fields.
+10. https:// URLs are ONLY allowed as the first argument to ctx.http.call(url, ...).
+    NEVER use https:// anywhere else — not in ctx.email templateId, not in comments, not in other strings.
     templateId is a short opaque string like 'd-abc123', never a URL.
+    For all Shopify API calls use ctx.shopify.get/post/graphql with relative paths.
 11. webhookTopics must exactly match what is listed in the plan
 12. For Shopify REST PUT endpoints (update), use ctx.shopify.post() — not a separate PUT method
 13. Every INSERT into a tenant table must include tenant_id: use ctx.tenantId
@@ -359,6 +436,32 @@ Rule: Widget responses are returned directly to the storefront — keep them sma
   CRITICAL: Return EXACTLY the responseShape from the widget API catalog — never rename fields.
   The widget generator sees the same catalog and checks the exact field names listed there.
   Never return raw DB rows or internal state.
+"""
+
+HARNESS_SECTION_ADMIN = """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ADMIN UI ROUTING — this handler receives requests from the Shopify Admin panel:
+
+When ctx.trigger === 'admin', the embedded Admin UI panel called bridge.call(path, body).
+  ctx.widgetPath — the path the panel called (e.g. '/list', '/run', '/config/save')
+  ctx.widgetBody — the body the panel sent (object, or {} for body-less calls)
+
+Rule: Route on ctx.widgetPath inside the admin branch. Always return a value.
+  ✅ if (ctx.trigger === 'admin') {
+       if (ctx.widgetPath === '/list') {
+         const rows = await ctx.db`SELECT ... WHERE tenant_id = ${ctx.tenantId} LIMIT 50`
+         return { total: rows.length, rows }
+       }
+       if (ctx.widgetPath === '/run') {
+         // perform the action
+         return { processed: N }
+       }
+       return { error: 'unknown path' }
+     }
+
+Rule: Always scope DB reads in admin paths to ctx.tenantId.
+Rule: For write operations (trigger, config save), log the action with ctx.logger.info.
+Rule: Return the EXACT responseShape from the adminApiCatalog — never rename fields.
 """
 
 HARNESS_SECTION_WIDGET_STOREFRONT = """

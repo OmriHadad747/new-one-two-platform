@@ -56,7 +56,7 @@ export function NewAppPage() {
   // Analyze conversation state
   const [analyzeHistory, setAnalyzeHistory] = useState<AnalyzeMessage[]>([]);
   const [analyzePhase, setAnalyzePhase] = useState<"idle" | "thinking" | "awaiting_confirm">("idle");
-  const [pendingIntent, setPendingIntent] = useState<Record<string, unknown> | null>(null);
+  const [, setPendingIntent] = useState<Record<string, unknown> | null>(null);
 
   const { state: gen, start, startRevision, reset, cancel } = useGeneration();
   const isStreaming = gen.status === "running";

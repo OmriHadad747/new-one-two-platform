@@ -68,6 +68,7 @@ export async function resolveWebhookContext(
       tenantKmsKeyName: string;
       tenantShopDomain: string | null;
       tenantShopifyAccessTokenSecretName: string | null;
+      tenantStorefrontAccessTokenSecretName: string | null;
       appId: string;
       appTenantId: string;
       appSlug: string;
@@ -75,6 +76,7 @@ export async function resolveWebhookContext(
       appStatus: string;
       appArchetype: string;
       appWidgetJs: string | null;
+      appAdminUiJs: string | null;
       appShopifyClientId: string;
       appShopifySecretName: string;
       appShopifyAccessTokenSecretName: string | null;
@@ -100,7 +102,8 @@ export async function resolveWebhookContext(
       t.plan                                 AS tenant_plan,
       t.kms_key_name                         AS tenant_kms_key_name,
       t.shop_domain                          AS tenant_shop_domain,
-      t.shopify_access_token_secret_name     AS tenant_shopify_access_token_secret_name,
+      t.shopify_access_token_secret_name      AS tenant_shopify_access_token_secret_name,
+      t.storefront_access_token_secret_name   AS tenant_storefront_access_token_secret_name,
 
       a.id                                   AS app_id,
       a.tenant_id                            AS app_tenant_id,
@@ -109,7 +112,8 @@ export async function resolveWebhookContext(
       a.status                               AS app_status,
       a.app_archetype                        AS app_archetype,
       a.widget_js                            AS app_widget_js,
-      a.shopify_client_id                      AS app_shopify_client_id,
+      a.admin_ui_js                          AS app_admin_ui_js,
+      a.shopify_client_id                    AS app_shopify_client_id,
       a.shopify_secret_name                  AS app_shopify_secret_name,
       a.shopify_access_token_secret_name     AS app_shopify_access_token_secret_name,
       a.shop_domain                          AS app_shop_domain,
@@ -158,6 +162,7 @@ export async function resolveWebhookContext(
       kmsKeyName: row.tenantKmsKeyName,
       shopDomain: row.tenantShopDomain,
       shopifyAccessTokenSecretName: row.tenantShopifyAccessTokenSecretName,
+      storefrontAccessTokenSecretName: row.tenantStorefrontAccessTokenSecretName,
       createdAt: new Date(),
       updatedAt: new Date(),
     },
@@ -169,6 +174,7 @@ export async function resolveWebhookContext(
       status: row.appStatus as App["status"],
       appArchetype: row.appArchetype as AppArchetype,
       widgetJs: row.appWidgetJs,
+      adminUiJs: row.appAdminUiJs,
       shopifyClientId: row.appShopifyClientId,
       shopifySecretName: row.appShopifySecretName,
       shopifyAccessTokenSecretName: row.appShopifyAccessTokenSecretName,
@@ -296,7 +302,7 @@ export async function updateExecutionStatus(
 export async function getAppVersionWithCode(appVersionId: string): Promise<{
   version: AppVersion;
   app: App;
-  tenant: Pick<Tenant, "id" | "slug" | "kmsKeyName" | "shopifyAccessTokenSecretName">;
+  tenant: Pick<Tenant, "id" | "slug" | "kmsKeyName" | "shopifyAccessTokenSecretName" | "storefrontAccessTokenSecretName">;
 } | null> {
   const rows = await sql<
     Array<{
@@ -317,6 +323,7 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       appStatus: string;
       appArchetype: string;
       appWidgetJs: string | null;
+      appAdminUiJs: string | null;
       appShopifyClientId: string;
       appShopifySecretName: string;
       appShopifyAccessTokenSecretName: string | null;
@@ -327,6 +334,7 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       tenantSlug: string;
       tenantKmsKeyName: string;
       tenantShopifyAccessTokenSecretName: string | null;
+      tenantStorefrontAccessTokenSecretName: string | null;
     }>
   >`
     SELECT
@@ -348,17 +356,20 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       a.status                               AS "appStatus",
       a.app_archetype                        AS "appArchetype",
       a.widget_js                            AS "appWidgetJs",
-      a.shopify_client_id                      AS "appShopifyClientId",
+      a.widget_js                            AS "appWidgetJs",
+      a.admin_ui_js                          AS "appAdminUiJs",
+      a.shopify_client_id                    AS "appShopifyClientId",
       a.shopify_secret_name                  AS "appShopifySecretName",
       a.shopify_access_token_secret_name     AS "appShopifyAccessTokenSecretName",
       a.shop_domain                          AS "appShopDomain",
       a.created_at                           AS "appCreatedAt",
       a.updated_at                           AS "appUpdatedAt",
 
-      t.id                                 AS "tenantId",
-      t.slug                               AS "tenantSlug",
-      t.kms_key_name                       AS "tenantKmsKeyName",
-      t.shopify_access_token_secret_name   AS "tenantShopifyAccessTokenSecretName"
+      t.id                                        AS "tenantId",
+      t.slug                                      AS "tenantSlug",
+      t.kms_key_name                              AS "tenantKmsKeyName",
+      t.shopify_access_token_secret_name          AS "tenantShopifyAccessTokenSecretName",
+      t.storefront_access_token_secret_name       AS "tenantStorefrontAccessTokenSecretName"
 
     FROM app_versions av
     JOIN apps a ON a.id = av.app_id
@@ -391,6 +402,7 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       status: row.appStatus as App["status"],
       appArchetype: row.appArchetype as AppArchetype,
       widgetJs: row.appWidgetJs,
+      adminUiJs: row.appAdminUiJs,
       shopifyClientId: row.appShopifyClientId,
       shopifySecretName: row.appShopifySecretName,
       shopifyAccessTokenSecretName: row.appShopifyAccessTokenSecretName,
@@ -403,6 +415,7 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       slug: row.tenantSlug,
       kmsKeyName: row.tenantKmsKeyName,
       shopifyAccessTokenSecretName: row.tenantShopifyAccessTokenSecretName,
+      storefrontAccessTokenSecretName: row.tenantStorefrontAccessTokenSecretName,
     },
   };
 }
@@ -693,7 +706,7 @@ export async function storeBundleInSession(
  * Resolves the widget JS and active backend function URL for a shop/app pair.
  * Called by GET /widgets/:shop/:appId.js on the API service.
  *
- * Returns null if not found, backend_only, or widget not yet generated.
+ * Returns null if not found, backend archetype, or widget not yet generated.
  * functionUrl is null when the bundle has not been deployed yet.
  */
 export async function resolveWidgetJs(
@@ -719,8 +732,42 @@ export async function resolveWidgetJs(
   `;
 
   const row = rows[0];
-  if (!row || row.appArchetype !== "storefront_ui" || !row.widgetJs) return null;
+  const isStorefront = row?.appArchetype === "storefront_backend" || row?.appArchetype === "storefront_backend_admin";
+  if (!row || !isStorefront || !row.widgetJs) return null;
   return { widgetJs: row.widgetJs, functionUrl: row.functionUrl };
+}
+
+/**
+ * Resolves the admin UI JS and active backend function URL for a shop/app pair.
+ * Called by GET /admin-ui/:shop/:appId.js on the API service.
+ *
+ * Returns null if not found, not storefront_backend_admin, or admin UI not yet generated.
+ */
+export async function resolveAdminUiJs(
+  shopDomain: string,
+  appId: string
+): Promise<{ adminUiJs: string; functionUrl: string | null } | null> {
+  const rows = await sql<
+    Array<{ adminUiJs: string | null; appArchetype: string; functionUrl: string | null }>
+  >`
+    SELECT
+      a.admin_ui_js     AS "adminUiJs",
+      a.app_archetype   AS "appArchetype",
+      df.function_url   AS "functionUrl"
+    FROM apps a
+    JOIN tenants t ON t.id = a.tenant_id
+    LEFT JOIN deployed_functions df
+      ON df.app_id = a.id AND df.is_active = TRUE
+    WHERE a.shop_domain = ${shopDomain}
+      AND a.id = ${appId}
+      AND a.status = 'active'
+      AND t.status = 'active'
+    LIMIT 1
+  `;
+
+  const row = rows[0];
+  if (!row || row.appArchetype !== "storefront_backend_admin" || !row.adminUiJs) return null;
+  return { adminUiJs: row.adminUiJs, functionUrl: row.functionUrl };
 }
 
 /**
@@ -788,6 +835,7 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       kmsKeyName: string;
       shopDomain: string | null;
       shopifyAccessTokenSecretName: string | null;
+      storefrontAccessTokenSecretName: string | null;
       createdAt: Date;
       updatedAt: Date;
     }>
@@ -798,11 +846,12 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       name,
       status,
       plan,
-      kms_key_name                         AS "kmsKeyName",
-      shop_domain                          AS "shopDomain",
-      shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
-      created_at                           AS "createdAt",
-      updated_at                           AS "updatedAt"
+      kms_key_name                            AS "kmsKeyName",
+      shop_domain                             AS "shopDomain",
+      shopify_access_token_secret_name        AS "shopifyAccessTokenSecretName",
+      storefront_access_token_secret_name     AS "storefrontAccessTokenSecretName",
+      created_at                              AS "createdAt",
+      updated_at                              AS "updatedAt"
     FROM tenants
     WHERE id = ${id}
     LIMIT 1
@@ -818,6 +867,7 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
     kmsKeyName: row.kmsKeyName,
     shopDomain: row.shopDomain,
     shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
+    storefrontAccessTokenSecretName: row.storefrontAccessTokenSecretName,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -837,6 +887,7 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
       kmsKeyName: string;
       shopDomain: string | null;
       shopifyAccessTokenSecretName: string | null;
+      storefrontAccessTokenSecretName: string | null;
       createdAt: Date;
       updatedAt: Date;
     }>
@@ -847,11 +898,12 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
       name,
       status,
       plan,
-      kms_key_name                         AS "kmsKeyName",
-      shop_domain                          AS "shopDomain",
-      shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
-      created_at                           AS "createdAt",
-      updated_at                           AS "updatedAt"
+      kms_key_name                            AS "kmsKeyName",
+      shop_domain                             AS "shopDomain",
+      shopify_access_token_secret_name        AS "shopifyAccessTokenSecretName",
+      storefront_access_token_secret_name     AS "storefrontAccessTokenSecretName",
+      created_at                              AS "createdAt",
+      updated_at                              AS "updatedAt"
     FROM tenants
     WHERE shop_domain = ${shopDomain}
     LIMIT 1
@@ -867,6 +919,7 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
     kmsKeyName: row.kmsKeyName,
     shopDomain: row.shopDomain,
     shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
+    storefrontAccessTokenSecretName: row.storefrontAccessTokenSecretName,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -883,6 +936,23 @@ export async function updateTenantAccessToken(
     UPDATE tenants
     SET
       shopify_access_token_secret_name = ${shopifyAccessTokenSecretName},
+      updated_at = NOW()
+    WHERE id = ${tenantId}
+  `;
+}
+
+/**
+ * Stores the Shopify Storefront API token secret name on the tenant.
+ * Called post-OAuth after creating the token via the Admin API.
+ */
+export async function updateTenantStorefrontToken(
+  tenantId: string,
+  storefrontAccessTokenSecretName: string
+): Promise<void> {
+  await sql`
+    UPDATE tenants
+    SET
+      storefront_access_token_secret_name = ${storefrontAccessTokenSecretName},
       updated_at = NOW()
     WHERE id = ${tenantId}
   `;
@@ -909,7 +979,7 @@ export async function createApp(params: {
       ${params.name},
       'active',
       ${params.shopDomain},
-      ${params.appArchetype ?? "backend_only"},
+      ${params.appArchetype ?? "backend"},
       ${params.shopifyClientId ?? "dev-api-key"},
       ${params.shopifySecretName ?? "projects/local/secrets/dev/versions/latest"}
     )
@@ -931,6 +1001,7 @@ export async function getAppById(
       status: string;
       appArchetype: string;
       widgetJs: string | null;
+      adminUiJs: string | null;
       shopifyClientId: string;
       shopifySecretName: string;
       shopifyAccessTokenSecretName: string | null;
@@ -947,7 +1018,8 @@ export async function getAppById(
       status,
       app_archetype                        AS "appArchetype",
       widget_js                            AS "widgetJs",
-      shopify_client_id                      AS "shopifyClientId",
+      admin_ui_js                          AS "adminUiJs",
+      shopify_client_id                    AS "shopifyClientId",
       shopify_secret_name                  AS "shopifySecretName",
       shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
       shop_domain                          AS "shopDomain",
@@ -967,6 +1039,7 @@ export async function getAppById(
     status: row.status as App["status"],
     appArchetype: row.appArchetype as AppArchetype,
     widgetJs: row.widgetJs,
+    adminUiJs: row.adminUiJs,
     shopifyClientId: row.shopifyClientId,
     shopifySecretName: row.shopifySecretName,
     shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
@@ -977,7 +1050,7 @@ export async function getAppById(
 }
 
 /**
- * Stores the widget JS for a platform app (storefront_ui archetype).
+ * Stores the storefront widget JS for a platform app.
  * Called by the deployer after a successful bundle deployment.
  */
 export async function updateAppWidgetJs(
@@ -993,9 +1066,24 @@ export async function updateAppWidgetJs(
 }
 
 /**
+ * Stores the admin UI JS for a storefront_backend_admin app.
+ * Called by the deployer after a successful bundle deployment.
+ */
+export async function updateAppAdminUiJs(
+  appId: string,
+  adminUiJs: string | null
+): Promise<void> {
+  await sql`
+    UPDATE apps
+    SET admin_ui_js = ${adminUiJs},
+        updated_at  = NOW()
+    WHERE id = ${appId}
+  `;
+}
+
+/**
  * Updates the app_archetype for a platform app.
- * Called by the deployer when deploying a bundle — archetype is inferred from
- * whether widgetModule is present (storefront_ui) or null (backend_only).
+ * Called by the deployer — archetype is inferred from the bundle contents.
  */
 export async function updateAppArchetype(
   appId: string,
@@ -1022,6 +1110,7 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
       status: string;
       appArchetype: string;
       widgetJs: string | null;
+      adminUiJs: string | null;
       shopifyClientId: string;
       shopifySecretName: string;
       shopifyAccessTokenSecretName: string | null;
@@ -1038,6 +1127,7 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
       status,
       app_archetype                        AS "appArchetype",
       widget_js                            AS "widgetJs",
+      admin_ui_js                          AS "adminUiJs",
       shopify_client_id                    AS "shopifyClientId",
       shopify_secret_name                  AS "shopifySecretName",
       shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
@@ -1057,6 +1147,7 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
     status: row.status as App["status"],
     appArchetype: row.appArchetype as AppArchetype,
     widgetJs: row.widgetJs,
+    adminUiJs: row.adminUiJs,
     shopifyClientId: row.shopifyClientId,
     shopifySecretName: row.shopifySecretName,
     shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,

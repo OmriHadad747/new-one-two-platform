@@ -18,7 +18,7 @@ class GenerationRequest(BaseModel):
     tenantId: str
     appId: str
     prompt: str
-    appArchetype: Literal["storefront_ui", "backend_only"] = "backend_only"
+    appArchetype: Literal["storefront_backend", "storefront_backend_admin", "backend"] = "backend"
     existingFeatures: List[str] = Field(default_factory=list)
     priorBundle: Optional[Dict[str, Any]] = None
     preComputedIntent: Optional[Dict[str, Any]] = None
@@ -65,7 +65,8 @@ class FeatureExplanation(BaseModel):
 
 
 class Bundle(BaseModel):
-    widgetModule: Optional[str] = None  # None for backend_only apps — raw JS ES module
+    widgetModule: Optional[str] = None   # storefront ES module (storefront_ui apps)
+    adminUiModule: Optional[str] = None  # admin panel ES module (storefront_ui_admin apps)
     handlerModule: HandlerModule
     dbMigration: DbMigration
     explanation: FeatureExplanation
@@ -73,6 +74,7 @@ class Bundle(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         return {
             "widgetModule": self.widgetModule,
+            "adminUiModule": self.adminUiModule,
             "handlerModule": self.handlerModule.model_dump(),
             "dbMigration": self.dbMigration.model_dump(),
             "explanation": self.explanation.model_dump(),

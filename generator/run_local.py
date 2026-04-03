@@ -35,7 +35,11 @@ _HERE = Path(__file__).parent
 os.chdir(_HERE)
 sys.path.insert(0, str(_HERE))
 
-from crews.feature_generator.agents import fetch_api_context, run_explanation_agent, run_product_agent
+from crews.feature_generator.agents import (
+    fetch_api_context,
+    run_explanation_agent,
+    run_product_agent,
+)
 from subagents.architect_agent import run_architect_agent
 from subagents.codespec_agent import run_codespec_agent
 from subagents.base import CodegenContext
@@ -53,6 +57,7 @@ _W = 56
 
 
 # ── Console output ────────────────────────────────────────────────────────────
+
 
 def _hr(char: str = "━") -> None:
     print(char * _W)
@@ -73,6 +78,7 @@ def _spinner(name: str) -> None:
 
 # ── results.json persistence ──────────────────────────────────────────────────
 
+
 def _append_result(result: Dict[str, Any]) -> None:
     existing: List[Dict[str, Any]] = []
     if RESULTS_FILE.exists():
@@ -90,6 +96,7 @@ def _append_result(result: Dict[str, Any]) -> None:
 
 # ── Markdown report ───────────────────────────────────────────────────────────
 
+
 def _slug(text: str, max_words: int = 6) -> str:
     words = re.sub(r"[^a-z0-9 ]", "", text.lower()).split()
     return "-".join(words[:max_words])
@@ -106,7 +113,10 @@ def _save_report(result: Dict[str, Any]) -> Path:
     intent = result.get("intent") or {}
     architect = result.get("architect") or {}
     codespec = result.get("codespec") or {}
-    is_storefront = result.get("archetype") == "storefront_ui"
+    is_storefront = result.get("archetype") in (
+        "storefront_backend",
+        "storefront_backend_admin",
+    )
 
     def ms_str(stage: str) -> str:
         return f"{stages[stage]['ms']}ms" if stage in stages else "—"
@@ -114,7 +124,7 @@ def _save_report(result: Dict[str, Any]) -> Path:
     # Build summary table rows
     shopify = architect.get("shopifyPlan") or {}
     impl = architect.get("implementationSpec") or {}
-    cs = (codespec.get("codeSpec") or {})
+    cs = codespec.get("codeSpec") or {}
     codegen_stage = stages.get("codegen") or {}
     val_attempts = codegen_stage.get("validation_attempts") or []
     val_errors = val_attempts[-1].get("errors") if val_attempts else {}
@@ -167,10 +177,10 @@ def _save_report(result: Dict[str, Any]) -> Path:
         return "  ".join(parts)
 
     agent_rows = [
-        ("Product",     "product"     in stages, ms_str("product"),     intent_notes()),
-        ("Architect",   "architect"   in stages, ms_str("architect"),   architect_notes()),
-        ("CodeSpec",    "codespec"    in stages, ms_str("codespec"),    codespec_notes()),
-        ("CodeGen",     "codegen"     in stages, ms_str("codegen"),     codegen_notes()),
+        ("Product", "product" in stages, ms_str("product"), intent_notes()),
+        ("Architect", "architect" in stages, ms_str("architect"), architect_notes()),
+        ("CodeSpec", "codespec" in stages, ms_str("codespec"), codespec_notes()),
+        ("CodeGen", "codegen" in stages, ms_str("codegen"), codegen_notes()),
         ("Explanation", "explanation" in stages, ms_str("explanation"), ""),
     ]
 
@@ -216,13 +226,34 @@ def _save_report(result: Dict[str, Any]) -> Path:
         lines += [f"", f"## Artifacts", f""]
 
         if artifacts.get("handler"):
-            lines += [f"### handler.js", f"", f"```javascript", artifacts["handler"], f"```", f""]
+            lines += [
+                f"### handler.js",
+                f"",
+                f"```javascript",
+                artifacts["handler"],
+                f"```",
+                f"",
+            ]
 
         if artifacts.get("migration"):
-            lines += [f"### migration.sql", f"", f"```sql", artifacts["migration"], f"```", f""]
+            lines += [
+                f"### migration.sql",
+                f"",
+                f"```sql",
+                artifacts["migration"],
+                f"```",
+                f"",
+            ]
 
         if is_storefront and artifacts.get("widget_js"):
-            lines += [f"### widget.js", f"", f"```javascript", artifacts["widget_js"], f"```", f""]
+            lines += [
+                f"### widget.js",
+                f"",
+                f"```javascript",
+                artifacts["widget_js"],
+                f"```",
+                f"",
+            ]
 
     # Explanation
     explanation = result.get("explanation")
@@ -238,6 +269,7 @@ def _save_report(result: Dict[str, Any]) -> Path:
 
 
 # ── Stage runner ──────────────────────────────────────────────────────────────
+
 
 class StageError(Exception):
     pass
@@ -275,12 +307,15 @@ def _run_codegen_parallel(
     intent: Dict,
     platform_api_catalog: List[Dict],
     is_storefront: bool,
+    is_admin_ui: bool,
     error_map: Dict[str, List[str]],
     artifacts: Dict[str, str],
 ) -> Dict[str, str]:
     to_run = [
-        gen for name, gen in GENERATORS.items()
+        gen
+        for name, gen in GENERATORS.items()
         if not (name == "widget_js" and not is_storefront)
+        and not (name == "admin_ui" and not is_admin_ui)
         and (name in error_map or name not in artifacts)
     ]
     if not to_run:
@@ -309,11 +344,16 @@ def _validate_artifacts(
     intent: Dict,
     platform_api_catalog: List[Dict],
     is_storefront: bool,
+    is_admin_ui: bool,
 ) -> Dict[str, List[str]]:
-    ctx = CodegenContext(intent=intent, plan=plan, platform_api_catalog=platform_api_catalog)
+    ctx = CodegenContext(
+        intent=intent, plan=plan, platform_api_catalog=platform_api_catalog
+    )
     error_map: Dict[str, List[str]] = {}
     for name, gen in GENERATORS.items():
         if name == "widget_js" and not is_storefront:
+            continue
+        if name == "admin_ui" and not is_admin_ui:
             continue
         errs = gen.validate(artifacts.get(name, ""), ctx)
         if errs:
@@ -328,6 +368,7 @@ def _validate_artifacts(
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
+
 
 def run(prompt: str, stop_after: Optional[str]) -> None:
     run_id = datetime.now().isoformat()
@@ -357,10 +398,9 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
         result["stages"]["product"] = {"ms": ms}
         result["intent"] = intent
 
-        archetype: str = intent.get("appArchetype") or "backend_only"
+        archetype = intent.get("appCategory", "backend")
         result["archetype"] = archetype
-        _agent_line("Product", ok=True, ms=ms,
-                    notes=f"archetype={archetype}  trigger={intent.get('triggerType')}")
+        _agent_line("Product", ok=True, ms=ms, notes=f"archetype={archetype}")
 
         if stop_after == "product":
             return
@@ -381,11 +421,15 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
 
         shopify = architect_output.get("shopifyPlan") or {}
         impl = architect_output.get("implementationSpec") or {}
-        _agent_line("Architect", ok=True, ms=arch_ms,
-                    notes=f"complexity={impl.get('complexity', '?')}  "
-                          f"topics={shopify.get('webhookTopics')}  "
-                          f"cron={shopify.get('cronSchedule') or '—'}  "
-                          f"stateMachine={'yes' if impl.get('stateMachine') else 'no'}")
+        _agent_line(
+            "Architect",
+            ok=True,
+            ms=arch_ms,
+            notes=f"complexity={impl.get('complexity', '?')}  "
+            f"topics={shopify.get('webhookTopics')}  "
+            f"cron={shopify.get('cronSchedule') or '—'}  "
+            f"stateMachine={'yes' if impl.get('stateMachine') else 'no'}",
+        )
 
         if stop_after == "architect":
             return
@@ -401,11 +445,15 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
         result["codespec"] = codespec_output
 
         cs = codespec_output.get("codeSpec") or {}
-        _agent_line("CodeSpec", ok=True, ms=cs_ms,
-                    notes=f"webhook={len(cs.get('webhookPath') or [])} steps  "
-                          f"cron={len(cs.get('cronPath') or [])} steps  "
-                          f"widget={len(cs.get('widgetPath') or [])} steps  "
-                          f"functions={len(cs.get('functions') or [])}")
+        _agent_line(
+            "CodeSpec",
+            ok=True,
+            ms=cs_ms,
+            notes=f"webhook={len(cs.get('webhookPath') or [])} steps  "
+            f"cron={len(cs.get('cronPath') or [])} steps  "
+            f"widget={len(cs.get('widgetPath') or [])} steps  "
+            f"functions={len(cs.get('functions') or [])}",
+        )
 
         plan: Dict = {
             **architect_output,
@@ -420,8 +468,11 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
             return
 
         # ── CodeGen + Validation ───────────────────────────────────────────────
-        catalog_dicts = (plan.get("implementationSpec") or {}).get("widgetApiCatalog") or []
-        is_storefront = archetype == "storefront_ui"
+        catalog_dicts = (plan.get("implementationSpec") or {}).get(
+            "widgetApiCatalog"
+        ) or []
+        is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
+        is_admin_ui = archetype == "storefront_backend_admin"
 
         artifacts: Dict[str, str] = {}
         error_map: Dict[str, List[str]] = {}
@@ -431,40 +482,74 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
         for attempt in range(1, MAX_RETRIES + 1):
             _spinner("CodeGen")
             t0 = time.monotonic()
-            artifacts = _run_codegen_parallel(plan, intent, catalog_dicts, is_storefront, error_map, artifacts)
+            artifacts = _run_codegen_parallel(
+                plan,
+                intent,
+                catalog_dicts,
+                is_storefront,
+                is_admin_ui,
+                error_map,
+                artifacts,
+            )
             gen_ms = int((time.monotonic() - t0) * 1000)
 
-            error_map = _validate_artifacts(artifacts, plan, intent, catalog_dicts, is_storefront)
+            error_map = _validate_artifacts(
+                artifacts, plan, intent, catalog_dicts, is_storefront, is_admin_ui
+            )
 
-            validation_attempts.append({
-                "attempt": attempt,
-                "errors": dict(error_map) if error_map else {},
-            })
+            validation_attempts.append(
+                {
+                    "attempt": attempt,
+                    "errors": dict(error_map) if error_map else {},
+                }
+            )
 
             if not error_map:
                 artifact_notes = "  ".join(
-                    f"{n} ✓" for n in (["handler", "migration"] + (["widget_js"] if is_storefront else []))
+                    f"{n} ✓"
+                    for n in (
+                        ["handler", "migration"]
+                        + (["widget_js"] if is_storefront else [])
+                    )
                     if artifacts.get(n)
                 )
-                _agent_line("CodeGen", ok=True, ms=gen_ms,
-                            notes=f"attempt {attempt}  {artifact_notes}")
-                result["stages"]["codegen"] = {"ms": gen_ms, "attempts": attempt,
-                                               "validation_attempts": validation_attempts}
+                _agent_line(
+                    "CodeGen",
+                    ok=True,
+                    ms=gen_ms,
+                    notes=f"attempt {attempt}  {artifact_notes}",
+                )
+                result["stages"]["codegen"] = {
+                    "ms": gen_ms,
+                    "attempts": attempt,
+                    "validation_attempts": validation_attempts,
+                }
                 break
 
-            error_summary = "  ".join(f"{n}:{errs[0][:30]}" for n, errs in error_map.items())
-            _agent_line("CodeGen", ok=False, ms=gen_ms,
-                        notes=f"attempt {attempt}/{MAX_RETRIES}  {error_summary}")
+            error_summary = "  ".join(
+                f"{n}:{errs[0][:30]}" for n, errs in error_map.items()
+            )
+            _agent_line(
+                "CodeGen",
+                ok=False,
+                ms=gen_ms,
+                notes=f"attempt {attempt}/{MAX_RETRIES}  {error_summary}",
+            )
 
             if attempt == MAX_RETRIES:
-                result["stages"]["codegen"] = {"ms": gen_ms, "attempts": attempt,
-                                               "validation_attempts": validation_attempts}
+                result["stages"]["codegen"] = {
+                    "ms": gen_ms,
+                    "attempts": attempt,
+                    "validation_attempts": validation_attempts,
+                }
                 result["artifacts"] = {
                     "handler": artifacts.get("handler", ""),
                     "migration": artifacts.get("migration", ""),
                     "widget_js": artifacts.get("widget_js") if is_storefront else None,
                 }
-                raise StageError(f"validation failed after {MAX_RETRIES} attempts: {error_map}")
+                raise StageError(
+                    f"validation failed after {MAX_RETRIES} attempts: {error_map}"
+                )
 
         result["artifacts"] = {
             "handler": artifacts.get("handler", ""),
@@ -515,20 +600,25 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run the feature generator pipeline locally.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("prompt", nargs="?",
-                        help="Merchant feature request (quote it).")
-    parser.add_argument("--file", "-f", metavar="PATH",
-                        help="Read prompt from a text file.")
-    parser.add_argument("--stop-after",
-                        choices=["product", "architect", "codespec", "codegen"],
-                        metavar="STAGE",
-                        help="Stop after STAGE. Choices: product, architect, codespec, codegen")
+    parser.add_argument(
+        "prompt", nargs="?", help="Merchant feature request (quote it)."
+    )
+    parser.add_argument(
+        "--file", "-f", metavar="PATH", help="Read prompt from a text file."
+    )
+    parser.add_argument(
+        "--stop-after",
+        choices=["product", "architect", "codespec", "codegen"],
+        metavar="STAGE",
+        help="Stop after STAGE. Choices: product, architect, codespec, codegen",
+    )
 
     args = parser.parse_args()
 

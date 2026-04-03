@@ -71,12 +71,22 @@ stateMachine: null if the feature does NOT need to detect state transitions.
   - skipWhenUnknown is almost always true: cannot confirm a transition without witnessing the start.
 
 platformGaps: What this feature needs that ctx cannot deliver.
-  ctx provides: ctx.shopify.get/post/graphql, ctx.db (Postgres), ctx.tenantId, ctx.payload, ctx.logger,
-                ctx.email.send({ to, subject, templateId?, data? }).
-  ctx does NOT provide: SMS, push notifications, Slack, external HTTP, file storage.
-  For each gap, specify the exact mitigation the handler should use (usually: log full delivery
-  intent with ctx.logger.info so an external integration can consume it).
-  Note: email is available via ctx.email.send() — do NOT list email as a platformGap.
+  ctx provides (use these — do NOT list them as gaps):
+    ctx.shopify.get/post/graphql  — Shopify Admin REST + GraphQL
+    ctx.db                        — Postgres (RLS-scoped to tenant)
+    ctx.tenantId / ctx.shop.domain
+    ctx.payload, ctx.logger
+    ctx.email.send(...)           — transactional email (stub → real Phase 3)
+    ctx.services.sms.send(...)    — SMS (stub → real Phase 3; logs SMS_SENT)
+    ctx.services.pdf.generate(html) → Buffer  (stub → real Phase 3)
+    ctx.services.csv.generate(rows) → string  (always real, pure in-process)
+    ctx.services.files.upload(name, content) → Promise<string>  (stub → real Phase 3)
+    ctx.http.call(url, options)   — external HTTP (real; https:// URLs allowed here only)
+    ctx.storefront.graphql(...)   — Shopify Storefront API (real)
+  ctx does NOT provide: push notifications, Slack, WhatsApp, real-time WebSockets.
+  For each genuine gap, specify the exact mitigation the handler should use (usually:
+  log full delivery intent with ctx.logger.info so an external integration can consume it).
+  Do NOT list email, SMS, PDF, CSV, files, or HTTP as platform gaps.
 
 cronBatching: Required when the cron path would call Shopify APIs inside a per-item loop.
   Shopify rate limit: ~2 req/s on Basic. N items × K calls per item = throttle at scale.
@@ -157,6 +167,18 @@ storefrontReads: null for backend_only apps.
   CRITICAL: Do NOT add a widgetApiCatalog path whose sole purpose is to proxy publicly
   available Shopify storefront data. That is a wasted backend call.
 
+adminApiCatalog: null unless app archetype is "storefront_ui_admin" OR the app has trigger="admin".
+  The Admin UI panel embedded in Shopify Admin calls these paths via bridge.call().
+  Each path is handled by the same backend handler — ctx.trigger === 'admin'.
+  Rules:
+  - path must start with "/" (e.g. "/list", "/trigger", "/config/get", "/config/save")
+  - method "GET" = read-only (list data, load config), "POST" = action or mutation
+  - responseShape: the EXACT JSON the handler returns on success.
+  - Design around what the merchant actually needs — no speculative extras.
+  Examples:
+    Category B (dashboard): [{ "method": "GET", "path": "/subscribers", "responseShape": { "total": 0, "rows": [] } }]
+    Category C admin-triggered: [{ "method": "POST", "path": "/run", "responseShape": { "processed": 0 } }]
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):
 {
@@ -206,6 +228,9 @@ OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanatio
       { "path": "/products/${handle}.js", "dataUsed": "variant.available — widget extracts handle from location.pathname, variantId from location.search" }
     ],
     "widgetApiCatalog": null | [
+      { "method": "POST" | "GET", "path": "/slug", "responseShape": { "fieldName": "exampleValue" } }
+    ],
+    "adminApiCatalog": null | [
       { "method": "POST" | "GET", "path": "/slug", "responseShape": { "fieldName": "exampleValue" } }
     ]
   }

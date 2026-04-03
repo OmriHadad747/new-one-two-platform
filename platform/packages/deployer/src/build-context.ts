@@ -4,7 +4,7 @@ import type { App, AppVersion, Tenant } from "@new-one-two/types";
 export async function fetchDeploymentContext(appVersionId: string): Promise<{
   version: AppVersion;
   app: App;
-  tenant: Pick<Tenant, "id" | "slug" | "kmsKeyName" | "shopifyAccessTokenSecretName">;
+  tenant: Pick<Tenant, "id" | "slug" | "kmsKeyName" | "shopifyAccessTokenSecretName" | "storefrontAccessTokenSecretName">;
 }> {
   const result = await getAppVersionWithCode(appVersionId);
   if (!result) {

@@ -76,6 +76,7 @@ class CodegenContext:
     prior_handler_code: Optional[str] = None
     prior_widget_code: Optional[str] = None
     prior_migration_sql: Optional[str] = None
+    prior_admin_ui_code: Optional[str] = None
 
 
 class Generator(ABC):

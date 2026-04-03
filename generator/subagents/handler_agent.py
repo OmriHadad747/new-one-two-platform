@@ -25,6 +25,7 @@ from subagents.base import CodegenContext, Generator
 from subagents.validation import validate_handler
 from templates.harness_contract import (
     HARNESS_BASE,
+    HARNESS_SECTION_ADMIN,
     HARNESS_SECTION_CRON_BATCHING,
     HARNESS_SECTION_STATE_MACHINE,
     HARNESS_SECTION_WEBHOOK,
@@ -49,6 +50,7 @@ class HandlerGenerator(Generator):
         spec_block = _format_code_spec(ctx.plan)
         gaps_block = _format_platform_gaps(ctx.plan)
         catalog_block = _format_widget_catalog(ctx.platform_api_catalog)
+        admin_catalog_block = _format_admin_catalog(ctx.plan)
         prior_block = _format_prior_handler(ctx.prior_handler_code)
 
         return (
@@ -58,6 +60,7 @@ class HandlerGenerator(Generator):
             f"Shopify API plan:\n{json.dumps(ctx.plan.get('shopifyPlan', {}), indent=2)}\n"
             f"{gaps_block}"
             f"{catalog_block}"
+            f"{admin_catalog_block}"
             f"{spec_block}"
             f"{prior_block}"
             "Generate the handler.js module. Output ONLY the JavaScript code."
@@ -105,6 +108,10 @@ def _build_jit_sections(plan: Dict[str, Any], platform_api_catalog: List[Dict[st
     if storefront_reads or "host.storefront" in widget_guidance:
         sections.append(HARNESS_SECTION_WIDGET_STOREFRONT)
 
+    admin_catalog = (plan.get("implementationSpec") or {}).get("adminApiCatalog") or []
+    if admin_catalog:
+        sections.append(HARNESS_SECTION_ADMIN)
+
     return "".join(sections)
 
 
@@ -122,9 +129,10 @@ def _format_code_spec(plan: Dict[str, Any]) -> str:
     webhook_path: List[str] = code_spec.get("webhookPath") or []
     cron_path: List[str] = code_spec.get("cronPath") or []
     widget_path: List[str] = code_spec.get("widgetPath") or []
+    admin_path: List[str] = code_spec.get("adminPath") or []
     functions: List[Dict[str, Any]] = code_spec.get("functions") or []
 
-    if not webhook_path and not cron_path and not widget_path and not functions:
+    if not webhook_path and not cron_path and not widget_path and not admin_path and not functions:
         return ""
 
     parts: List[str] = [
@@ -144,6 +152,10 @@ def _format_code_spec(plan: Dict[str, Any]) -> str:
     if widget_path:
         steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(widget_path))
         parts.append(f"\nWidget handler path (ctx.trigger === 'widget'):\n{steps}")
+
+    if admin_path:
+        steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(admin_path))
+        parts.append(f"\nAdmin UI handler path (ctx.trigger === 'admin'):\n{steps}")
 
     if functions:
         parts.append("\nHelper functions:")
@@ -171,6 +183,23 @@ def _format_widget_catalog(catalog: List[Dict[str, Any]]) -> str:
         lines.append(f"  {e['method']} {e['path']}{shape_str}")
     return (
         "\nWidget API catalog (handler MUST return the exact responseShape for each path):\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
+def _format_admin_catalog(plan: Dict[str, Any]) -> str:
+    """Show the admin API catalog so the handler returns exact responseShapes for admin paths."""
+    catalog = (plan.get("implementationSpec") or {}).get("adminApiCatalog") or []
+    if not catalog:
+        return ""
+    lines = []
+    for e in catalog:
+        shape = e.get("responseShape")
+        shape_str = f" → return {shape}" if shape else ""
+        lines.append(f"  {e.get('method', 'POST')} {e['path']}{shape_str}")
+    return (
+        "\nAdmin UI catalog (handler MUST return the exact responseShape for each admin path):\n"
         + "\n".join(lines)
         + "\n"
     )

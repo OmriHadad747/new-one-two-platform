@@ -16,7 +16,7 @@ export const GenerationRequestSchema = z.object({
   tenantId: z.string().uuid(),
   appId: z.string().uuid(),
   prompt: z.string().min(1),
-  appArchetype: z.enum(["storefront_ui", "backend_only"]).default("backend_only"),
+  appArchetype: z.enum(["storefront_backend", "storefront_backend_admin", "backend"]).default("backend"),
   existingFeatures: z.array(z.string()).default([]),
   priorBundle: z.record(z.unknown()).nullable().optional(),
   preComputedIntent: z.record(z.unknown()).nullable().optional(),
@@ -70,7 +70,8 @@ export const ExplanationSchema = z.object({
 });
 
 export const BundleSchema = z.object({
-  widgetModule: z.string().nullable(), // raw JS ES module source; null for backend_only apps
+  widgetModule: z.string().nullable(),   // storefront widget ES module; null for backend apps
+  adminUiModule: z.string().nullable(),  // admin UI ES module; null unless storefront_backend_admin
   handlerModule: HandlerModuleSchema,
   dbMigration: DbMigrationSchema,
   explanation: ExplanationSchema,
