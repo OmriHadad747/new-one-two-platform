@@ -16,26 +16,24 @@ export const GenerationRequestSchema = z.object({
   tenantId: z.string().uuid(),
   appId: z.string().uuid(),
   prompt: z.string().min(1),
-  appArchetype: z.enum(["storefront_backend", "storefront_backend_admin", "backend"]).default("backend"),
   existingFeatures: z.array(z.string()).default([]),
   priorBundle: z.record(z.unknown()).nullable().optional(),
   preComputedIntent: z.record(z.unknown()).nullable().optional(),
 });
+
 
 // ─── ProgressEvent ────────────────────────────────────────────────────────────
 
 export const ProgressEventSchema = z.object({
   jobId: z.string().uuid(),
   agent: z.enum([
-    "intent",
-    "schema",
+    "product",
     "architect",
     "codespec",
-    "planner",
-    "codegen",
-    "widget_config",
     "handler",
     "migration",
+    "widget_js",
+    "admin_ui",
     "validation",
     "explanation",
   ]),

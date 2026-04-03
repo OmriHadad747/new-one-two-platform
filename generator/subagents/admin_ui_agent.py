@@ -3,9 +3,9 @@ Admin UI Generator — produces a self-contained JavaScript ES module for the
 Shopify Admin iframe panel.
 
 Used for:
-  - Category B apps (storefront_ui_admin): merchant dashboard alongside the
+  - Category B apps (storefront_backend_admin): merchant dashboard alongside the
     storefront widget (e.g. subscriber lists, conversion metrics, email template config).
-  - Category C admin-triggered apps (backend_only with trigger="admin"): a Polaris-style
+  - Category C admin-triggered apps (backend with trigger="admin"): a Polaris-style
     panel with a button or form that calls the backend handler.
 
 The generated JS exports:
@@ -20,7 +20,7 @@ WHERE:
     bridge.notify(message, variant?)  — show a toast notification.
                                         variant: "success" | "error" | "info" (default "info")
 
-Only runs for storefront_ui_admin apps and backend_only apps with trigger="admin".
+Only runs for storefront_backend_admin apps and backend apps with trigger="admin".
 
 Model: claude-sonnet-4-6 (prefers_code_model = True)
 """

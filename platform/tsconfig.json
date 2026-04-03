@@ -13,13 +13,15 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    "baseUrl": ".",
     "paths": {
       "@new-one-two/types": ["./packages/types/src/index.ts"],
       "@new-one-two/db": ["./packages/db/src/index.ts"],
       "@new-one-two/crypto": ["./packages/crypto/src/index.ts"],
       "@new-one-two/logger": ["./packages/logger/src/index.ts"],
       "@new-one-two/deployer": ["./packages/deployer/src/index.ts"],
-      "@new-one-two/pubsub-client": ["./packages/pubsub-client/src/index.ts"]
+      "@new-one-two/pubsub-client": ["./packages/pubsub-client/src/index.ts"],
+      "@new-one-two/harness": ["./packages/harness/src/index.ts"]
     }
   }
 }

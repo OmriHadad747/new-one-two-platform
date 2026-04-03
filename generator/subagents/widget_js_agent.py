@@ -1,5 +1,5 @@
 """
-Widget JS Generator — produces a self-contained ES module for storefront_ui apps.
+Widget JS Generator — produces a self-contained ES module for storefront_backend / storefront_backend_admin apps.
 
 The generated JS is loaded by the App Block runtime at storefront page load.
 It must export a `mount(container, host)` function and interact with the outside
@@ -10,8 +10,8 @@ The implementationSpec contributes two things:
     notified" rather than "email sent" when the backend can only log intent).
   - widgetGuidance: feature-specific UX decisions from the Planner.
 
-Only runs for storefront_ui apps — the registry entry is always present but
-crew.py skips this generator for backend_only apps.
+Only runs for storefront_backend / storefront_backend_admin apps — the registry entry is always present but
+crew.py skips this generator for backend apps.
 
 Model: claude-sonnet-4-6 (prefers_code_model = True)
 """

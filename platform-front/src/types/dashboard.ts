@@ -4,7 +4,7 @@
 export type TenantStatus = "active" | "suspended" | "pending";
 export type AppStatus = "active" | "inactive" | "deleted";
 export type VersionStatus = "draft" | "building" | "ready" | "failed" | "archived";
-export type AppArchetype = "storefront_ui" | "backend_only";
+export type AppArchetype = "storefront_backend" | "storefront_backend_admin" | "backend";
 
 export interface Tenant {
   id: string;
@@ -97,12 +97,13 @@ export interface StartGenerationResponse {
 export type GenerationProgressStatus = "running" | "completed" | "failed" | "retrying";
 
 export type GenerationAgent =
-  | "intent"
-  | "schema"
-  | "codegen"
-  | "widget_config"
+  | "product"
+  | "architect"
+  | "codespec"
   | "handler"
   | "migration"
+  | "widget_js"
+  | "admin_ui"
   | "validation"
   | "explanation";
 

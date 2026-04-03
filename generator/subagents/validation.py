@@ -116,7 +116,7 @@ def _is_valid_cron(expr: str) -> bool:
 
 
 def validate_architect(
-    architect_output: Dict[str, Any], app_archetype: str = "backend_only"
+    architect_output: Dict[str, Any], app_archetype: str
 ) -> List[str]:
     """
     Rule-based gate on the Architect Agent output (structural decisions only).
@@ -125,7 +125,7 @@ def validate_architect(
     Checks:
       1. All webhookTopics are in the known-valid set.
       2. cronSchedule, if present, is a valid 5-field cron expression.
-      3. storefront_ui apps must have a non-empty widgetApiCatalog.
+      3. storefront_backend / storefront_backend_admin apps must have a non-empty widgetApiCatalog OR storefrontReads.
       4. All widgetApiCatalog paths start with '/'.
       5. stateMachine.unknownSentinel, if set, must be the string "null".
     """
@@ -150,15 +150,15 @@ def validate_architect(
             f"(e.g. '*/15 * * * *')"
         )
 
-    # 3. storefront_ui apps should declare their widget API catalog
+    # 3. storefront_backend / storefront_backend_admin apps should declare their widget API catalog
     widget_catalog = impl.get("widgetApiCatalog") or []
     storefront_reads = impl.get("storefrontReads") or []
-    if app_archetype == "storefront_ui" and not widget_catalog and not storefront_reads:
+    if app_archetype in ("storefront_backend", "storefront_backend_admin") and not widget_catalog and not storefront_reads:
         # Check widgetGuidance for evidence of host.storefront() usage before failing
         guidance = (impl.get("widgetGuidance") or "").lower()
         if "host.storefront" not in guidance and "storefront" not in guidance:
             errors.append(
-                "widgetApiCatalog is null/empty for a storefront_ui app — "
+                "widgetApiCatalog is null/empty for a storefront_backend app — "
                 "list every path the widget calls via host.call() with its responseShape, "
                 "or if all widget data comes from Shopify's public storefront, "
                 "describe host.storefront() usage in widgetGuidance"
@@ -369,7 +369,7 @@ def validate_cross_artifact(
     Checks that field names the widget sends via host.call() match what the handler
     destructures from ctx.widgetBody for the same route path.
 
-    Only runs for storefront_ui apps (crew.py guards on is_storefront).
+    Only runs for storefront_backend / storefront_backend_admin apps (crew.py guards on is_storefront).
     Returns {generator_name: [errors]} — errors are attributed to both "handler"
     and "widget_js" so both generators receive the mismatch on retry and can converge.
     """
@@ -672,11 +672,11 @@ def validate_widget_js(
     widget_js: str,
     platform_api_catalog: List[Dict[str, str]],
 ) -> List[str]:
-    """Validate the generated widget ES module (storefront_ui only)."""
+    """Validate the generated widget ES module (storefront_backend / storefront_backend_admin only)."""
     errors: List[str] = []
 
     if not widget_js or not widget_js.strip():
-        return errors  # backend_only — no widget JS to validate
+        return errors  # backend — no widget JS to validate
 
     # Must export a mount function
     if not re.search(r"\bexport\s+function\s+mount\b", widget_js):
@@ -726,6 +726,119 @@ def validate_widget_js(
             "is silently discarded. Add a POST endpoint to platformApiCatalog and call "
             "it via host.call(path, data) to persist the submission"
         )
+
+    return errors
+
+
+# ── Admin UI cross-artifact validator ─────────────────────────────────────────
+
+
+def validate_cross_artifact_admin(
+    admin_ui_js: str,
+    handler_code: str,
+) -> Dict[str, List[str]]:
+    """
+    Checks that field names the admin UI sends via bridge.call() match what the
+    handler destructures from ctx.widgetBody for the same route path, AND that
+    each path is handled inside a ctx.trigger === 'admin' block.
+
+    Only runs for storefront_backend_admin apps (crew.py guards on is_admin_ui).
+    Returns {generator_name: [errors]} attributed to both "handler" and "admin_ui"
+    so both generators receive the mismatch on retry.
+    """
+    if not admin_ui_js or not handler_code:
+        return {}
+
+    errors: Dict[str, List[str]] = {}
+
+    _NON_FIELD = {
+        "true", "false", "null", "undefined", "bridge", "context", "await",
+        "const", "let", "var", "return", "if", "else", "new", "this",
+        "async", "function", "result", "data", "response", "error",
+    }
+
+    # Locate the admin trigger block in the handler
+    admin_block_match = re.search(
+        r"ctx\.trigger\s*===\s*['\"]admin['\"]",
+        handler_code,
+    )
+    admin_block = handler_code[admin_block_match.start():] if admin_block_match else ""
+
+    if not admin_block_match:
+        # No admin block at all — if admin UI calls any paths, that's a problem
+        called_paths = re.findall(r"""bridge\.call\s*\(\s*['"]([^'"]+)['"]""", admin_ui_js)
+        if called_paths:
+            msg = (
+                f"admin UI calls {sorted(set(called_paths))} via bridge.call() but "
+                f"handler has no ctx.trigger === 'admin' block"
+            )
+            errors.setdefault("handler", []).append(msg)
+            errors.setdefault("admin_ui", []).append(msg)
+        return errors
+
+    # Extract all bridge.call('/path', { ... }) from admin UI
+    call_pattern = re.compile(
+        r"bridge\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*(?:,\s*\{([^}]*)\})?",
+        re.DOTALL,
+    )
+
+    for m in call_pattern.finditer(admin_ui_js):
+        path = m.group(1)
+        body_str = m.group(2) or ""
+
+        raw_idents = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", body_str)
+        sent_fields = {f for f in raw_idents if f not in _NON_FIELD}
+
+        # Check the path is handled inside the admin block
+        route_match = re.search(
+            rf"ctx\.widgetPath\s*===\s*['\"](?:{re.escape(path)})['\"]",
+            admin_block,
+        )
+        if not route_match:
+            msg = (
+                f"admin UI calls bridge.call('{path}') but handler has no "
+                f"ctx.widgetPath === '{path}' route inside the admin trigger block"
+            )
+            errors.setdefault("handler", []).append(msg)
+            errors.setdefault("admin_ui", []).append(msg)
+            continue
+
+        if not sent_fields:
+            continue
+
+        # Find the body of this route in the admin block
+        route_start = route_match.start()
+        next_route = re.search(r"ctx\.widgetPath\s*===", admin_block[route_start + 1:])
+        route_end = (route_start + 1 + next_route.start()) if next_route else len(admin_block)
+        window = admin_block[route_start:route_end]
+
+        destr_match = re.search(
+            r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody",
+            window,
+        )
+        if not destr_match:
+            if "ctx.widgetBody" not in window:
+                msg = (
+                    f"admin UI sends {sorted(sent_fields)} to '{path}' but handler "
+                    f"has no ctx.widgetBody access in the admin '{path}' route"
+                )
+                errors.setdefault("handler", []).append(msg)
+                errors.setdefault("admin_ui", []).append(msg)
+            continue
+
+        destr_str = destr_match.group(1)
+        raw_destr = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", destr_str)
+        handler_fields = {f for f in raw_destr if f not in _NON_FIELD}
+
+        missing = sent_fields - handler_fields
+        if missing:
+            msg = (
+                f"admin UI sends field(s) {sorted(missing)} to '{path}' but handler "
+                f"destructures {sorted(handler_fields)} from ctx.widgetBody in the admin block — "
+                f"field name mismatch. Align both sides to the codeSpec.adminPath steps."
+            )
+            errors.setdefault("handler", []).append(msg)
+            errors.setdefault("admin_ui", []).append(msg)
 
     return errors
 

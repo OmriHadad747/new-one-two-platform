@@ -48,6 +48,7 @@ from subagents.validation import (
     validate_architect,
     validate_codespec,
     validate_cross_artifact,
+    validate_cross_artifact_admin,
 )
 
 RESULTS_FILE = _HERE / "results.json"
@@ -364,6 +365,12 @@ def _validate_artifacts(
         ).items():
             if errs:
                 error_map.setdefault(gen_name, []).extend(errs)
+    if is_admin_ui and "admin_ui" not in error_map and "handler" not in error_map:
+        for gen_name, errs in validate_cross_artifact_admin(
+            artifacts.get("admin_ui", ""), artifacts.get("handler", "")
+        ).items():
+            if errs:
+                error_map.setdefault(gen_name, []).extend(errs)
     return error_map
 
 
@@ -410,6 +417,11 @@ def run(prompt: str, stop_after: Optional[str]) -> None:
             intent.get("resources", []),
             intent_description=intent.get("desiredOutcome", ""),
         )
+        resources = intent.get("resources", [])
+        if api_context:
+            _agent_line("API Docs", ok=True, ms=0, notes=f"resources={resources}  chars={len(api_context)}")
+        else:
+            _agent_line("API Docs", ok=False, ms=0, notes=f"resources={resources}  MCP unavailable — no docs")
         architect_output, arch_ms = _run_with_retry(
             label="Architect",
             run_fn=run_architect_agent,

@@ -1,22 +1,29 @@
 {
   "name": "@new-one-two/harness",
   "version": "0.1.0",
-  "description": "Runtime container that wraps tenant-generated handler code",
+  "description": "Core execution logic for AI-generated code",
   "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "scripts": {
-    "build": "esbuild src/server.ts --bundle --platform=node --target=node20 --outfile=dist/server.cjs --external:@google-cloud/secret-manager --external:@google-cloud/kms --external:google-auth-library",
-    "dev": "tsx src/server.ts"
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch"
   },
   "dependencies": {
-    "fastify": "^4.28.0",
     "@new-one-two/db": "workspace:*",
     "@new-one-two/crypto": "workspace:*",
     "@new-one-two/logger": "workspace:*",
     "@new-one-two/types": "workspace:*"
   },
   "devDependencies": {
-    "esbuild": "^0.21.0",
-    "tsx": "^4.7.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
   }
 }

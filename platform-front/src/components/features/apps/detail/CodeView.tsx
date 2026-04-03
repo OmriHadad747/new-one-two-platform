@@ -3,7 +3,7 @@ import { Tag } from "@/components/ui/Badge";
 import type { App } from "@/types/dashboard";
 
 export function CodeView({ app }: { app: App }) {
-  const hasWidget = app.appArchetype === "storefront_ui" && app.widgetJs;
+  const hasWidget = (app.appArchetype === "storefront_backend" || app.appArchetype === "storefront_backend_admin") && app.widgetJs;
 
   return (
     <div className="grid grid-cols-[1fr_320px] gap-4">
@@ -19,7 +19,7 @@ export function CodeView({ app }: { app: App }) {
           </pre>
         ) : (
           <span className="text-faint italic">
-            {app.appArchetype === "backend_only"
+            {app.appArchetype === "backend"
               ? "Backend-only app — no widget JS"
               : "Widget JS not yet generated"}
           </span>
@@ -37,12 +37,9 @@ export function CodeView({ app }: { app: App }) {
             { k: "Shop", v: app.shopDomain },
             { k: "Status", v: app.status },
           ].map(({ k, v }) => (
-            <div
-              key={k}
-              className="flex justify-between items-center py-1.5 border-b border-white/7 last:border-b-0"
-            >
+            <div key={k} className="flex justify-between py-1.5 border-b border-white/5 last:border-0">
               <span className="text-xs text-faint">{k}</span>
-              <span className="text-xs text-ink font-semibold font-mono">{v}</span>
+              <span className="text-xs text-ink font-mono">{v}</span>
             </div>
           ))}
         </div>

@@ -205,7 +205,13 @@ export function AppDetailPage() {
                 <InfoRow label="Status" value={<StatusPill status={app.status} />} />
                 <InfoRow
                   label="Type"
-                  value={app.appArchetype === "storefront_ui" ? "Widget + Backend" : "Backend only"}
+                  value={
+                    app.appArchetype === "backend"
+                      ? "Backend only"
+                      : app.appArchetype === "storefront_backend"
+                      ? "Widget + Backend"
+                      : "Widget + Backend + Admin"
+                  }
                 />
                 <InfoRow label="Created" value={formatDate(app.createdAt)} />
                 <InfoRow label="Updated" value={timeAgo(app.updatedAt)} />

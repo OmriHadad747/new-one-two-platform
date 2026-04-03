@@ -1,10 +1,10 @@
 import Fastify from "fastify";
 import { logger } from "@new-one-two/logger";
 import type { HarnessInvokeRequest } from "@new-one-two/types";
+import { loadModule } from "@new-one-two/harness";
 import { handleWebhookInvoke } from "./webhook-handler.js";
 import { handleWidgetInvoke } from "./widget-handler.js";
 import { handleAdminInvoke } from "./admin-handler.js";
-import { loadModule } from "./module-loader.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "8080", 10);
 

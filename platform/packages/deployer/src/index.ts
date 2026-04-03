@@ -162,7 +162,7 @@ export async function deployAppVersion(appVersionId: string): Promise<{
  *
  * Deployment sequence (atomic — rolls back migration on failure):
  *   1. Run DB migration (tenant-scoped, RLS-safe)
- *   2. Store widget JS in tenants.widget_js (storefront_ui apps only)
+ *   2. Store widget JS in apps.widget_js (storefront_backend / storefront_backend_admin apps only)
  *      Served at GET /widgets/:shop/:appId.js by the webhook gateway
  *   3. Create draft AppVersion from handlerModule.code
  *   4. Build + push Docker image and deploy to Cloud Run

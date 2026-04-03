@@ -218,7 +218,7 @@ This rule applies whenever two or more boolean flags can be simultaneously true 
 meanings — always check the narrowest condition first.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ADMIN PATH CONTRACT (storefront_ui_admin and admin-triggered apps)
+ADMIN PATH CONTRACT (storefront_backend_admin and admin-triggered apps)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 adminPath is the CONTRACT between the Admin UI panel and the handler.

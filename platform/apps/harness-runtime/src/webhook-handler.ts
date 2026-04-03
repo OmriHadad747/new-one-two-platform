@@ -1,7 +1,5 @@
 import type { HarnessInvokeRequest, HarnessInvokeResponse } from "@new-one-two/types";
-import { createWebhookContext, withTenantContext } from "./webhook-context.js";
-import { loadModule } from "./module-loader.js";
-import { withTimeout, HandlerTimeoutError } from "./timeout.js";
+import { createWebhookContext, withTenantContext, loadModule, withTimeout, HandlerTimeoutError } from "@new-one-two/harness";
 
 // Must be shorter than the Cloud Run request timeout (configured at 30s)
 const HANDLER_TIMEOUT_MS = parseInt(process.env["HANDLER_TIMEOUT_MS"] ?? "25000", 10);

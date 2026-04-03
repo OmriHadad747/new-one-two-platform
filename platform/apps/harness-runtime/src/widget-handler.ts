@@ -1,13 +1,14 @@
 import { withTenantContext } from "@new-one-two/db";
 import type { HandlerContext } from "@new-one-two/types";
-import { loadModule } from "./module-loader.js";
-import { createBaseContext } from "./context-factory.js";
+import { loadModule, createBaseContext } from "@new-one-two/harness";
 
+// The deployer injects TENANT_ID as an env var into every harness container.
+// The X-Tenant-Id header is a fallback for local development.
 const ENV_TENANT_ID = process.env["TENANT_ID"] ?? null;
 
-export async function handleAdminInvoke(
+export async function handleWidgetInvoke(
   tenantIdFromHeader: string | undefined,
-  adminPath: string,
+  widgetPath: string,
   body: Record<string, unknown>
 ): Promise<{ status: number; data: unknown }> {
   const tenantId = ENV_TENANT_ID ?? tenantIdFromHeader;
@@ -25,15 +26,16 @@ export async function handleAdminInvoke(
       const baseCtx = await createBaseContext({
         tenantId,
         tx,
-        loggerTopic: `admin:${adminPath}`,
+        loggerTopic: `widget:${widgetPath}`,
       });
 
       const ctx: HandlerContext = {
         ...baseCtx,
-        payload: body,
-        trigger: "admin",
-        adminPath,
-        adminBody: body,
+        payload: {},
+        trigger: "widget",
+        widgetPath,
+        widgetBody: body,
+        customerId: (body.customerId as string | null) ?? null,
       };
 
       result = await mod.handler(ctx);

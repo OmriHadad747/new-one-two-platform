@@ -2,7 +2,7 @@ import { WidgetMockup } from "@/components/features/generation/WidgetMockup";
 import type { App } from "@/types/dashboard";
 
 export function PreviewView({ app }: { app: App }) {
-  if (app.appArchetype === "backend_only") {
+  if (app.appArchetype === "backend") {
     return (
       <div className="max-w-[420px] bg-raised border border-white/7 rounded-xl p-8 text-center">
         <div className="text-4xl mb-4">⚙️</div>

@@ -49,7 +49,7 @@ from subagents.base import CodegenContext, Generator
 from subagents.architect_agent import run_architect_agent
 from subagents.codespec_agent import run_codespec_agent
 from subagents.registry import GENERATORS
-from subagents.validation import validate_architect, validate_codespec, validate_cross_artifact
+from subagents.validation import validate_architect, validate_codespec, validate_cross_artifact, validate_cross_artifact_admin
 
 log = logging.getLogger(__name__)
 
@@ -111,6 +111,9 @@ def run_feature_generation(request: GenerationRequest) -> None:
         _emit(request, "architect", "running", "Planning Shopify API surface…")
         t0 = _now_ms()
 
+        # appCategory (product agent) is the ground truth for archetype decision.
+        archetype = intent.get("appCategory")
+
         api_context = fetch_api_context(
             intent.get("resources", []),
             intent_description=intent.get("desiredOutcome", ""),
@@ -122,11 +125,11 @@ def run_feature_generation(request: GenerationRequest) -> None:
             architect_output = run_architect_agent(
                 prompt=request.prompt,
                 intent=intent,
-                app_archetype=request.appArchetype,
+                app_archetype=archetype,
                 api_context=api_context,
                 validation_errors=arch_errors if arch_attempt > 1 else None,
             )
-            arch_errors = validate_architect(architect_output, app_archetype=request.appArchetype)
+            arch_errors = validate_architect(architect_output, app_archetype=archetype)
 
             if not arch_errors:
                 break
@@ -245,19 +248,27 @@ def run_feature_generation(request: GenerationRequest) -> None:
         )
 
         # ── Agent 4: Parallel CodeGen + Agent 5: Validation (retry loop) ────
-        _emit(request, "codegen", "running", "Generating feature code…")
+        
+        # appCategory (product agent) is the ground truth for archetype decision.
+        archetype = intent["appCategory"]
+        is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
+        is_admin_ui = archetype == "storefront_backend_admin"
+
+        log.info("job=%s decided_archetype=%s is_storefront=%s is_admin_ui=%s", 
+                 request.jobId, archetype, is_storefront, is_admin_ui)
+
+        _emit(request, "handler", "running", "Generating backend handler…")
+        _emit(request, "migration", "running", "Writing DB migration…")
+        if is_storefront:
+            _emit(request, "widget_js", "running", "Generating storefront widget…")
+        if is_admin_ui:
+            _emit(request, "admin_ui", "running", "Generating admin panel…")
+        
         t0 = _now_ms()
 
         # widgetApiCatalog is decided by the Architect agent based on what this
         # specific feature needs — not hardcoded by the platform.
         catalog_dicts = (plan.get("implementationSpec") or {}).get("widgetApiCatalog") or []
-
-        # appCategory (product agent) and appArchetype (GenerationRequest) share
-        # the same vocabulary — use appCategory when present, fall back to request.
-        archetype = intent.get("appCategory") or request.appArchetype
-
-        is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
-        is_admin_ui = archetype == "storefront_backend_admin"
 
         # ── Extract prior artifacts for revision context ─────────────────────
         prior_bundle = request.priorBundle or {}
@@ -301,7 +312,13 @@ def run_feature_generation(request: GenerationRequest) -> None:
                         outputTokens=0,
                     )
                 )
-                _emit(request, "codegen", "completed", "Code generation complete")
+                _emit(request, "handler", "completed", "Handler complete")
+                _emit(request, "migration", "completed", "Migration complete")
+                if is_storefront:
+                    _emit(request, "widget_js", "completed", "Widget complete")
+                if is_admin_ui:
+                    _emit(request, "admin_ui", "completed", "Admin UI complete")
+                
                 _emit(request, "validation", "running", "Validating generated artifacts…")
 
             error_map = _validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
@@ -512,6 +529,21 @@ def _validate_artifacts(
             artifacts.get("handler", ""),
         )
         for gen_name, errs in cross_errors.items():
+            if errs:
+                error_map.setdefault(gen_name, []).extend(errs)
+
+    # Admin UI ↔ handler cross-artifact check: verify bridge.call() paths and
+    # field names are handled inside the ctx.trigger === 'admin' block
+    if (
+        is_admin_ui
+        and "admin_ui" not in error_map
+        and "handler" not in error_map
+    ):
+        admin_cross_errors = validate_cross_artifact_admin(
+            artifacts.get("admin_ui", ""),
+            artifacts.get("handler", ""),
+        )
+        for gen_name, errs in admin_cross_errors.items():
             if errs:
                 error_map.setdefault(gen_name, []).extend(errs)
 

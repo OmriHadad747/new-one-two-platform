@@ -18,7 +18,6 @@ class GenerationRequest(BaseModel):
     tenantId: str
     appId: str
     prompt: str
-    appArchetype: Literal["storefront_backend", "storefront_backend_admin", "backend"] = "backend"
     existingFeatures: List[str] = Field(default_factory=list)
     priorBundle: Optional[Dict[str, Any]] = None
     preComputedIntent: Optional[Dict[str, Any]] = None
@@ -29,8 +28,8 @@ class GenerationRequest(BaseModel):
 class ProgressEvent(BaseModel):
     jobId: str
     agent: Literal[
-        "intent", "schema", "architect", "codespec", "planner", "codegen", "widget_config",
-        "handler", "migration", "validation", "explanation"
+        "product", "architect", "codespec", "handler", "migration", 
+        "widget_js", "admin_ui", "validation", "explanation"
     ]
     status: Literal["running", "completed", "failed", "retrying"]
     message: str
@@ -65,8 +64,8 @@ class FeatureExplanation(BaseModel):
 
 
 class Bundle(BaseModel):
-    widgetModule: Optional[str] = None   # storefront ES module (storefront_ui apps)
-    adminUiModule: Optional[str] = None  # admin panel ES module (storefront_ui_admin apps)
+    widgetModule: Optional[str] = None   # storefront ES module (storefront_backend / storefront_backend_admin apps)
+    adminUiModule: Optional[str] = None  # admin panel ES module (storefront_backend_admin apps)
     handlerModule: HandlerModule
     dbMigration: DbMigration
     explanation: FeatureExplanation

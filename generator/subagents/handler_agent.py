@@ -8,7 +8,7 @@ requires them, keeping the context window focused on what actually applies:
   HARNESS_SECTION_WEBHOOK       — when webhookTopics is non-empty
   HARNESS_SECTION_STATE_MACHINE — when implementationSpec.stateMachine.needsStateTracking
   HARNESS_SECTION_CRON_BATCHING — when implementationSpec.cronBatching.required
-  HARNESS_SECTION_WIDGET        — when platform_api_catalog is non-empty (storefront_ui apps)
+  HARNESS_SECTION_WIDGET        — when platform_api_catalog is non-empty (storefront_backend / storefront_backend_admin apps)
 
 The codeSpec from the Planner is rendered as a numbered algorithm the generator
 implements literally — no interpretation, no gap-filling.

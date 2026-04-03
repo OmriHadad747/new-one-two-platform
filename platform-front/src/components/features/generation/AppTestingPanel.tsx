@@ -111,11 +111,20 @@ function DeployPanel({
   onDeploy: () => void;
   deploying: boolean;
 }) {
-  const archetype = app?.appArchetype ?? "backend_only";
+  const archetype = app?.appArchetype ?? "backend";
+  
+  // Use bundle info if available, otherwise fall back to app record
+  const effectiveHasAdmin = bundle?.hasAdminUI ?? archetype === "storefront_backend_admin";
+  const effectiveHasWidget = bundle?.hasWidget ?? (archetype === "storefront_backend" || archetype === "storefront_backend_admin");
+
   const triggerType = bundle?.triggerType ?? "webhook";
   const topics = bundle?.triggerTopics ?? [];
 
-  const archetypeLabel = archetype === "storefront_ui" ? "Widget + Backend" : "Backend only";
+  const archetypeLabel =
+    effectiveHasAdmin ? "Widget + Backend + Admin" :
+    effectiveHasWidget ? "Widget + Backend" :
+    "Backend only";
+
   const triggerLabel =
     triggerType === "cron"    ? "Scheduled (cron)"  :
     triggerType === "admin"   ? "Admin-triggered"   :
@@ -163,7 +172,7 @@ function DeployPanel({
       </button>
 
       <p className="text-[11px] text-faint text-center leading-relaxed">
-        Activates the handler and {archetype === "storefront_ui" ? "injects the widget into your theme" : "registers webhook subscriptions"}.
+        Activates the handler and {effectiveHasWidget ? "injects the widget into your theme" : "registers webhook subscriptions"}.
       </p>
     </div>
   );
@@ -207,7 +216,7 @@ function LivePanel({
     }
   };
 
-  const hasWidget = bundle?.hasWidget ?? app?.appArchetype === "storefront_ui";
+  const hasWidget = bundle?.hasWidget ?? (app?.appArchetype === "storefront_backend" || app?.appArchetype === "storefront_backend_admin");
   const storeFrontUrl = shopDomain ? `https://${shopDomain}` : null;
   const themeEditorUrl = shopDomain ? `https://${shopDomain}/admin/themes/current/editor` : null;
   const adminUrl = shopDomain ? `https://${shopDomain}/admin/apps` : null;
@@ -216,7 +225,7 @@ function LivePanel({
   const topicHint = triggerTopics.length > 0 ? `(${triggerTopics[0]})` : "in Shopify";
   const validateSteps = bundle?.explanation
     ? bundle.explanation.split(/\n+/).filter(Boolean)
-    : app?.appArchetype === "storefront_ui"
+    : hasWidget
       ? [
           "Open your store and navigate to a product page.",
           "The widget should appear — interact with it.",

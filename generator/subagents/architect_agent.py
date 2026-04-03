@@ -18,6 +18,7 @@ Output: { shopifyPlan, implementationSpec }  — WITHOUT implementationSpec.code
 
 Model: claude-sonnet-4-6
 """
+
 from __future__ import annotations
 
 import json
@@ -115,11 +116,11 @@ migrationGuidance: 1-2 sentences on schema decisions — column nullability, sen
   (typically tenant_id, entity_id, customer_email). Use CONSTRAINT uq_<table>_<key> UNIQUE (...).
   This enables ON CONFLICT DO NOTHING inserts.
 
-widgetGuidance: 1-2 UX sentences for the storefront widget (null if appArchetype is backend_only).
+widgetGuidance: 1-2 UX sentences for the storefront widget (null if appArchetype is backend).
   Focus on UX implications of platformGaps (e.g. "show 'you will be notified' not 'email sent'").
 
-widgetApiCatalog: null for backend_only apps.
-  For storefront_ui apps: the exact paths the widget will call via host.call().
+widgetApiCatalog: null for backend apps.
+  For storefront_backend / storefront_backend_admin apps: the exact paths the widget will call via host.call().
   Decide based on what this specific feature requires — do not add speculative extras.
   Before adding any path: ask "can the widget get this data from host.storefront() instead?"
   If yes → add to storefrontReads, not widgetApiCatalog.
@@ -146,8 +147,8 @@ widgetApiCatalog: null for backend_only apps.
   Store customer_id BIGINT (Shopify customer ID) in the subscriptions table alongside
   customer_email so both logged-in and guest flows are supported.
 
-storefrontReads: null for backend_only apps.
-  For storefront_ui apps: list Shopify public endpoints the widget reads directly via
+storefrontReads: null for backend apps.
+  For storefront_backend / storefront_backend_admin apps: list Shopify public endpoints the widget reads directly via
   host.storefront() — data the widget can fetch without a backend call.
   Use this instead of widgetApiCatalog entries when the data is publicly available
   from Shopify's storefront (no auth, no DB, no Admin API needed).
@@ -167,7 +168,7 @@ storefrontReads: null for backend_only apps.
   CRITICAL: Do NOT add a widgetApiCatalog path whose sole purpose is to proxy publicly
   available Shopify storefront data. That is a wasted backend call.
 
-adminApiCatalog: null unless app archetype is "storefront_ui_admin" OR the app has trigger="admin".
+adminApiCatalog: null unless app archetype is "storefront_backend_admin" OR the app has trigger="admin".
   The Admin UI panel embedded in Shopify Admin calls these paths via bridge.call().
   Each path is handled by the same backend handler — ctx.trigger === 'admin'.
   Rules:
@@ -263,7 +264,7 @@ def run_architect_agent(
     intent:
         Parsed intent from run_intent_agent().
     app_archetype:
-        "storefront_ui" | "backend_only"
+        "storefront_backend" | "storefront_backend_admin" | "backend"
     api_context:
         Live Shopify API context from fetch_api_context() — REST endpoints,
         GraphQL schema, webhook topics. Empty string if MCP unavailable.

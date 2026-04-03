@@ -28,7 +28,12 @@ function StatusBadge({ status }: { status: App["status"] }) {
 }
 
 function ArchetypeBadge({ archetype }: { archetype: App["appArchetype"] }) {
-  const label = archetype === "storefront_ui" ? "Widget + Backend" : "Backend only";
+  const label =
+    archetype === "backend"
+      ? "Backend only"
+      : archetype === "storefront_backend"
+        ? "Widget + Backend"
+        : "Widget + Backend + Admin";
   return (
     <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-accent/8 text-accent">
       {label}

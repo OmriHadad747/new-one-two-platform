@@ -1,0 +1,24 @@
+{
+  "name": "@new-one-two/harness-runtime",
+  "version": "0.1.0",
+  "description": "Execution service for AI-generated code",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/server.ts --bundle --platform=node --target=node20 --outfile=dist/server.cjs --external:@google-cloud/secret-manager --external:@google-cloud/kms --external:google-auth-library",
+    "dev": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "fastify": "^4.28.0",
+    "@new-one-two/harness": "workspace:*",
+    "@new-one-two/db": "workspace:*",
+    "@new-one-two/crypto": "workspace:*",
+    "@new-one-two/logger": "workspace:*",
+    "@new-one-two/types": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

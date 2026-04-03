@@ -55,7 +55,7 @@ class CodegenContext:
                         (codeSpec, stateMachine, platformGaps, cronBatching, guidance).
                         Replaces the former separate api_plan + strategy fields.
     platform_api_catalog Allowed backend paths for widget host.call(). Empty for
-                        backend_only apps but always present so generators don't
+                        backend apps but always present so generators don't
                         need to guard against None.
     previous_errors     Validation errors from the prior attempt on THIS generator.
                         None on the first attempt. Used to build a retry prompt.
@@ -63,7 +63,7 @@ class CodegenContext:
                         revision runs. Agents should treat this as the starting point
                         and apply the merchant's feedback as a diff, not a rewrite.
     prior_widget_code   The currently deployed widget ES module, present only on
-                        revision runs for storefront_ui apps.
+                        revision runs for storefront_backend / storefront_backend_admin apps.
     prior_migration_sql The DDL that was already applied to the DB, present only on
                         revision runs. The migration agent must only emit incremental
                         DDL (new tables or ADD COLUMN) — never recreate existing tables.

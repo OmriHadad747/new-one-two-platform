@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from models.adapter import get_llm, invoke, invoke_conversation, extract_json
-from mcp import client as mcp_client
+from shopify_mcp import client as mcp_client
 
 # ─── API context loader ───────────────────────────────────────────────────────
 
@@ -68,10 +68,10 @@ Rules:
 - resources: only include what the feature actually reads or writes.
 - desiredOutcome: describe the outcome from the merchant's or customer's perspective, not the implementation.
 - cronSchedule: set to a cron string only if "cron" is in triggerTypes.
-- appCategory:
-    - "storefront_backend": Widget on the storefront. Backend stores config or processes webhook events into DB. No Admin UI.
-    - "storefront_backend_admin": Widget on the storefront for customer interaction, plus a merchant-facing dashboard embedded in the Shopify Admin.
-    - "backend": No storefront widget. Apps are fully automatic (webhook/cron) or admin-triggered via a Polaris UI.
+- appCategory selection:
+    - "storefront_backend": REQUIRED if "widget" is in triggerTypes. Used for apps with a storefront widget for customer interaction.
+    - "storefront_backend_admin": REQUIRED if "widget" is in triggerTypes AND the merchant needs a dedicated dashboard in Shopify Admin to view data or settings.
+    - "backend": ONLY for fully automatic apps (webhook/cron) or pure admin action tools. NO storefront widget.
 - Output ONLY the JSON object"""
 
 

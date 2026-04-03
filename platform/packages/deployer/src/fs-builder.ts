@@ -7,8 +7,8 @@ import { buildDockerfile } from "./dockerfile-template.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Path to the pre-built harness bundle in the monorepo
-const HARNESS_BUNDLE = path.resolve(__dirname, "../../harness/dist/server.cjs");
-const HARNESS_RUNTIME_PACKAGE = path.resolve(__dirname, "../../harness/runtime-package.json");
+const HARNESS_BUNDLE = path.resolve(__dirname, "../../../apps/harness-runtime/dist/server.cjs");
+const HARNESS_RUNTIME_PACKAGE = path.resolve(__dirname, "../../../apps/harness-runtime/runtime-package.json");
 
 export async function createBuildContext(
   appId: string,
