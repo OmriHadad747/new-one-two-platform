@@ -57,7 +57,7 @@ export function DashboardPage() {
     return (
       <>
         <TopBar title="Dashboard" />
-        <EmptyApps onNew={() => navigate("/new")} />
+        <EmptyApps onNew={() => navigate("/app/new")} />
       </>
     );
   }
@@ -68,7 +68,7 @@ export function DashboardPage() {
         title="Dashboard"
         subtitle={shopDomain ?? tenantId}
         actions={
-          <Button variant="primary" onClick={() => navigate("/new")}>
+          <Button variant="primary" onClick={() => navigate("/app/new")}>
             ✦ New App
           </Button>
         }
@@ -94,7 +94,7 @@ export function DashboardPage() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-bold text-ink">Your Apps</h2>
           {apps.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={() => navigate("/apps")}>
+            <Button variant="ghost" size="sm" onClick={() => navigate("/app/apps")}>
               View all
             </Button>
           )}
@@ -108,12 +108,12 @@ export function DashboardPage() {
           />
         )}
         {!appsQuery.isLoading && !appsQuery.isError && apps.length === 0 && (
-          <EmptyApps onNew={() => navigate("/new")} />
+          <EmptyApps onNew={() => navigate("/app/new")} />
         )}
         {apps.length > 0 && (
           <AppGrid
             apps={apps.slice(0, 6)}
-            onSelect={(app) => navigate(`/apps/${app.id}`)}
+            onSelect={(app) => navigate(`/app/apps/${app.id}`)}
           />
         )}
 

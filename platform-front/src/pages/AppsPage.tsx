@@ -89,7 +89,7 @@ export function AppsPage() {
     return (
       <>
         <TopBar title="My Apps" />
-        <EmptyApps onNew={() => navigate("/new")} />
+        <EmptyApps onNew={() => navigate("/app/new")} />
       </>
     );
   }
@@ -107,7 +107,7 @@ export function AppsPage() {
             <Button
               variant="primary"
               size="sm"
-              onClick={() => navigate("/new")}
+              onClick={() => navigate("/app/new")}
             >
               ↺ Regenerate
             </Button>
@@ -120,7 +120,7 @@ export function AppsPage() {
           activeId={activeAppId ?? ""}
           onSelect={(app) => {
             setActiveAppId(app.id);
-            navigate(`/apps/${app.id}`, { replace: true });
+            navigate(`/app/apps/${app.id}`, { replace: true });
           }}
         />
 

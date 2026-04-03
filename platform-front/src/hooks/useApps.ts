@@ -48,6 +48,23 @@ export function useExecutionLogs(tenantId: string | null, limit = 20) {
   });
 }
 
+/**
+ * Polls execution logs filtered to a single app every 5 seconds.
+ * Used by the AppTestingPanel to show live backend activity.
+ */
+export function useAppLogs(tenantId: string | null, appId: string | null, enabled = false) {
+  return useQuery({
+    queryKey: ["app-logs", tenantId, appId],
+    queryFn: async () => {
+      const all = await api.tenants.logs(tenantId!, 50);
+      return all.filter((l) => l.appId === appId);
+    },
+    enabled: !!tenantId && !!appId && enabled,
+    staleTime: 0,
+    refetchInterval: 5_000,
+  });
+}
+
 export function useCreateApp(tenantId: string) {
   const qc = useQueryClient();
   return useMutation({

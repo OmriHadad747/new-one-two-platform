@@ -6,6 +6,6 @@ import { useSessionStore } from "@/stores/session";
  */
 export function RequireAuth() {
   const tenantId = useSessionStore((s) => s.tenantId);
-  if (!tenantId) return <Navigate to="/welcome" replace />;
+  if (!tenantId) return <Navigate to="/" replace />;
   return <Outlet />;
 }

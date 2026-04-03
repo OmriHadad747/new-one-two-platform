@@ -13,9 +13,10 @@ interface ChatInputProps {
   onChange: (v: string) => void;
   onSubmit: () => void;
   disabled?: boolean;
+  placeholder?: string;
 }
 
-export function ChatInput({ value, onChange, onSubmit, disabled }: ChatInputProps) {
+export function ChatInput({ value, onChange, onSubmit, disabled, placeholder }: ChatInputProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -27,7 +28,7 @@ export function ChatInput({ value, onChange, onSubmit, disabled }: ChatInputProp
 
   return (
     <div className="px-5 py-4 border-t border-white/7 bg-surface shrink-0">
-      <div className="flex gap-2 mb-2.5 flex-wrap">
+      {!placeholder && <div className="flex gap-2 mb-2.5 flex-wrap">
         {HINTS.map((h) => (
           <button
             key={h}
@@ -38,7 +39,7 @@ export function ChatInput({ value, onChange, onSubmit, disabled }: ChatInputProp
             {h}
           </button>
         ))}
-      </div>
+      </div>}
       <div
         className={cn(
           "flex gap-2.5 items-end bg-raised border rounded-xl px-3.5 py-2.5 transition-colors duration-150",
@@ -52,7 +53,7 @@ export function ChatInput({ value, onChange, onSubmit, disabled }: ChatInputProp
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKey}
           disabled={disabled}
-          placeholder="Describe the feature you want to build..."
+          placeholder={placeholder ?? "Describe the feature you want to build..."}
           className="flex-1 bg-transparent border-0 outline-none resize-none font-sans text-sm text-ink placeholder:text-faint min-h-[22px] max-h-[120px] leading-relaxed disabled:opacity-50"
         />
         <button

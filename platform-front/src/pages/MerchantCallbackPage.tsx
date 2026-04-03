@@ -27,7 +27,7 @@ export function MerchantCallbackPage() {
     api.tenants.get(tenantId)
       .then((tenant) => {
         setTenant(tenant.id, tenant.shopDomain ?? "", tenant.plan);
-        navigate("/", { replace: true });
+        navigate("/app", { replace: true });
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to load store.");
@@ -41,7 +41,7 @@ export function MerchantCallbackPage() {
         <p className="text-sm text-danger">{error}</p>
         <button
           type="button"
-          onClick={() => navigate("/welcome")}
+          onClick={() => navigate("/")}
           className="text-xs text-faint px-3 py-1.5 border border-white/13 rounded-lg hover:text-ink transition-all bg-transparent cursor-pointer"
         >
           ← Back to install

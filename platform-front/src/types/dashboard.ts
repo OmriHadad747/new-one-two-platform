@@ -119,3 +119,28 @@ export interface GenerationState {
   completedEvent: CompletedEvent | null;
   error: string | null;
 }
+
+// ─── Generation Result Bundle ─────────────────────────────────────────────────
+
+/**
+ * Partial shape of what the generator puts in bundle.
+ * Only the fields the frontend needs — the full bundle lives server-side.
+ */
+export interface GenerationBundle {
+  /** AI-generated, step-by-step testing instructions for this specific app. */
+  explanation?: string;
+  /** Webhook topics this app subscribes to — e.g. ["orders/create"]. */
+  triggerTopics?: string[];
+  /** How the handler is invoked: webhook driven, cron, admin UI, or widget call. */
+  triggerType?: "webhook" | "cron" | "admin" | "widget";
+  /** True when a storefront widget module was generated. */
+  hasWidget?: boolean;
+  /** True when an Admin UI (Polaris) component was generated. */
+  hasAdminUI?: boolean;
+}
+
+export interface GenerationResult {
+  status: "running" | "completed" | "failed";
+  bundle?: GenerationBundle;
+  error?: string;
+}

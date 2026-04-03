@@ -3,7 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { Shell } from "@/components/layout/Shell";
 import { RequireAuth } from "@/components/layout/RequireAuth";
-import { WelcomePage } from "@/pages/WelcomePage";
+import { LandingPage } from "@/pages/LandingPage";
+import { InstallPage } from "@/pages/InstallPage";
 import { MerchantCallbackPage } from "@/pages/MerchantCallbackPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { NewAppPage } from "@/pages/NewAppPage";
@@ -21,14 +22,18 @@ const queryClient = new QueryClient({
 });
 
 const router = createBrowserRouter([
-  // Post-OAuth redirect target — fetches tenant, saves session, goes to "/"
-  { path: "merchants/:tenantId", element: <MerchantCallbackPage /> },
+  // ─── Public standalone pages (no sidebar shell) ──────────────────────────
+  { path: "/", element: <LandingPage /> },
+  { path: "/install", element: <InstallPage /> },
 
+  // ─── Post-OAuth redirect — fetches tenant, saves session, goes to /app ───
+  { path: "/merchants/:tenantId", element: <MerchantCallbackPage /> },
+
+  // ─── Authenticated app shell ─────────────────────────────────────────────
   {
+    path: "/app",
     element: <Shell />,
     children: [
-      { path: "welcome", element: <WelcomePage /> },
-      // ─── Authenticated routes (require session) ───────────────────────────────
       {
         element: <RequireAuth />,
         children: [

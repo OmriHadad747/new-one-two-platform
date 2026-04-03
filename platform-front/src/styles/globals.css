@@ -1,22 +1,26 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Syne", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Space Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-  --color-base: #0a0a0f;
-  --color-surface: #0f0f17;
-  --color-raised: #13131e;
+  /* ── Backgrounds ─────────────────────────────────────────── */
+  --color-base: #131318;       /* page background              */
+  --color-surface: #1b1b20;    /* cards / sidebar              */
+  --color-raised: #1f1f24;     /* elevated elements            */
+  --color-elevated: #2a292f;   /* hover states / deep cards    */
 
-  --color-accent: #7c6af5;
-  --color-accent-hi: #8f7ef7;
-  --color-teal: #4ecdc4;
-  --color-amber: #f7931e;
-  --color-danger: #f05d5d;
+  /* ── Brand ───────────────────────────────────────────────── */
+  --color-accent: #a78bfa;     /* primary violet               */
+  --color-accent-hi: #c4b5fd;  /* violet hover / highlight     */
+  --color-teal: #5de6ff;       /* secondary cyan               */
+  --color-amber: #c0c1ff;      /* tertiary indigo              */
+  --color-danger: #ffb4ab;     /* error / destructive          */
 
-  --color-ink: #e8e8f0;
-  --color-muted: #9898b8;
-  --color-faint: #6b6b85;
+  /* ── Text ────────────────────────────────────────────────── */
+  --color-ink: #e4e1e9;        /* primary text                 */
+  --color-muted: #cbc3d7;      /* secondary text               */
+  --color-faint: #958ea0;      /* placeholder / tertiary text  */
 }
 
 @layer base {
@@ -54,29 +58,47 @@
     font-family: var(--font-mono);
   }
 
+  /* Glassmorphism card */
+  .glass-card {
+    background: rgba(31, 31, 36, 0.6);
+    backdrop-filter: blur(24px);
+    border: 1px solid rgba(149, 142, 160, 0.15);
+  }
+
+  /* Kinetic button lift */
+  .kinetic-btn:hover {
+    box-shadow: 0 0 20px rgba(167, 139, 250, 0.35);
+    transform: translateY(-1px);
+  }
+
+  /* Hero ambient glow */
+  .hero-glow {
+    position: absolute;
+    width: 600px;
+    height: 600px;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle,
+      rgba(167, 139, 250, 0.08) 0%,
+      rgba(19, 19, 24, 0) 70%
+    );
+    z-index: 0;
+    pointer-events: none;
+  }
+
   .animate-blink {
     animation: blink 1s step-start infinite;
   }
   @keyframes blink {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0;
-    }
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
   }
 
   .animate-pulse-subtle {
     animation: pulse-subtle 2s ease-in-out infinite;
   }
   @keyframes pulse-subtle {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.5;
-    }
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.5; }
   }
 }

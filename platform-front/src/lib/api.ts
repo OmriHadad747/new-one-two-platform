@@ -5,6 +5,7 @@ import type {
   ExecutionLogEntry,
   StartGenerationRequest,
   StartGenerationResponse,
+  GenerationResult,
 } from "@/types/dashboard";
 
 const BASE = "/api";
@@ -52,7 +53,7 @@ export const api = {
         body: JSON.stringify(body),
       }),
     result: (jobId: string) =>
-      request<{ status: string; bundle?: unknown }>(`/generation/${jobId}/result`),
+      request<GenerationResult>(`/generation/${jobId}/result`),
     approve: (jobId: string) =>
       request<{ deployed: boolean }>(`/generation/${jobId}/approve`, {
         method: "POST",
@@ -65,5 +66,16 @@ export const api = {
       }),
     progressStream: (jobId: string) =>
       new EventSource(`${BASE}/generation/${jobId}/progress`),
+  },
+  widgets: {
+    /**
+     * Fire a manual test event against a deployed app handler.
+     * Routes through the existing widget proxy → Cloud Run function.
+     */
+    trigger: (shopDomain: string, appId: string, payload: Record<string, unknown> = {}) =>
+      request<Record<string, unknown>>(`/widgets/${encodeURIComponent(shopDomain)}/${appId}/widget/trigger`, {
+        method: "POST",
+        body: JSON.stringify({ test: true, ...payload }),
+      }),
   },
 } as const;
