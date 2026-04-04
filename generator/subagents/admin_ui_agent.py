@@ -24,13 +24,14 @@ Only runs for storefront_backend_admin apps and backend apps with trigger="admin
 
 Model: claude-sonnet-4-6 (prefers_code_model = True)
 """
+
 from __future__ import annotations
 
 import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
-from subagents.validation import validate_admin_ui
+from subagents.validation import validate_admin_ui_artifact
 
 
 _SYSTEM_PROMPT = """You are generating a Shopify Admin embedded panel as a self-contained JavaScript ES module.
@@ -68,14 +69,16 @@ RULES:
 1. Export ONLY a named `mount` function: export function mount(container, bridge) { ... }
 2. Render only inside `container` — never access the DOM outside it.
 3. All backend requests use bridge.call(). NEVER use raw fetch(), XMLHttpRequest, or hardcoded URLs.
-4. Never access window.*, document.* outside of container.querySelector patterns.
-   EXCEPTION: do NOT use window.location — the admin panel has no meaningful URL context.
-5. Never use eval(), Function(), setTimeout (except for debounce with < 500ms), setInterval.
-6. Never hardcode tenant IDs, shop domains, or entity IDs — read from bridge.context.
-7. All bridge.call() paths must come from the adminApiCatalog — never invent paths.
-8. Output ONLY the raw JavaScript — no markdown fences, no explanation, no comments outside the code.
-9. Handle all bridge.call() rejections gracefully — show an error message in the UI.
-10. If adminApiCatalog is empty, render a clear "Backend not configured" message.
+4. Never access window.* globals.
+5. Never access document.* directly — only use container.querySelector / container.querySelectorAll /
+   container.getElementById for DOM access. Validation rejects direct document.* calls.
+   EXCEPTION: document.createElement and document.createTextNode are allowed for building DOM nodes.
+6. Never use eval(), Function(), setTimeout (except for debounce with < 500ms), setInterval.
+7. Never hardcode tenant IDs, shop domains, or entity IDs — read from bridge.context.
+8. All bridge.call() paths must come from the adminApiCatalog — never invent paths.
+9. Output ONLY the raw JavaScript — no markdown fences, no explanation, no comments outside the code.
+10. Handle all bridge.call() rejections gracefully — show an error message in the UI.
+11. If adminApiCatalog is empty, render a clear "Backend not configured" message.
 
 LAYOUT PATTERNS:
   Read-only dashboard (list + stats):
@@ -131,14 +134,16 @@ class AdminUiGenerator(Generator):
         text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE)
         text = text.strip()
         # Strip any leading prose before the JS code.
-        js_start = re.search(r"^(export\s|const\s|let\s|var\s|function\s|//|/\*)", text, re.MULTILINE)
+        js_start = re.search(
+            r"^(export\s|const\s|let\s|var\s|function\s|//|/\*)", text, re.MULTILINE
+        )
         if js_start and js_start.start() > 0:
-            text = text[js_start.start():]
+            text = text[js_start.start() :]
         return text.strip()
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         admin_catalog = _extract_admin_catalog(ctx.plan)
-        return validate_admin_ui(artifact, admin_catalog)
+        return validate_admin_ui_artifact(artifact, admin_catalog)
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────

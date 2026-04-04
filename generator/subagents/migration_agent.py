@@ -13,6 +13,7 @@ migration-specific guidance from migrationGuidance.
 
 Model: claude-haiku (prefers_code_model = False — DDL is simpler than handler code)
 """
+
 from __future__ import annotations
 
 import json
@@ -20,7 +21,7 @@ import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
-from subagents.validation import validate_migration
+from subagents.validation import validate_migration_artifact
 
 _SYSTEM_PROMPT = """You are a PostgreSQL database expert generating tenant-scoped migrations.
 
@@ -126,7 +127,7 @@ class MigrationGenerator(Generator):
         return sql
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
-        return validate_migration(artifact)
+        return validate_migration_artifact(artifact)
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────
@@ -191,6 +192,5 @@ def _extract_codespec_sql_steps(plan: Dict[str, Any]) -> List[str]:
 
     sql_keywords = ("SELECT", "INSERT", "UPDATE", "UPSERT", "DELETE")
     return [
-        step for step in all_steps
-        if any(kw in step.upper() for kw in sql_keywords)
+        step for step in all_steps if any(kw in step.upper() for kw in sql_keywords)
     ]

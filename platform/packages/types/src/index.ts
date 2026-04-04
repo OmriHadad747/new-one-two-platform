@@ -30,8 +30,9 @@ export type ExecutionStatus = "queued" | "running" | "success" | "failed" | "tim
 //   backend                — webhook/cron handler only, no storefront widget
 //   storefront_backend     — handler + storefront widget
 //   storefront_backend_admin — handler + storefront widget + admin UI panel
+//   backend_admin          — handler + admin UI panel (no storefront widget)
 
-export type AppArchetype = "storefront_backend" | "storefront_backend_admin" | "backend";
+export type AppArchetype = "storefront_backend" | "storefront_backend_admin" | "backend" | "backend_admin";
 
 // ─── Tenant ──────────────────────────────────────────────────────────────────
 

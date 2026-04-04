@@ -809,7 +809,8 @@ export async function resolveAdminUiJs(
   `;
 
   const row = rows[0];
-  if (!row || row.appArchetype !== "storefront_backend_admin" || !row.adminUiJs) return null;
+  const hasAdmin = row?.appArchetype === "storefront_backend_admin" || row?.appArchetype === "backend_admin";
+  if (!row || !hasAdmin || !row.adminUiJs) return null;
   return { adminUiJs: row.adminUiJs, functionUrl: row.functionUrl };
 }
 

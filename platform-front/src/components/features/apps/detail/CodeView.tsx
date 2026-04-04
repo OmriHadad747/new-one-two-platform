@@ -19,8 +19,8 @@ export function CodeView({ app }: { app: App }) {
           </pre>
         ) : (
           <span className="text-faint italic">
-            {app.appArchetype === "backend"
-              ? "Backend-only app — no widget JS"
+            {app.appArchetype === "backend" || app.appArchetype === "backend_admin"
+              ? "No widget JS for this archetype"
               : "Widget JS not yet generated"}
           </span>
         )}

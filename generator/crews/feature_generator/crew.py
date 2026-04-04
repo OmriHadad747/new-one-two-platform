@@ -27,7 +27,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 
-from contract.publisher import publish_completed, publish_progress
+import contract.publisher as _contract_publisher
 from contract.validators import (
     Bundle,
     DbMigration,
@@ -49,7 +49,12 @@ from subagents.base import CodegenContext, Generator
 from subagents.architect_agent import run_architect_agent
 from subagents.codespec_agent import run_codespec_agent
 from subagents.registry import GENERATORS
-from subagents.validation import validate_architect, validate_codespec, validate_cross_artifact, validate_cross_artifact_admin
+from subagents.validation import (
+    validate_architect_plan,
+    validate_codespec_plan,
+    validate_widget_handler_contract,
+    validate_admin_handler_contract,
+)
 
 log = logging.getLogger(__name__)
 
@@ -76,7 +81,7 @@ def _emit(
             message=message,
             timestampMs=_now_ms(),
         )
-        publish_progress(event)
+        _contract_publisher.publish_progress(event)
     except Exception:
         log.exception(
             "Failed to publish progress event agent=%s status=%s", agent, status
@@ -129,7 +134,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
                 api_context=api_context,
                 validation_errors=arch_errors if arch_attempt > 1 else None,
             )
-            arch_errors = validate_architect(architect_output, app_archetype=archetype)
+            arch_errors = validate_architect_plan(architect_output, app_archetype=archetype)
 
             if not arch_errors:
                 break
@@ -148,7 +153,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
                     "failed",
                     f"Architect validation failed: {arch_errors[0]}",
                 )
-                publish_completed(
+                _contract_publisher.publish_completed(
                     FeatureBundleMessage(
                         jobId=request.jobId,
                         status="failed",
@@ -191,7 +196,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
                 api_context=api_context,
                 validation_errors=cs_errors if cs_attempt > 1 else None,
             )
-            cs_errors = validate_codespec(codespec_output, architect_output)
+            cs_errors = validate_codespec_plan(codespec_output, architect_output)
 
             if not cs_errors:
                 break
@@ -210,7 +215,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
                     "failed",
                     f"CodeSpec validation failed: {cs_errors[0]}",
                 )
-                publish_completed(
+                _contract_publisher.publish_completed(
                     FeatureBundleMessage(
                         jobId=request.jobId,
                         status="failed",
@@ -252,7 +257,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
         # appCategory (product agent) is the ground truth for archetype decision.
         archetype = intent["appCategory"]
         is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
-        is_admin_ui = archetype == "storefront_backend_admin"
+        is_admin_ui = archetype in ("storefront_backend_admin", "backend_admin")
 
         log.info("job=%s decided_archetype=%s is_storefront=%s is_admin_ui=%s", 
                  request.jobId, archetype, is_storefront, is_admin_ui)
@@ -295,7 +300,13 @@ def run_feature_generation(request: GenerationRequest) -> None:
         error_map: Dict[str, List[str]] = {}
 
         for attempt in range(1, _MAX_RETRIES + 1):
-            artifacts = _run_codegen_parallel(
+            # On retries, emit "running" for every generator being re-run so the
+            # console shows spinners rather than going silent for the full LLM round-trip.
+            if attempt > 1:
+                for name in error_map:
+                    _emit(request, name, "running", f"Retrying (attempt {attempt}/{_MAX_RETRIES})…")  # type: ignore[arg-type]
+
+            artifacts = run_codegen_parallel(
                 base_ctx,
                 is_storefront=is_storefront,
                 is_admin_ui=is_admin_ui,
@@ -318,10 +329,14 @@ def run_feature_generation(request: GenerationRequest) -> None:
                     _emit(request, "widget_js", "completed", "Widget complete")
                 if is_admin_ui:
                     _emit(request, "admin_ui", "completed", "Admin UI complete")
-                
-                _emit(request, "validation", "running", "Validating generated artifacts…")
+            else:
+                # Emit completed for each generator that was retried
+                for name in list(error_map.keys()):
+                    _emit(request, name, "completed", f"Retry {attempt} complete")  # type: ignore[arg-type]
 
-            error_map = _validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
+            _emit(request, "validation", "running", "Validating generated artifacts…")
+
+            error_map = validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
 
             if not error_map:
                 break
@@ -344,7 +359,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
                     "failed",
                     f"Validation failed: {all_errors[0]}",
                 )
-                publish_completed(
+                _contract_publisher.publish_completed(
                     FeatureBundleMessage(
                         jobId=request.jobId,
                         status="failed",
@@ -357,7 +372,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
             _emit(
                 request,
                 "validation",
-                "running",
+                "retrying",
                 f"Fixing {failing} (attempt {attempt + 1}/{_MAX_RETRIES})…",
             )
 
@@ -415,7 +430,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
             agentTrace=agent_trace,
         )
 
-        publish_completed(
+        _contract_publisher.publish_completed(
             FeatureBundleMessage(
                 jobId=request.jobId,
                 status="success",
@@ -428,7 +443,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
     except Exception as exc:
         log.exception("job=%s unhandled error in run_feature_generation", request.jobId)
         try:
-            publish_completed(
+            _contract_publisher.publish_completed(
                 FeatureBundleMessage(
                     jobId=request.jobId,
                     status="failed",
@@ -442,7 +457,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
 # ── Parallel CodeGen ───────────────────────────────────────────────────────────
 
 
-def _run_codegen_parallel(
+def run_codegen_parallel(
     base_ctx: CodegenContext,
     *,
     is_storefront: bool,
@@ -495,7 +510,7 @@ def _run_codegen_parallel(
     return artifacts
 
 
-def _validate_artifacts(
+def validate_artifacts(
     artifacts: Dict[str, str],
     ctx: CodegenContext,
     is_storefront: bool,
@@ -524,7 +539,7 @@ def _validate_artifacts(
         and "widget_js" not in error_map
         and "handler" not in error_map
     ):
-        cross_errors = validate_cross_artifact(
+        cross_errors = validate_widget_handler_contract(
             artifacts.get("widget_js", ""),
             artifacts.get("handler", ""),
         )
@@ -539,7 +554,7 @@ def _validate_artifacts(
         and "admin_ui" not in error_map
         and "handler" not in error_map
     ):
-        admin_cross_errors = validate_cross_artifact_admin(
+        admin_cross_errors = validate_admin_handler_contract(
             artifacts.get("admin_ui", ""),
             artifacts.get("handler", ""),
         )

@@ -15,13 +15,14 @@ crew.py skips this generator for backend apps.
 
 Model: claude-sonnet-4-6 (prefers_code_model = True)
 """
+
 from __future__ import annotations
 
 import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
-from subagents.validation import validate_widget_js
+from subagents.validation import validate_widget_artifact
 
 _SYSTEM_PROMPT = """You are generating a Shopify storefront widget as a self-contained JavaScript ES module.
 
@@ -117,13 +118,15 @@ class WidgetJsGenerator(Generator):
         text = text.strip()
         # Strip any leading prose the model emitted before the JS code.
         # Widget modules always start with export/const/let/var/function/comment.
-        js_start = re.search(r"^(export\s|const\s|let\s|var\s|function\s|//|/\*)", text, re.MULTILINE)
+        js_start = re.search(
+            r"^(export\s|const\s|let\s|var\s|function\s|//|/\*)", text, re.MULTILINE
+        )
         if js_start and js_start.start() > 0:
-            text = text[js_start.start():]
+            text = text[js_start.start() :]
         return text.strip()
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
-        return validate_widget_js(artifact, ctx.platform_api_catalog)
+        return validate_widget_artifact(artifact, ctx.platform_api_catalog)
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────

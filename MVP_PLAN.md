@@ -6,7 +6,85 @@ Each app consists of up to three artifacts:
 
 - **Widget ES module** — client-side, sandboxed under the host API, runs in the storefront
 - **TypeScript handler** — server-side logic, has access to `ctx`
-- **Admin React/Polaris UI** — rendered inside the Shopify Admin iframe (only for apps that need a merchant dashboard)
+- **Admin UI ES module** — rendered inside the Shopify Admin embedded shell (only for Category B and D apps)
+
+---
+
+## Storefront Widget Runtime — How Multiple Apps Work Under One Shopify App
+
+The platform uses a **single Shopify app** (umbrella app) for all merchants. Multiple platform apps per merchant are supported through the App Block's `app_id` setting — not through multiple Shopify apps.
+
+### How it works
+
+1. **One theme extension** (`widget-runtime`) is deployed once and never changes.
+2. The App Block's Liquid template reads a shop-level metafield (`platform_app.base_url`) written during OAuth install — this points the block at the platform API without hardcoding any URL.
+3. The merchant places the App Block in their theme via the Theme Editor and sets `app_id` to the platform app's UUID.
+4. At page load, `widget-runtime.js` reads `data-app-id`, fetches `GET /widgets/:shop/:appId.js` from the platform, dynamically imports the ES module, and calls `widget.mount(container, host)`.
+5. **Multiple apps on one page**: the merchant can place as many App Block instances as they want in their theme, each with a different `app_id`. Each instance mounts independently in its own container. `widget-runtime.js` runs `mountBlock()` in parallel for all instances found on the page.
+6. The `host` object passed to each widget is scoped to that widget's `appId` — `host.call()` routes to that app's harness container, `host.context.shop` comes from the block's data attribute.
+
+### Key design properties
+
+- The block itself is a fixed, dumb loader — generating new apps requires zero theme changes.
+- `host.call()` and `host.storefront()` are the widget's only interfaces to the outside world. No direct fetch, no hardcoded URLs.
+- URL changes (Shopify's client-side variant picker uses `history.pushState`) are detected via a patched `pushState`/`replaceState` that fires a synthetic `urlchange` event, causing each widget to re-evaluate its page context.
+
+---
+
+## Admin UI — Embedded Shell Architecture
+
+### Two entry points, one platform
+
+The platform maintains two separate frontend applications:
+
+| App | URL | Purpose |
+|-----|-----|---------|
+| `platform-front` | `app.yourdomain.com` | Merchant-facing dashboard — generate apps, manage deployments, view logs |
+| `platform-shopify-admin` | `admin.yourdomain.com` | Shopify Admin embedded shell — renders each platform app's Admin UI module |
+
+These coexist independently. OAuth installs still redirect to `platform-front`. Merchants access `platform-shopify-admin` by clicking your app in their Shopify Admin sidebar.
+
+### How the embedded shell works
+
+`platform-shopify-admin` is a React app configured as a Shopify embedded app (`embedded = true` in `shopify.app.toml`). Shopify loads it inside their Admin iframe, giving it full App Bridge access — session tokens, their nav chrome, toasts.
+
+**On load:**
+1. App Bridge initialises and provides a signed `sessionToken` (JWT) identifying the merchant.
+2. The shell calls `GET /tenants/:shop/apps` on the platform API to fetch the list of the merchant's platform apps that have an `adminUiModule`.
+3. A sidebar renders one entry per app (e.g. "Back In Stock Notifier", "Order Exporter").
+4. When the merchant selects an app, the shell fetches `GET /admin-ui/:shop/:appId.js`, dynamically imports the ES module, and calls `mount(container, bridge)`.
+
+**The `bridge` object the shell provides:**
+```typescript
+{
+  context: { shop, tenantId },
+  call: async (path, body) => {
+    // Gets a fresh App Bridge session token on every call
+    const token = await getSessionToken(app);
+    return fetch(`/admin-ui/${shop}/${appId}/admin${path}`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    }).then(r => r.json());
+  },
+  notify: (message, variant) => {
+    // Delegates to App Bridge Toast API
+    Toast.show(app, { message, isError: variant === "error" });
+  },
+}
+```
+
+The `adminUiModule` has no awareness of App Bridge — it writes against `bridge.call()` and `bridge.notify()` exactly as specified. The shell is the only thing that changes.
+
+### Security: session token verification
+
+All `POST /admin-ui/:shop/:appId/admin/*` requests from the embedded shell carry `Authorization: Bearer <session_token>`. The platform API verifies the JWT signature using Shopify's public keys before forwarding to the harness. This replaces the current unauthenticated proxy and makes admin routes production-safe.
+
+### Multiple apps per merchant, nested pages
+
+- **Multiple apps**: the sidebar lists all the merchant's apps with an `adminUiModule`. Switching apps unmounts the current module and mounts the next one in the same container.
+- **Nested pages within a module**: each module owns its container's DOM entirely. Nested pages are client-side show/hide state inside the module — no routing needed at the shell level.
+- **App Bridge TitleBar**: the shell sets the Shopify Admin breadcrumb to the active platform app's name. Modules cannot access App Bridge directly.
 
 ---
 
@@ -42,8 +120,12 @@ Widget on the storefront for customer interaction, plus a merchant-facing dashbo
 *(Examples: Price Drop Alert, Back In Stock Notify Me)*
 
 ### Category C — Backend Only
-No storefront widget. Apps are either fully automatic (webhook or cron triggered) or admin-triggered via a Polaris UI.
-*(Examples: Order Thank You Email, Bulk Order Tagger, Image Size Optimizer)*
+No storefront widget, no custom Admin UI. Apps are fully automatic (webhook or cron triggered).
+*(Examples: Order Thank You Email, Abandoned Cart SMS, Image Size Optimizer)*
+
+### Category D — Backend + Admin UI
+No storefront widget. Includes a merchant-facing dashboard or control panel embedded in the Shopify Admin.
+*(Examples: Bulk Order Tagger, Custom Order CSV Exporter, App Configuration Dashboard)*
 
 ---
 
@@ -81,7 +163,16 @@ PDF and CSV are always free — generated in-process with zero marginal cost.
 ## Execution Phases
 
 ### Phase 0 — Foundation (~1.5 weeks)
-Harness updated with all new services (stubs where noted). Admin handler (App Bridge JWT validation) implemented. Generator prompts updated with all 3 categories and all ~21 app types. Each app type manually generated and tested end-to-end.
+Harness updated with all new services (stubs where noted). Generator prompts updated with all 4 categories and all ~21 app types. Each app type manually generated and tested end-to-end.
+
+`platform-shopify-admin` embedded shell built:
+- App Bridge initialisation + session token flow
+- `GET /tenants/:shop/apps` API endpoint
+- Sidebar listing merchant's platform apps with admin UI modules
+- Dynamic `adminUiModule` loader (`mount(container, bridge)`)
+- Bridge implementation: `call()` with session token, `notify()` via App Bridge Toast
+- Session token JWT verification middleware on `POST /admin-ui/:shop/:appId/admin/*`
+- `shopify.app.toml`: `embedded = true`, register `platform-shopify-admin` URL as app URL
 
 ### Phase 1 — Billing (~1 week)
 Shopify `RecurringApplicationCharge` integrated. Plan stored per tenant. Services and app creation gated by plan. Upgrade prompts in platform dashboard.

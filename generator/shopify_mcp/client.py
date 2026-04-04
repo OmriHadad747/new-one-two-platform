@@ -111,6 +111,10 @@ def _write_cache(key: str, data: Any, ttl: int = _CACHE_TTL_SECONDS) -> None:
 # ── Async MCP session ─────────────────────────────────────────────────────────
 
 
+_TOOL_TIMEOUT_SECONDS = 30   # per-tool call timeout
+_SESSION_TIMEOUT_SECONDS = 120  # total MCP session timeout (all calls combined)
+
+
 async def _run_session_async(calls: list[tuple[str, dict[str, Any]]]) -> list[Any]:
     """
     Spawn the MCP server exactly once and execute all tool calls in order.
@@ -120,47 +124,65 @@ async def _run_session_async(calls: list[tuple[str, dict[str, Any]]]) -> list[An
 
     Returns results in the same order as the input calls list (learn_shopify_api
     result is NOT included in the returned list).
+
+    Each individual tool call is guarded by _TOOL_TIMEOUT_SECONDS. The entire
+    session is also bounded by _SESSION_TIMEOUT_SECONDS so a hung MCP server
+    process can never block the pipeline indefinitely.
     """
     server_params = StdioServerParameters(
         command="npx",
         args=["--yes", "@shopify/dev-mcp@latest"],
         env={**os.environ, "npm_config_loglevel": "silent"},
     )
-    results: list[Any] = []
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
 
-            # Step 1: obtain conversationId
-            conversation_id: str | None = None
-            try:
-                learn_result = await session.call_tool(
-                    "learn_shopify_api",
-                    {"api": "admin", "model": "claude-sonnet-4-6"},
-                )
-                learn_text = _extract_text(learn_result)
-                # The conversationId is returned in the result content
-                cid_match = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", learn_text, re.IGNORECASE)
-                if cid_match:
-                    conversation_id = cid_match.group(0)
-                    log.debug("MCP conversationId: %s", conversation_id)
-                else:
-                    log.warning("MCP: could not extract conversationId from learn_shopify_api response")
-            except Exception as exc:
-                log.warning("MCP learn_shopify_api failed: %s", exc)
+    async def _run() -> list[Any]:
+        results: list[Any] = []
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
 
-            # Step 2: run the actual calls, injecting conversationId where needed
-            for tool_name, tool_args in calls:
-                enriched = dict(tool_args)
-                if conversation_id and "conversationId" not in enriched:
-                    enriched["conversationId"] = conversation_id
+                # Step 1: obtain conversationId
+                conversation_id: str | None = None
                 try:
-                    result = await session.call_tool(tool_name, enriched)
-                    results.append(result)
+                    learn_result = await asyncio.wait_for(
+                        session.call_tool("learn_shopify_api", {"api": "admin", "model": "claude-sonnet-4-6"}),
+                        timeout=_TOOL_TIMEOUT_SECONDS,
+                    )
+                    learn_text = _extract_text(learn_result)
+                    cid_match = re.search(
+                        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                        learn_text, re.IGNORECASE,
+                    )
+                    if cid_match:
+                        conversation_id = cid_match.group(0)
+                        log.debug("MCP conversationId: %s", conversation_id)
+                    else:
+                        log.warning("MCP: could not extract conversationId from learn_shopify_api response")
+                except asyncio.TimeoutError:
+                    log.warning("MCP learn_shopify_api timed out after %ds", _TOOL_TIMEOUT_SECONDS)
                 except Exception as exc:
-                    log.warning("MCP tool %r failed: %s", tool_name, exc)
-                    results.append(None)
-    return results
+                    log.warning("MCP learn_shopify_api failed: %s", exc)
+
+                # Step 2: run the actual calls, injecting conversationId where needed
+                for tool_name, tool_args in calls:
+                    enriched = dict(tool_args)
+                    if conversation_id and "conversationId" not in enriched:
+                        enriched["conversationId"] = conversation_id
+                    try:
+                        result = await asyncio.wait_for(
+                            session.call_tool(tool_name, enriched),
+                            timeout=_TOOL_TIMEOUT_SECONDS,
+                        )
+                        results.append(result)
+                    except asyncio.TimeoutError:
+                        log.warning("MCP tool %r timed out after %ds — skipping", tool_name, _TOOL_TIMEOUT_SECONDS)
+                        results.append(None)
+                    except Exception as exc:
+                        log.warning("MCP tool %r failed: %s", tool_name, exc)
+                        results.append(None)
+        return results
+
+    return await asyncio.wait_for(_run(), timeout=_SESSION_TIMEOUT_SECONDS)
 
 
 def _run_async(coro: Any) -> Any:

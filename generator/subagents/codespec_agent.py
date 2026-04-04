@@ -48,9 +48,10 @@ ABSOLUTE RULES — violations will cause codegen failures:
     If the email template needs a product URL, pass product_id or product_handle as a data field
     and let the email template construct the URL: e.g. data: { productHandle, variantId }.
   ALWAYS use ctx.tenantId for the tenant UUID — NEVER ctx.shop.tenant_id or ctx.tenant.id.
-  CRON PATH: the harness calls the handler once per tenant with ctx.tenantId already set.
-    Every SELECT in the cron path MUST include AND tenant_id = ${ctx.tenantId}.
-    NEVER fetch rows across all tenants in a cron SELECT.
+  ALL DB SELECT STEPS must include AND tenant_id = ${ctx.tenantId} — applies to every path
+    (webhookPath, cronPath, adminPath). NEVER query rows without a tenant_id filter.
+    ✅ "SELECT ... WHERE tenant_id = ${ctx.tenantId} AND entity_id = ${payloadEntityId}"
+    ❌ "SELECT ... WHERE notified_at IS NULL"  // missing tenant scope — validation error
 
 DB result checks MUST use .length, never array index:
   ALWAYS check rows.length === 0 to detect empty results — NEVER rows[0] === undefined.

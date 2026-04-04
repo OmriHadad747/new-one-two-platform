@@ -34,7 +34,9 @@ function ArchetypeBadge({ archetype }: { archetype: App["appArchetype"] }) {
       ? "Backend only"
       : archetype === "storefront_backend"
         ? "Widget + Backend"
-        : "Widget + Backend + Admin";
+        : archetype === "backend_admin"
+          ? "Backend + Admin"
+          : "Widget + Backend + Admin";
   return (
     <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-accent/8 text-accent">
       {label}

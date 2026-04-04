@@ -81,7 +81,7 @@ This catalog details the specific Shopify app types supported by the platform du
 ---
 
 ## Category C — Backend Only
-*No storefront widget. Apps are either fully automatic (webhook or cron triggered) or admin-triggered via a Polaris UI.*
+*No storefront widget, no custom Admin UI. Apps are fully automatic (webhook or cron triggered).*
 
 ### 12. Order Thank You Email
 *   **Similar Real App:** Klaviyo / Omnisend (for transactional emails)
@@ -113,6 +113,23 @@ This catalog details the specific Shopify app types supported by the platform du
 *   **Services Needed:** `ctx.db`, `ctx.services.email`.
 *   **Shopify Infra:** Cron (daily), Admin API (`inventoryLevels`).
 
+### 20. Image Alt Text Generator
+*   **Similar Real App:** SEO Image Optimizer
+*   **Flow:** Backend listens to `products/create` and `products/update` webhooks. It identifies images without alt text, sends the image URL to an AI service via `ctx.services.ai` (or `ctx.http`) to generate a descriptive alt text, and updates the Shopify product media via the Admin API.
+*   **Services Needed:** `ctx.db`, `ctx.http` (or `ctx.services.ai`).
+*   **Shopify Infra:** `products/create` & `update` webhooks, Admin API (`productUpdate`).
+
+### 21. Image Size Optimizer (Category Ceiling)
+*   **Similar Real App:** Crush.pics
+*   **Flow:** Backend listens to `products/update` webhooks to detect new media. It downloads the image, sends it to an external compression API via `ctx.http`, temporarily stores the optimized image via `ctx.services.files`, and re-uploads it to replace the original image using the Shopify Admin API.
+*   **Services Needed:** `ctx.db`, `ctx.http`, `ctx.services.files`.
+*   **Shopify Infra:** `products/update` webhook, external HTTP API, Admin API (update media).
+
+---
+
+## Category D — Backend + Admin UI
+*No storefront widget. Includes a merchant-facing dashboard or control panel embedded in the Shopify Admin.*
+
 ### 17. Bulk Order Tagger
 *   **Similar Real App:** Auto Tags
 *   **Flow:** The Admin UI allows the merchant to define rules (e.g., "If order > $100, tag 'VIP'"). The merchant clicks a "Run Now" button in the Admin UI, which triggers the handler (`trigger: "admin"`). The handler queries recent orders and applies the tag via the Admin API (`tagsAdd` mutation).
@@ -130,15 +147,3 @@ This catalog details the specific Shopify app types supported by the platform du
 *   **Flow:** The merchant selects orders in the Admin UI and clicks "Print". The handler queries the order data, injects it into an HTML template, converts it to a PDF using `ctx.services.pdf`, and returns the file buffer to the frontend for printing/download.
 *   **Services Needed:** `ctx.db`, `ctx.services.pdf`.
 *   **Shopify Infra:** Admin UI (React), Admin API (query orders).
-
-### 20. Image Alt Text Generator
-*   **Similar Real App:** SEO Image Optimizer
-*   **Flow:** Backend listens to `products/create` and `products/update` webhooks. It identifies images without alt text, sends the image URL to an AI service via `ctx.services.ai` (or `ctx.http`) to generate a descriptive alt text, and updates the Shopify product media via the Admin API.
-*   **Services Needed:** `ctx.db`, `ctx.http` (or `ctx.services.ai`).
-*   **Shopify Infra:** `products/create` & `update` webhooks, Admin API (`productUpdate`).
-
-### 21. Image Size Optimizer (Category Ceiling)
-*   **Similar Real App:** Crush.pics
-*   **Flow:** Backend listens to `products/update` webhooks to detect new media. It downloads the image, sends it to an external compression API via `ctx.http`, temporarily stores the optimized image via `ctx.services.files`, and re-uploads it to replace the original image using the Shopify Admin API.
-*   **Services Needed:** `ctx.db`, `ctx.http`, `ctx.services.files`.
-*   **Shopify Infra:** `products/update` webhook, external HTTP API, Admin API (update media).

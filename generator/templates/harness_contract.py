@@ -261,6 +261,11 @@ NEVER emit first and mark after; a crash between those two steps causes double-e
   ❌ fetch rows → emit side effects → mark as done   (crash window between emit and mark)
   ❌ UPDATE without RETURNING + length check          (allows double-execution on replay)
 
+Rule: Every SELECT in the webhook path MUST be scoped to ctx.tenantId AND to the specific
+  entity from the payload. Never query all pending rows across all tenants or all entities.
+  ✅ WHERE tenant_id = ${ctx.tenantId} AND variant_id = ${variantId}
+  ❌ WHERE notified_at IS NULL  // missing tenant_id scope — cross-tenant data leak
+
 Rule: When the webhook handler must enrich data for multiple items found in the DB
 (e.g. fetching product details to compose notification emails after a state transition),
 apply the same pre-fetch discipline as the cron path — batch ALL Shopify calls before
@@ -441,6 +446,7 @@ Rule: Widget responses are returned directly to the storefront — keep them sma
 HARNESS_SECTION_ADMIN = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ADMIN UI ROUTING — this handler receives requests from the Shopify Admin panel:
+  Applies to: storefront_backend_admin and backend_admin archetypes.
 
 When ctx.trigger === 'admin', the embedded Admin UI panel called bridge.call(path, body).
   ctx.widgetPath — the path the panel called (e.g. '/list', '/run', '/config/save')

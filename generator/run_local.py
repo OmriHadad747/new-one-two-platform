@@ -2,19 +2,18 @@
 """
 Local generation runner — fast iteration without any infrastructure.
 
-Runs the full pipeline (product → architect → codespec → codegen → validate →
-explanation) and appends the result to generator/results.json.
+Runs the exact same production pipeline (run_feature_generation) by patching
+contract.publisher in-process to intercept progress events and the final bundle.
 No Pub/Sub, no GCP, no API server needed — just ANTHROPIC_API_KEY.
 
 USAGE
 -----
   python run_local.py "notify me when a product is back in stock"
   python run_local.py --file prompt.txt
-  python run_local.py "my prompt" --stop-after product
 
 OUTPUT
 ------
-  Console: one clean line per agent with status + timing + key info.
+  Console: one clean line per agent with status + timing
   File:    test_results/<timestamp>_<slug>.md  (markdown with full artifacts)
   JSON:    results.json  (appended, machine-readable)
 """
@@ -26,7 +25,7 @@ import os
 import re
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -35,26 +34,32 @@ _HERE = Path(__file__).parent
 os.chdir(_HERE)
 sys.path.insert(0, str(_HERE))
 
-from crews.feature_generator.agents import (
-    fetch_api_context,
-    run_explanation_agent,
-    run_product_agent,
-)
-from subagents.architect_agent import run_architect_agent
-from subagents.codespec_agent import run_codespec_agent
-from subagents.base import CodegenContext
-from subagents.registry import GENERATORS
-from subagents.validation import (
-    validate_architect,
-    validate_codespec,
-    validate_cross_artifact,
-    validate_cross_artifact_admin,
-)
+import contract.publisher as _publisher
+from contract.validators import FeatureBundleMessage, GenerationRequest, ProgressEvent
+from crews.feature_generator.crew import run_feature_generation
 
 RESULTS_FILE = _HERE / "results.json"
 TEST_RESULTS_DIR = _HERE / "test_results"
 
 _W = 100
+
+# Agent display labels — must cover every agent value in the ProgressEvent Literal.
+_LABELS: Dict[str, str] = {
+    "product": "Product",
+    "architect": "Architect",
+    "codespec": "CodeSpec",
+    "handler": "Handler",
+    "migration": "Migration",
+    "widget_js": "Widget JS",
+    "admin_ui": "Admin UI",
+    "validation": "Validation",
+    "explanation": "Explanation",
+}
+
+# Report row order — agents that may or may not appear are added conditionally.
+_PLAN_AGENTS = ["product", "architect", "codespec"]
+_CODEGEN_AGENTS = ["handler", "migration", "widget_js", "admin_ui"]
+_TAIL_AGENTS = ["validation", "explanation"]
 
 
 # ── Console output ────────────────────────────────────────────────────────────
@@ -64,17 +69,23 @@ def _hr(char: str = "━") -> None:
     print(char * _W)
 
 
-def _agent_line(name: str, ok: bool, ms: int, notes: str = "") -> None:
-    """Overwrite the spinner line with the final agent result."""
+def _agent_line(name: str, ok: bool, ms: Optional[int], notes: str = "") -> None:
+    """Print a final result line for an agent, overwriting the current spinner."""
     icon = "✓" if ok else "✗"
-    timing = f"{ms}ms"
+    timing = f"{ms}ms" if ms is not None else "—"
     line = f"  {name:<12} {icon}  {timing:<8}  {notes}".rstrip()
     print(f"\r{line:<{_W}}")
 
 
 def _spinner(name: str) -> None:
-    """Print a 'running' placeholder that will be overwritten."""
+    """Print a 'running' placeholder that will be overwritten by _agent_line."""
     print(f"\r  {name:<12} …", end="", flush=True)
+
+
+def _retry_line(name: str, notes: str) -> None:
+    """Print a retry notice without consuming the agent's timing slot."""
+    line = f"  {name:<12} ↻  {'':8}  {notes}".rstrip()
+    print(f"\r{line:<{_W}}")
 
 
 # ── results.json persistence ──────────────────────────────────────────────────
@@ -109,523 +120,185 @@ def _save_report(result: Dict[str, Any]) -> Path:
     slug = _slug(result.get("prompt", "run"))
     path = TEST_RESULTS_DIR / f"{ts}_{slug}.md"
 
-    stages = result.get("stages", {})
     artifacts = result.get("artifacts") or {}
-    intent = result.get("intent") or {}
-    architect = result.get("architect") or {}
-    codespec = result.get("codespec") or {}
-    is_storefront = result.get("archetype") in (
-        "storefront_backend",
-        "storefront_backend_admin",
-    )
-    is_admin_ui = result.get("archetype") == "storefront_backend_admin"
+    stages = result.get("stages") or {}
+
+    # Determine which optional agents were active — prefer stages over artifacts
+    # so the report is accurate even on failure (artifacts may be empty on fail).
+    is_storefront = "widget_js" in stages or bool(artifacts.get("widget_js"))
+    is_admin_ui = "admin_ui" in stages or bool(artifacts.get("admin_ui"))
 
     def ms_str(stage: str) -> str:
-        return f"{stages[stage]['ms']}ms" if stage in stages else "—"
+        entry = stages.get(stage)
+        if not entry:
+            return "—"
+        return f"{entry['ms']}ms"
 
-    # Build summary table rows
-    shopify = architect.get("shopifyPlan") or {}
-    impl = architect.get("implementationSpec") or {}
-    cs = codespec.get("codeSpec") or {}
-    codegen_stage = stages.get("codegen") or {}
-    val_attempts = codegen_stage.get("validation_attempts") or []
-    val_errors = val_attempts[-1].get("errors") if val_attempts else {}
-
-    def artifact_status(name: str) -> str:
-        if name == "widget_js" and not is_storefront:
-            return "n/a"
-        if name == "admin_ui" and not is_admin_ui:
-            return "n/a"
-        return "✓" if artifacts.get(name) else "✗"
+    def stage_icon(stage: str) -> str:
+        entry = stages.get(stage)
+        if not entry:
+            return "—"
+        return "✓" if entry.get("ok", True) else "✗"
 
     lines = [
-        f"# Feature Generator — Run Result",
-        f"",
+        "# Feature Generator — Run Result",
+        "",
         f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
         f"**Status:** {'✅ SUCCESS' if result['status'] == 'success' else '❌ FAILED'}  ",
         f"**Total:** {result['total_ms']}ms  ",
         f"**Prompt:** {result['prompt']}",
-        f"",
-        f"## Pipeline",
-        f"",
-        f"| Agent       | Status | Time       | Notes |",
-        f"|-------------|--------|------------|-------|",
+        "",
+        "## Pipeline",
+        "",
+        "| Agent       | Status | Time       |",
+        "|-------------|--------|------------|",
     ]
 
-    def intent_notes() -> str:
-        return f"archetype={intent.get('appArchetype','?')}  trigger={intent.get('triggerType','?')}"
+    agent_rows = list(_PLAN_AGENTS)
+    for a in _CODEGEN_AGENTS:
+        if a == "widget_js" and not is_storefront:
+            continue
+        if a == "admin_ui" and not is_admin_ui:
+            continue
+        agent_rows.append(a)
+    agent_rows.extend(_TAIL_AGENTS)
 
-    def architect_notes() -> str:
-        topics = shopify.get("webhookTopics") or []
-        cron = shopify.get("cronSchedule") or "—"
-        complexity = impl.get("complexity", "?")
-        return f"complexity={complexity}  topics={topics}  cron={cron}  stateMachine={'yes' if impl.get('stateMachine') else 'no'}"
+    for agent in agent_rows:
+        label = _LABELS.get(agent, agent)
+        lines.append(f"| {label:<11} | {stage_icon(agent):<6} | {ms_str(agent):<10} |")
 
-    def codespec_notes() -> str:
-        return (
-            f"webhook={len(cs.get('webhookPath') or [])} steps  "
-            f"cron={len(cs.get('cronPath') or [])} steps  "
-            f"widget={len(cs.get('widgetPath') or [])} steps  "
-            f"functions={len(cs.get('functions') or [])}"
-        )
-
-    def codegen_notes() -> str:
-        attempts = codegen_stage.get("attempts", "?")
-        parts = [f"attempt {attempts}"]
-        parts.append(f"handler {artifact_status('handler')}")
-        parts.append(f"migration {artifact_status('migration')}")
-        if is_storefront:
-            parts.append(f"widget_js {artifact_status('widget_js')}")
-        if is_admin_ui:
-            parts.append(f"admin_ui {artifact_status('admin_ui')}")
-        if val_errors:
-            parts.append(f"errors: {list(val_errors.keys())}")
-        return "  ".join(parts)
-
-    agent_rows = [
-        ("Product", "product" in stages, ms_str("product"), intent_notes()),
-        ("Architect", "architect" in stages, ms_str("architect"), architect_notes()),
-        ("CodeSpec", "codespec" in stages, ms_str("codespec"), codespec_notes()),
-        ("CodeGen", "codegen" in stages, ms_str("codegen"), codegen_notes()),
-        ("Explanation", "explanation" in stages, ms_str("explanation"), ""),
-    ]
-
-    for name, ok, t, notes in agent_rows:
-        icon = "✓" if ok else "—"
-        lines.append(f"| {name:<11} | {icon:<6} | {t:<10} | {notes} |")
-
-    # Product detail
-    if intent:
-        lines += [
-            f"",
-            f"## Product Spec",
-            f"",
-            f"```json",
-            json.dumps(intent, indent=2),
-            f"```",
-        ]
-
-    # Architect detail
-    if architect:
-        lines += [
-            f"",
-            f"## Architect Plan",
-            f"",
-            f"```json",
-            json.dumps(architect, indent=2),
-            f"```",
-        ]
-
-    # CodeSpec detail
-    if codespec:
-        lines += [
-            f"",
-            f"## CodeSpec",
-            f"",
-            f"```json",
-            json.dumps(codespec, indent=2),
-            f"```",
-        ]
-
-    # Artifacts
     if artifacts:
-        lines += [f"", f"## Artifacts", f""]
+        lines += ["", "## Artifacts", ""]
 
         if artifacts.get("handler"):
-            lines += [
-                f"### handler.js",
-                f"",
-                f"```javascript",
-                artifacts["handler"],
-                f"```",
-                f"",
-            ]
+            lines += ["### handler.js", "", "```javascript", artifacts["handler"], "```", ""]
 
         if artifacts.get("migration"):
-            lines += [
-                f"### migration.sql",
-                f"",
-                f"```sql",
-                artifacts["migration"],
-                f"```",
-                f"",
-            ]
+            lines += ["### migration.sql", "", "```sql", artifacts["migration"], "```", ""]
 
-        if is_storefront and artifacts.get("widget_js"):
-            lines += [
-                f"### widget.js",
-                f"",
-                f"```javascript",
-                artifacts["widget_js"],
-                f"```",
-                f"",
-            ]
+        if artifacts.get("widget_js"):
+            lines += ["### widget.js", "", "```javascript", artifacts["widget_js"], "```", ""]
 
-        if is_admin_ui and artifacts.get("admin_ui"):
-            lines += [
-                f"### admin_ui.js",
-                f"",
-                f"```javascript",
-                artifacts["admin_ui"],
-                f"```",
-                f"",
-            ]
+        if artifacts.get("admin_ui"):
+            lines += ["### admin_ui.js", "", "```javascript", artifacts["admin_ui"], "```", ""]
 
-    # Explanation
     explanation = result.get("explanation")
     if explanation:
-        lines += [f"", f"## Explanation", f"", str(explanation)]
+        lines += ["", "## Explanation", "", str(explanation)]
 
-    # Error
     if result.get("error"):
-        lines += [f"", f"## Error", f"", f"```", result["error"], f"```"]
+        lines += ["", "## Error", "", "```", result["error"], "```"]
 
     path.write_text("\n".join(lines) + "\n")
     return path
 
 
-# ── Stage runner ──────────────────────────────────────────────────────────────
+# ── Main runner ───────────────────────────────────────────────────────────────
 
 
-class StageError(Exception):
-    pass
-
-
-def _run_with_retry(
-    label: str,
-    run_fn,
-    validate_fn,
-    run_args: tuple,
-    max_attempts: int = 2,
-) -> Any:
-    errors: List[str] = []
-    for attempt in range(1, max_attempts + 1):
-        _spinner(label)
-        t0 = time.monotonic()
-        output = run_fn(*run_args, validation_errors=errors if attempt > 1 else None)
-        ms = int((time.monotonic() - t0) * 1000)
-
-        errors = validate_fn(output)
-        if not errors:
-            return output, ms
-
-        retry_note = f"attempt {attempt}/{max_attempts} — {errors[0][:80]}"
-        _agent_line(label, ok=False, ms=ms, notes=retry_note)
-
-        if attempt == max_attempts:
-            raise StageError(f"{label} failed after {max_attempts} attempts: {errors}")
-
-    return None, 0  # unreachable
-
-
-def _run_codegen_parallel(
-    plan: Dict,
-    intent: Dict,
-    platform_api_catalog: List[Dict],
-    is_storefront: bool,
-    is_admin_ui: bool,
-    error_map: Dict[str, List[str]],
-    artifacts: Dict[str, str],
-) -> Dict[str, str]:
-    to_run = [
-        gen
-        for name, gen in GENERATORS.items()
-        if not (name == "widget_js" and not is_storefront)
-        and not (name == "admin_ui" and not is_admin_ui)
-        and (name in error_map or name not in artifacts)
-    ]
-    if not to_run:
-        return artifacts
-    with ThreadPoolExecutor(max_workers=len(to_run)) as pool:
-        futures = {
-            gen.name: pool.submit(
-                gen.generate,
-                CodegenContext(
-                    intent=intent,
-                    plan=plan,
-                    platform_api_catalog=platform_api_catalog,
-                    previous_errors=error_map.get(gen.name),
-                ),
-            )
-            for gen in to_run
-        }
-        for name, future in futures.items():
-            artifacts[name] = future.result()
-    return artifacts
-
-
-def _validate_artifacts(
-    artifacts: Dict[str, str],
-    plan: Dict,
-    intent: Dict,
-    platform_api_catalog: List[Dict],
-    is_storefront: bool,
-    is_admin_ui: bool,
-) -> Dict[str, List[str]]:
-    ctx = CodegenContext(
-        intent=intent, plan=plan, platform_api_catalog=platform_api_catalog
-    )
-    error_map: Dict[str, List[str]] = {}
-    for name, gen in GENERATORS.items():
-        if name == "widget_js" and not is_storefront:
-            continue
-        if name == "admin_ui" and not is_admin_ui:
-            continue
-        errs = gen.validate(artifacts.get(name, ""), ctx)
-        if errs:
-            error_map[name] = errs
-    if is_storefront and "widget_js" not in error_map and "handler" not in error_map:
-        for gen_name, errs in validate_cross_artifact(
-            artifacts.get("widget_js", ""), artifacts.get("handler", "")
-        ).items():
-            if errs:
-                error_map.setdefault(gen_name, []).extend(errs)
-    if is_admin_ui and "admin_ui" not in error_map and "handler" not in error_map:
-        for gen_name, errs in validate_cross_artifact_admin(
-            artifacts.get("admin_ui", ""), artifacts.get("handler", "")
-        ).items():
-            if errs:
-                error_map.setdefault(gen_name, []).extend(errs)
-    return error_map
-
-
-# ── Main pipeline ─────────────────────────────────────────────────────────────
-
-
-def run(prompt: str, stop_after: Optional[str]) -> None:
-    run_id = datetime.now().isoformat()
+def run(prompt: str) -> None:
+    job_id = str(uuid.uuid4())
     result: Dict[str, Any] = {
-        "id": run_id,
+        "id": job_id,
         "prompt": prompt,
         "status": "error",
         "error": None,
         "total_ms": 0,
         "stages": {},
+        "artifacts": {},
     }
 
     _hr()
-    print(f"  Feature Generator")
+    print("  Feature Generator")
     print(f"  Prompt: {prompt}")
     _hr()
     print()
 
+    # Per-agent wall-clock start times. Keyed by agent name.
+    # On retry: the "running" event resets the clock so timing reflects the retry only.
+    _start_times: Dict[str, float] = {}
+    _bundle_holder: List[FeatureBundleMessage] = []
+
+    def _on_progress(event: ProgressEvent) -> None:
+        label = _LABELS.get(event.agent, event.agent)
+
+        if event.status == "running":
+            # Reset clock on every "running" — includes retry starts.
+            _start_times[event.agent] = time.monotonic()
+            _spinner(label)
+
+        elif event.status == "completed":
+            t0 = _start_times.pop(event.agent, time.monotonic())
+            ms = int((time.monotonic() - t0) * 1000)
+            result["stages"][event.agent] = {"ms": ms, "ok": True}
+            _agent_line(label, ok=True, ms=ms, notes=event.message)
+
+        elif event.status == "failed":
+            t0 = _start_times.pop(event.agent, time.monotonic())
+            ms = int((time.monotonic() - t0) * 1000)
+            result["stages"][event.agent] = {"ms": ms, "ok": False}
+            _agent_line(label, ok=False, ms=ms, notes=event.message)
+
+        elif event.status == "retrying":
+            # Print a retry notice. Don't record a stage time — the next
+            # "running" event will reset the clock for the retry attempt.
+            _start_times.pop(event.agent, None)
+            _retry_line(label, notes=event.message)
+
+    def _on_completed(msg: FeatureBundleMessage) -> None:
+        _bundle_holder.append(msg)
+
+    # Patch contract.publisher in-process — crew.py calls through the module
+    # reference (_contract_publisher.publish_*) so this patch lands correctly.
+    _orig_progress = _publisher.publish_progress
+    _orig_completed = _publisher.publish_completed
+    _publisher.publish_progress = _on_progress  # type: ignore[assignment]
+    _publisher.publish_completed = _on_completed  # type: ignore[assignment]
+
     total_start = time.monotonic()
-
     try:
-        # ── Product ───────────────────────────────────────────────────────────
-        _spinner("Product")
-        t0 = time.monotonic()
-        intent = run_product_agent(prompt)
-        ms = int((time.monotonic() - t0) * 1000)
-        result["stages"]["product"] = {"ms": ms}
-        result["intent"] = intent
-
-        archetype = intent.get("appCategory", "backend")
-        result["archetype"] = archetype
-        _agent_line("Product", ok=True, ms=ms, notes=f"archetype={archetype}")
-
-        if stop_after == "product":
-            return
-
-        # ── Architect ─────────────────────────────────────────────────────────
-        api_context = fetch_api_context(
-            intent.get("resources", []),
-            intent_description=intent.get("desiredOutcome", ""),
+        request = GenerationRequest(
+            jobId=job_id,
+            tenantId=str(uuid.uuid4()),
+            appId=str(uuid.uuid4()),
+            prompt=prompt,
         )
-        resources = intent.get("resources", [])
-        if api_context:
-            _agent_line("API Docs", ok=True, ms=0, notes=f"resources={resources}  chars={len(api_context)}")
-        else:
-            _agent_line("API Docs", ok=False, ms=0, notes=f"resources={resources}  MCP unavailable — no docs")
-        architect_output, arch_ms = _run_with_retry(
-            label="Architect",
-            run_fn=run_architect_agent,
-            validate_fn=lambda out: validate_architect(out, app_archetype=archetype),
-            run_args=(prompt, intent, archetype, api_context),
-        )
-        result["stages"]["architect"] = {"ms": arch_ms}
-        result["architect"] = architect_output
-
-        shopify = architect_output.get("shopifyPlan") or {}
-        impl = architect_output.get("implementationSpec") or {}
-        _agent_line(
-            "Architect",
-            ok=True,
-            ms=arch_ms,
-            notes=f"complexity={impl.get('complexity', '?')}  "
-            f"topics={shopify.get('webhookTopics')}  "
-            f"cron={shopify.get('cronSchedule') or '—'}  "
-            f"stateMachine={'yes' if impl.get('stateMachine') else 'no'}",
-        )
-
-        if stop_after == "architect":
-            return
-
-        # ── CodeSpec ──────────────────────────────────────────────────────────
-        codespec_output, cs_ms = _run_with_retry(
-            label="CodeSpec",
-            run_fn=run_codespec_agent,
-            validate_fn=lambda out: validate_codespec(out, architect_output),
-            run_args=(prompt, intent, architect_output, api_context),
-        )
-        result["stages"]["codespec"] = {"ms": cs_ms}
-        result["codespec"] = codespec_output
-
-        cs = codespec_output.get("codeSpec") or {}
-        _agent_line(
-            "CodeSpec",
-            ok=True,
-            ms=cs_ms,
-            notes=f"webhook={len(cs.get('webhookPath') or [])} steps  "
-            f"cron={len(cs.get('cronPath') or [])} steps  "
-            f"widget={len(cs.get('widgetPath') or [])} steps  "
-            f"functions={len(cs.get('functions') or [])}",
-        )
-
-        plan: Dict = {
-            **architect_output,
-            "implementationSpec": {
-                **(architect_output.get("implementationSpec") or {}),
-                "codeSpec": cs,
-            },
-        }
-        result["plan"] = plan
-
-        if stop_after == "codespec":
-            return
-
-        # ── CodeGen + Validation ───────────────────────────────────────────────
-        catalog_dicts = (plan.get("implementationSpec") or {}).get(
-            "widgetApiCatalog"
-        ) or []
-        is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
-        is_admin_ui = archetype == "storefront_backend_admin"
-
-        artifacts: Dict[str, str] = {}
-        error_map: Dict[str, List[str]] = {}
-        MAX_RETRIES = 3
-        validation_attempts: List[Dict] = []
-
-        for attempt in range(1, MAX_RETRIES + 1):
-            _spinner("CodeGen")
-            t0 = time.monotonic()
-            artifacts = _run_codegen_parallel(
-                plan,
-                intent,
-                catalog_dicts,
-                is_storefront,
-                is_admin_ui,
-                error_map,
-                artifacts,
-            )
-            gen_ms = int((time.monotonic() - t0) * 1000)
-
-            error_map = _validate_artifacts(
-                artifacts, plan, intent, catalog_dicts, is_storefront, is_admin_ui
-            )
-
-            validation_attempts.append(
-                {
-                    "attempt": attempt,
-                    "errors": dict(error_map) if error_map else {},
-                }
-            )
-
-            if not error_map:
-                artifact_notes = "  ".join(
-                    f"{n} ✓"
-                    for n in (
-                        ["handler", "migration"]
-                        + (["widget_js"] if is_storefront else [])
-                        + (["admin_ui"] if is_admin_ui else [])
-                    )
-                    if artifacts.get(n)
-                )
-                _agent_line(
-                    "CodeGen",
-                    ok=True,
-                    ms=gen_ms,
-                    notes=f"attempt {attempt}  {artifact_notes}",
-                )
-                result["stages"]["codegen"] = {
-                    "ms": gen_ms,
-                    "attempts": attempt,
-                    "validation_attempts": validation_attempts,
-                }
-                break
-
-            error_summary = "  ".join(
-                f"{n}:{errs[0][:60]}" for n, errs in error_map.items()
-            )
-            _agent_line(
-                "CodeGen",
-                ok=False,
-                ms=gen_ms,
-                notes=f"attempt {attempt}/{MAX_RETRIES}  {error_summary}",
-            )
-
-            if attempt == MAX_RETRIES:
-                result["stages"]["codegen"] = {
-                    "ms": gen_ms,
-                    "attempts": attempt,
-                    "validation_attempts": validation_attempts,
-                }
-                result["artifacts"] = {
-                    "handler": artifacts.get("handler", ""),
-                    "migration": artifacts.get("migration", ""),
-                    "widget_js": artifacts.get("widget_js") if is_storefront else None,
-                    "admin_ui": artifacts.get("admin_ui") if is_admin_ui else None,
-                }
-                raise StageError(
-                    f"validation failed after {MAX_RETRIES} attempts: {error_map}"
-                )
-
-        result["artifacts"] = {
-            "handler": artifacts.get("handler", ""),
-            "migration": artifacts.get("migration", ""),
-            "widget_js": artifacts.get("widget_js") if is_storefront else None,
-            "admin_ui": artifacts.get("admin_ui") if is_admin_ui else None,
-        }
-
-        if stop_after == "codegen":
-            return
-
-        # ── Explanation ────────────────────────────────────────────────────────
-        _spinner("Explanation")
-        t0 = time.monotonic()
-        explanation = run_explanation_agent(
-            intent=intent,
-            plan=plan,
-            widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
-            handler_code=artifacts.get("handler", ""),
-            migration_sql=artifacts.get("migration", ""),
-        )
-        ms = int((time.monotonic() - t0) * 1000)
-        _agent_line("Explanation", ok=True, ms=ms)
-        result["stages"]["explanation"] = {"ms": ms}
-        result["explanation"] = explanation
-
-        result["status"] = "success"
-
-    except StageError as e:
-        result["error"] = str(e)
-        print(f"\n  FAILED: {e}")
-
+        run_feature_generation(request)
     finally:
+        _publisher.publish_progress = _orig_progress
+        _publisher.publish_completed = _orig_completed
         result["total_ms"] = int((time.monotonic() - total_start) * 1000)
-        _append_result(result)
-        report_path = _save_report(result)
 
-        print()
-        _hr()
-        status = "SUCCESS" if result["status"] == "success" else "FAILED"
-        total_s = result["total_ms"] / 1000
-        print(f"  {status} — {total_s:.1f}s — {report_path.relative_to(_HERE)}")
-        _hr()
-        print()
+    # Unpack the bundle into the result dict
+    if _bundle_holder:
+        msg = _bundle_holder[0]
+        result["status"] = msg.status
+        result["error"] = msg.error
+        if msg.bundle:
+            b = msg.bundle
+            result["artifacts"] = {
+                "handler": b.handlerModule.code,
+                "migration": b.dbMigration.sql,
+                "widget_js": b.widgetModule,
+                "admin_ui": b.adminUiModule,
+            }
+            result["explanation"] = b.explanation.merchantFacing
+    else:
+        result["error"] = "No completion event received from run_feature_generation"
 
-        if result["status"] == "error":
-            sys.exit(1)
+    _append_result(result)
+    report_path = _save_report(result)
+
+    print()
+    _hr()
+    status = "SUCCESS" if result["status"] == "success" else "FAILED"
+    total_s = result["total_ms"] / 1000
+    print(f"  {status} — {total_s:.1f}s — {report_path.relative_to(_HERE)}")
+    _hr()
+    print()
+
+    if result["status"] != "success":
+        sys.exit(1)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -643,12 +316,6 @@ def main() -> None:
     parser.add_argument(
         "--file", "-f", metavar="PATH", help="Read prompt from a text file."
     )
-    parser.add_argument(
-        "--stop-after",
-        choices=["product", "architect", "codespec", "codegen"],
-        metavar="STAGE",
-        help="Stop after STAGE. Choices: product, architect, codespec, codegen",
-    )
 
     args = parser.parse_args()
 
@@ -663,7 +330,7 @@ def main() -> None:
     if not prompt:
         parser.error("Prompt is empty.")
 
-    run(prompt=prompt, stop_after=args.stop_after)
+    run(prompt=prompt)
 
 
 if __name__ == "__main__":

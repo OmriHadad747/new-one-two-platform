@@ -22,7 +22,7 @@ import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
-from subagents.validation import validate_handler
+from subagents.validation import validate_handler_artifact
 from templates.harness_contract import (
     HARNESS_BASE,
     HARNESS_SECTION_ADMIN,
@@ -53,6 +53,8 @@ class HandlerGenerator(Generator):
         admin_catalog_block = _format_admin_catalog(ctx.plan)
         prior_block = _format_prior_handler(ctx.prior_handler_code)
 
+        routing_checklist = _format_routing_checklist(ctx.platform_api_catalog, ctx.plan)
+
         return (
             f"{retry_block}"
             f"{jit_sections}"
@@ -63,6 +65,7 @@ class HandlerGenerator(Generator):
             f"{admin_catalog_block}"
             f"{spec_block}"
             f"{prior_block}"
+            f"{routing_checklist}"
             "Generate the handler.js module. Output ONLY the JavaScript code."
         )
 
@@ -73,7 +76,10 @@ class HandlerGenerator(Generator):
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         topics = ctx.plan.get("shopifyPlan", {}).get("webhookTopics", [])
-        return validate_handler(artifact, topics)
+        impl = ctx.plan.get("implementationSpec") or {}
+        widget_catalog = impl.get("widgetApiCatalog") or []
+        admin_catalog = impl.get("adminApiCatalog") or []
+        return validate_handler_artifact(artifact, topics, widget_catalog, admin_catalog)
 
 
 # ── JIT harness section builder (Change 3) ────────────────────────────────────
@@ -231,3 +237,50 @@ def _format_platform_gaps(plan: Dict[str, Any]) -> str:
         return ""
     lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
     return f"\nPlatform limitations (ctx cannot provide these — handle exactly as stated):\n{lines}\n"
+
+
+def _format_routing_checklist(
+    widget_catalog: List[Dict[str, Any]],
+    plan: Dict[str, Any],
+) -> str:
+    """
+    Emit a pre-generation routing checklist as the last thing the model sees.
+
+    Lists every ctx.widgetPath route that MUST appear in the generated handler.
+    This prevents the common failure where the model writes all business logic
+    but omits the trigger dispatch scaffold entirely.
+
+    Only emitted when at least one catalog is non-empty — backend-only apps
+    (no widget, no admin) have no routes to check and get no checklist.
+    """
+    admin_catalog: List[Dict[str, Any]] = (
+        (plan.get("implementationSpec") or {}).get("adminApiCatalog") or []
+    )
+    if not widget_catalog and not admin_catalog:
+        return ""
+
+    lines = [
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "ROUTING CHECKLIST — your handler MUST include ALL of these branches:",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    if widget_catalog:
+        lines.append("Inside  if (ctx.trigger === 'widget') { ... }:")
+        for entry in widget_catalog:
+            path = entry.get("path", "")
+            shape = entry.get("responseShape", "")
+            lines.append(f"  ✓ if (ctx.widgetPath === '{path}')  →  return {shape}")
+
+    if admin_catalog:
+        lines.append("Inside  if (ctx.trigger === 'admin') { ... }:")
+        for entry in admin_catalog:
+            path = entry.get("path", "")
+            shape = entry.get("responseShape", "")
+            lines.append(f"  ✓ if (ctx.widgetPath === '{path}')  →  return {shape}")
+
+    lines.append(
+        "Validation rejects the handler if ANY of these branches is missing.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+    return "\n".join(lines) + "\n"

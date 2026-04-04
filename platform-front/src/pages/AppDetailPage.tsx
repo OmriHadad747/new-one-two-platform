@@ -253,6 +253,8 @@ export function AppDetailPage() {
                         ? "Backend only"
                         : app.appArchetype === "storefront_backend"
                         ? "Widget + Backend"
+                        : app.appArchetype === "backend_admin"
+                        ? "Backend + Admin"
                         : "Widget + Backend + Admin"
                     }
                   />

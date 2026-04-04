@@ -17,15 +17,35 @@ interface AppTestingPanelProps {
 
 // ─── Pipeline steps ───────────────────────────────────────────────────────────
 
-const STEPS = [
-  { agent: "product",     label: "Understanding your request" },
-  { agent: "architect",   label: "Planning API surface"       },
-  { agent: "codespec",    label: "Writing implementation plan"},
-  { agent: "handler",     label: "Generating backend handler" },
-  { agent: "migration",   label: "Writing DB migration"       },
-  { agent: "validation",  label: "Validating output"          },
-  { agent: "explanation", label: "Preparing summary"          },
+// Fixed steps always shown, in pipeline order.
+const STATIC_STEPS: { agent: string; label: string }[] = [
+  { agent: "product",     label: "Understanding your request"  },
+  { agent: "architect",   label: "Planning API surface"        },
+  { agent: "codespec",    label: "Writing implementation plan" },
+  { agent: "handler",     label: "Generating backend handler"  },
+  { agent: "migration",   label: "Writing DB migration"        },
+  // widget_js and admin_ui are injected dynamically below when the backend emits them
+  { agent: "validation",  label: "Validating output"           },
+  { agent: "explanation", label: "Preparing summary"           },
 ];
+
+// Optional codegen agents inserted between migration and validation when present.
+const OPTIONAL_AGENTS: Record<string, string> = {
+  widget_js: "Generating storefront widget",
+  admin_ui:  "Generating admin panel",
+};
+
+function buildSteps(byAgent: Record<string, ProgressEvent>) {
+  const steps = [...STATIC_STEPS];
+  const validationIdx = steps.findIndex((s) => s.agent === "validation");
+  const toInsert = Object.entries(OPTIONAL_AGENTS)
+    .filter(([agent]) => agent in byAgent)
+    .map(([agent, label]) => ({ agent, label }));
+  if (toInsert.length > 0) {
+    steps.splice(validationIdx, 0, ...toInsert);
+  }
+  return steps;
+}
 
 function stepStatus(agent: string, byAgent: Record<string, ProgressEvent>) {
   return byAgent[agent]?.status ?? "waiting";
@@ -39,6 +59,8 @@ function GeneratingPanel({ events }: { events: ProgressEvent[] }) {
     return acc;
   }, {});
 
+  const steps = buildSteps(byAgent);
+
   const latestMessage = [...events].reverse().find(
     (e) => e.status === "running" || e.status === "retrying"
   )?.message;
@@ -50,7 +72,7 @@ function GeneratingPanel({ events }: { events: ProgressEvent[] }) {
           Building your app
         </p>
         <div className="space-y-3.5">
-          {STEPS.map(({ agent, label }) => {
+          {steps.map(({ agent, label }) => {
             const status = stepStatus(agent, byAgent);
             return (
               <div key={agent} className="flex items-center gap-3">
@@ -114,14 +136,15 @@ function DeployPanel({
   const archetype = app?.appArchetype ?? "backend";
   
   // Use bundle info if available, otherwise fall back to app record
-  const effectiveHasAdmin = bundle?.hasAdminUI ?? archetype === "storefront_backend_admin";
+  const effectiveHasAdmin = bundle?.hasAdminUI ?? (archetype === "storefront_backend_admin" || archetype === "backend_admin");
   const effectiveHasWidget = bundle?.hasWidget ?? (archetype === "storefront_backend" || archetype === "storefront_backend_admin");
 
   const triggerType = bundle?.triggerType ?? "webhook";
   const topics = bundle?.triggerTopics ?? [];
 
   const archetypeLabel =
-    effectiveHasAdmin ? "Widget + Backend + Admin" :
+    effectiveHasAdmin && effectiveHasWidget ? "Widget + Backend + Admin" :
+    effectiveHasAdmin ? "Backend + Admin" :
     effectiveHasWidget ? "Widget + Backend" :
     "Backend only";
 

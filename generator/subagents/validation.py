@@ -1,23 +1,25 @@
 """
 Static analysis utilities shared across all generators.
 
-Each Generator subclass owns its validate() method and delegates here for the
-actual checks. This file contains:
+Naming convention
+-----------------
+  _plan      — validates LLM plan output (Architect / CodeSpec) before codegen starts
+  _artifact  — validates a single generated artifact in isolation
+  _contract  — cross-artifact check (two artifacts must agree on a shared interface)
 
-  Planning gates (two-stage chain):
-    - validate_architect()      — structural decisions (topics, cron, catalog)
-    - validate_codespec()       — algorithm correctness (claim ordering, field names)
+Execution order in the pipeline
+--------------------------------
+  1. validate_architect_plan()   — after Architect agent
+  2. validate_codespec_plan()    — after CodeSpec agent
+  3. validate_handler_artifact() )
+     validate_migration_artifact() ) — after parallel CodeGen (per artifact)
+     validate_widget_artifact()    )
+     validate_admin_ui_artifact()  )
+  4. validate_widget_handler_contract()  ) — after all per-artifact checks pass
+     validate_admin_handler_contract()   )
 
-  Per-artifact validators:
-    - validate_handler()        — CommonJS handler.js
-    - validate_migration()      — PostgreSQL DDL
-    - validate_widget_js()      — storefront ES module
-
-  Cross-artifact validator:
-    - validate_cross_artifact() — widget↔handler field-name contract
-
-  Shared constants (VALID_WEBHOOK_TOPICS, forbidden pattern lists)
-  _js_is_syntactically_complete() heuristic used by validate_handler
+Cross-artifact validators (step 4) only check *field alignment* — route existence
+is already verified statically by validate_handler_artifact() in step 3.
 """
 
 from __future__ import annotations
@@ -26,74 +28,71 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # ── Webhook topic registry ────────────────────────────────────────────────────
 #
-# Primary source: mcp/cache/webhook_topics.json — populated by mcp.client
-#   prefetch_for_run() before each pipeline run (24 h TTL).
+# Primary source: shopify_mcp/cache/webhook_topics.json — populated by
+#   shopify_mcp.client.prefetch_for_run() before each pipeline run (24 h TTL).
 # Fallback: hardcoded set below — covers the most common topics so validation
 #   never fails with a false-positive on a cache miss or MCP outage.
-#
-# validate_architect() and validate_handler() call _get_valid_webhook_topics()
-# at validation time (not at import time) so they always see the freshest cache.
 
-_FALLBACK_WEBHOOK_TOPICS: frozenset[str] = frozenset({
-    "orders/create",
-    "orders/updated",
-    "orders/cancelled",
-    "orders/paid",
-    "orders/fulfilled",
-    "orders/partially_fulfilled",
-    "products/create",
-    "products/update",
-    "products/delete",
-    "customers/create",
-    "customers/update",
-    "customers/delete",
-    "customers/enable",
-    "customers/disable",
-    "inventory_levels/update",
-    "inventory_levels/connect",
-    "inventory_levels/disconnect",
-    "inventory_items/create",
-    "inventory_items/update",
-    "inventory_items/delete",
-    "app/uninstalled",
-    "app/subscriptions/update",
-    "collections/create",
-    "collections/update",
-    "collections/delete",
-    "draft_orders/create",
-    "draft_orders/update",
-    "fulfillments/create",
-    "fulfillments/update",
-    "refunds/create",
-    "checkouts/create",
-    "checkouts/update",
-    "checkouts/delete",
-    "carts/create",
-    "carts/update",
-    "disputes/create",
-    "disputes/redacted",
-})
+_FALLBACK_WEBHOOK_TOPICS: frozenset[str] = frozenset(
+    {
+        "orders/create",
+        "orders/updated",
+        "orders/cancelled",
+        "orders/paid",
+        "orders/fulfilled",
+        "orders/partially_fulfilled",
+        "products/create",
+        "products/update",
+        "products/delete",
+        "customers/create",
+        "customers/update",
+        "customers/delete",
+        "customers/enable",
+        "customers/disable",
+        "inventory_levels/update",
+        "inventory_levels/connect",
+        "inventory_levels/disconnect",
+        "inventory_items/create",
+        "inventory_items/update",
+        "inventory_items/delete",
+        "app/uninstalled",
+        "app/subscriptions/update",
+        "collections/create",
+        "collections/update",
+        "collections/delete",
+        "draft_orders/create",
+        "draft_orders/update",
+        "fulfillments/create",
+        "fulfillments/update",
+        "refunds/create",
+        "checkouts/create",
+        "checkouts/update",
+        "checkouts/delete",
+        "carts/create",
+        "carts/update",
+        "disputes/create",
+        "disputes/redacted",
+    }
+)
 
-_MCP_TOPICS_CACHE = Path(__file__).parent.parent / "mcp" / "cache" / "webhook_topics.json"
+_MCP_TOPICS_CACHE = (
+    Path(__file__).parent.parent / "shopify_mcp" / "cache" / "webhook_topics.json"
+)
 _TOPICS_CACHE_TTL = 24 * 60 * 60
 
 
 def _get_valid_webhook_topics() -> frozenset[str]:
-    """
-    Return the current set of valid webhook topics.
-
-    Reads from the MCP cache file if fresh; falls back to the hardcoded set.
-    Called at validation time so every run sees the latest cached data without
-    requiring a module reload.
-    """
+    """Return the current valid webhook topic set (MCP cache → fallback)."""
     try:
         if _MCP_TOPICS_CACHE.exists():
             entry = json.loads(_MCP_TOPICS_CACHE.read_text(encoding="utf-8"))
-            if time.time() - entry.get("fetched_at", 0) < entry.get("ttl_seconds", _TOPICS_CACHE_TTL):
+            if time.time() - entry.get("fetched_at", 0) < entry.get(
+                "ttl_seconds", _TOPICS_CACHE_TTL
+            ):
                 live = frozenset(entry.get("data") or [])
                 if live:
                     return live
@@ -102,8 +101,8 @@ def _get_valid_webhook_topics() -> frozenset[str]:
     return _FALLBACK_WEBHOOK_TOPICS
 
 
-# Keep a module-level alias for code that still does `from validation import VALID_WEBHOOK_TOPICS`.
-# This snapshot is taken at import time; prefer _get_valid_webhook_topics() in validators.
+# Snapshot at import time for callers that do `from validation import VALID_WEBHOOK_TOPICS`.
+# Prefer _get_valid_webhook_topics() inside validators so they always see the freshest cache.
 VALID_WEBHOOK_TOPICS = _get_valid_webhook_topics()
 
 
@@ -112,22 +111,26 @@ def _is_valid_cron(expr: str) -> bool:
     return len(expr.strip().split()) == 5
 
 
-# ── Architect validator ────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# PLAN VALIDATORS  (run before codegen, on LLM plan output)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
-def validate_architect(
+def validate_architect_plan(
     architect_output: Dict[str, Any], app_archetype: str
 ) -> List[str]:
     """
-    Rule-based gate on the Architect Agent output (structural decisions only).
-    Returns a list of error strings; empty list = valid.
+    Gate on the Architect Agent output (structural decisions only).
+    Returns error strings; empty = valid.
 
     Checks:
       1. All webhookTopics are in the known-valid set.
       2. cronSchedule, if present, is a valid 5-field cron expression.
-      3. storefront_backend / storefront_backend_admin apps must have a non-empty widgetApiCatalog OR storefrontReads.
+      3. storefront apps must have a non-empty widgetApiCatalog OR storefrontReads.
       4. All widgetApiCatalog paths start with '/'.
-      5. stateMachine.unknownSentinel, if set, must be the string "null".
+      5. Admin archetypes (storefront_backend_admin, backend_admin) must have a non-empty adminApiCatalog.
+      6. All adminApiCatalog paths start with '/'.
+      7. stateMachine.unknownSentinel must be the string "null".
     """
     errors: List[str] = []
     shopify = architect_output.get("shopifyPlan") or {}
@@ -150,11 +153,14 @@ def validate_architect(
             f"(e.g. '*/15 * * * *')"
         )
 
-    # 3. storefront_backend / storefront_backend_admin apps should declare their widget API catalog
+    # 3. storefront apps must declare widget catalog or storefront reads
     widget_catalog = impl.get("widgetApiCatalog") or []
     storefront_reads = impl.get("storefrontReads") or []
-    if app_archetype in ("storefront_backend", "storefront_backend_admin") and not widget_catalog and not storefront_reads:
-        # Check widgetGuidance for evidence of host.storefront() usage before failing
+    if (
+        app_archetype in ("storefront_backend", "storefront_backend_admin")
+        and not widget_catalog
+        and not storefront_reads
+    ):
         guidance = (impl.get("widgetGuidance") or "").lower()
         if "host.storefront" not in guidance and "storefront" not in guidance:
             errors.append(
@@ -173,57 +179,74 @@ def validate_architect(
                 f"(e.g. '/signup', '/status')"
             )
 
-    # 5. stateMachine.unknownSentinel must be the string "null", never 0 or false
+    # 5. Admin archetypes must declare a non-empty adminApiCatalog
+    admin_catalog = impl.get("adminApiCatalog") or []
+    if app_archetype in ("storefront_backend_admin", "backend_admin"):
+        if not admin_catalog:
+            errors.append(
+                f"adminApiCatalog is null/empty for a {app_archetype!r} app — "
+                "list every path the admin panel calls via bridge.call() with its responseShape "
+                "(e.g. '/list', '/trigger', '/config/save')"
+            )
+
+    # 6. Every adminApiCatalog path must start with '/'
+    for entry in admin_catalog:
+        path = entry.get("path", "")
+        if path and not path.startswith("/"):
+            errors.append(
+                f"adminApiCatalog path {path!r} must start with '/' "
+                f"(e.g. '/list', '/trigger', '/config/save')"
+            )
+
+    # 7. stateMachine.unknownSentinel must be the string "null"
     sm = impl.get("stateMachine") or {}
     if sm.get("needsStateTracking"):
         sentinel = sm.get("unknownSentinel")
         if sentinel != "null":
             errors.append(
                 f"stateMachine.unknownSentinel is {sentinel!r} — must be the string "
-                f"\"null\" (not the number 0, not false, not empty string). "
+                f'"null" (not the number 0, not false, not empty string). '
                 f"Reason: 0 is a valid real state (zero inventory); null = never observed."
             )
 
     return errors
 
 
-# ── CodeSpec validator ─────────────────────────────────────────────────────────
-
-
-def validate_codespec(
+def validate_codespec_plan(
     codespec_output: Dict[str, Any],
     architect_output: Dict[str, Any],
 ) -> List[str]:
     """
-    Rule-based gate on the CodeSpec Agent output (algorithm correctness).
-    Returns a list of error strings; empty list = valid.
+    Gate on the CodeSpec Agent output (algorithm correctness).
+    Returns error strings; empty = valid.
 
     Args:
-        codespec_output:  { "codeSpec": { webhookPath, cronPath, widgetPath, functions } }
+        codespec_output:  { "codeSpec": { webhookPath, cronPath, widgetPath, adminPath, functions } }
         architect_output: Full architect plan (shopifyPlan + implementationSpec without codeSpec).
 
     Checks:
       1. Each widgetApiCatalog path has at least one widgetPath entry.
-      2. storefrontReads declared by architect must appear as host.storefront() in widgetPath.
-      3. Atomic claim: every RETURNING step is immediately followed by a skip guard.
-      4. State transition guard present when needsStateTracking is true.
-      5. No Shopify API calls inside per-item loop bodies — any path.
-      6. For each path, host.call() fields must match ctx.widgetBody destructuring (spec contract).
-      7. Cron path SELECTs must be scoped to ctx.tenantId — never cross-tenant.
+      2. Each adminApiCatalog path has at least one adminPath entry.
+      3. storefrontReads declared by architect must appear as host.storefront() in widgetPath.
+      4. Atomic claim: every RETURNING step is immediately followed by a skip guard (all paths).
+      5. No Shopify API calls inside per-item loop bodies.
+      6. DB SELECT steps in webhook, cron, and admin paths must reference ctx.tenantId.
+         (field-name contract between widget/admin UI and handler is checked by the contract
+          validators at artifact level, where the actual generated code can be inspected)
     """
     errors: List[str] = []
     impl = architect_output.get("implementationSpec") or {}
-    sm = impl.get("stateMachine") or {}
-    batching = impl.get("cronBatching") or {}
     widget_catalog = impl.get("widgetApiCatalog") or []
+    admin_catalog = impl.get("adminApiCatalog") or []
     storefront_reads = impl.get("storefrontReads") or []
 
     code_spec = codespec_output.get("codeSpec") or {}
     webhook_path: List[str] = code_spec.get("webhookPath") or []
     cron_path: List[str] = code_spec.get("cronPath") or []
     widget_path: List[str] = code_spec.get("widgetPath") or []
+    admin_path: List[str] = code_spec.get("adminPath") or []
 
-    # 1. Each catalog path must be covered by at least one widgetPath step
+    # 1. Each widgetApiCatalog path must be covered by at least one widgetPath step
     for entry in widget_catalog:
         catalog_path = entry.get("path", "")
         if catalog_path:
@@ -238,7 +261,22 @@ def validate_codespec(
                     f"one widgetPath step starting with 'path {catalog_path}:'"
                 )
 
-    # 2. storefrontReads declared by architect must appear as host.storefront() in widgetPath
+    # 2. Each adminApiCatalog path must be covered by at least one adminPath step
+    for entry in admin_catalog:
+        catalog_path = entry.get("path", "")
+        if catalog_path:
+            covered = any(
+                f"path {catalog_path}" in step or catalog_path in step
+                for step in admin_path
+            )
+            if not covered:
+                errors.append(
+                    f"adminApiCatalog path '{catalog_path}' has no corresponding "
+                    f"entry in codeSpec.adminPath — each admin catalog path needs at least "
+                    f"one adminPath step"
+                )
+
+    # 3. storefrontReads declared by architect must appear as host.storefront() in widgetPath
     if storefront_reads:
         has_storefront_call = any("host.storefront" in step for step in widget_path)
         if not has_storefront_call:
@@ -249,8 +287,14 @@ def validate_codespec(
                 f"{', '.join(r.get('path', '?') for r in storefront_reads)}"
             )
 
-    # 3. Atomic claim ordering: RETURNING step must be immediately followed by a skip guard
-    for path_name, path_steps in [("webhookPath", webhook_path), ("cronPath", cron_path)]:
+    # 4. Atomic claim ordering: RETURNING step must be immediately followed by a skip guard.
+    #    Applies to all paths — any path may perform UPDATE...RETURNING for idempotency.
+    for path_name, path_steps in [
+        ("webhookPath", webhook_path),
+        ("cronPath", cron_path),
+        ("widgetPath", widget_path),
+        ("adminPath", admin_path),
+    ]:
         for i, step in enumerate(path_steps):
             if "RETURNING" in step or "returning" in step.lower():
                 next_step = path_steps[i + 1] if i + 1 < len(path_steps) else ""
@@ -269,17 +313,21 @@ def validate_codespec(
                         f"Next step is: {next_step[:80]!r}"
                     )
 
-    # 5. No Shopify API calls inside per-item loop bodies — applies to ALL paths always.
+    # 5. No Shopify API calls inside per-item loop bodies
     loop_indicators = re.compile(
         r"\bfor\s+each\b|\bfor\s+\(|\bfor\s+const\b|loop\s+body|\binside\s+loop\b",
         re.IGNORECASE,
     )
     shopify_call = re.compile(r"/admin/api/|ctx\.shopify\.", re.IGNORECASE)
-    for path_name, path_steps in [("webhookPath", webhook_path), ("cronPath", cron_path)]:
+    for path_name, path_steps in [
+        ("webhookPath", webhook_path),
+        ("cronPath", cron_path),
+    ]:
         for i, step in enumerate(path_steps):
             if loop_indicators.search(step) and shopify_call.search(step):
-                # Allow batch pre-fetch steps (the loop that chunks IDs and calls Shopify)
-                if not re.search(r"\bbatch\b|\bchunk\b|\bpre.?fetch\b", step, re.IGNORECASE):
+                if not re.search(
+                    r"\bbatch\b|\bchunk\b|\bpre.?fetch\b", step, re.IGNORECASE
+                ):
                     errors.append(
                         f"codeSpec.{path_name} step {i + 1}: Shopify API call inside a "
                         f"per-item loop — move all ctx.shopify calls to a pre-fetch phase "
@@ -287,178 +335,49 @@ def validate_codespec(
                         f"Step: {step[:100]!r}"
                     )
 
-    # 6. For each widgetPath route, host.call() body fields must exactly match
-    # ctx.widgetBody destructuring fields. Catches spec-level contradictions before codegen.
-    _NON_FIELD_SPEC = {
-        # JS keywords / values
-        "true", "false", "null", "undefined", "host", "context", "await",
-        # English connectives / prose noise that leak into object-literal positions
-        "only", "when", "if", "is", "not", "and", "or", "the", "a", "an",
-        "of", "for", "to", "in", "on", "at", "with",
-        # Single-word identifiers that are never real widget body field names —
-        # they only appear when the model writes prose instead of JS syntax
-        # (e.g. "{ variant id }" → ['variant', 'id'])
-        "id", "variant", "product", "email", "customer", "inventory",
-        "item", "type", "name", "value", "data", "body", "path", "from",
-    }
-    _spec_call_fields: Dict[str, set] = {}
-    _spec_body_fields: Dict[str, set] = {}
-    for step in widget_path:
-        pm = re.match(r"path\s+(/\S+):\s*(.*)", step.strip(), re.IGNORECASE)
-        if not pm:
-            continue
-        slug, content = pm.group(1), pm.group(2)
-        call_m = re.search(
-            r"host\.call\s*\(['\"][^'\"]+['\"],\s*\{([^}]*)\}", content, re.IGNORECASE
-        )
-        if call_m:
-            # Only accept lowercase-first identifiers — PascalCase words (String, Integer)
-            # and prose that leaks into the object literal are not field names.
-            fields = {f for f in re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", call_m.group(1))
-                      if f not in _NON_FIELD_SPEC and f[0].islower()}
-            _spec_call_fields[slug] = fields
-        body_m = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody", content)
-        if body_m:
-            fields = {f for f in re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", body_m.group(1))
-                      if f not in _NON_FIELD_SPEC and f[0].islower()}
-            _spec_body_fields[slug] = fields
-
-    for slug in set(list(_spec_call_fields.keys()) + list(_spec_body_fields.keys())):
-        call_f = _spec_call_fields.get(slug, set())
-        body_f = _spec_body_fields.get(slug, set())
-        if call_f and body_f and call_f != body_f:
-            parts = []
-            extra = body_f - call_f
-            missing = call_f - body_f
-            if extra:
-                parts.append(f"handler destructures {sorted(extra)} not sent by widget")
-            if missing:
-                parts.append(f"widget sends {sorted(missing)} not destructured by handler")
-            errors.append(
-                f"codeSpec.widgetPath '{slug}': widget↔handler field contract mismatch — "
-                f"{'; '.join(parts)}. "
-                f"host.call() sends: {sorted(call_f)}; "
-                f"ctx.widgetBody destructures: {sorted(body_f)}. "
-                f"These two sets must be identical. "
-                f"Fix: rewrite the handler step as "
-                f"'const {{ {', '.join(sorted(call_f))} }} = ctx.widgetBody'"
-            )
-
-    # 8. Cron path SELECTs must be scoped to ctx.tenantId — never cross-tenant
+    # 6. DB SELECT steps must always be scoped to ctx.tenantId.
+    #    Applies to webhook, cron, and admin paths — any path that queries tenant tables.
+    #    (widgetPath is excluded: widget queries are typically single-entity lookups and
+    #    the handler enforces tenant scoping at the artifact level via validate_handler_artifact.)
+    #
+    #    Field-name alignment between widget/admin UI and handler is NOT checked here.
+    #    Natural-language codeSpec steps are too imprecise for reliable regex parsing.
+    #    That contract is enforced at the artifact level by validate_widget_handler_contract
+    #    and validate_admin_handler_contract, where the real generated code can be inspected.
     select_re = re.compile(r"\bSELECT\b", re.IGNORECASE)
     tenant_re = re.compile(r"ctx\.tenantId", re.IGNORECASE)
-    for i, step in enumerate(cron_path):
-        if select_re.search(step) and not tenant_re.search(step):
-            errors.append(
-                f"codeSpec.cronPath step {i + 1}: SELECT is missing tenant_id filter — "
-                f"add 'AND tenant_id = ${{ctx.tenantId}}'. "
-                f"The harness calls the cron handler once per tenant with ctx.tenantId set."
-            )
-
-    return errors
-
-
-# ── Cross-artifact validator ───────────────────────────────────────────────────
-
-
-def validate_cross_artifact(
-    widget_js: str,
-    handler_code: str,
-) -> Dict[str, List[str]]:
-    """
-    Checks that field names the widget sends via host.call() match what the handler
-    destructures from ctx.widgetBody for the same route path.
-
-    Only runs for storefront_backend / storefront_backend_admin apps (crew.py guards on is_storefront).
-    Returns {generator_name: [errors]} — errors are attributed to both "handler"
-    and "widget_js" so both generators receive the mismatch on retry and can converge.
-    """
-    if not widget_js or not handler_code:
-        return {}
-
-    errors: Dict[str, List[str]] = {}
-
-    _NON_FIELD = {
-        "true", "false", "null", "undefined", "host", "context", "await",
-        "const", "let", "var", "return", "if", "else", "new", "this",
-        "async", "function", "result", "data", "response", "error",
-    }
-
-    # Extract all host.call('/path', { ... }) from widget JS
-    call_pattern = re.compile(
-        r"host\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{([^}]*)\}",
-        re.DOTALL,
-    )
-
-    for m in call_pattern.finditer(widget_js):
-        path = m.group(1)
-        body_str = m.group(2)
-
-        # Extract all identifier names from the object body
-        raw_idents = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", body_str)
-        sent_fields = {f for f in raw_idents if f not in _NON_FIELD}
-
-        if not sent_fields:
-            continue
-
-        # Find the handler's route block for this path
-        route_match = re.search(
-            rf"ctx\.widgetPath\s*===\s*['\"](?:{re.escape(path)})['\"]",
-            handler_code,
-        )
-        if not route_match:
-            # Path not in handler — already caught by validate_widget_js path check
-            continue
-
-        # Scan from this route match to the next ctx.widgetPath check (or end of handler)
-        route_start = route_match.start()
-        next_route = re.search(r"ctx\.widgetPath\s*===", handler_code[route_start + 1:])
-        route_end = (route_start + 1 + next_route.start()) if next_route else len(handler_code)
-        window = handler_code[route_start:route_end]
-
-        destr_match = re.search(
-            r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody",
-            window,
-        )
-
-        if not destr_match:
-            # No destructuring — check if handler even reads ctx.widgetBody
-            if "ctx.widgetBody" not in window:
-                msg = (
-                    f"widget sends {sorted(sent_fields)} to '{path}' but handler "
-                    f"has no ctx.widgetBody access in the '{path}' route"
+    for path_name, path_steps in [
+        ("webhookPath", webhook_path),
+        ("cronPath", cron_path),
+        ("adminPath", admin_path),
+    ]:
+        for i, step in enumerate(path_steps):
+            if select_re.search(step) and not tenant_re.search(step):
+                errors.append(
+                    f"codeSpec.{path_name} step {i + 1}: SELECT is missing tenant_id filter — "
+                    f"add 'AND tenant_id = ${{ctx.tenantId}}'. "
+                    f"Every DB query must be scoped to the current tenant."
                 )
-                errors.setdefault("handler", []).append(msg)
-                errors.setdefault("widget_js", []).append(msg)
-            continue
-
-        # Extract field names from the destructuring pattern
-        destr_str = destr_match.group(1)
-        raw_destr = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", destr_str)
-        handler_fields = {f for f in raw_destr if f not in _NON_FIELD}
-
-        missing = sent_fields - handler_fields
-        if missing:
-            msg = (
-                f"widget sends field(s) {sorted(missing)} to '{path}' but handler "
-                f"destructures {sorted(handler_fields)} from ctx.widgetBody — "
-                f"field name mismatch. "
-                f"The codeSpec.widgetPath is the ground truth: align both sides to it."
-            )
-            errors.setdefault("handler", []).append(msg)
-            errors.setdefault("widget_js", []).append(msg)
 
     return errors
 
 
-# ── Handler validator ──────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# ARTIFACT VALIDATORS  (run per-artifact after codegen, single artifact in isolation)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Handler ───────────────────────────────────────────────────────────────────
 
 FORBIDDEN_HANDLER_PATTERNS = [
     (r"\brequire\s*\(", "require() calls are not allowed"),
-    (r"\bfetch\s*\(", "raw fetch() calls are not allowed — use ctx.shopify or ctx.http.call()"),
-    # URLs are allowed ONLY inside ctx.http.call() — anywhere else they are forbidden.
-    # The validator checks for standalone URLs not preceded by ctx.http.call pattern.
-    (r"(?<!ctx\.http\.call\(['\"])https?://", "raw HTTP URLs are not allowed outside ctx.http.call() — use ctx.shopify for Shopify API, ctx.http.call(url) for external APIs"),
+    (
+        r"\bfetch\s*\(",
+        "raw fetch() calls are not allowed — use ctx.shopify or ctx.http.call()",
+    ),
+    (
+        r"(?<!ctx\.http\.call\(['\"])https?://",
+        "raw HTTP URLs are not allowed outside ctx.http.call() — use ctx.shopify for Shopify API, ctx.http.call(url) for external APIs",
+    ),
     (r"\beval\s*\(", "eval() is not allowed"),
     (r"\bprocess\.exit\b", "process.exit is not allowed"),
     (r"\bprocess\.kill\b", "process.kill is not allowed"),
@@ -497,7 +416,7 @@ def _js_is_syntactically_complete(code: str) -> bool:
 
         if in_string:
             if c == "\\":
-                i += 2  # skip escaped char
+                i += 2
                 continue
             if c == in_string:
                 in_string = None
@@ -528,19 +447,36 @@ def _js_is_syntactically_complete(code: str) -> bool:
     return depth == 0 and in_string is None and not in_block_comment
 
 
-def validate_handler(code: str, api_plan_topics: List[str]) -> List[str]:
-    """Validate the generated CommonJS handler.js."""
+def validate_handler_artifact(
+    code: str,
+    api_plan_topics: List[str],
+    widget_catalog: Optional[List[Dict[str, Any]]] = None,
+    admin_catalog: Optional[List[Dict[str, Any]]] = None,
+) -> List[str]:
+    """
+    Validate the generated CommonJS handler.js.
+
+    Checks:
+      1. Syntax completeness (balanced braces/parens/strings).
+      2. module.exports, webhookTopics, handler present.
+      3. Forbidden patterns (require, fetch, eval, process.env, etc.).
+      4. Declared webhookTopics match the architect plan.
+      5. Every widgetApiCatalog path has a ctx.widgetPath === '/path' branch
+         outside any admin block (widget trigger routing).
+      6. Every adminApiCatalog path has a ctx.widgetPath === '/path' branch
+         inside the ctx.trigger === 'admin' block.
+    """
     errors: List[str] = []
 
-    # Syntax completeness — catches truncated output before anything else
+    # 1. Syntax completeness — fail fast, further checks are meaningless on broken code
     if not _js_is_syntactically_complete(code):
         errors.append(
             "code is syntactically incomplete (truncated output) — "
             "unbalanced braces, unclosed string, or unmatched brackets"
         )
-        return errors  # further checks are meaningless on broken code
+        return errors
 
-    # Shape checks
+    # 2. Shape checks
     if "module.exports" not in code:
         errors.append("module.exports not found")
     if "webhookTopics" not in code:
@@ -548,20 +484,18 @@ def validate_handler(code: str, api_plan_topics: List[str]) -> List[str]:
     if "handler" not in code:
         errors.append("handler function not found in exports")
 
-    # Forbidden patterns
+    # 3. Forbidden patterns
     for pattern, message in FORBIDDEN_HANDLER_PATTERNS:
         match = re.search(pattern, code)
         if match:
-            # For URL violations, show the offending URL so the retry prompt is specific
             if "URL" in message or "http" in message.lower():
-                # Extract up to 80 chars of context around the match
                 start = max(0, match.start() - 20)
                 snippet = code[start : match.start() + 60].replace("\n", " ").strip()
                 errors.append(f"{message} — found: '{snippet}'")
             else:
                 errors.append(message)
 
-    # Extract declared webhook topics
+    # 4. Declared webhook topics must match the plan
     topic_match = re.search(r"webhookTopics\s*:\s*\[([^\]]*)\]", code)
     if topic_match:
         raw_topics = topic_match.group(1)
@@ -572,21 +506,82 @@ def validate_handler(code: str, api_plan_topics: List[str]) -> List[str]:
             errors.append(f"unknown webhook topics: {sorted(unknown)}")
 
         planned = set(api_plan_topics)
-        mismatch = declared.symmetric_difference(planned)
-        if mismatch and planned:
+        if declared and not planned:
+            # Handler invented topics when the plan has none (cron-only / backend app)
             errors.append(
-                f"webhook topics don't match API plan. "
-                f"Declared: {sorted(declared)}, Planned: {sorted(planned)}"
+                f"handler declares webhook topics {sorted(declared)} but the plan has none — "
+                f"set webhookTopics to [] for cron-only or backend apps"
+            )
+        elif planned:
+            mismatch = declared.symmetric_difference(planned)
+            if mismatch:
+                errors.append(
+                    f"webhook topics don't match API plan — "
+                    f"declared: {sorted(declared)}, planned: {sorted(planned)}"
+                )
+
+    # 5. Every widget catalog path must have a route branch somewhere in the handler.
+    #    We search the entire code rather than trying to slice a "widget region" by
+    #    position — ordering of trigger blocks varies and position-based slicing
+    #    produces false negatives when the admin block appears before the widget block.
+    #    Widget and admin catalog paths are always distinct slugs (by architect design),
+    #    so a widget path match can't be a false positive from the admin block.
+    for entry in widget_catalog or []:
+        path = entry.get("path", "")
+        if not path:
+            continue
+        route_present = bool(
+            re.search(
+                rf"ctx\.widgetPath\s*===\s*['\"]{ re.escape(path) }['\"]",
+                code,
+            )
+        )
+        if not route_present:
+            errors.append(
+                f"handler missing widget route for '{path}' — "
+                f"add: if (ctx.widgetPath === '{path}') {{ ... }} "
+                f"inside the widget trigger block. "
+                f"Every widgetApiCatalog path MUST be handled."
+            )
+
+    # 6. Every admin catalog path must have a route branch inside the admin block
+    admin_block = ""
+    admin_block_match = re.search(r"ctx\.trigger\s*===\s*['\"]admin['\"]", code)
+    if admin_block_match:
+        admin_block = code[admin_block_match.start() :]
+
+    for entry in admin_catalog or []:
+        path = entry.get("path", "")
+        if not path:
+            continue
+        if not admin_block:
+            errors.append(
+                f"handler has no ctx.trigger === 'admin' block but adminApiCatalog "
+                f"requires path '{path}' — add an admin trigger block that routes on ctx.widgetPath"
+            )
+            continue
+        route_present = bool(
+            re.search(
+                rf"ctx\.widgetPath\s*===\s*['\"]{ re.escape(path) }['\"]",
+                admin_block,
+            )
+        )
+        if not route_present:
+            errors.append(
+                f"handler missing admin route for '{path}' — "
+                f"add: if (ctx.widgetPath === '{path}') {{ ... }} "
+                f"inside the ctx.trigger === 'admin' block. "
+                f"Every adminApiCatalog path MUST be handled."
             )
 
     return errors
 
 
-# ── Migration validator ────────────────────────────────────────────────────────
+# ── Migration ─────────────────────────────────────────────────────────────────
 
 
-def validate_migration(sql: str) -> List[str]:
-    """Validate the generated SQL migration."""
+def validate_migration_artifact(sql: str) -> List[str]:
+    """Validate the generated PostgreSQL DDL migration."""
     errors: List[str] = []
 
     if not sql.strip():
@@ -596,8 +591,6 @@ def validate_migration(sql: str) -> List[str]:
         (r"\bDROP\s+TABLE\b", "DROP TABLE"),
         (r"\bDROP\s+COLUMN\b", "DROP COLUMN"),
         (r"\bTRUNCATE\b", "TRUNCATE"),
-        # ALTER TABLE is allowed only for ENABLE ROW LEVEL SECURITY (required RLS pattern).
-        # Any other ALTER TABLE form (ADD COLUMN, DROP COLUMN, etc.) is forbidden.
         (
             r"\bALTER\s+TABLE\b(?!\s+\w+\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY)",
             "ALTER TABLE on existing tables",
@@ -607,14 +600,13 @@ def validate_migration(sql: str) -> List[str]:
         if re.search(pattern, sql, re.IGNORECASE):
             errors.append(f"forbidden SQL operation: {name}")
 
-    # Each CREATE TABLE must include tenant_id; customer_id must be nullable
     create_table_stmts = re.findall(
         r"CREATE\s+TABLE\s+\w+\s*\([\s\S]*?\);", sql, re.IGNORECASE
     )
     for stmt in create_table_stmts:
         if "tenant_id" not in stmt.lower():
             errors.append(
-                f"CREATE TABLE missing tenant_id column: " f"{stmt[:80].strip()}..."
+                f"CREATE TABLE missing tenant_id column: {stmt[:80].strip()}..."
             )
         if re.search(r"\bcustomer_id\b[^,\n]*\bNOT\s+NULL\b", stmt, re.IGNORECASE):
             errors.append(
@@ -622,35 +614,74 @@ def validate_migration(sql: str) -> List[str]:
                 "storefront widget visitors can be guests with customerId = null"
             )
 
-    # RLS policy required when creating tables
-    has_create_table = bool(re.search(r"\bCREATE\s+TABLE\b", sql, re.IGNORECASE))
-    has_rls = bool(
-        re.search(r"\bROW\s+LEVEL\s+SECURITY\b", sql, re.IGNORECASE)
-    ) or bool(re.search(r"\bCREATE\s+POLICY\b", sql, re.IGNORECASE))
-    if has_create_table and not has_rls:
-        errors.append("CREATE TABLE present but no RLS policy found")
+    # RLS is required per table — a single file-level check would pass when only
+    # one of multiple tables has a policy. Check each created table individually.
+    created_tables = re.findall(
+        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", sql, re.IGNORECASE
+    )
+    for table_name in created_tables:
+        has_enable_rls = bool(
+            re.search(
+                rf"ALTER\s+TABLE\s+{re.escape(table_name)}\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",
+                sql,
+                re.IGNORECASE,
+            )
+        )
+        has_policy = bool(
+            re.search(
+                rf"CREATE\s+POLICY\s+\w+\s+ON\s+{re.escape(table_name)}\b",
+                sql,
+                re.IGNORECASE,
+            )
+        )
+        missing_stmts = []
+        if not has_enable_rls:
+            missing_stmts.append(
+                f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY"
+            )
+        if not has_policy:
+            missing_stmts.append(
+                f"CREATE POLICY ... ON {table_name} USING (tenant_id = auth.uid()) WITH CHECK (tenant_id = auth.uid())"
+            )
+        if missing_stmts:
+            errors.append(
+                f"table '{table_name}' is missing row-level security — add: "
+                + "; ".join(missing_stmts)
+            )
 
-    # Each CREATE POLICY must have WITH CHECK so INSERTs are also tenant-scoped
     policy_stmts = re.findall(
         r"CREATE\s+POLICY\b[^;]+;", sql, re.IGNORECASE | re.DOTALL
     )
     for stmt in policy_stmts:
+        name_match = re.search(r"CREATE\s+POLICY\s+(\w+)", stmt, re.IGNORECASE)
+        policy_name = name_match.group(1) if name_match else "unknown"
+
         if "with check" not in stmt.lower():
-            # Extract policy name for a readable error
-            name_match = re.search(r"CREATE\s+POLICY\s+(\w+)", stmt, re.IGNORECASE)
-            policy_name = name_match.group(1) if name_match else "unknown"
             errors.append(
                 f"policy '{policy_name}' missing WITH CHECK clause — "
                 "INSERT operations bypass tenant isolation without it"
             )
 
+        # The USING and WITH CHECK expressions must reference tenant_id to actually
+        # enforce isolation. A policy with USING (true) would pass the clause check
+        # above but allow cross-tenant reads.
+        if "tenant_id" not in stmt.lower():
+            errors.append(
+                f"policy '{policy_name}' does not reference tenant_id — "
+                "USING and WITH CHECK expressions must filter by tenant_id "
+                "(e.g. USING (tenant_id = auth.uid()) WITH CHECK (tenant_id = auth.uid()))"
+            )
+
     return errors
 
 
-# ── Widget JS validator ────────────────────────────────────────────────────────
+# ── Widget ────────────────────────────────────────────────────────────────────
 
 FORBIDDEN_WIDGET_JS_PATTERNS = [
-    (r"\bfetch\s*\(", "raw fetch() not allowed — use host.call() for backend requests or host.storefront() for Shopify public endpoints"),
+    (
+        r"\bfetch\s*\(",
+        "raw fetch() not allowed — use host.call() for backend requests or host.storefront() for Shopify public endpoints",
+    ),
     (r"\bXMLHttpRequest\b", "XMLHttpRequest not allowed — use host.call()"),
     (r"\beval\s*\(", "eval() is not allowed"),
     (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
@@ -668,29 +699,32 @@ FORBIDDEN_WIDGET_JS_PATTERNS = [
 ]
 
 
-def validate_widget_js(
+def validate_widget_artifact(
     widget_js: str,
     platform_api_catalog: List[Dict[str, str]],
 ) -> List[str]:
-    """Validate the generated widget ES module (storefront_backend / storefront_backend_admin only)."""
+    """
+    Validate the generated storefront widget ES module.
+    Only runs for storefront_backend / storefront_backend_admin apps.
+    """
     errors: List[str] = []
 
     if not widget_js or not widget_js.strip():
         return errors  # backend — no widget JS to validate
 
-    # Must export a mount function
     if not re.search(r"\bexport\s+function\s+mount\b", widget_js):
         errors.append(
             "must export a named mount function: export function mount(container, host) { ... }"
         )
 
-    # Forbidden patterns
     for pattern, message in FORBIDDEN_WIDGET_JS_PATTERNS:
         if re.search(pattern, widget_js):
             errors.append(message)
 
-    # host.storefront() must use relative paths only — no full URLs
-    storefront_calls = re.findall(r"""host\.storefront\s*\(\s*['"`]([^'"`]+)['"`]""", widget_js)
+    # host.storefront() must use relative paths
+    storefront_calls = re.findall(
+        r"""host\.storefront\s*\(\s*['"`]([^'"`]+)['"`]""", widget_js
+    )
     for path in storefront_calls:
         if path.startswith("http://") or path.startswith("https://"):
             errors.append(
@@ -698,7 +732,7 @@ def validate_widget_js(
                 f"not a full URL: '{path[:60]}'"
             )
 
-    # host.call() paths must be in the platform API catalog
+    # host.call() paths must be in the catalog
     catalog_paths = {entry["path"] for entry in platform_api_catalog}
     called_paths = re.findall(r"""host\.call\s*\(\s*['"]([^'"]+)['"]""", widget_js)
     for path in called_paths:
@@ -708,21 +742,28 @@ def validate_widget_js(
                 f"Allowed: {sorted(catalog_paths)}"
             )
 
-    # No hardcoded tenant IDs
     if re.search(r"\btenant[_-]?id\s*[:=]\s*['\"]", widget_js, re.IGNORECASE):
         errors.append("hardcoded tenant_id detected — read from host.context instead")
 
-    # Widget must not silently discard collected user data
-    has_submit = bool(
+    # Detect form submissions: either an explicit submit button/listener, or a button
+    # click listener combined with a form input — both indicate the widget is collecting
+    # data and attempting to send it somewhere.
+    has_explicit_submit = bool(
         re.search(
             r"type=[\"']submit[\"']|addEventListener\([\"']submit|\.submit\s*\(",
             widget_js,
         )
     )
+    has_form_input = bool(
+        re.search(r"<input|<textarea|\bgetFormData\b", widget_js)
+    )
+    has_click_submit = bool(
+        re.search(r"addEventListener\([\"']click", widget_js)
+    )
     has_host_call = bool(re.search(r"\bhost\.call\s*\(", widget_js))
-    if has_submit and not has_host_call:
+    if (has_explicit_submit or (has_click_submit and has_form_input)) and not has_host_call:
         errors.append(
-            "widget has a submit action but never calls host.call() — collected data "
+            "widget has a form action but never calls host.call() — collected data "
             "is silently discarded. Add a POST endpoint to platformApiCatalog and call "
             "it via host.call(path, data) to persist the submission"
         )
@@ -730,53 +771,248 @@ def validate_widget_js(
     return errors
 
 
-# ── Admin UI cross-artifact validator ─────────────────────────────────────────
+# ── Admin UI ──────────────────────────────────────────────────────────────────
+
+FORBIDDEN_ADMIN_UI_PATTERNS = [
+    (
+        r"\bfetch\s*\(",
+        "raw fetch() not allowed — use bridge.call() for backend requests",
+    ),
+    (r"\bXMLHttpRequest\b", "XMLHttpRequest not allowed — use bridge.call()"),
+    (r"\beval\s*\(", "eval() is not allowed"),
+    (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
+    (r"\bwindow\.", "window.* access is not allowed"),
+    (
+        r"\bdocument\.(?!querySelector|querySelectorAll|createElement|createTextNode|getElementById)",
+        "direct document.* access is not allowed outside container queries — use container.querySelector() patterns",
+    ),
+    (
+        r"https?://",
+        "hardcoded URLs are not allowed — use bridge.call() with catalog paths",
+    ),
+    (r"\bsetInterval\s*\(", "setInterval is not allowed"),
+]
 
 
-def validate_cross_artifact_admin(
+def validate_admin_ui_artifact(
+    admin_ui_js: str,
+    admin_api_catalog: List[Dict[str, str]],
+) -> List[str]:
+    """Validate the generated Admin UI ES module (storefront_backend_admin only)."""
+    errors: List[str] = []
+
+    if not admin_ui_js or not admin_ui_js.strip():
+        return errors
+
+    if not re.search(r"\bexport\s+function\s+mount\b", admin_ui_js):
+        errors.append(
+            "must export a named mount function: export function mount(container, bridge) { ... }"
+        )
+
+    for pattern, message in FORBIDDEN_ADMIN_UI_PATTERNS:
+        if re.search(pattern, admin_ui_js):
+            errors.append(message)
+
+    # bridge.call() paths must be in the admin catalog
+    if admin_api_catalog:
+        catalog_paths = {entry["path"] for entry in admin_api_catalog}
+        called_paths = re.findall(
+            r"""bridge\.call\s*\(\s*['"]([^'"]+)['"]""", admin_ui_js
+        )
+        for path in called_paths:
+            if path not in catalog_paths:
+                errors.append(
+                    f"bridge.call() references unlisted path '{path}'. "
+                    f"Allowed: {sorted(catalog_paths)}"
+                )
+
+    if re.search(r"\btenant[_-]?id\s*[:=]\s*['\"]", admin_ui_js, re.IGNORECASE):
+        errors.append(
+            "hardcoded tenant_id detected — read from bridge.context.tenantId instead"
+        )
+
+    has_explicit_submit = bool(
+        re.search(
+            r"type=[\"']submit[\"']|addEventListener\([\"']submit|\.submit\s*\(",
+            admin_ui_js,
+        )
+    )
+    has_form_input = bool(
+        re.search(r"<input|<textarea|\bgetFormData\b", admin_ui_js)
+    )
+    has_click_submit = bool(
+        re.search(r"addEventListener\([\"']click", admin_ui_js)
+    )
+    has_bridge_call = bool(re.search(r"\bbridge\.call\s*\(", admin_ui_js))
+    if (has_explicit_submit or (has_click_submit and has_form_input)) and not has_bridge_call:
+        errors.append(
+            "admin UI has a form action but never calls bridge.call() — collected data "
+            "is silently discarded. Add a POST endpoint to adminApiCatalog and call it "
+            "via bridge.call(path, data)."
+        )
+
+    return errors
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONTRACT VALIDATORS  (cross-artifact field alignment, run after artifact validators)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# These only run when BOTH artifacts already passed their individual validators.
+# Route existence is guaranteed by validate_handler_artifact() — these validators
+# only check that field names sent by the UI match what the handler destructures.
+
+
+def _extract_call_keys(body_str: str) -> set:
+    """
+    Extract top-level property key names from a JavaScript object literal fragment.
+
+    Handles both shorthand  ``{ email, variantId }``
+    and explicit            ``{ email: formData.email, variantId: someVar }``
+
+    Returns only the key identifiers — not their value expressions — to avoid false
+    mismatches where value expressions happen to contain identifiers that look like
+    field names (e.g. ``{ email: formData.email }`` must yield ``{'email'}``, not
+    ``{'email', 'formData'}``.
+
+    Limitation: only top-level keys are extracted. Nested object values
+    (e.g. ``{ items: [{id: x}] }``) may cause inner keys to appear; in practice
+    widget/admin call bodies are flat objects so this is not an issue.
+    """
+    keys: set = set()
+    # An object property key appears at the start of a property — immediately after
+    # ``{``, ``,``, or start-of-string — and is followed by ``:`` (explicit property)
+    # or ``,``/``}`` (shorthand property).
+    for m in re.finditer(
+        r"(?:(?:^|[,{])\s*)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[:,}])",
+        body_str.strip(),
+    ):
+        key = m.group(1)
+        if key not in _NON_FIELD:
+            keys.add(key)
+    return keys
+
+_NON_FIELD = {
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "host",
+    "bridge",
+    "context",
+    "await",
+    "const",
+    "let",
+    "var",
+    "return",
+    "if",
+    "else",
+    "new",
+    "this",
+    "async",
+    "function",
+    "result",
+    "data",
+    "response",
+    "error",
+}
+
+
+def validate_widget_handler_contract(
+    widget_js: str,
+    handler_code: str,
+) -> Dict[str, List[str]]:
+    """
+    Check that field names the widget sends via host.call() match what the handler
+    destructures from ctx.widgetBody for the same route path.
+
+    Returns {generator_name: [errors]} attributed to both sides so both receive
+    the mismatch on retry. Route existence is pre-checked by validate_handler_artifact.
+    """
+    if not widget_js or not handler_code:
+        return {}
+
+    errors: Dict[str, List[str]] = {}
+
+    call_pattern = re.compile(
+        r"host\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{([^}]*)\}",
+        re.DOTALL,
+    )
+
+    for m in call_pattern.finditer(widget_js):
+        path = m.group(1)
+        body_str = m.group(2)
+
+        # Use key-only extraction to avoid false mismatches from value expressions
+        # (e.g. { email: formData.email } → {'email'}, not {'email', 'formData'})
+        sent_fields = _extract_call_keys(body_str)
+        if not sent_fields:
+            continue
+
+        route_match = re.search(
+            rf"ctx\.widgetPath\s*===\s*['\"](?:{re.escape(path)})['\"]",
+            handler_code,
+        )
+        if not route_match:
+            continue  # route absence already reported by validate_handler_artifact
+
+        route_start = route_match.start()
+        next_route = re.search(
+            r"ctx\.widgetPath\s*===", handler_code[route_start + 1 :]
+        )
+        route_end = (
+            (route_start + 1 + next_route.start()) if next_route else len(handler_code)
+        )
+        window = handler_code[route_start:route_end]
+
+        destr_match = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody", window)
+        if not destr_match:
+            if "ctx.widgetBody" not in window:
+                msg = (
+                    f"widget sends {sorted(sent_fields)} to '{path}' but handler "
+                    f"has no ctx.widgetBody access in the '{path}' route"
+                )
+                errors.setdefault("handler", []).append(msg)
+                errors.setdefault("widget_js", []).append(msg)
+            continue
+
+        handler_fields = {
+            f
+            for f in re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", destr_match.group(1))
+            if f not in _NON_FIELD
+        }
+        missing = sent_fields - handler_fields
+        if missing:
+            msg = (
+                f"widget sends field(s) {sorted(missing)} to '{path}' but handler "
+                f"destructures {sorted(handler_fields)} from ctx.widgetBody — "
+                f"field name mismatch. Align both sides to the codeSpec.widgetPath."
+            )
+            errors.setdefault("handler", []).append(msg)
+            errors.setdefault("widget_js", []).append(msg)
+
+    return errors
+
+
+def validate_admin_handler_contract(
     admin_ui_js: str,
     handler_code: str,
 ) -> Dict[str, List[str]]:
     """
-    Checks that field names the admin UI sends via bridge.call() match what the
-    handler destructures from ctx.widgetBody for the same route path, AND that
-    each path is handled inside a ctx.trigger === 'admin' block.
+    Check that field names the admin UI sends via bridge.call() match what the handler
+    destructures from ctx.widgetBody inside the admin trigger block.
 
-    Only runs for storefront_backend_admin apps (crew.py guards on is_admin_ui).
-    Returns {generator_name: [errors]} attributed to both "handler" and "admin_ui"
-    so both generators receive the mismatch on retry.
+    Returns {generator_name: [errors]} attributed to both sides. Route existence
+    is pre-checked by validate_handler_artifact.
     """
     if not admin_ui_js or not handler_code:
         return {}
 
     errors: Dict[str, List[str]] = {}
 
-    _NON_FIELD = {
-        "true", "false", "null", "undefined", "bridge", "context", "await",
-        "const", "let", "var", "return", "if", "else", "new", "this",
-        "async", "function", "result", "data", "response", "error",
-    }
+    admin_block_match = re.search(r"ctx\.trigger\s*===\s*['\"]admin['\"]", handler_code)
+    admin_block = handler_code[admin_block_match.start() :] if admin_block_match else ""
 
-    # Locate the admin trigger block in the handler
-    admin_block_match = re.search(
-        r"ctx\.trigger\s*===\s*['\"]admin['\"]",
-        handler_code,
-    )
-    admin_block = handler_code[admin_block_match.start():] if admin_block_match else ""
-
-    if not admin_block_match:
-        # No admin block at all — if admin UI calls any paths, that's a problem
-        called_paths = re.findall(r"""bridge\.call\s*\(\s*['"]([^'"]+)['"]""", admin_ui_js)
-        if called_paths:
-            msg = (
-                f"admin UI calls {sorted(set(called_paths))} via bridge.call() but "
-                f"handler has no ctx.trigger === 'admin' block"
-            )
-            errors.setdefault("handler", []).append(msg)
-            errors.setdefault("admin_ui", []).append(msg)
-        return errors
-
-    # Extract all bridge.call('/path', { ... }) from admin UI
     call_pattern = re.compile(
         r"bridge\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*(?:,\s*\{([^}]*)\})?",
         re.DOTALL,
@@ -786,36 +1022,26 @@ def validate_cross_artifact_admin(
         path = m.group(1)
         body_str = m.group(2) or ""
 
-        raw_idents = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", body_str)
-        sent_fields = {f for f in raw_idents if f not in _NON_FIELD}
+        # Use key-only extraction — same rationale as validate_widget_handler_contract
+        sent_fields = _extract_call_keys(body_str)
+        if not sent_fields:
+            continue
 
-        # Check the path is handled inside the admin block
         route_match = re.search(
             rf"ctx\.widgetPath\s*===\s*['\"](?:{re.escape(path)})['\"]",
             admin_block,
         )
         if not route_match:
-            msg = (
-                f"admin UI calls bridge.call('{path}') but handler has no "
-                f"ctx.widgetPath === '{path}' route inside the admin trigger block"
-            )
-            errors.setdefault("handler", []).append(msg)
-            errors.setdefault("admin_ui", []).append(msg)
-            continue
+            continue  # route absence already reported by validate_handler_artifact
 
-        if not sent_fields:
-            continue
-
-        # Find the body of this route in the admin block
         route_start = route_match.start()
-        next_route = re.search(r"ctx\.widgetPath\s*===", admin_block[route_start + 1:])
-        route_end = (route_start + 1 + next_route.start()) if next_route else len(admin_block)
+        next_route = re.search(r"ctx\.widgetPath\s*===", admin_block[route_start + 1 :])
+        route_end = (
+            (route_start + 1 + next_route.start()) if next_route else len(admin_block)
+        )
         window = admin_block[route_start:route_end]
 
-        destr_match = re.search(
-            r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody",
-            window,
-        )
+        destr_match = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody", window)
         if not destr_match:
             if "ctx.widgetBody" not in window:
                 msg = (
@@ -826,85 +1052,19 @@ def validate_cross_artifact_admin(
                 errors.setdefault("admin_ui", []).append(msg)
             continue
 
-        destr_str = destr_match.group(1)
-        raw_destr = re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", destr_str)
-        handler_fields = {f for f in raw_destr if f not in _NON_FIELD}
-
+        handler_fields = {
+            f
+            for f in re.findall(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b", destr_match.group(1))
+            if f not in _NON_FIELD
+        }
         missing = sent_fields - handler_fields
         if missing:
             msg = (
                 f"admin UI sends field(s) {sorted(missing)} to '{path}' but handler "
                 f"destructures {sorted(handler_fields)} from ctx.widgetBody in the admin block — "
-                f"field name mismatch. Align both sides to the codeSpec.adminPath steps."
+                f"field name mismatch. Align both sides to the codeSpec.adminPath."
             )
             errors.setdefault("handler", []).append(msg)
             errors.setdefault("admin_ui", []).append(msg)
-
-    return errors
-
-
-# ── Admin UI validator ─────────────────────────────────────────────────────────
-
-FORBIDDEN_ADMIN_UI_PATTERNS = [
-    (r"\bfetch\s*\(", "raw fetch() not allowed — use bridge.call() for backend requests"),
-    (r"\bXMLHttpRequest\b", "XMLHttpRequest not allowed — use bridge.call()"),
-    (r"\beval\s*\(", "eval() is not allowed"),
-    (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
-    (r"\bwindow\.", "window.* access is not allowed"),
-    (r"https?://", "hardcoded URLs are not allowed — use bridge.call() with catalog paths"),
-    (r"\bsetInterval\s*\(", "setInterval is not allowed"),
-]
-
-
-def validate_admin_ui(
-    admin_ui_js: str,
-    admin_api_catalog: List[Dict[str, str]],
-) -> List[str]:
-    """Validate the generated Admin UI ES module."""
-    errors: List[str] = []
-
-    if not admin_ui_js or not admin_ui_js.strip():
-        return errors
-
-    # Must export a mount function
-    if not re.search(r"\bexport\s+function\s+mount\b", admin_ui_js):
-        errors.append(
-            "must export a named mount function: export function mount(container, bridge) { ... }"
-        )
-
-    # Forbidden patterns
-    for pattern, message in FORBIDDEN_ADMIN_UI_PATTERNS:
-        if re.search(pattern, admin_ui_js):
-            errors.append(message)
-
-    # bridge.call() paths must be in the admin API catalog
-    if admin_api_catalog:
-        catalog_paths = {entry["path"] for entry in admin_api_catalog}
-        called_paths = re.findall(r"""bridge\.call\s*\(\s*['"]([^'"]+)['"]""", admin_ui_js)
-        for path in called_paths:
-            if path not in catalog_paths:
-                errors.append(
-                    f"bridge.call() references unlisted path '{path}'. "
-                    f"Allowed: {sorted(catalog_paths)}"
-                )
-
-    # No hardcoded tenant IDs
-    if re.search(r"\btenant[_-]?id\s*[:=]\s*['\"]", admin_ui_js, re.IGNORECASE):
-        errors.append("hardcoded tenant_id detected — read from bridge.context.tenantId instead")
-
-    # Admin UI with a submit action must call bridge.call() — not silently discard data
-    has_submit = bool(
-        re.search(
-            r"type=[\"']submit[\"']|addEventListener\([\"']submit|\.submit\s*\(",
-            admin_ui_js,
-        )
-    )
-    has_bridge_call = bool(re.search(r"\bbridge\.call\s*\(", admin_ui_js))
-    if has_submit and not has_bridge_call:
-        errors.append(
-            "admin UI has a submit action but never calls bridge.call() — collected data "
-            "is silently discarded. Add a POST endpoint to adminApiCatalog and call it "
-            "via bridge.call(path, data)."
-        )
 
     return errors

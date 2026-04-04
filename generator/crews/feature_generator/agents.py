@@ -56,7 +56,7 @@ OUTPUT FORMAT — respond ONLY with this JSON object (no markdown fences):
   "resources": ["inventory", "orders", "customers", "products", "discounts"],
   "desiredOutcome": "one sentence describing the merchant-visible behavior",
   "cronSchedule": null | "cron expression",
-  "appCategory": "storefront_backend" | "storefront_backend_admin" | "backend"
+  "appCategory": "storefront_backend" | "storefront_backend_admin" | "backend" | "backend_admin"
 }
 
 Rules:
@@ -71,7 +71,8 @@ Rules:
 - appCategory selection:
     - "storefront_backend": REQUIRED if "widget" is in triggerTypes. Used for apps with a storefront widget for customer interaction.
     - "storefront_backend_admin": REQUIRED if "widget" is in triggerTypes AND the merchant needs a dedicated dashboard in Shopify Admin to view data or settings.
-    - "backend": ONLY for fully automatic apps (webhook/cron) or pure admin action tools. NO storefront widget.
+    - "backend_admin": REQUIRED if the merchant needs a dedicated dashboard in Shopify Admin BUT there is no storefront widget.
+    - "backend": ONLY for fully automatic apps (webhook/cron) or pure admin action tools that require NO custom Admin UI (they just run the handler). NO storefront widget.
 - Output ONLY the JSON object"""
 
 
@@ -106,7 +107,7 @@ If you understand the request:
     "resources": ["orders", "inventory", "customers", "products", "discounts"],
     "desiredOutcome": "one sentence",
     "cronSchedule": null,
-    "appCategory": "storefront_backend | storefront_backend_admin | backend"
+    "appCategory": "storefront_backend | storefront_backend_admin | backend | backend_admin"
   }
 }
 
@@ -115,7 +116,7 @@ Rules:
 - Off-topic or non-Shopify requests: guide the merchant with a clarifying question toward a concrete Shopify app concept.
 - When the request is clear, go directly to "ready" — do not ask unnecessary questions.
 - triggerTypes: "webhook" = reacts to Shopify events; "cron" = runs on schedule; "admin" = merchant triggers it manually; "widget" = customer interacts on storefront.
-- appCategory: "storefront_backend" = widget + backend, no Admin UI; "storefront_backend_admin" = widget + backend + Admin UI; "backend" = no widget."""
+- appCategory: "storefront_backend" = widget + backend; "storefront_backend_admin" = widget + backend + Admin UI; "backend_admin" = backend + Admin UI; "backend" = no widget, no custom Admin UI."""
 
 
 def run_product_agent_analyze(history: List[Dict[str, Any]]) -> Dict[str, Any]:

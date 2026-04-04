@@ -39,6 +39,10 @@ webhookTopics: Only subscribe to a topic if its payload fields are actively read
   Do NOT subscribe "just in case" — unused subscriptions waste quota.
   Use only topics listed in the Shopify API context provided below.
   If no context is available, use only well-known topics for the resources involved.
+  CRITICAL — format: topics MUST use lowercase REST format "resource/action" (e.g. "inventory_levels/update").
+  Do NOT use GraphQL enum format (SCREAMING_SNAKE_CASE like "INVENTORY_LEVELS_UPDATE" or "VARIANTS_IN_STOCK").
+  GraphQL introspection may show WebhookSubscriptionTopic enum values — those are NOT valid here.
+  There is NO "variants_in_stock" or similar topic — use "inventory_levels/update" to detect stock changes.
 
 cronSchedule: null unless periodic polling is required. Use standard 5-field cron expression.
 
@@ -168,17 +172,19 @@ storefrontReads: null for backend apps.
   CRITICAL: Do NOT add a widgetApiCatalog path whose sole purpose is to proxy publicly
   available Shopify storefront data. That is a wasted backend call.
 
-adminApiCatalog: null unless app archetype is "storefront_backend_admin" OR the app has trigger="admin".
+adminApiCatalog: REQUIRED (non-null, non-empty) when app archetype is "storefront_backend_admin" or "backend_admin".
+  null for all other archetypes (storefront_backend, backend).
   The Admin UI panel embedded in Shopify Admin calls these paths via bridge.call().
   Each path is handled by the same backend handler — ctx.trigger === 'admin'.
   Rules:
-  - path must start with "/" (e.g. "/list", "/trigger", "/config/get", "/config/save")
+  - path MUST start with "/" (e.g. "/list", "/trigger", "/config/get", "/config/save")
+    Validation rejects any path without a leading slash.
   - method "GET" = read-only (list data, load config), "POST" = action or mutation
   - responseShape: the EXACT JSON the handler returns on success.
   - Design around what the merchant actually needs — no speculative extras.
   Examples:
-    Category B (dashboard): [{ "method": "GET", "path": "/subscribers", "responseShape": { "total": 0, "rows": [] } }]
-    Category C admin-triggered: [{ "method": "POST", "path": "/run", "responseShape": { "processed": 0 } }]
+    storefront_backend_admin (dashboard): [{ "method": "GET", "path": "/subscribers", "responseShape": { "total": 0, "rows": [] } }]
+    backend_admin (admin-triggered action): [{ "method": "POST", "path": "/run", "responseShape": { "processed": 0 } }]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):
@@ -264,7 +270,7 @@ def run_architect_agent(
     intent:
         Parsed intent from run_intent_agent().
     app_archetype:
-        "storefront_backend" | "storefront_backend_admin" | "backend"
+        "storefront_backend" | "storefront_backend_admin" | "backend" | "backend_admin"
     api_context:
         Live Shopify API context from fetch_api_context() — REST endpoints,
         GraphQL schema, webhook topics. Empty string if MCP unavailable.
