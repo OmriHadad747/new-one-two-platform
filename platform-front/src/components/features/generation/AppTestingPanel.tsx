@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { useWebhookAppLogs } from "@/hooks/useApps";
 import { useState } from "react";
 import type { GenerationState, GenerationBundle, App, ProgressEvent } from "@/types/dashboard";
+import { ArchetypePills } from "@/components/ui/ArchetypePills";
 
 interface AppTestingPanelProps {
   gen: GenerationState;
@@ -142,17 +143,25 @@ function DeployPanel({
   const triggerType = bundle?.triggerType ?? "webhook";
   const topics = bundle?.triggerTopics ?? [];
 
-  const archetypeLabel =
-    effectiveHasAdmin && effectiveHasWidget ? "Widget + Backend + Admin" :
-    effectiveHasAdmin ? "Backend + Admin" :
-    effectiveHasWidget ? "Widget + Backend" :
-    "Backend only";
+  const effectiveArchetype =
+    effectiveHasAdmin && effectiveHasWidget ? "storefront_backend_admin" as const :
+    effectiveHasAdmin  ? "backend_admin"        as const :
+    effectiveHasWidget ? "storefront_backend"   as const :
+    "backend" as const;
 
   const triggerLabel =
     triggerType === "cron"    ? "Scheduled (cron)"  :
     triggerType === "admin"   ? "Admin-triggered"   :
     triggerType === "widget"  ? "Widget interaction" :
     topics[0] ?? "Webhook-triggered";
+
+  // explanation may be a string (legacy) or { merchantFacing, technical } (new generator)
+  const explanationText: string | null =
+    typeof bundle?.explanation === "string"
+      ? bundle.explanation
+      : typeof bundle?.explanation === "object" && bundle?.explanation !== null
+        ? ((bundle.explanation as unknown as { merchantFacing?: string }).merchantFacing ?? null)
+        : null;
 
   return (
     <div className="space-y-5">
@@ -166,7 +175,7 @@ function DeployPanel({
         <div className="space-y-2 pt-1">
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-semibold text-faint uppercase tracking-wider w-14 shrink-0">Type</span>
-            <span className="text-xs px-2 py-0.5 bg-accent/10 text-accent rounded-full">{archetypeLabel}</span>
+            <ArchetypePills archetype={effectiveArchetype} />
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-semibold text-faint uppercase tracking-wider w-14 shrink-0">Trigger</span>
@@ -174,9 +183,9 @@ function DeployPanel({
           </div>
         </div>
 
-        {bundle?.explanation && (
+        {explanationText && (
           <p className="text-[11px] text-muted leading-relaxed pt-1 border-t border-white/[0.06]">
-            {bundle.explanation.split("\n")[0]}
+            {explanationText.split("\n")[0]}
           </p>
         )}
       </div>
@@ -246,8 +255,15 @@ function LivePanel({
 
   const triggerTopics = bundle?.triggerTopics ?? [];
   const topicHint = triggerTopics.length > 0 ? `(${triggerTopics[0]})` : "in Shopify";
-  const validateSteps = bundle?.explanation
-    ? bundle.explanation.split(/\n+/).filter(Boolean)
+  // explanation may be a string (legacy) or an object { merchantFacing, technical } (new generator)
+  const explanationText: string | null =
+    typeof bundle?.explanation === "string"
+      ? bundle.explanation
+      : typeof bundle?.explanation === "object" && bundle?.explanation !== null
+        ? ((bundle.explanation as unknown as { merchantFacing?: string }).merchantFacing ?? null)
+        : null;
+  const validateSteps = explanationText
+    ? explanationText.split(/\n+/).filter(Boolean)
     : hasWidget
       ? [
           "Open your store and navigate to a product page.",

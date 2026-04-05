@@ -176,7 +176,7 @@ LAYOUT PATTERNS:
 class AdminUiGenerator(Generator):
     name = "admin_ui"
     prefers_code_model = True
-    max_tokens = 6144
+    max_tokens = 8192
 
     # ── Generator interface ────────────────────────────────────────────────────
 

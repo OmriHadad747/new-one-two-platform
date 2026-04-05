@@ -63,7 +63,6 @@ export interface App {
   adminUiJs: string | null;             // admin UI ES module; null unless storefront_backend_admin
   shopifyClientId: string;
   shopifySecretName: string;             // GCP Secret Manager resource name (HMAC signing secret)
-  shopifyAccessTokenSecretName: string | null; // GCP Secret Manager resource name (OAuth access token)
   shopDomain: string;                    // mystore.myshopify.com
   createdAt: Date;
   updatedAt: Date;

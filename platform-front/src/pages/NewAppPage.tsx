@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/Button";
 import { ChatMessages, type ChatMessage } from "@/components/features/generation/ChatMessages";
 import { ChatInput } from "@/components/features/generation/ChatInput";
 import { AppTestingPanel } from "@/components/features/generation/AppTestingPanel";
-import { useGeneration } from "@/hooks/useGeneration";
+import { useGeneration, useLatestSession } from "@/hooks/useGeneration";
 import { useSessionStore } from "@/stores/session";
 import { useApps, useApp } from "@/hooks/useApps";
 import { api } from "@/lib/api";
+import type { SessionBundle } from "@/types/dashboard";
 import { NameAppModal } from "@/components/features/generation/NameAppModal";
 import type { GenerationBundle, AnalyzeMessage } from "@/types/dashboard";
 
@@ -68,12 +69,49 @@ export function NewAppPage() {
 
   const activeAppQuery = useApp(tenantId, selectedAppId);
   const activeApp = activeAppQuery.data ?? null;
+  const latestSessionQuery = useLatestSession(selectedAppId);
 
+  // Hydrate generation state from the persisted latest session when the user
+  // returns to an app that already has a completed (but undeployed) generation.
   useEffect(() => {
-    if (!selectedAppId && apps.length > 0 && apps[0]) {
-      setSelectedAppId(apps[0].id);
-    }
-  }, [apps, selectedAppId]);
+    const session = latestSessionQuery.data;
+    if (!session || gen.status !== "idle") return;
+    if (session.status !== "completed" && session.status !== "failed") return;
+
+    const sb = session.bundle as SessionBundle | null | undefined;
+    if (!sb?.handlerModule) return;
+
+    const restoredBundle: GenerationBundle = {
+      explanation: sb.explanation?.merchantFacing,
+      triggerTopics: sb.handlerModule.webhookTopics ?? session.webhookTopics,
+      triggerType: sb.handlerModule.cronSchedule
+        ? "cron"
+        : sb.adminUiModule
+          ? "admin"
+          : sb.widgetModule
+            ? "widget"
+            : "webhook",
+      hasWidget: !!sb.widgetModule,
+      hasAdminUI: !!sb.adminUiModule,
+    };
+
+    const alreadyDeployed = activeApp !== null && activeApp.status !== "draft";
+    setBundle(restoredBundle);
+    setDeployed(alreadyDeployed);
+    setMessages([
+      WELCOME,
+      {
+        id: "resume",
+        role: "ai",
+        text: alreadyDeployed
+          ? "Welcome back! This app is live. Describe what you'd like to change and I'll revise it."
+          : "Welcome back! Your last generation is ready to deploy. Hit Deploy when you're ready, or describe changes first.",
+      },
+    ]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestSessionQuery.data, activeApp?.status]);
+
+  // Intentionally no auto-selection: null means "create a new app" on confirm.
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });

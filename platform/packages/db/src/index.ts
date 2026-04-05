@@ -115,7 +115,6 @@ export async function resolveWebhookContext(
       a.admin_ui_js                          AS app_admin_ui_js,
       a.shopify_client_id                    AS app_shopify_client_id,
       a.shopify_secret_name                  AS app_shopify_secret_name,
-      a.shopify_access_token_secret_name     AS app_shopify_access_token_secret_name,
       a.shop_domain                          AS app_shop_domain,
       a.created_at                           AS app_created_at,
       a.updated_at                           AS app_updated_at,
@@ -177,7 +176,6 @@ export async function resolveWebhookContext(
       adminUiJs: row.appAdminUiJs,
       shopifyClientId: row.appShopifyClientId,
       shopifySecretName: row.appShopifySecretName,
-      shopifyAccessTokenSecretName: row.appShopifyAccessTokenSecretName,
       shopDomain: row.appShopDomain,
       createdAt: row.appCreatedAt,
       updatedAt: row.appUpdatedAt,
@@ -360,7 +358,6 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       a.admin_ui_js                          AS "appAdminUiJs",
       a.shopify_client_id                    AS "appShopifyClientId",
       a.shopify_secret_name                  AS "appShopifySecretName",
-      a.shopify_access_token_secret_name     AS "appShopifyAccessTokenSecretName",
       a.shop_domain                          AS "appShopDomain",
       a.created_at                           AS "appCreatedAt",
       a.updated_at                           AS "appUpdatedAt",
@@ -405,7 +402,6 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       adminUiJs: row.appAdminUiJs,
       shopifyClientId: row.appShopifyClientId,
       shopifySecretName: row.appShopifySecretName,
-      shopifyAccessTokenSecretName: row.appShopifyAccessTokenSecretName,
       shopDomain: row.appShopDomain,
       createdAt: row.appCreatedAt,
       updatedAt: row.appUpdatedAt,
@@ -1048,7 +1044,6 @@ export async function getAppById(
       adminUiJs: string | null;
       shopifyClientId: string;
       shopifySecretName: string;
-      shopifyAccessTokenSecretName: string | null;
       shopDomain: string;
       createdAt: Date;
       updatedAt: Date;
@@ -1086,7 +1081,6 @@ export async function getAppById(
     adminUiJs: row.adminUiJs,
     shopifyClientId: row.shopifyClientId,
     shopifySecretName: row.shopifySecretName,
-    shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
     shopDomain: row.shopDomain,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -1188,7 +1182,6 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
       adminUiJs: string | null;
       shopifyClientId: string;
       shopifySecretName: string;
-      shopifyAccessTokenSecretName: string | null;
       shopDomain: string;
       createdAt: Date;
       updatedAt: Date;
@@ -1225,7 +1218,6 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
     adminUiJs: row.adminUiJs,
     shopifyClientId: row.shopifyClientId,
     shopifySecretName: row.shopifySecretName,
-    shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
     shopDomain: row.shopDomain,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -1427,7 +1419,6 @@ export async function getAdminUiAppsByShop(shopDomain: string): Promise<App[]> {
       adminUiJs: string | null;
       shopifyClientId: string;
       shopifySecretName: string;
-      shopifyAccessTokenSecretName: string | null;
       shopDomain: string;
       createdAt: Date;
       updatedAt: Date;
@@ -1466,7 +1457,6 @@ export async function getAdminUiAppsByShop(shopDomain: string): Promise<App[]> {
     adminUiJs: row.adminUiJs,
     shopifyClientId: row.shopifyClientId,
     shopifySecretName: row.shopifySecretName,
-    shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
     shopDomain: row.shopDomain,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

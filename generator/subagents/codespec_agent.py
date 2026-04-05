@@ -323,7 +323,7 @@ def run_codespec_agent(
         api_context_section=api_context_section,
     )
 
-    llm = get_code_llm(max_tokens=4096)
+    llm = get_code_llm(max_tokens=8192)
     current_user = user
     for attempt in range(2):
         result = invoke(llm, CODESPEC_SYSTEM, current_user)

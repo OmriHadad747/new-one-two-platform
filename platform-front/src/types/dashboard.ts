@@ -172,3 +172,25 @@ export interface GenerationResult {
   bundle?: GenerationBundle;
   error?: string;
 }
+
+// ─── Latest Session Result (full session object from /generation/app/:appId/latest) ───
+
+/** Full FeatureBundle shape as returned by the generation API. */
+export interface SessionBundle {
+  handlerModule?: { code?: string; webhookTopics?: string[]; cronSchedule?: string | null };
+  widgetModule?: string | null;
+  adminUiModule?: string | null;
+  explanation?: { merchantFacing?: string; technical?: unknown };
+}
+
+/** Shape returned by GET /generation/app/:appId/latest */
+export interface LatestSessionResult {
+  jobId: string | null;
+  status: string;
+  bundle?: SessionBundle | null;
+  error?: string | null;
+  errorMessage?: string | null;
+  prompt: string;
+  webhookTopics: string[];
+  cronSchedule: string | null;
+}
