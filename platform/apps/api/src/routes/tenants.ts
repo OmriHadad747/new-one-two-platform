@@ -16,8 +16,12 @@ import {
   createApp,
   getAppById,
   getAppsByTenantId,
-  getRecentExecutionLogs,
+  getRecentWebhookInvocationLogs,
   getTenantStats,
+  updateAppName,
+  updateAppStatus,
+  getWidgetInvocationLogs,
+  getAdminInvocationLogs,
 } from "@new-one-two/db";
 import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
 
@@ -146,6 +150,62 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
     }
   );
 
+  // ─── PATCH /tenants/:tenantId/apps/:appId ──────────────────────────────────
+
+  app.patch<{ Params: { tenantId: string; appId: string }; Body: { name?: string; status?: string } }>(
+    "/:tenantId/apps/:appId",
+    async (
+      req: FastifyRequest<{ Params: { tenantId: string; appId: string }; Body: { name?: string; status?: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { tenantId, appId } = req.params;
+      const { name, status } = req.body;
+
+      if (!name?.trim() && !status) {
+        return reply.status(400).send({ error: "name or status is required" });
+      }
+
+      const foundApp = await getAppById(tenantId, appId);
+      if (!foundApp) {
+        return reply.status(404).send({ error: "App not found" });
+      }
+
+      if (name?.trim()) await updateAppName(tenantId, appId, name.trim());
+      if (status === "active" || status === "inactive" || status === "deleted") await updateAppStatus(appId, status);
+
+      const updated = await getAppById(tenantId, appId);
+      return reply.send(updated);
+    }
+  );
+
+  // ─── GET /tenants/:tenantId/apps/:appId/widget-logs ────────────────────────
+
+  app.get<{ Params: { tenantId: string; appId: string }; Querystring: { limit?: string } }>(
+    "/:tenantId/apps/:appId/widget-logs",
+    async (req, reply) => {
+      const { tenantId, appId } = req.params;
+      const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200);
+      const foundApp = await getAppById(tenantId, appId);
+      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      const logs = await getWidgetInvocationLogs(appId, limit);
+      return reply.send(logs);
+    }
+  );
+
+  // ─── GET /tenants/:tenantId/apps/:appId/admin-logs ─────────────────────────
+
+  app.get<{ Params: { tenantId: string; appId: string }; Querystring: { limit?: string } }>(
+    "/:tenantId/apps/:appId/admin-logs",
+    async (req, reply) => {
+      const { tenantId, appId } = req.params;
+      const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200);
+      const foundApp = await getAppById(tenantId, appId);
+      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      const logs = await getAdminInvocationLogs(appId, limit);
+      return reply.send(logs);
+    }
+  );
+
   // ─── GET /tenants/:tenantId/logs ────────────────────────────────────────────
 
   app.get<{ Params: { tenantId: string }; Querystring: { limit?: string } }>(
@@ -165,7 +225,7 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
         return reply.status(404).send({ error: "Tenant not found" });
       }
 
-      const logs = await getRecentExecutionLogs(tenantId, limit);
+      const logs = await getRecentWebhookInvocationLogs(tenantId, limit);
       return reply.send(logs);
     }
   );

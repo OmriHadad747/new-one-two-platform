@@ -1,6 +1,6 @@
 import { cn } from "@/lib/cn";
 import { api } from "@/lib/api";
-import { useAppLogs } from "@/hooks/useApps";
+import { useWebhookAppLogs } from "@/hooks/useApps";
 import { useState } from "react";
 import type { GenerationState, GenerationBundle, App, ProgressEvent } from "@/types/dashboard";
 
@@ -217,7 +217,7 @@ function LivePanel({
   const [triggerState, setTriggerState] = useState<"idle" | "loading" | "ok" | "err">("idle");
   const [triggerOut, setTriggerOut] = useState<string | null>(null);
 
-  const logsQuery = useAppLogs(tenantId, app?.id ?? null, true);
+  const logsQuery = useWebhookAppLogs(tenantId, app?.id ?? null, true);
   const logs = logsQuery.data ?? [];
 
   const canTrigger =
@@ -483,12 +483,27 @@ export function AppTestingPanel({
 
         {/* Failed */}
         {gen.status === "failed" && !deployed && (
-          <div className="flex flex-col items-center justify-center h-full gap-4 py-16 text-center">
-            <span className="material-symbols-outlined text-danger text-[32px]">error</span>
-            <div>
-              <p className="text-sm font-semibold text-danger">Generation failed</p>
-              <p className="text-[11px] text-faint mt-1">Describe what went wrong in the chat to try again.</p>
-            </div>
+          <div className="flex flex-col items-center justify-center h-full gap-4 py-16 text-center px-6">
+            {gen.completedEvent?.errorCode === "platform_limitation" ? (
+              <>
+                <span className="material-symbols-outlined text-amber text-[32px]">build_circle</span>
+                <div>
+                  <p className="text-sm font-semibold text-ink">Not supported yet</p>
+                  <p className="text-[12px] text-muted mt-1 max-w-[280px]">
+                    {gen.completedEvent.error ?? "This app type requires a capability that isn't available on the platform yet."}
+                  </p>
+                  <p className="text-[11px] text-faint mt-2">Try describing a different version of your idea in the chat.</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-danger text-[32px]">error</span>
+                <div>
+                  <p className="text-sm font-semibold text-danger">Generation failed</p>
+                  <p className="text-[11px] text-faint mt-1">Describe what went wrong in the chat to try again.</p>
+                </div>
+              </>
+            )}
           </div>
         )}
 

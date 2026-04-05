@@ -98,6 +98,10 @@ class FeatureBundleMessage(BaseModel):
     jobId: str
     status: Literal["success", "failed"]
     error: Optional[str] = None
+    # "platform_limitation" — architect detected the app requires a capability
+    # that ctx cannot deliver and has no viable mitigation. Show a merchant-
+    # friendly message; do not suggest retrying (it won't help).
+    errorCode: Optional[Literal["platform_limitation"]] = None
     bundle: Optional[Bundle] = None
     meta: Optional[GenerationMeta] = None
 
@@ -105,6 +109,8 @@ class FeatureBundleMessage(BaseModel):
         d: Dict[str, Any] = {"jobId": self.jobId, "status": self.status}
         if self.error:
             d["error"] = self.error
+        if self.errorCode:
+            d["errorCode"] = self.errorCode
         if self.bundle:
             d["bundle"] = self.bundle.to_dict()
         if self.meta:

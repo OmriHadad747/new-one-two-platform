@@ -1,6 +1,6 @@
 import { Worker, type Job } from "bullmq";
 import { GoogleAuth } from "google-auth-library";
-import { updateExecutionStatus } from "@new-one-two/db";
+import { updateWebhookInvocationLog } from "@new-one-two/db";
 import { createRequestLogger } from "@new-one-two/logger";
 import type { WebhookJobPayload, HarnessInvokeResponse } from "@new-one-two/types";
 
@@ -148,7 +148,7 @@ async function processWebhookJob(job: Job<WebhookJobPayload>): Promise<void> {
 
   const startedAt = new Date();
 
-  await updateExecutionStatus(payload.executionLogId, {
+  await updateWebhookInvocationLog(payload.executionLogId, {
     status: "running",
     startedAt,
   });
@@ -176,7 +176,7 @@ async function processWebhookJob(job: Job<WebhookJobPayload>): Promise<void> {
 
     log.info({ jobId: job.id, durationMs, statusCode }, "Webhook job executed successfully");
 
-    await updateExecutionStatus(payload.executionLogId, {
+    await updateWebhookInvocationLog(payload.executionLogId, {
       status: "success",
       durationMs,
       responseStatusCode: statusCode,
@@ -195,7 +195,7 @@ async function processWebhookJob(job: Job<WebhookJobPayload>): Promise<void> {
       );
 
       const errHarnessResponse = parseHarnessResponse(err.body);
-      await updateExecutionStatus(payload.executionLogId, {
+      await updateWebhookInvocationLog(payload.executionLogId, {
         status: "failed",
         durationMs,
         responseStatusCode: err.httpStatus,
@@ -208,7 +208,7 @@ async function processWebhookJob(job: Job<WebhookJobPayload>): Promise<void> {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error({ jobId: job.id, errorMessage, durationMs }, "Unexpected error invoking Cloud Run function");
 
-      await updateExecutionStatus(payload.executionLogId, {
+      await updateWebhookInvocationLog(payload.executionLogId, {
         status: "failed",
         durationMs,
         errorMessage,

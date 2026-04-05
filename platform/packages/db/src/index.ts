@@ -214,7 +214,7 @@ export async function resolveWebhookContext(
  * Creates an execution log entry (idempotent — returns existing if duplicate).
  * The unique index on (app_id, shopify_webhook_id) enforces at-most-once queuing.
  */
-export async function createExecutionLog(params: {
+export async function createWebhookInvocationLog(params: {
   webhookSubscriptionId: string;
   deployedFunctionId: string;
   appId: string;
@@ -224,7 +224,7 @@ export async function createExecutionLog(params: {
   requestPayloadHash: string;
 }): Promise<{ id: string; isDuplicate: boolean }> {
   const rows = await sql<{ id: string }[]>`
-    INSERT INTO execution_logs (
+    INSERT INTO webhook_invocation_logs (
       webhook_subscription_id,
       deployed_function_id,
       app_id,
@@ -250,7 +250,7 @@ export async function createExecutionLog(params: {
   if (rows.length === 0) {
     // Duplicate — find the existing log
     const existing = await sql<{ id: string }[]>`
-      SELECT id FROM execution_logs
+      SELECT id FROM webhook_invocation_logs
       WHERE app_id = ${params.appId}
         AND shopify_webhook_id = ${params.shopifyWebhookId}
       LIMIT 1
@@ -264,7 +264,7 @@ export async function createExecutionLog(params: {
 /**
  * Transitions execution log status. Called by the worker.
  */
-export async function updateExecutionStatus(
+export async function updateWebhookInvocationLog(
   id: string,
   update: {
     status: "running" | "success" | "failed" | "timeout";
@@ -278,7 +278,7 @@ export async function updateExecutionStatus(
   }
 ): Promise<void> {
   await sql`
-    UPDATE execution_logs
+    UPDATE webhook_invocation_logs
     SET
       status               = ${update.status},
       duration_ms          = ${update.durationMs ?? null},
@@ -1156,6 +1156,23 @@ export async function updateAppArchetype(
 }
 
 /**
+ * Renames a platform app (name only — slug is immutable).
+ */
+export async function updateAppName(
+  tenantId: string,
+  appId: string,
+  name: string
+): Promise<void> {
+  await sql`
+    UPDATE apps
+    SET name       = ${name},
+        updated_at = NOW()
+    WHERE id        = ${appId}
+      AND tenant_id = ${tenantId}
+  `;
+}
+
+/**
  * Returns all apps for a tenant, newest first.
  */
 export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
@@ -1218,7 +1235,7 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
 /**
  * Returns the most recent execution logs across all apps for a tenant.
  */
-export async function getRecentExecutionLogs(
+export async function getRecentWebhookInvocationLogs(
   tenantId: string,
   limit = 20
 ): Promise<
@@ -1254,10 +1271,98 @@ export async function getRecentExecutionLogs(
       el.duration_ms     AS "durationMs",
       el.error_message   AS "errorMessage",
       el.queued_at       AS "queuedAt"
-    FROM execution_logs el
+    FROM webhook_invocation_logs el
     JOIN apps a ON a.id = el.app_id
     WHERE el.tenant_id = ${tenantId}
     ORDER BY el.queued_at DESC
+    LIMIT ${limit}
+  `;
+}
+
+// ─── Widget invocation logs ───────────────────────────────────────────────────
+
+export async function createWidgetInvocationLog(params: {
+  appId: string;
+  tenantId: string;
+  path: string;
+}): Promise<string> {
+  const rows = await sql<{ id: string }[]>`
+    INSERT INTO widget_invocation_logs (app_id, tenant_id, path, status)
+    VALUES (${params.appId}, ${params.tenantId}, ${params.path}, 'running')
+    RETURNING id
+  `;
+  return rows[0]!.id;
+}
+
+export async function updateWidgetInvocationLog(
+  id: string,
+  update: { status: "success" | "failed"; durationMs: number; errorMessage?: string }
+): Promise<void> {
+  await sql`
+    UPDATE widget_invocation_logs
+    SET status        = ${update.status},
+        duration_ms   = ${update.durationMs},
+        error_message = ${update.errorMessage ?? null}
+    WHERE id = ${id}
+  `;
+}
+
+export async function getWidgetInvocationLogs(
+  appId: string,
+  limit = 50
+): Promise<Array<{ id: string; path: string; status: string; durationMs: number | null; errorMessage: string | null; invokedAt: Date }>> {
+  return sql`
+    SELECT id, path, status,
+           duration_ms   AS "durationMs",
+           error_message AS "errorMessage",
+           invoked_at    AS "invokedAt"
+    FROM widget_invocation_logs
+    WHERE app_id = ${appId}
+    ORDER BY invoked_at DESC
+    LIMIT ${limit}
+  `;
+}
+
+// ─── Admin invocation logs ────────────────────────────────────────────────────
+
+export async function createAdminInvocationLog(params: {
+  appId: string;
+  tenantId: string;
+  path: string;
+}): Promise<string> {
+  const rows = await sql<{ id: string }[]>`
+    INSERT INTO admin_invocation_logs (app_id, tenant_id, path, status)
+    VALUES (${params.appId}, ${params.tenantId}, ${params.path}, 'running')
+    RETURNING id
+  `;
+  return rows[0]!.id;
+}
+
+export async function updateAdminInvocationLog(
+  id: string,
+  update: { status: "success" | "failed"; durationMs: number; errorMessage?: string }
+): Promise<void> {
+  await sql`
+    UPDATE admin_invocation_logs
+    SET status        = ${update.status},
+        duration_ms   = ${update.durationMs},
+        error_message = ${update.errorMessage ?? null}
+    WHERE id = ${id}
+  `;
+}
+
+export async function getAdminInvocationLogs(
+  appId: string,
+  limit = 50
+): Promise<Array<{ id: string; path: string; status: string; durationMs: number | null; errorMessage: string | null; invokedAt: Date }>> {
+  return sql`
+    SELECT id, path, status,
+           duration_ms   AS "durationMs",
+           error_message AS "errorMessage",
+           invoked_at    AS "invokedAt"
+    FROM admin_invocation_logs
+    WHERE app_id = ${appId}
+    ORDER BY invoked_at DESC
     LIMIT ${limit}
   `;
 }
@@ -1283,7 +1388,7 @@ export async function getTenantStats(tenantId: string): Promise<{
       SELECT
         COUNT(*)                           AS "calls",
         AVG(duration_ms)                   AS "avgMs"
-      FROM execution_logs
+      FROM webhook_invocation_logs
       WHERE tenant_id  = ${tenantId}
         AND queued_at >= date_trunc('month', NOW())
     `,
@@ -1304,6 +1409,70 @@ export async function getTenantStats(tenantId: string): Promise<{
  * Creates or replaces a webhook subscription for an (app, topic) pair.
  * Uses RLS — must be called within withTenantContext.
  */
+/**
+ * Returns all active apps with an Admin UI module for a given shop domain.
+ * Used by the embedded Shopify Admin shell to populate the app sidebar.
+ * Joins through tenants so the caller only needs to know the shop domain.
+ */
+export async function getAdminUiAppsByShop(shopDomain: string): Promise<App[]> {
+  const rows = await sql<
+    Array<{
+      id: string;
+      tenantId: string;
+      slug: string;
+      name: string;
+      status: string;
+      appArchetype: string;
+      widgetJs: string | null;
+      adminUiJs: string | null;
+      shopifyClientId: string;
+      shopifySecretName: string;
+      shopifyAccessTokenSecretName: string | null;
+      shopDomain: string;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  >`
+    SELECT
+      a.id,
+      a.tenant_id                            AS "tenantId",
+      a.slug,
+      a.name,
+      a.status,
+      a.app_archetype                        AS "appArchetype",
+      a.widget_js                            AS "widgetJs",
+      a.admin_ui_js                          AS "adminUiJs",
+      a.shopify_client_id                    AS "shopifyClientId",
+      a.shopify_secret_name                  AS "shopifySecretName",
+      a.shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
+      a.shop_domain                          AS "shopDomain",
+      a.created_at                           AS "createdAt",
+      a.updated_at                           AS "updatedAt"
+    FROM apps a
+    JOIN tenants t ON t.id = a.tenant_id
+    WHERE t.shop_domain = ${shopDomain}
+      AND a.admin_ui_js IS NOT NULL
+      AND a.status != 'deleted'
+    ORDER BY a.updated_at DESC
+  `;
+  return rows.map((row) => ({
+    id: row.id,
+    tenantId: row.tenantId,
+    slug: row.slug,
+    name: row.name,
+    status: row.status as App["status"],
+    appArchetype: row.appArchetype as AppArchetype,
+    widgetJs: row.widgetJs,
+    adminUiJs: row.adminUiJs,
+    shopifyClientId: row.shopifyClientId,
+    shopifySecretName: row.shopifySecretName,
+    shopifyAccessTokenSecretName: row.shopifyAccessTokenSecretName,
+    shopDomain: row.shopDomain,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
+}
+
 export async function upsertWebhookSubscription(params: {
   appId: string;
   tenantId: string;

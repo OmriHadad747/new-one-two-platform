@@ -2,7 +2,8 @@ import type {
   Tenant,
   App,
   TenantStats,
-  ExecutionLogEntry,
+  WebhookInvocationLogEntry,
+  InvocationLogEntry,
   StartGenerationRequest,
   StartGenerationResponse,
   GenerationResult,
@@ -33,7 +34,7 @@ export const api = {
     stats: (tenantId: string) =>
       request<TenantStats>(`/tenants/${tenantId}/stats`),
     logs: (tenantId: string, limit = 20) =>
-      request<ExecutionLogEntry[]>(`/tenants/${tenantId}/logs?limit=${limit}`),
+      request<WebhookInvocationLogEntry[]>(`/tenants/${tenantId}/logs?limit=${limit}`),
   },
 
   apps: {
@@ -46,6 +47,25 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       }),
+    rename: (tenantId: string, appId: string, name: string) =>
+      request<App>(`/tenants/${tenantId}/apps/${appId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      }),
+    setStatus: (tenantId: string, appId: string, status: "active" | "inactive") =>
+      request<App>(`/tenants/${tenantId}/apps/${appId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }),
+    delete: (tenantId: string, appId: string) =>
+      request<App>(`/tenants/${tenantId}/apps/${appId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "deleted" }),
+      }),
+    widgetLogs: (tenantId: string, appId: string, limit = 50) =>
+      request<InvocationLogEntry[]>(`/tenants/${tenantId}/apps/${appId}/widget-logs?limit=${limit}`),
+    adminLogs: (tenantId: string, appId: string, limit = 50) =>
+      request<InvocationLogEntry[]>(`/tenants/${tenantId}/apps/${appId}/admin-logs?limit=${limit}`),
   },
 
   generation: {

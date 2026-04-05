@@ -1,17 +1,23 @@
 import { getSecret } from "@new-one-two/crypto";
 import { createRequestLogger } from "@new-one-two/logger";
 import type {
+  BarcodeClient,
   CsvClient,
   EmailClient,
   FilesClient,
   HandlerContext,
   HttpClient,
+  ImageClient,
   PdfClient,
+  QrCodeClient,
   ServicesClient,
   ShopInfo,
   SmsClient,
   StorefrontClient,
 } from "@new-one-two/types";
+import QRCode from "qrcode";
+import JsBarcode from "jsbarcode";
+import { DOMImplementation, XMLSerializer } from "@xmldom/xmldom";
 import { buildShopifyClient } from "./shopify-client.js";
 
 const SHOPIFY_CLIENT_ID = process.env["SHOPIFY_CLIENT_ID"] ?? null;
@@ -120,6 +126,66 @@ export async function createBaseContext(options: CreateBaseContextOptions): Prom
     },
   };
 
+  const image: ImageClient = {
+    async resize(url, options) {
+      // Stub: fetch the original image and return it unchanged.
+      // Phase 3: replace with sharp().resize(width, height, { fit }).toBuffer()
+      logger.info(
+        { event: "IMAGE_RESIZE", tenantId, url, ...options },
+        "image.resize stub — sharp not yet wired; returning original bytes"
+      );
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Failed to fetch image for resize [${res.status}]: ${url}`);
+      return Buffer.from(await res.arrayBuffer());
+    },
+    async analyze(url) {
+      // Stub: do a HEAD request to get content-length; dimensions not available without sharp.
+      // Phase 3: use sharp(buffer).metadata() for real width/height/format.
+      logger.info(
+        { event: "IMAGE_ANALYZE", tenantId, url },
+        "image.analyze stub — sharp not yet wired; returning zero dimensions"
+      );
+      const res = await fetch(url, { method: "HEAD" });
+      const sizeBytes = parseInt(res.headers.get("content-length") ?? "0", 10);
+      const contentType = res.headers.get("content-type") ?? "";
+      const format = contentType.replace("image/", "") || "unknown";
+      return { width: 0, height: 0, format, sizeBytes };
+    },
+  };
+
+  const qrcode: QrCodeClient = {
+    async generate(text, options) {
+      const size = options?.size ?? 300;
+      if (options?.format === "svg") {
+        const svg = await QRCode.toString(text, { type: "svg", width: size });
+        logger.info({ event: "QRCODE_GENERATED", tenantId, format: "svg" }, "qrcode generated");
+        return svg;
+      }
+      const buffer = await QRCode.toBuffer(text, { width: size });
+      logger.info({ event: "QRCODE_GENERATED", tenantId, format: "png" }, "qrcode generated");
+      return buffer;
+    },
+  };
+
+  const barcode: BarcodeClient = {
+    async generate(value, options) {
+      const format = options?.format ?? "CODE128";
+      const width = options?.width ?? 2;
+      const height = options?.height ?? 100;
+      const document = new DOMImplementation().createDocument("http://www.w3.org/1999/xhtml", "html", null);
+      const svgNode = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      JsBarcode(svgNode, value, {
+        format,
+        width,
+        height,
+        xmlDocument: document,
+      });
+      const svg = new XMLSerializer().serializeToString(svgNode);
+      logger.info({ event: "BARCODE_GENERATED", tenantId, format }, "barcode generated");
+      return svg;
+    },
+  };
+
   const http: HttpClient = {
     async call(url, options) {
       const method = options?.method ?? "GET";
@@ -154,7 +220,7 @@ export async function createBaseContext(options: CreateBaseContextOptions): Prom
     },
   };
 
-  const services: ServicesClient = { email, sms, pdf, csv, files };
+  const services: ServicesClient = { email, sms, pdf, csv, files, image, qrcode, barcode };
 
   return {
     shopify,

@@ -57,9 +57,83 @@ WHERE:
                                   // variant: "success" | "error" | "info" (default "info")
 
 DESIGN PRINCIPLES:
-- Style with clean, minimal CSS using a dark/neutral palette appropriate for Shopify Admin.
-- Use Shopify Polaris design tokens (spacing, typography) as inspiration — but implement
-  in plain CSS. Do not import Polaris or any external library.
+- The panel runs inside a Shopify Admin iframe that has already loaded Polaris. Polaris CSS
+  custom properties are available globally — use them for ALL colors, spacing, and typography.
+  DO NOT invent a custom color palette or hardcode any hex colors.
+
+  Essential Polaris CSS tokens to use:
+    Colors:
+      --p-color-bg-surface            background of cards / panels
+      --p-color-bg-surface-secondary  slightly recessed background (table rows, sidebars)
+      --p-color-bg-fill               fills for selected/hover states
+      --p-color-bg-fill-success       success banner background
+      --p-color-bg-fill-critical      error banner background
+      --p-color-bg-fill-warning       warning banner background
+      --p-color-text                  primary body text
+      --p-color-text-secondary        muted / label text
+      --p-color-text-success          success text
+      --p-color-text-critical         error text
+      --p-color-border                default border
+      --p-color-border-emphasis       stronger border (dividers, active states)
+      --p-color-icon                  icon color
+    Spacing (base unit = 4px):
+      --p-space-100 (4px)  --p-space-200 (8px)  --p-space-300 (12px)
+      --p-space-400 (16px) --p-space-500 (20px) --p-space-600 (24px)
+      --p-space-800 (32px) --p-space-1000 (40px)
+    Border radius:
+      --p-border-radius-100 (4px)  --p-border-radius-200 (8px)
+      --p-border-radius-300 (12px) --p-border-radius-full (9999px)
+    Typography:
+      --p-font-family-sans
+      --p-font-size-300 (12px label) --p-font-size-350 (14px body)
+      --p-font-size-400 (16px heading) --p-font-size-500 (20px title)
+      --p-font-weight-medium (500)  --p-font-weight-semibold (600)  --p-font-weight-bold (700)
+    Shadow:
+      --p-shadow-100  --p-shadow-200  --p-shadow-300
+
+  Example card:
+    .card {
+      background: var(--p-color-bg-surface);
+      border: 1px solid var(--p-color-border);
+      border-radius: var(--p-border-radius-200);
+      padding: var(--p-space-400);
+      box-shadow: var(--p-shadow-100);
+      font-family: var(--p-font-family-sans);
+      color: var(--p-color-text);
+    }
+  Example primary button:
+    .btn-primary {
+      background: #008060;   /* Shopify brand green — safe to hardcode */
+      color: #fff;
+      border: none;
+      border-radius: var(--p-border-radius-100);
+      padding: var(--p-space-200) var(--p-space-400);
+      font-size: var(--p-font-size-350);
+      font-weight: var(--p-font-weight-medium);
+      cursor: pointer;
+    }
+  Example secondary button:
+    .btn-secondary {
+      background: var(--p-color-bg-surface);
+      color: var(--p-color-text);
+      border: 1px solid var(--p-color-border-emphasis);
+      border-radius: var(--p-border-radius-100);
+      padding: var(--p-space-200) var(--p-space-400);
+      font-size: var(--p-font-size-350);
+      font-weight: var(--p-font-weight-medium);
+      cursor: pointer;
+    }
+  Example badge:
+    .badge {
+      display: inline-flex; align-items: center;
+      padding: 2px var(--p-space-200);
+      border-radius: var(--p-border-radius-full);
+      font-size: var(--p-font-size-300);
+      font-weight: var(--p-font-weight-semibold);
+    }
+    .badge-success { background: var(--p-color-bg-fill-success); color: var(--p-color-text-success); }
+    .badge-error   { background: var(--p-color-bg-fill-critical); color: var(--p-color-text-critical); }
+
 - Components: tables for list data, stat cards for metrics, action buttons, forms for config.
 - Show loading states (spinner or skeleton) while bridge.call() is in progress.
 - Show error states clearly when bridge.call() rejects.

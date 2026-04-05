@@ -23,7 +23,7 @@ export type WebhookTopic =
   | (string & {}); // allow unknown future topics
 
 export type LogLevel = "info" | "warn" | "error" | "debug";
-export type ExecutionStatus = "queued" | "running" | "success" | "failed" | "timeout";
+export type WebhookInvocationStatus = "queued" | "running" | "success" | "failed" | "timeout";
 
 // ─── App Archetype ────────────────────────────────────────────────────────────
 // Unified vocabulary shared between generator (appCategory) and platform (appArchetype).
@@ -115,9 +115,9 @@ export interface WebhookSubscription {
   updatedAt: Date;
 }
 
-// ─── ExecutionLog ─────────────────────────────────────────────────────────────
+// ─── WebhookInvocationLog ─────────────────────────────────────────────────────────────
 
-export interface ExecutionLog {
+export interface WebhookInvocationLog {
   id: string;
   webhookSubscriptionId: string;
   deployedFunctionId: string;
@@ -125,7 +125,7 @@ export interface ExecutionLog {
   tenantId: string;
   topic: WebhookTopic;
   shopifyWebhookId: string;     // X-Shopify-Webhook-Id header — idempotency key
-  status: ExecutionStatus;
+  status: WebhookInvocationStatus;
   durationMs: number | null;
   requestPayloadHash: string;   // SHA-256 of raw body — for dedup
   responseStatusCode: number | null;
@@ -243,12 +243,81 @@ export interface FilesClient {
   upload(name: string, content: Buffer | string, mimeType?: string): Promise<string>;
 }
 
+export interface ImageResizeOptions {
+  width: number;
+  height: number;
+  /** How to fit the image into the target dimensions. Defaults to 'cover'. */
+  fit?: "cover" | "contain" | "fill";
+}
+
+export interface ImageInfo {
+  width: number;
+  height: number;
+  format: string;   // e.g. "jpeg", "png", "webp"
+  sizeBytes: number;
+}
+
+export interface ImageClient {
+  /**
+   * Fetches the image at `url`, resizes it to the given dimensions, and returns
+   * the result as a Buffer. Phase 3: real sharp impl.
+   * Stub: returns the original image bytes unchanged (no actual resize in dev).
+   */
+  resize(url: string, options: ImageResizeOptions): Promise<Buffer>;
+  /**
+   * Fetches the image at `url` and returns its dimensions and format.
+   * Phase 3: real sharp impl.
+   * Stub: returns zero dimensions with a warning log.
+   */
+  analyze(url: string): Promise<ImageInfo>;
+}
+
+export interface QrCodeOptions {
+  /** Pixel size of the generated QR code image. Defaults to 300. */
+  size?: number;
+  /** Output format. 'png' returns a Buffer; 'svg' returns a string. Defaults to 'png'. */
+  format?: "png" | "svg";
+}
+
+export interface QrCodeClient {
+  /**
+   * Generates a QR code encoding `text`.
+   * Returns a PNG Buffer (default) or an SVG string when format is 'svg'.
+   * Always real — uses the qrcode package (pure JS, no native deps).
+   */
+  generate(text: string, options?: QrCodeOptions): Promise<Buffer | string>;
+}
+
+export interface BarcodeOptions {
+  /**
+   * Barcode symbology. Defaults to 'CODE128'.
+   * Common values: 'CODE128', 'EAN13', 'EAN8', 'UPC', 'CODE39'.
+   */
+  format?: string;
+  width?: number;  // bar width in pixels, defaults to 2
+  height?: number; // bar height in pixels, defaults to 100
+}
+
+export interface BarcodeClient {
+  /**
+   * Generates a barcode for `value` and returns it as an SVG string.
+   * Always real — uses jsbarcode (pure JS, no native deps).
+   */
+  generate(value: string, options?: BarcodeOptions): Promise<string>;
+}
+
 export interface ServicesClient {
   email: EmailClient;
   sms: SmsClient;
   pdf: PdfClient;
   csv: CsvClient;
   files: FilesClient;
+  /** Image resize and analysis. Stub in MVP; real sharp impl in Phase 3. */
+  image: ImageClient;
+  /** QR code generation. Always real (pure JS). */
+  qrcode: QrCodeClient;
+  /** Barcode generation (SVG). Always real (pure JS). */
+  barcode: BarcodeClient;
 }
 
 // ─── HandlerContext ───────────────────────────────────────────────────────────

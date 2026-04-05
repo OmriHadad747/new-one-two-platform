@@ -9,6 +9,7 @@ import { useGeneration } from "@/hooks/useGeneration";
 import { useSessionStore } from "@/stores/session";
 import { useApps, useApp } from "@/hooks/useApps";
 import { api } from "@/lib/api";
+import { NameAppModal } from "@/components/features/generation/NameAppModal";
 import type { GenerationBundle, AnalyzeMessage } from "@/types/dashboard";
 
 const WELCOME: ChatMessage = {
@@ -52,6 +53,9 @@ export function NewAppPage() {
   const [deployed, setDeployed] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [bundle, setBundle] = useState<GenerationBundle | null>(null);
+
+  // Name modal state
+  const [nameModal, setNameModal] = useState<{ suggestedName: string; onConfirm: (name: string) => void } | null>(null);
 
   // Analyze conversation state
   const [analyzeHistory, setAnalyzeHistory] = useState<AnalyzeMessage[]>([]);
@@ -139,44 +143,60 @@ export function NewAppPage() {
       const confirmMsgId = crypto.randomUUID();
       setAnalyzePhase("awaiting_confirm");
 
-      const handleConfirm = async () => {
-        // Remove the action buttons from the confirm message
-        setMessages((prev) =>
-          prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m))
-        );
+      const handleConfirm = () => {
+        const originalPrompt = history[0]?.content ?? "New App";
+        const suggestedName = appIdForGen
+          ? (apps.find((a) => a.id === appIdForGen)?.name ?? nameFromPrompt(originalPrompt))
+          : nameFromPrompt(originalPrompt);
 
-        let appId = appIdForGen;
-        if (!appId) {
-          const originalPrompt = history[0]?.content ?? "New App";
-          const name = nameFromPrompt(originalPrompt);
-          const slug = slugFromName(name);
-          try {
-            const newApp = await api.apps.create(tenantId!, { slug, name });
-            appId = newApp.id;
-            setSelectedAppId(newApp.id);
-            await appsQuery.refetch();
-          } catch (err) {
+        setNameModal({
+          suggestedName,
+          onConfirm: async (chosenName: string) => {
+            setNameModal(null);
+
+            // Remove the action buttons from the confirm message
+            setMessages((prev) =>
+              prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m))
+            );
+
+            let appId = appIdForGen;
+            if (!appId) {
+              const slug = slugFromName(chosenName);
+              try {
+                const newApp = await api.apps.create(tenantId!, { slug, name: chosenName });
+                appId = newApp.id;
+                setSelectedAppId(newApp.id);
+                await appsQuery.refetch();
+              } catch (err) {
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: crypto.randomUUID(),
+                    role: "ai",
+                    text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}`,
+                  },
+                ]);
+                setAnalyzePhase("idle");
+                return;
+              }
+            } else {
+              // Rename existing app if the merchant changed the name
+              const existing = apps.find((a) => a.id === appId);
+              if (existing && existing.name !== chosenName) {
+                await api.apps.rename(tenantId!, appId, chosenName).catch(() => null);
+                await appsQuery.refetch();
+              }
+            }
+
+            setAnalyzePhase("idle");
+            setPendingIntent(null);
             setMessages((prev) => [
               ...prev,
-              {
-                id: crypto.randomUUID(),
-                role: "ai",
-                text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}`,
-              },
+              { id: crypto.randomUUID(), role: "ai", text: "Your app is being built — follow the progress on the right →" },
             ]);
-            setAnalyzePhase("idle");
-            return;
-          }
-        }
-
-        const originalPrompt = history[0]?.content ?? "";
-        setAnalyzePhase("idle");
-        setPendingIntent(null);
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: "ai", text: "Your app is being built — follow the progress on the right →" },
-        ]);
-        await start({ appId, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: intent });
+            await start({ appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: intent });
+          },
+        });
       };
 
       setMessages((prev) => [
@@ -323,6 +343,13 @@ export function NewAppPage() {
 
   return (
     <>
+      {nameModal && (
+        <NameAppModal
+          initialName={nameModal.suggestedName}
+          onConfirm={nameModal.onConfirm}
+          onCancel={() => setNameModal(null)}
+        />
+      )}
       <TopBar
         title="New App"
         subtitle={

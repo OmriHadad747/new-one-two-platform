@@ -86,12 +86,29 @@ platformGaps: What this feature needs that ctx cannot deliver.
     ctx.services.pdf.generate(html) → Buffer  (stub → real Phase 3)
     ctx.services.csv.generate(rows) → string  (always real, pure in-process)
     ctx.services.files.upload(name, content) → Promise<string>  (stub → real Phase 3)
+    ctx.services.image.resize(url, {width, height, fit?}) → Buffer  (stub → real Phase 3)
+    ctx.services.image.analyze(url) → {width, height, format, sizeBytes}  (stub → real Phase 3)
+    ctx.services.qrcode.generate(text, {size?, format?}) → Buffer|string  (always real)
+    ctx.services.barcode.generate(value, {format?, width?, height?}) → string SVG  (always real)
     ctx.http.call(url, options)   — external HTTP (real; https:// URLs allowed here only)
     ctx.storefront.graphql(...)   — Shopify Storefront API (real)
-  ctx does NOT provide: push notifications, Slack, WhatsApp, real-time WebSockets.
+  ctx does NOT provide: push notifications, Slack, WhatsApp, real-time WebSockets,
+  in-process native binaries, GPU processing, or real-time data streams.
   For each genuine gap, specify the exact mitigation the handler should use (usually:
   log full delivery intent with ctx.logger.info so an external integration can consume it).
-  Do NOT list email, SMS, PDF, CSV, files, or HTTP as platform gaps.
+  Do NOT list email, SMS, PDF, CSV, files, image, qrcode, barcode, or HTTP as platform gaps.
+
+feasibility: CRITICAL — assess whether this app is BUILDABLE with the ctx surface above.
+  Set to "feasible" in almost all cases. Set to "blocked" ONLY when:
+    • The core value of the app literally cannot be delivered without a capability
+      that ctx does NOT provide (e.g. real-time WebSocket push, GPU inference,
+      native OS binary execution, live voice/video processing).
+    • There is no reasonable mitigation (a stub + logging is NOT a blocked reason).
+  Image resize, PDF, QR codes, barcodes, email, SMS, CSV, files are all available
+  through ctx.services — do NOT mark these as blocked.
+  When feasibility is "blocked", set blockedReason to a single merchant-friendly
+  sentence explaining what's missing (e.g. "This app requires real-time WebSocket
+  push notifications, which aren't supported yet.").
 
 cronBatching: Required when the cron path would call Shopify APIs inside a per-item loop.
   Shopify rate limit: ~2 req/s on Basic. N items × K calls per item = throttle at scale.
@@ -211,6 +228,8 @@ OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanatio
     ]
   },
   "implementationSpec": {
+    "feasibility": "feasible" | "blocked",
+    "blockedReason": null | "Single merchant-friendly sentence — only set when feasibility is 'blocked'",
     "complexity": "low" | "medium" | "high",
     "stateMachine": null | {
       "needsStateTracking": true,

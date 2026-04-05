@@ -6,10 +6,10 @@ import { AppGrid } from "@/components/features/dashboard/AppGrid";
 import { ActivityFeed } from "@/components/features/dashboard/ActivityFeed";
 import { LoadingSpinner, ErrorMessage, EmptyApps } from "@/components/ui/StateViews";
 import { useSessionStore } from "@/stores/session";
-import { useApps, useTenantStats, useExecutionLogs } from "@/hooks/useApps";
-import type { ExecutionLogEntry } from "@/types/dashboard";
+import { useApps, useTenantStats, useWebhookLogs } from "@/hooks/useApps";
+import type { WebhookInvocationLogEntry } from "@/types/dashboard";
 
-function logToActivityIcon(log: ExecutionLogEntry): string {
+function logToActivityIcon(log: WebhookInvocationLogEntry): string {
   if (log.status === "failed" || log.status === "timeout") return "⚠";
   if (log.topic.startsWith("orders")) return "🛒";
   if (log.topic.startsWith("products")) return "📦";
@@ -32,7 +32,7 @@ export function DashboardPage() {
 
   const appsQuery = useApps(tenantId);
   const statsQuery = useTenantStats(tenantId);
-  const logsQuery = useExecutionLogs(tenantId, 10);
+  const logsQuery = useWebhookLogs(tenantId, 10);
 
   const apps = appsQuery.data ?? [];
   const stats = statsQuery.data ?? {

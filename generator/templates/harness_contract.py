@@ -66,11 +66,13 @@ ctx.db  — postgres.js tagged template (RLS-scoped to this tenant)
 ctx.tenantId — UUID string of the current tenant
   MUST be included as the tenant_id column value in every INSERT statement.
 
-ctx.trigger — how the handler was invoked: 'webhook' | 'cron' | 'widget'
+ctx.trigger — how the handler was invoked: 'webhook' | 'cron' | 'widget' | 'admin'
   Use ctx.trigger to branch between code paths. NEVER inspect ctx.payload to infer trigger type.
   Example:
     if (ctx.trigger === 'widget') {
       // handle storefront request via ctx.widgetPath / ctx.widgetBody
+    } else if (ctx.trigger === 'admin') {
+      // handle Shopify Admin panel request via ctx.adminPath / ctx.adminBody
     } else if (ctx.trigger === 'cron') {
       // handle periodic job
     } else {
@@ -79,6 +81,8 @@ ctx.trigger — how the handler was invoked: 'webhook' | 'cron' | 'widget'
 
 ctx.widgetPath — path segment from the storefront request (e.g. '/signup'). Set only when ctx.trigger === 'widget'.
 ctx.widgetBody — parsed request body from the storefront widget. Set only when ctx.trigger === 'widget'.
+ctx.adminPath  — path segment from the Admin UI panel (e.g. '/subscribers'). Set only when ctx.trigger === 'admin'.
+ctx.adminBody  — parsed request body from the Admin UI panel. Set only when ctx.trigger === 'admin'.
 
 ctx.payload — the parsed Shopify webhook body (object). For cron jobs this is {}.
   Example: const orderId = ctx.payload.id
@@ -203,7 +207,19 @@ ABSOLUTE RULES (violations will cause deployment failure):
 1.  Output ONLY the JavaScript code — no markdown fences, no explanation
 2.  Use module.exports = { webhookTopics, cronSchedule, handler } — exactly this shape
 3.  handler MUST be an async function taking a single argument named ctx
-4.  NO require() or import() calls — all capabilities come through ctx
+4.  NO require() or import() calls — the harness runtime has NO node_modules.
+    There is no sharp, axios, lodash, or any other npm package available at runtime.
+    Use ONLY capabilities exposed through ctx — they cover all MVP app types:
+      ctx.services.image.resize(url, {width, height, fit?}) → Promise<Buffer>
+      ctx.services.image.analyze(url) → Promise<{width, height, format, sizeBytes}>
+      ctx.services.qrcode.generate(text, {size?, format?}) → Promise<Buffer|string>
+      ctx.services.barcode.generate(value, {format?, width?, height?}) → Promise<string> (SVG)
+      ctx.services.pdf.generate(html) → Promise<Buffer>
+      ctx.services.csv.generate(rows, headers?) → string
+      ctx.services.files.upload(name, content, mimeType?) → Promise<string>
+      ctx.services.email.send({to, subject, body}) → Promise<void>
+      ctx.services.sms.send({to, body}) → Promise<void>
+      ctx.http.call(url, {method?, headers?, body?}) → Promise<unknown>
 5.  NO eval(), Function(), setTimeout(), setInterval(), setImmediate()
 6.  NO process.exit(), process.kill(), or process.env access
 7.  NO global variable mutation
@@ -449,23 +465,31 @@ ADMIN UI ROUTING — this handler receives requests from the Shopify Admin panel
   Applies to: storefront_backend_admin and backend_admin archetypes.
 
 When ctx.trigger === 'admin', the embedded Admin UI panel called bridge.call(path, body).
-  ctx.widgetPath — the path the panel called (e.g. '/list', '/run', '/config/save')
-  ctx.widgetBody — the body the panel sent (object, or {} for body-less calls)
+  ctx.adminPath — the path the panel called (e.g. '/list', '/run', '/config/save')
+  ctx.adminBody — the body the panel sent (object, or {} for body-less calls)
 
 CRITICAL RULE: Every path listed in the adminApiCatalog MUST have a corresponding
-  `ctx.widgetPath === '<path>'` branch inside the `ctx.trigger === 'admin'` block.
+  `ctx.adminPath === '<path>'` branch inside the `ctx.trigger === 'admin'` block.
   Missing even one path is a validation error. The catalog is the contract — implement all of it.
 
-Rule: Route on ctx.widgetPath inside the admin branch. Always return a value.
+CRITICAL RULE: ALWAYS use ctx.adminPath and ctx.adminBody — NEVER ctx.widgetPath or ctx.widgetBody
+  inside the `ctx.trigger === 'admin'` branch. Those are for widget triggers only.
+
+Rule: Log on every admin invocation entry so routing decisions appear in logs:
+  ctx.logger.info({ adminPath: ctx.adminPath }, 'admin invoke')
+
+Rule: Route on ctx.adminPath inside the admin branch. Always return a value.
   ✅ if (ctx.trigger === 'admin') {
-       if (ctx.widgetPath === '/list') {
+       ctx.logger.info({ adminPath: ctx.adminPath }, 'admin invoke')
+       if (ctx.adminPath === '/list') {
          const rows = await ctx.db`SELECT ... WHERE tenant_id = ${ctx.tenantId} LIMIT 50`
          return { total: rows.length, rows }
        }
-       if (ctx.widgetPath === '/run') {
+       if (ctx.adminPath === '/run') {
          // perform the action
          return { processed: N }
        }
+       ctx.logger.warn({ adminPath: ctx.adminPath }, 'admin: unknown path')
        return { error: 'unknown path' }
      }
 

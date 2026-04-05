@@ -169,6 +169,27 @@ def run_feature_generation(request: GenerationRequest) -> None:
                 f"Fixing architect plan (attempt {arch_attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
             )
 
+        # ── Feasibility gate — platform limitation check ─────────────────────
+        # If the architect flagged that the app concept requires a capability
+        # that ctx cannot deliver, fail immediately with a merchant-friendly message.
+        # Do NOT proceed to codegen — retrying won't help.
+        impl_spec = architect_output.get("implementationSpec") or {}
+        if impl_spec.get("feasibility") == "blocked":
+            blocked_reason: str = impl_spec.get(
+                "blockedReason",
+                "This app requires capabilities that aren't available on the platform yet.",
+            )
+            _emit(request, "architect", "failed", blocked_reason)
+            _contract_publisher.publish_completed(
+                FeatureBundleMessage(
+                    jobId=request.jobId,
+                    status="failed",
+                    error=blocked_reason,
+                    errorCode="platform_limitation",
+                )
+            )
+            return
+
         agent_trace.append(
             AgentTraceEntry(agent="architect", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
         )

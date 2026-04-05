@@ -97,13 +97,21 @@ All `POST /admin-ui/:shop/:appId/admin/*` requests from the embedded shell carry
 | `ctx.http` | Real | Thin fetch wrapper with logging |
 | `ctx.storefront` (Storefront GraphQL) | Real | Storefront Access Token created at OAuth, stored per tenant |
 | `ctx.shop` (`{ domain }`) | Real | From env var |
-| `ctx.services.email` | Stub → real Phase 3 | Logs `EMAIL_SENT` in dev |
-| `ctx.services.sms` | Stub → real Phase 3 | Logs `SMS_SENT` in dev |
+| `ctx.services.email` | Stub → real Phase 3 | Logs `EMAIL_SENT` in dev; real impl uses Resend |
+| `ctx.services.sms` | Stub → real Phase 3 | Logs `SMS_SENT` in dev; real impl uses Twilio |
 | `ctx.services.pdf` | Stub → real Phase 3 | Real impl uses PDFKit (in-process, no external API) |
 | `ctx.services.csv` | Real | Pure in-process, zero external dependency |
 | `ctx.services.files` | Stub → real Phase 3 | Real impl uses GCS |
+| `ctx.services.image.resize` | Stub → real Phase 3 | Stub fetches URL and returns original bytes; real impl uses sharp |
+| `ctx.services.image.analyze` | Stub → real Phase 3 | Stub returns zero dims; real impl uses sharp metadata |
+| `ctx.services.qrcode` | Real | Pure JS (`qrcode` package); returns PNG Buffer or SVG string |
+| `ctx.services.barcode` | Real | Pure JS (`jsbarcode` + `@xmldom/xmldom`); returns SVG string |
 
 **Not in MVP:** `ctx.queue`, `ctx.cache`, `ctx.billing`, `ctx.services.ai`
+
+### Platform limitation detection
+
+When the architect determines an app concept requires a capability outside the ctx surface (e.g. real-time WebSockets, native GPU processing), the pipeline fails immediately before codegen with `errorCode: "platform_limitation"` and a merchant-friendly message. The frontend shows a distinct "Not supported yet" state with the specific reason, rather than suggesting a retry.
 
 ---
 

@@ -9,9 +9,30 @@ End-to-end test with a real Shopify dev store, AI generation, and live webhooks.
 - Docker Desktop running
 - pnpm installed
 - Python venv set up: `cd generator && python3 -m venv .venv && pip install -r requirements.txt`
-- ngrok account with two static domains configured (or use the `--all` config below)
+- ngrok account with **three** static domains configured (see ngrok config below)
 - `platform/.env` filled in (see template at `platform/.env.example`)
 - `generator/.env` with `ANTHROPIC_API_KEY`
+- `platform-shopify-admin/.env` with `VITE_SHOPIFY_CLIENT_ID` (copy from `.env.example`)
+
+### ngrok config (`~/Library/Application Support/ngrok/ngrok.yml`)
+
+```yaml
+version: "2"
+authtoken: <your-authtoken>
+
+tunnels:
+  platform-api:
+    proto: http
+    addr: 3002
+  webhook-gateway:
+    proto: http
+    addr: 3001
+  admin-shell:
+    proto: http
+    addr: 3003
+```
+
+Start all three: `ngrok start --all`
 
 ---
 
@@ -35,15 +56,14 @@ ngrok start --all
 
 The script prints the install link at the end — keep it handy for Step 5.
 
-### Step 4 — Start platform services in debug mode
-
-Use the VS Code launch config **"Full Stack (api + gateway + worker + generator)"**
 
 ### Step 5 — Install the app
 
-Use the install link printed by `sync-ngrok.sh` in Step 3.
+Use the install link printed by `sync-ngrok.sh` in Step 3 (format: `https://<api-ngrok>/oauth/install?shop=<your-store>.myshopify.com`).
 
-Complete the OAuth flow. The API logs will print the merchant access token — copy it and add it to `SM_DEV_SECRETS` in `platform/.env`:
+Complete the OAuth flow. On success you will be redirected to **platform-front** at `http://localhost:3000/merchants/<tenantId>`.
+
+The API logs will print the merchant access token — copy it and add it to `SM_DEV_SECRETS` in `platform/.env`:
 
 ```
 SM_DEV_SECRETS={
@@ -121,12 +141,36 @@ docker logs harness-00000000-0000-0000-0000-000000000002 --tail 30
 
 ## Quick reference
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| API | http://localhost:3002 | Generation + OAuth + widget proxy |
-| Webhook Gateway | http://localhost:3001 | Shopify webhook ingress |
-| Generator | http://localhost:8001 | Python AI pipeline |
-| Bull Board | http://localhost:3010 | Queue monitoring |
+| Service | URL | ngrok tunnel | Purpose |
+|---------|-----|-------------|---------|
+| Platform Front | http://localhost:3000 | — (no tunnel needed) | Merchant dashboard — post-install redirect |
+| Webhook Gateway | http://localhost:3001 | port 3001 | Shopify webhook ingress |
+| API | http://localhost:3002 | port 3002 | Generation + OAuth callback + widget proxy |
+| Admin Shell | http://localhost:3003 | port 3003 | Shopify Admin embedded app (loaded in iframe) |
+| Generator | http://localhost:8001 | — | Python AI pipeline |
+| Bull Board | http://localhost:3010 | — | Queue monitoring |
+
+### OAuth install → redirect flow
+
+```
+merchant clicks install link
+  → GET <api-ngrok>/oauth/install?shop=...
+  → Shopify OAuth (Shopify's servers)
+  → GET <api-ngrok>/oauth/callback?code=...
+  → API creates tenant, stores tokens
+  → 302 → http://localhost:3000/merchants/<tenantId>   ← platform-front
+```
+
+### Shopify Admin sidebar flow
+
+```
+merchant opens Shopify Admin → clicks your app in sidebar
+  → Shopify loads <admin-ngrok>/?shop=...&host=...  (platform-shopify-admin)
+  → App Bridge initialises, shell fetches apps list
+  → merchant selects an app → admin UI module mounts
+  → bridge.call() → POST <api-ngrok>/admin-ui/:shop/:appId/admin/*
+    (session token verified, forwarded to harness)
+```
 
 ## Troubleshooting
 

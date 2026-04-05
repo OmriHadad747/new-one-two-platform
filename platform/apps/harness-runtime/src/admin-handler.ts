@@ -1,8 +1,9 @@
-import { withTenantContext } from "@new-one-two/db";
+import { withTenantContext, createAdminInvocationLog, updateAdminInvocationLog } from "@new-one-two/db";
 import type { HandlerContext } from "@new-one-two/types";
 import { loadModule, createBaseContext } from "@new-one-two/harness";
 
 const ENV_TENANT_ID = process.env["TENANT_ID"] ?? null;
+const ENV_APP_ID = process.env["APP_ID"] ?? null;
 
 export async function handleAdminInvoke(
   tenantIdFromHeader: string | undefined,
@@ -15,7 +16,14 @@ export async function handleAdminInvoke(
     return { status: 400, data: { error: "missing_tenant_id" } };
   }
 
+  const appId = ENV_APP_ID;
   const mod = loadModule();
+  const t0 = performance.now();
+
+  let logId: string | null = null;
+  if (appId) {
+    logId = await createAdminInvocationLog({ appId, tenantId, path: adminPath }).catch(() => null);
+  }
 
   let result: unknown;
 
@@ -38,11 +46,15 @@ export async function handleAdminInvoke(
       result = await mod.handler(ctx);
     });
 
+    const durationMs = Math.round(performance.now() - t0);
+    if (logId) await updateAdminInvocationLog(logId, { status: "success", durationMs }).catch(() => null);
+
     return { status: 200, data: result ?? {} };
   } catch (err: unknown) {
-    return {
-      status: 500,
-      data: { error: err instanceof Error ? err.message : String(err) },
-    };
+    const durationMs = Math.round(performance.now() - t0);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (logId) await updateAdminInvocationLog(logId, { status: "failed", durationMs, errorMessage }).catch(() => null);
+
+    return { status: 500, data: { error: errorMessage } };
   }
 }

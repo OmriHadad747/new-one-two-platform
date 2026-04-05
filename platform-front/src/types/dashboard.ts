@@ -46,7 +46,7 @@ export interface ActivityItem {
 
 // ─── Execution Logs ───────────────────────────────────────────────────────────
 
-export interface ExecutionLogEntry {
+export interface WebhookInvocationLogEntry {
   id: string;
   appId: string;
   appName: string;
@@ -55,6 +55,15 @@ export interface ExecutionLogEntry {
   durationMs: number | null;
   errorMessage: string | null;
   queuedAt: string;
+}
+
+export interface InvocationLogEntry {
+  id: string;
+  path: string;
+  status: "running" | "success" | "failed";
+  durationMs: number | null;
+  errorMessage: string | null;
+  invokedAt: string;
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
@@ -119,6 +128,9 @@ export interface CompletedEvent {
   type: "completed";
   status: "success" | "failed";
   error?: string;
+  /** "platform_limitation" — the app concept requires a capability ctx can't deliver.
+   *  Show a clear explanation; do not suggest retrying. */
+  errorCode?: "platform_limitation";
   meta?: {
     totalInputTokens: number;
     totalOutputTokens: number;

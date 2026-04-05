@@ -1,10 +1,9 @@
-import { withTenantContext } from "@new-one-two/db";
+import { withTenantContext, createWidgetInvocationLog, updateWidgetInvocationLog } from "@new-one-two/db";
 import type { HandlerContext } from "@new-one-two/types";
 import { loadModule, createBaseContext } from "@new-one-two/harness";
 
-// The deployer injects TENANT_ID as an env var into every harness container.
-// The X-Tenant-Id header is a fallback for local development.
 const ENV_TENANT_ID = process.env["TENANT_ID"] ?? null;
+const ENV_APP_ID = process.env["APP_ID"] ?? null;
 
 export async function handleWidgetInvoke(
   tenantIdFromHeader: string | undefined,
@@ -17,7 +16,15 @@ export async function handleWidgetInvoke(
     return { status: 400, data: { error: "missing_tenant_id" } };
   }
 
+  const appId = ENV_APP_ID;
   const mod = loadModule();
+  const t0 = performance.now();
+
+  // Create log entry before invocation (best-effort — never fail the request)
+  let logId: string | null = null;
+  if (appId) {
+    logId = await createWidgetInvocationLog({ appId, tenantId, path: widgetPath }).catch(() => null);
+  }
 
   let result: unknown;
 
@@ -41,11 +48,15 @@ export async function handleWidgetInvoke(
       result = await mod.handler(ctx);
     });
 
+    const durationMs = Math.round(performance.now() - t0);
+    if (logId) await updateWidgetInvocationLog(logId, { status: "success", durationMs }).catch(() => null);
+
     return { status: 200, data: result ?? {} };
   } catch (err: unknown) {
-    return {
-      status: 500,
-      data: { error: err instanceof Error ? err.message : String(err) },
-    };
+    const durationMs = Math.round(performance.now() - t0);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    if (logId) await updateWidgetInvocationLog(logId, { status: "failed", durationMs, errorMessage }).catch(() => null);
+
+    return { status: 500, data: { error: errorMessage } };
   }
 }

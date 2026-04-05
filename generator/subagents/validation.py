@@ -463,7 +463,7 @@ def validate_handler_artifact(
       4. Declared webhookTopics match the architect plan.
       5. Every widgetApiCatalog path has a ctx.widgetPath === '/path' branch
          outside any admin block (widget trigger routing).
-      6. Every adminApiCatalog path has a ctx.widgetPath === '/path' branch
+      6. Every adminApiCatalog path has a ctx.adminPath === '/path' branch
          inside the ctx.trigger === 'admin' block.
     """
     errors: List[str] = []
@@ -557,19 +557,19 @@ def validate_handler_artifact(
         if not admin_block:
             errors.append(
                 f"handler has no ctx.trigger === 'admin' block but adminApiCatalog "
-                f"requires path '{path}' — add an admin trigger block that routes on ctx.widgetPath"
+                f"requires path '{path}' — add an admin trigger block that routes on ctx.adminPath"
             )
             continue
         route_present = bool(
             re.search(
-                rf"ctx\.widgetPath\s*===\s*['\"]{ re.escape(path) }['\"]",
+                rf"ctx\.adminPath\s*===\s*['\"]{ re.escape(path) }['\"]",
                 admin_block,
             )
         )
         if not route_present:
             errors.append(
                 f"handler missing admin route for '{path}' — "
-                f"add: if (ctx.widgetPath === '{path}') {{ ... }} "
+                f"add: if (ctx.adminPath === '{path}') {{ ... }} "
                 f"inside the ctx.trigger === 'admin' block. "
                 f"Every adminApiCatalog path MUST be handled."
             )
@@ -1028,25 +1028,25 @@ def validate_admin_handler_contract(
             continue
 
         route_match = re.search(
-            rf"ctx\.widgetPath\s*===\s*['\"](?:{re.escape(path)})['\"]",
+            rf"ctx\.adminPath\s*===\s*['\"](?:{re.escape(path)})['\"]",
             admin_block,
         )
         if not route_match:
             continue  # route absence already reported by validate_handler_artifact
 
         route_start = route_match.start()
-        next_route = re.search(r"ctx\.widgetPath\s*===", admin_block[route_start + 1 :])
+        next_route = re.search(r"ctx\.adminPath\s*===", admin_block[route_start + 1 :])
         route_end = (
             (route_start + 1 + next_route.start()) if next_route else len(admin_block)
         )
         window = admin_block[route_start:route_end]
 
-        destr_match = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody", window)
+        destr_match = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.adminBody", window)
         if not destr_match:
-            if "ctx.widgetBody" not in window:
+            if "ctx.adminBody" not in window:
                 msg = (
                     f"admin UI sends {sorted(sent_fields)} to '{path}' but handler "
-                    f"has no ctx.widgetBody access in the admin '{path}' route"
+                    f"has no ctx.adminBody access in the admin '{path}' route"
                 )
                 errors.setdefault("handler", []).append(msg)
                 errors.setdefault("admin_ui", []).append(msg)
@@ -1061,7 +1061,7 @@ def validate_admin_handler_contract(
         if missing:
             msg = (
                 f"admin UI sends field(s) {sorted(missing)} to '{path}' but handler "
-                f"destructures {sorted(handler_fields)} from ctx.widgetBody in the admin block — "
+                f"destructures {sorted(handler_fields)} from ctx.adminBody in the admin block — "
                 f"field name mismatch. Align both sides to the codeSpec.adminPath."
             )
             errors.setdefault("handler", []).append(msg)

@@ -38,7 +38,7 @@ export function useTenantStats(tenantId: string | null) {
   });
 }
 
-export function useExecutionLogs(tenantId: string | null, limit = 20) {
+export function useWebhookLogs(tenantId: string | null, limit = 20) {
   return useQuery({
     queryKey: ["logs", tenantId, limit],
     queryFn: () => api.tenants.logs(tenantId!, limit),
@@ -52,7 +52,7 @@ export function useExecutionLogs(tenantId: string | null, limit = 20) {
  * Polls execution logs filtered to a single app every 5 seconds.
  * Used by the AppTestingPanel to show live backend activity.
  */
-export function useAppLogs(tenantId: string | null, appId: string | null, enabled = false) {
+export function useWebhookAppLogs(tenantId: string | null, appId: string | null, enabled = false) {
   return useQuery({
     queryKey: ["app-logs", tenantId, appId],
     queryFn: async () => {
@@ -62,6 +62,26 @@ export function useAppLogs(tenantId: string | null, appId: string | null, enable
     enabled: !!tenantId && !!appId && enabled,
     staleTime: 0,
     refetchInterval: 5_000,
+  });
+}
+
+export function useWidgetLogs(tenantId: string | null, appId: string | null, enabled = false) {
+  return useQuery({
+    queryKey: ["widget-logs", tenantId, appId],
+    queryFn: () => api.apps.widgetLogs(tenantId!, appId!),
+    enabled: !!tenantId && !!appId && enabled,
+    staleTime: 0,
+    refetchInterval: 10_000,
+  });
+}
+
+export function useAdminLogs(tenantId: string | null, appId: string | null, enabled = false) {
+  return useQuery({
+    queryKey: ["admin-logs", tenantId, appId],
+    queryFn: () => api.apps.adminLogs(tenantId!, appId!),
+    enabled: !!tenantId && !!appId && enabled,
+    staleTime: 0,
+    refetchInterval: 10_000,
   });
 }
 

@@ -5,7 +5,7 @@ declare module "fastify" {
     rawBody?: boolean;
   }
 }
-import { resolveWebhookContext, createExecutionLog } from "@new-one-two/db";
+import { resolveWebhookContext, createWebhookInvocationLog } from "@new-one-two/db";
 import { getSecret, validateShopifyHmac, hashPayload } from "@new-one-two/crypto";
 import { createRequestLogger } from "@new-one-two/logger";
 import { enqueueWebhook } from "../queue/webhook-queue.js";
@@ -118,7 +118,7 @@ async function webhookHandler(
   // ── 4. Idempotency check + create execution log ────────────────────────────
   const payloadHash = hashPayload(rawBody);
 
-  const { id: executionLogId, isDuplicate } = await createExecutionLog({
+  const { id: executionLogId, isDuplicate } = await createWebhookInvocationLog({
     webhookSubscriptionId: ctx.subscription.id,
     deployedFunctionId: ctx.deployedFunction.id,
     appId: ctx.app.id,
