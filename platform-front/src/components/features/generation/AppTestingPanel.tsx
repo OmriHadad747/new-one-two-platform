@@ -1,6 +1,6 @@
 import { cn } from "@/lib/cn";
 import { api } from "@/lib/api";
-import { useWebhookAppLogs } from "@/hooks/useApps";
+import { useNavigate } from "react-router";
 import { useState } from "react";
 import type { GenerationState, GenerationBundle, App, ProgressEvent } from "@/types/dashboard";
 import { ArchetypePills } from "@/components/ui/ArchetypePills";
@@ -212,22 +212,33 @@ function DeployPanel({
 
 // ─── Live panel (post-deploy) ─────────────────────────────────────────────────
 
+/** Build a sensible default payload for a given webhook topic or trigger type. */
+function defaultPayload(triggerType: string, topics: string[]): Record<string, unknown> {
+  const topic = topics[0] ?? "";
+  if (topic.startsWith("orders/")) return { id: 1001, email: "customer@example.com", total_price: "49.99", line_items: [{ title: "Example Product", quantity: 1 }] };
+  if (topic.startsWith("products/")) return { id: 2001, title: "Example Product", status: "active" };
+  if (topic.startsWith("customers/")) return { id: 3001, email: "customer@example.com", first_name: "Jane", last_name: "Doe" };
+  if (triggerType === "cron") return { scheduled_at: new Date().toISOString() };
+  if (triggerType === "admin" || triggerType === "widget") return { action: "test", value: "example" };
+  return { test: true };
+}
+
 function LivePanel({
   bundle,
   app,
   shopDomain,
-  tenantId,
 }: {
   bundle: GenerationBundle | null;
   app: App | null;
   shopDomain: string | null;
-  tenantId: string | null;
 }) {
+  const navigate = useNavigate();
   const [triggerState, setTriggerState] = useState<"idle" | "loading" | "ok" | "err">("idle");
   const [triggerOut, setTriggerOut] = useState<string | null>(null);
-
-  const logsQuery = useWebhookAppLogs(tenantId, app?.id ?? null, true);
-  const logs = logsQuery.data ?? [];
+  const [payloadJson, setPayloadJson] = useState<string>(() =>
+    JSON.stringify(defaultPayload(bundle?.triggerType ?? "webhook", bundle?.triggerTopics ?? []), null, 2)
+  );
+  const [payloadError, setPayloadError] = useState<string | null>(null);
 
   const canTrigger =
     !!shopDomain &&
@@ -236,10 +247,18 @@ function LivePanel({
 
   const handleTrigger = async () => {
     if (!shopDomain || !app?.id) return;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(payloadJson) as Record<string, unknown>;
+      setPayloadError(null);
+    } catch {
+      setPayloadError("Invalid JSON — fix the payload before firing.");
+      return;
+    }
     setTriggerState("loading");
     setTriggerOut(null);
     try {
-      const res = await api.widgets.trigger(shopDomain, app.id);
+      const res = await api.widgets.trigger(shopDomain, app.id, parsed);
       setTriggerState("ok");
       setTriggerOut(JSON.stringify(res, null, 2));
     } catch (err) {
@@ -255,43 +274,27 @@ function LivePanel({
 
   const triggerTopics = bundle?.triggerTopics ?? [];
   const topicHint = triggerTopics.length > 0 ? `(${triggerTopics[0]})` : "in Shopify";
-  // explanation may be a string (legacy) or an object { merchantFacing, technical } (new generator)
+
   const explanationText: string | null =
     typeof bundle?.explanation === "string"
       ? bundle.explanation
       : typeof bundle?.explanation === "object" && bundle?.explanation !== null
         ? ((bundle.explanation as unknown as { merchantFacing?: string }).merchantFacing ?? null)
         : null;
+
   const validateSteps = explanationText
     ? explanationText.split(/\n+/).filter(Boolean)
     : hasWidget
       ? [
           "Open your store and navigate to a product page.",
           "The widget should appear — interact with it.",
-          "Check the Logs section below for backend calls.",
           "Something wrong? Describe it in the chat to revise.",
         ]
       : [
           `Trigger a real event ${topicHint} — e.g. create a test order.`,
-          "Check the Logs section — your execution should appear within 5s.",
-          "Verify status shows 'success' and the expected action occurred.",
+          "Verify the expected action occurred in your store.",
           "Something wrong? Describe it in the chat to revise.",
         ];
-
-  const statusDot: Record<string, string> = {
-    success: "bg-teal",
-    failed:  "bg-danger",
-    timeout: "bg-danger",
-    running: "bg-accent animate-pulse-subtle",
-    queued:  "bg-faint",
-  };
-  const statusText: Record<string, string> = {
-    success: "text-teal",
-    failed:  "text-danger",
-    timeout: "text-danger",
-    running: "text-accent",
-    queued:  "text-faint",
-  };
 
   return (
     <div className="space-y-7">
@@ -314,7 +317,27 @@ function LivePanel({
         </ol>
 
         {canTrigger && (
-          <div className="mt-4">
+          <div className="mt-4 space-y-2">
+            {/* Editable payload */}
+            <div>
+              <label className="text-[10px] font-semibold text-faint uppercase tracking-wider block mb-1.5">
+                Event payload
+              </label>
+              <textarea
+                value={payloadJson}
+                onChange={(e) => { setPayloadJson(e.target.value); setPayloadError(null); }}
+                spellCheck={false}
+                rows={6}
+                className={cn(
+                  "w-full font-mono text-[11px] bg-raised border rounded-lg px-3 py-2.5 text-ink resize-none outline-none leading-relaxed",
+                  payloadError ? "border-danger/50 focus:border-danger" : "border-white/[0.08] focus:border-accent/50"
+                )}
+              />
+              {payloadError && (
+                <p className="text-[10px] text-danger mt-1">{payloadError}</p>
+              )}
+            </div>
+
             <button
               type="button"
               onClick={handleTrigger}
@@ -326,9 +349,10 @@ function LivePanel({
               </span>
               {triggerState === "loading" ? "Firing…" : "Fire test event"}
             </button>
+
             {triggerOut && (
               <pre className={cn(
-                "mt-2.5 p-3 rounded-lg font-mono text-[10px] leading-relaxed overflow-x-auto",
+                "p-3 rounded-lg font-mono text-[10px] leading-relaxed overflow-x-auto",
                 triggerState === "ok" ? "bg-teal/8 text-teal" : "bg-danger/8 text-danger"
               )}>
                 {triggerOut}
@@ -338,55 +362,22 @@ function LivePanel({
         )}
       </section>
 
-      {/* ── Logs ───────────────────────────────────────────────────────── */}
-      <section>
-        <div className="flex items-center justify-between mb-3.5">
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-teal text-[16px]">terminal</span>
-            <span className="text-[11px] font-bold text-ink uppercase tracking-wider">Logs</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-teal animate-pulse-subtle" />
-          </div>
-          {logsQuery.isFetching && (
-            <span className="material-symbols-outlined text-faint text-[14px] animate-spin">refresh</span>
-          )}
-        </div>
-
-        {logs.length === 0 && !logsQuery.isFetching && (
-          <div className="py-8 text-center">
-            <p className="text-[12px] text-faint">No executions yet.</p>
-            <p className="text-[11px] text-faint mt-1 opacity-60">Trigger an event in Shopify to see logs.</p>
-          </div>
-        )}
-
-        {logs.length > 0 && (
-          <div className="space-y-1.5">
-            {logs.slice(0, 8).map((log) => (
-              <div key={log.id} className="bg-raised border border-white/[0.05] rounded-lg px-3.5 py-2.5">
-                <div className="flex items-center gap-2.5">
-                  <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", statusDot[log.status] ?? "bg-faint")} />
-                  <span className="font-mono text-[11px] text-ink flex-1 truncate">{log.topic}</span>
-                  <span className={cn("text-[10px] font-bold shrink-0", statusText[log.status] ?? "text-faint")}>
-                    {log.status}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3 pl-4 mt-0.5">
-                  <span className="text-[10px] text-faint font-mono">
-                    {new Date(log.queuedAt).toLocaleTimeString()}
-                  </span>
-                  {log.durationMs != null && (
-                    <span className="text-[10px] text-faint">{log.durationMs}ms</span>
-                  )}
-                  {log.errorMessage && (
-                    <span className="text-[10px] text-danger truncate max-w-[140px]" title={log.errorMessage}>
-                      {log.errorMessage}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      {/* ── Logs link ──────────────────────────────────────────────────── */}
+      {app?.id && (
+        <section>
+          <button
+            type="button"
+            onClick={() => navigate(`/app/apps/${app.id}`)}
+            className="w-full flex items-center justify-between px-3.5 py-2.5 bg-white/[0.03] border border-white/[0.07] rounded-lg text-muted text-[12px] font-semibold hover:bg-white/[0.06] hover:text-ink transition-colors border-0 cursor-pointer"
+          >
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[15px]">terminal</span>
+              <span>View logs</span>
+            </div>
+            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+          </button>
+        </section>
+      )}
 
       {/* ── Open in Shopify ─────────────────────────────────────────────── */}
       <section>
@@ -529,7 +520,6 @@ export function AppTestingPanel({
             bundle={bundle}
             app={app}
             shopDomain={shopDomain}
-            tenantId={tenantId}
           />
         )}
       </div>

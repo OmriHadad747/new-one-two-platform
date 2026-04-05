@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { ChatMessages, type ChatMessage } from "@/components/features/generation/ChatMessages";
@@ -7,6 +7,7 @@ import { ChatInput } from "@/components/features/generation/ChatInput";
 import { AppTestingPanel } from "@/components/features/generation/AppTestingPanel";
 import { useGeneration, useLatestSession } from "@/hooks/useGeneration";
 import { useSessionStore } from "@/stores/session";
+import { useGenerationStore } from "@/stores/generation";
 import { useApps, useApp } from "@/hooks/useApps";
 import { api } from "@/lib/api";
 import type { SessionBundle } from "@/types/dashboard";
@@ -39,10 +40,11 @@ function slugFromName(name: string): string {
 
 export function NewAppPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { tenantId, shopDomain } = useSessionStore();
   const appsQuery = useApps(tenantId);
 
-  const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(searchParams.get("appId"));
   const apps = appsQuery.data ?? [];
 
   const [input, setInput] = useState("");
@@ -63,7 +65,8 @@ export function NewAppPage() {
   const [analyzePhase, setAnalyzePhase] = useState<"idle" | "thinking" | "awaiting_confirm">("idle");
   const [, setPendingIntent] = useState<Record<string, unknown> | null>(null);
 
-  const { state: gen, start, startRevision, reset, cancel } = useGeneration();
+  const { state: gen, start, startRevision, reconnect, restore, reset, cancel } = useGeneration();
+  const { setActive, updateStatus, updateEvents, updateMessages, active: activeGenStore } = useGenerationStore();
   const isStreaming = gen.status === "running";
   const isAnalyzing = analyzePhase === "thinking";
 
@@ -72,10 +75,26 @@ export function NewAppPage() {
   const latestSessionQuery = useLatestSession(selectedAppId);
 
   // Hydrate generation state from the persisted latest session when the user
-  // returns to an app that already has a completed (but undeployed) generation.
+  // returns to an app that was generating or has a completed generation.
   useEffect(() => {
     const session = latestSessionQuery.data;
     if (!session || gen.status !== "idle") return;
+
+    // Still running — reconnect the SSE stream and restore cached state
+    if (session.status === "running" && session.jobId) {
+      const cached = activeGenStore?.jobId === session.jobId ? activeGenStore : null;
+      reconnect(session.jobId, cached?.events ?? []);
+      if (cached?.messages?.length) {
+        setMessages(cached.messages);
+      } else {
+        setMessages([
+          WELCOME,
+          { id: "resume", role: "ai", text: "Welcome back! Your app is still being built — follow the progress on the right →" },
+        ]);
+      }
+      return;
+    }
+
     if (session.status !== "completed" && session.status !== "failed") return;
 
     const sb = session.bundle as SessionBundle | null | undefined;
@@ -96,6 +115,7 @@ export function NewAppPage() {
     };
 
     const alreadyDeployed = activeApp !== null && activeApp.status !== "draft";
+    if (session.jobId) restore(session.jobId);
     setBundle(restoredBundle);
     setDeployed(alreadyDeployed);
     setMessages([
@@ -117,8 +137,27 @@ export function NewAppPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAnalyzing]);
 
-  // React to generation status transitions
+  // Sync events to the store so they survive navigation
   useEffect(() => {
+    if (gen.jobId && gen.events.length > 0) {
+      updateEvents(gen.jobId, gen.events);
+    }
+  }, [gen.jobId, gen.events, updateEvents]);
+
+  // Sync messages to the store so they survive navigation
+  useEffect(() => {
+    if (gen.jobId) {
+      updateMessages(gen.jobId, messages);
+    }
+  }, [gen.jobId, messages, updateMessages]);
+
+  // Sync global generation store so sidebar can show spinner on the right app
+  useEffect(() => {
+    if (gen.jobId && selectedAppId) {
+      setActive(selectedAppId, gen.jobId, gen.status as "idle" | "running" | "completed" | "failed");
+    } else if (gen.jobId) {
+      updateStatus(gen.jobId, gen.status as "idle" | "running" | "completed" | "failed");
+    }
     if (prevStatus.current === "running" && gen.status === "completed") {
       setMessages((prev) => [
         ...prev,
@@ -128,6 +167,12 @@ export function NewAppPage() {
           text: "Done! Review the output in the chat, then hit Deploy in the right panel whenever you're ready.",
         },
       ]);
+      // Fetch the result bundle immediately so DeployPanel shows the real type/trigger
+      if (gen.jobId) {
+        api.generation.result(gen.jobId)
+          .then((res) => { if (res.bundle) setBundle(res.bundle); })
+          .catch(() => null);
+      }
     }
     if (prevStatus.current === "running" && gen.status === "failed") {
       setMessages((prev) => [
@@ -142,7 +187,7 @@ export function NewAppPage() {
       ]);
     }
     prevStatus.current = gen.status;
-  }, [gen.status, gen.error]);
+  }, [gen.status, gen.jobId, gen.error, updateStatus]);
 
   /** Run the /analyze conversation step with the current history. */
   const runAnalyze = useCallback(async (history: AnalyzeMessage[], appIdForGen: string | null) => {

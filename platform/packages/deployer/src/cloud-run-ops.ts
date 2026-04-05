@@ -80,3 +80,18 @@ export async function deployToCloudRun(
 
   return { functionUrl: serviceUrl };
 }
+
+export async function deleteCloudRunService(appId: string): Promise<void> {
+  try {
+    const [operation] = await client.deleteService({ name: cloudRunServicePath(appId) });
+    await operation.promise();
+    logger.info({ appId }, "Cloud Run service deleted");
+  } catch (err: unknown) {
+    const code = (err as { code?: number }).code;
+    if (code === 5 /* NOT_FOUND */) {
+      logger.info({ appId }, "Cloud Run service already gone — skipping delete");
+      return;
+    }
+    throw err;
+  }
+}

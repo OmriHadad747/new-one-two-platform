@@ -86,7 +86,7 @@ There are no restrictions on widget type — only on how it communicates with th
 class WidgetJsGenerator(Generator):
     name = "widget_js"
     prefers_code_model = True
-    max_tokens = 4096
+    max_tokens = 16000
 
     # ── Generator interface ────────────────────────────────────────────────────
 

@@ -2,15 +2,15 @@ import { logger } from "@new-one-two/logger";
 import { fetchDeploymentContext, parseMetadata } from "./build-context.js";
 import { createBuildContext, removeBuildContext } from "./fs-builder.js";
 import { dockerBuild, dockerPush } from "./docker-ops.js";
-import { deployToDockerLocal } from "./cloud-run-dev.js";
-import { deployToCloudRun } from "./cloud-run-ops.js";
+import { deployToDockerLocal, stopDockerLocal } from "./cloud-run-dev.js";
+import { deployToCloudRun, deleteCloudRunService } from "./cloud-run-ops.js";
 import {
   writeDeployedFunction,
   writeWebhookSubscriptions,
   setVersionStatus,
 } from "./db-writer.js";
 import { dockerImageName, callbackUrl } from "./service-namer.js";
-import { registerShopifyWebhooks } from "./shopify-webhook-registrar.js";
+import { registerShopifyWebhooks, unregisterShopifyWebhooks } from "./shopify-webhook-registrar.js";
 import { runTenantMigration, rollbackTenantMigration } from "./migration-runner.js";
 import {
   createDraftAppVersion,
@@ -19,6 +19,10 @@ import {
   updateAppAdminUiJs,
   updateAppArchetype,
   updateAppStatus,
+  getActiveWebhookSubscriptionsForApp,
+  deactivateAppInfrastructure,
+  getTenantById,
+  getAppByIdOnly,
 } from "@new-one-two/db";
 import type { FeatureBundle } from "@new-one-two/types";
 
@@ -284,4 +288,57 @@ export async function deployFeatureBundle(params: {
 
     throw err;
   }
+}
+
+/**
+ * Tears down all infrastructure for a deleted app:
+ *   1. Unregisters Shopify webhooks
+ *   2. Stops the harness (Cloud Run service or local Docker container)
+ *   3. Deactivates deployed_functions + webhook_subscriptions in DB
+ *
+ * Non-fatal per step — logs warnings and continues so partial failures
+ * don't leave the app stuck in a non-deleted state.
+ */
+export async function teardownApp(appId: string): Promise<void> {
+  const app = await getAppByIdOnly(appId);
+  if (!app) {
+    logger.warn({ appId }, "teardownApp: app not found, skipping");
+    return;
+  }
+
+  const tenant = await getTenantById(app.tenantId);
+
+  // 1. Unregister Shopify webhooks
+  try {
+    const webhooks = await getActiveWebhookSubscriptionsForApp(appId);
+    if (webhooks.length > 0 && tenant) {
+      await unregisterShopifyWebhooks({
+        shop: app.shopDomain,
+        accessTokenSecretName: tenant.shopifyAccessTokenSecretName,
+        webhooks,
+      });
+    }
+  } catch (err) {
+    logger.warn({ err, appId }, "teardownApp: Shopify webhook unregistration failed (continuing)");
+  }
+
+  // 2. Stop the harness
+  try {
+    if (DEPLOY_MODE === "local") {
+      await stopDockerLocal(appId);
+    } else {
+      await deleteCloudRunService(appId);
+    }
+  } catch (err) {
+    logger.warn({ err, appId }, "teardownApp: harness teardown failed (continuing)");
+  }
+
+  // 3. Deactivate DB records
+  try {
+    await deactivateAppInfrastructure(appId);
+  } catch (err) {
+    logger.warn({ err, appId }, "teardownApp: DB deactivation failed (continuing)");
+  }
+
+  logger.info({ appId }, "App teardown complete");
 }

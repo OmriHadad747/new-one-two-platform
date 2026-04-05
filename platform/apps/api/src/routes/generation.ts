@@ -68,10 +68,8 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       await updateGenerationSession(sessionId, { jobId, status: "running" });
 
-      await publishGenerationRequest({ jobId, tenantId, appId, prompt, preComputedIntent });
-
-      // Register a persistent completed listener that writes the bundle to DB.
-      // This runs regardless of whether any SSE client is connected.
+      // Register the completed listener BEFORE publishing — prevents the race
+      // condition where a fast generator publishes the result before we listen.
       const unsubCompleted = registerCompletedListener(
         jobId,
         async (bundleMsg: FeatureBundleMessage) => {
@@ -93,6 +91,8 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
           logger.info({ jobId, status: bundleMsg.status }, "Bundle stored in DB");
         }
       );
+
+      await publishGenerationRequest({ jobId, tenantId, appId, prompt, preComputedIntent });
 
       logger.info({ jobId, sessionId, appId }, "GenerationRequest published");
       return reply.status(202).send({ jobId, sessionId });

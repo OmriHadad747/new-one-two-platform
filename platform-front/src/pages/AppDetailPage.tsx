@@ -3,6 +3,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { useSessionStore } from "@/stores/session";
+import { useGenerationStore } from "@/stores/generation";
 import { useApp, useWebhookAppLogs, useWidgetLogs, useAdminLogs } from "@/hooks/useApps";
 import { useLatestSession, useGeneration } from "@/hooks/useGeneration";
 import type { WebhookInvocationLogEntry, InvocationLogEntry, App, SessionBundle } from "@/types/dashboard";
@@ -423,14 +424,16 @@ function SettingsPanel({
             </div>
           </div>
 
-          {/* App type */}
-          <div className="flex items-center justify-between gap-4 px-5 py-4">
-            <div>
-              <p className="text-[13px] font-medium text-ink">Type</p>
-              <p className="text-[11px] text-faint mt-0.5">Archetype generated for this app.</p>
+          {/* App type — only show once deployed (archetype is set by generator on deploy) */}
+          {app.status !== "draft" && (
+            <div className="flex items-center justify-between gap-4 px-5 py-4">
+              <div>
+                <p className="text-[13px] font-medium text-ink">Type</p>
+                <p className="text-[11px] text-faint mt-0.5">Archetype generated for this app.</p>
+              </div>
+              <ArchetypePills archetype={app.appArchetype} />
             </div>
-            <ArchetypePills archetype={app.appArchetype} />
-          </div>
+          )}
 
           {/* Created */}
           <div className="flex items-center justify-between gap-4 px-5 py-4">
@@ -571,6 +574,8 @@ export function AppDetailPage() {
 
   const app = appQuery.data ?? null;
   const latestSession = latestSessionQuery.data ?? null;
+  const activeGen = useGenerationStore((s) => s.active);
+  const isGenerating = activeGen?.appId === appId && activeGen?.status === "running";
 
   const startRename = () => { setRenameValue(app?.name ?? ""); setRenaming(true); };
 
@@ -614,7 +619,7 @@ export function AppDetailPage() {
         subtitle={app?.slug}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate("/app/new")}>
+            <Button variant="ghost" size="sm" onClick={() => navigate(`/app/new?appId=${appId}`)}>
               Edit in AI
             </Button>
             <Button variant="ghost" size="sm" onClick={() => navigate("/app/apps")}>
@@ -640,7 +645,7 @@ export function AppDetailPage() {
         <div className="flex-1 overflow-hidden flex flex-col">
 
           {/* ── Draft Banner ──────────────────────────────────────────────────── */}
-          {app.status === "draft" && latestSession?.status === "completed" && (
+          {!isGenerating && app.status === "draft" && latestSession?.status === "completed" && (
             <div className="bg-amber/5 border-b border-amber/15 px-7 py-3 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
                 <span className="material-symbols-outlined text-amber text-[20px]">info</span>
@@ -787,8 +792,12 @@ export function AppDetailPage() {
                         </button>
                       )}
                     </div>
-                    <InfoRow label="Status" value={<StatusPill status={app.status} />} />
-                    <InfoRow label="Type" value={<ArchetypePills archetype={app.appArchetype} />} />
+                    <InfoRow label="Status" value={
+                      isGenerating
+                        ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent">Building…</span>
+                        : <StatusPill status={app.status} />
+                    } />
+                    {!isGenerating && <InfoRow label="Type" value={<ArchetypePills archetype={app.appArchetype} />} />}
                     <InfoRow label="Created" value={formatDate(app.createdAt)} />
                     <InfoRow label="Updated" value={timeAgo(app.updatedAt)} />
                   </div>
@@ -796,27 +805,27 @@ export function AppDetailPage() {
 
                 <SidebarSection title="Actions">
                   <div className="space-y-2">
-                    <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => navigate("/app/new")}>
+                    <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => navigate(`/app/new?appId=${appId}`)}>
                       <span className="material-symbols-outlined text-[15px] mr-2">edit</span>
                       Edit in AI
                     </Button>
-                    {app.status === "draft" ? (
+                    {isGenerating ? (
+                      <div className="flex items-center gap-2 px-3 py-2 text-[12px] text-faint">
+                        <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />
+                        Building your app…
+                      </div>
+                    ) : latestSession?.status === "completed" ? (
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="w-full justify-start text-amber hover:bg-amber/10"
+                        className={`w-full justify-start ${app.status === "draft" ? "text-amber hover:bg-amber/10" : ""}`}
                         onClick={handleDeployDraft}
                         disabled={deploying}
                       >
                         <span className="material-symbols-outlined text-[15px] mr-2">rocket_launch</span>
-                        {deploying ? "Deploying..." : "Deploy Draft"}
+                        {deploying ? "Deploying..." : app.status === "draft" ? "Deploy" : "Redeploy"}
                       </Button>
-                    ) : (
-                      <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => navigate("/app/new")}>
-                        <span className="material-symbols-outlined text-[15px] mr-2">rocket_launch</span>
-                        Redeploy
-                      </Button>
-                    )}
+                    ) : null}
                     <div className="border-t border-white/[0.06] mt-3 pt-3">
                       <button
                         type="button"

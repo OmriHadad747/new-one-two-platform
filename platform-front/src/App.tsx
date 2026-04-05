@@ -1,4 +1,4 @@
-import { createBrowserRouter, RouterProvider } from "react-router";
+import { createBrowserRouter, RouterProvider, Navigate } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { Shell } from "@/components/layout/Shell";
@@ -38,7 +38,7 @@ const router = createBrowserRouter([
       {
         element: <RequireAuth />,
         children: [
-          { index: true, element: <DashboardPage /> },
+          { index: true, element: <Navigate to="/app/apps" replace /> },
           { path: "new", element: <NewAppPage /> },
           { path: "apps", element: <AppsPage /> },
           { path: "apps/:appId", element: <AppDetailPage /> },

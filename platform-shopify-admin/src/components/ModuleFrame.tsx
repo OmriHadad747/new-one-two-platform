@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BlockStack, InlineStack, Spinner, Banner, Text } from "@shopify/polaris";
 import type { AdminApp, AdminBridge, AdminUiModule } from "../types.js";
+import { ADMIN_SHELL_CSS } from "../adminShellStyles.js";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
 
@@ -98,8 +99,12 @@ export function ModuleFrame({ shop, app, bridge }: Props) {
         return;
       }
 
-      // ── 3. Mount into the container ─────────────────────────────────────
+      // ── 3. Inject shared base styles, then mount ────────────────────────
       try {
+        const sharedStyle = document.createElement("style");
+        sharedStyle.setAttribute("data-admin-shell", "base");
+        sharedStyle.textContent = ADMIN_SHELL_CSS;
+        container.appendChild(sharedStyle);
         mod.mount(container, bridge);
         moduleRef.current = mod;
         setState({ phase: "mounted" });

@@ -23,6 +23,7 @@ import {
   getWidgetInvocationLogs,
   getAdminInvocationLogs,
 } from "@new-one-two/db";
+import { teardownApp } from "@new-one-two/deployer";
 import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
 
 export const tenantsRoute: FastifyPluginAsync = async (app) => {
@@ -171,7 +172,14 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       }
 
       if (name?.trim()) await updateAppName(tenantId, appId, name.trim());
-      if (status === "active" || status === "inactive" || status === "deleted") await updateAppStatus(appId, status);
+      if (status === "active" || status === "inactive") await updateAppStatus(appId, status);
+      if (status === "deleted") {
+        await updateAppStatus(appId, "deleted");
+        // Fire-and-forget teardown — don't block the response
+        teardownApp(appId).catch((err: unknown) => {
+          app.log.error({ err, appId }, "Background teardown failed");
+        });
+      }
 
       const updated = await getAppById(tenantId, appId);
       return reply.send(updated);

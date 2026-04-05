@@ -61,11 +61,32 @@ export function useGeneration() {
     es.onerror = () => {
       es.close();
       esRef.current = null;
-      setState((s) => ({
-        ...s,
-        status: s.status === "running" ? "failed" : s.status,
-        error: s.status === "running" ? "Connection lost" : s.error,
-      }));
+      // The stream may have closed because the job finished while we were away.
+      // Fetch the result to find the true final status before marking as failed.
+      setState((s) => {
+        if (s.status !== "running") return s;
+        // Trigger async result check; update state once resolved.
+        api.generation.result(jobId)
+          .then((res) => {
+            setState((prev) => ({
+              ...prev,
+              status: "completed",
+              completedEvent: null,
+              error: null,
+              // Merge bundle info from result if needed
+            }));
+            void res; // suppress unused warning
+          })
+          .catch(() => {
+            setState((prev) => ({
+              ...prev,
+              status: "failed",
+              error: "Connection lost",
+            }));
+          });
+        // Temporarily stay in running state while we check
+        return s;
+      });
     };
   }, []);
 
@@ -138,16 +159,31 @@ export function useGeneration() {
     setState((s) => ({ ...s, status: "failed", error: "Cancelled" }));
   }, []);
 
-  return { state, start, startRevision, reset, approve, cancel };
+  /** Reconnect to a generation that is already running (e.g. after navigating away). */
+  const reconnect = useCallback((jobId: string, initialEvents: ProgressEvent[] = []) => {
+    esRef.current?.close();
+    setState({ ...INITIAL, status: "running", jobId, events: initialEvents });
+    _openStream(jobId);
+  }, [_openStream]);
+
+  /** Restore a completed generation without touching the SSE stream. */
+  const restore = useCallback((jobId: string) => {
+    esRef.current?.close();
+    setState({ ...INITIAL, status: "completed", jobId });
+  }, []);
+
+  return { state, start, startRevision, reconnect, restore, reset, approve, cancel };
 }
 
-/** Fetches the latest session for an app. */
+/** Fetches the latest session for an app — always fresh on mount so reconnect logic sees real status. */
 export function useLatestSession(appId: string | null) {
   return useQuery({
     queryKey: ["latest-session", appId],
     queryFn: () => api.generation.latestSession(appId!),
     enabled: !!appId,
     retry: false,
+    staleTime: 0,
+    refetchOnMount: true,
   });
 }
 

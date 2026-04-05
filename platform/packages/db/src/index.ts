@@ -416,6 +416,32 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
   };
 }
 
+/** Fetch an app by id alone — used during teardown when tenantId is not in scope. */
+export async function getAppByIdOnly(appId: string): Promise<App | null> {
+  const rows = await sql<Array<{
+    id: string; tenantId: string; slug: string; name: string; status: string;
+    appArchetype: string; widgetJs: string | null; adminUiJs: string | null;
+    shopifyClientId: string; shopifySecretName: string; shopDomain: string;
+    createdAt: Date; updatedAt: Date;
+  }>>`
+    SELECT id, tenant_id AS "tenantId", slug, name, status,
+           app_archetype AS "appArchetype", widget_js AS "widgetJs",
+           admin_ui_js AS "adminUiJs", shopify_client_id AS "shopifyClientId",
+           shopify_secret_name AS "shopifySecretName", shop_domain AS "shopDomain",
+           created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM apps WHERE id = ${appId} LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id, tenantId: row.tenantId, slug: row.slug, name: row.name,
+    status: row.status as App["status"], appArchetype: row.appArchetype as AppArchetype,
+    widgetJs: row.widgetJs, adminUiJs: row.adminUiJs, shopifyClientId: row.shopifyClientId,
+    shopifySecretName: row.shopifySecretName, shopDomain: row.shopDomain,
+    createdAt: row.createdAt, updatedAt: row.updatedAt,
+  };
+}
+
 /**
  * Returns all active webhook topics across all apps for a tenant.
  * Used by the OAuth callback to re-register webhooks after re-install.
@@ -1060,7 +1086,6 @@ export async function getAppById(
       admin_ui_js                          AS "adminUiJs",
       shopify_client_id                    AS "shopifyClientId",
       shopify_secret_name                  AS "shopifySecretName",
-      shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
       shop_domain                          AS "shopDomain",
       created_at                           AS "createdAt",
       updated_at                           AS "updatedAt"
@@ -1198,7 +1223,6 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
       admin_ui_js                          AS "adminUiJs",
       shopify_client_id                    AS "shopifyClientId",
       shopify_secret_name                  AS "shopifySecretName",
-      shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
       shop_domain                          AS "shopDomain",
       created_at                           AS "createdAt",
       updated_at                           AS "updatedAt"
@@ -1435,7 +1459,6 @@ export async function getAdminUiAppsByShop(shopDomain: string): Promise<App[]> {
       a.admin_ui_js                          AS "adminUiJs",
       a.shopify_client_id                    AS "shopifyClientId",
       a.shopify_secret_name                  AS "shopifySecretName",
-      a.shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
       a.shop_domain                          AS "shopDomain",
       a.created_at                           AS "createdAt",
       a.updated_at                           AS "updatedAt"
@@ -1461,6 +1484,37 @@ export async function getAdminUiAppsByShop(shopDomain: string): Promise<App[]> {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }));
+}
+
+/**
+ * Returns active webhook subscriptions for an app, including the Shopify webhook ID
+ * needed to call the Shopify DELETE API during teardown.
+ */
+export async function getActiveWebhookSubscriptionsForApp(
+  appId: string
+): Promise<Array<{ topic: string; shopifyWebhookId: string }>> {
+  return sql<Array<{ topic: string; shopifyWebhookId: string }>>`
+    SELECT topic, shopify_webhook_id AS "shopifyWebhookId"
+    FROM webhook_subscriptions
+    WHERE app_id = ${appId} AND active = TRUE
+  `;
+}
+
+/**
+ * Deactivates all deployed_functions and webhook_subscriptions for an app.
+ * Called during app deletion — does not remove rows so audit history is preserved.
+ */
+export async function deactivateAppInfrastructure(appId: string): Promise<void> {
+  await sql`
+    UPDATE deployed_functions
+    SET is_active = FALSE, updated_at = NOW()
+    WHERE app_id = ${appId} AND is_active = TRUE
+  `;
+  await sql`
+    UPDATE webhook_subscriptions
+    SET active = FALSE, updated_at = NOW()
+    WHERE app_id = ${appId} AND active = TRUE
+  `;
 }
 
 export async function upsertWebhookSubscription(params: {

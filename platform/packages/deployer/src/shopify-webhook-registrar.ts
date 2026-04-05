@@ -139,6 +139,36 @@ export async function registerShopifyWebhooks(params: {
 }
 
 /**
+ * Deletes specific Shopify webhooks by their stored IDs.
+ * Called during app teardown to stop Shopify from sending events to a deleted app.
+ */
+export async function unregisterShopifyWebhooks(params: {
+  shop: string;
+  accessTokenSecretName: string | null;
+  webhooks: Array<{ topic: string; shopifyWebhookId: string }>;
+}): Promise<void> {
+  if (params.webhooks.length === 0) return;
+
+  if (!params.accessTokenSecretName) {
+    logger.warn({ shop: params.shop }, "Shopify webhook unregistration skipped — no access token");
+    return;
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getSecret(params.accessTokenSecretName);
+  } catch (err) {
+    logger.warn({ err }, "Shopify webhook unregistration skipped — could not resolve access token");
+    return;
+  }
+
+  for (const wh of params.webhooks) {
+    await shopifyDelete(params.shop, accessToken, `/webhooks/${wh.shopifyWebhookId}.json`);
+    logger.info({ topic: wh.topic, shopifyWebhookId: wh.shopifyWebhookId }, "Unregistered Shopify webhook");
+  }
+}
+
+/**
  * Called by the OAuth callback after a merchant re-installs the app.
  * Re-registers all active webhook subscriptions for the tenant using the
  * fresh access token, pointing them at the current WEBHOOK_BASE_URL.

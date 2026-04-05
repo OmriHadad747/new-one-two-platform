@@ -3,6 +3,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { useSessionStore } from "@/stores/session";
+import { useGenerationStore } from "@/stores/generation";
 import { useApps } from "@/hooks/useApps";
 import type { App } from "@/types/dashboard";
 
@@ -49,6 +50,7 @@ export function AppsPage() {
   const { tenantId } = useSessionStore();
   const appsQuery = useApps(tenantId);
   const apps = appsQuery.data ?? [];
+  const activeGen = useGenerationStore((s) => s.active);
 
   return (
     <>
@@ -114,7 +116,9 @@ export function AppsPage() {
               <span className="text-[10px] font-bold text-faint uppercase tracking-wider text-right">Actions</span>
             </div>
 
-            {apps.map((app, i) => (
+            {apps.map((app, i) => {
+              const isGenerating = activeGen?.appId === app.id && activeGen.status === "running";
+              return (
               <div
                 key={app.id}
                 className={cn(
@@ -124,19 +128,30 @@ export function AppsPage() {
                 onClick={() => navigate(`/app/apps/${app.id}`)}
               >
                 {/* Name */}
-                <div className="min-w-0">
-                  <div className="text-[13px] font-semibold text-ink truncate">{app.name}</div>
-                  <div className="text-[11px] text-faint font-mono truncate mt-0.5">{app.slug}</div>
+                <div className="min-w-0 flex items-center gap-2">
+                  {isGenerating && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-semibold text-ink truncate">{app.name}</div>
+                    <div className="text-[11px] text-faint font-mono truncate mt-0.5">{app.slug}</div>
+                  </div>
                 </div>
 
                 {/* Archetype */}
                 <div>
-                  <ArchetypeBadge archetype={app.appArchetype} />
+                  {!isGenerating && <ArchetypeBadge archetype={app.appArchetype} />}
                 </div>
 
                 {/* Status */}
                 <div>
-                  <StatusBadge status={app.status} />
+                  {isGenerating ? (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent">
+                      Building…
+                    </span>
+                  ) : (
+                    <StatusBadge status={app.status} />
+                  )}
                 </div>
 
                 {/* Updated */}
@@ -146,7 +161,7 @@ export function AppsPage() {
                 <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
                   <button
                     type="button"
-                    onClick={() => navigate("/app/new")}
+                    onClick={() => navigate(`/app/new?appId=${app.id}`)}
                     title="Edit in AI"
                     className="w-7 h-7 rounded-md flex items-center justify-center text-faint hover:text-accent hover:bg-accent/10 transition-colors bg-transparent border-0 cursor-pointer"
                   >
@@ -162,7 +177,8 @@ export function AppsPage() {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>

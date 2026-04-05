@@ -71,3 +71,14 @@ export async function deployToDockerLocal(
   // (Docker Desktop adds it to /etc/hosts) and from inside Docker containers.
   return { functionUrl: `http://${DEV_HARNESS_HOST}:${hostPort}` };
 }
+
+export async function stopDockerLocal(appId: string): Promise<void> {
+  const containerName = localContainerName(appId);
+  try {
+    await run("docker", ["stop", containerName]);
+    await run("docker", ["rm", containerName]);
+    logger.info({ containerName }, "Harness container stopped and removed");
+  } catch {
+    // Already gone — fine
+  }
+}

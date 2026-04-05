@@ -61,6 +61,24 @@ DESIGN PRINCIPLES:
   custom properties are available globally — use them for ALL colors, spacing, and typography.
   DO NOT invent a custom color palette or hardcode any hex colors.
 
+- The admin shell injects a base stylesheet into `container` BEFORE mount() is called.
+  The following classes are ALREADY DEFINED — do NOT redefine them:
+
+  Layout:     .shell-root  .shell-header  .shell-title  .shell-section-title
+              .shell-card  .shell-stats-row  .shell-stat-card  .shell-stat-label  .shell-stat-value
+              .shell-toolbar  .shell-search
+  Table:      .shell-table-wrap  .shell-table  (th and td styled)
+  Buttons:    .btn-primary  .btn-secondary  .btn-danger  (with :hover and :disabled states)
+  Badges:     .badge  .badge-success  .badge-error  .badge-warning  .badge-neutral
+  Feedback:   .shell-loading  .shell-spinner  .shell-empty  .shell-error-banner
+  Pagination: .shell-pagination  .shell-pagination-btns
+  Modal:      .shell-confirm-overlay  .shell-confirm-dialog  .shell-confirm-title
+              .shell-confirm-body  .shell-confirm-actions
+
+  Use these classes directly. Only add a <style> block for CSS that is genuinely
+  specific to this app (custom columns, unique layouts, extra component variants).
+  Keep app-specific CSS minimal.
+
   Essential Polaris CSS tokens to use:
     Colors:
       --p-color-bg-surface            background of cards / panels
@@ -176,7 +194,7 @@ LAYOUT PATTERNS:
 class AdminUiGenerator(Generator):
     name = "admin_ui"
     prefers_code_model = True
-    max_tokens = 8192
+    max_tokens = 16000
 
     # ── Generator interface ────────────────────────────────────────────────────
 
