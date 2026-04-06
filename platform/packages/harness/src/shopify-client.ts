@@ -1,11 +1,11 @@
 import { getSecret } from "@new-one-two/crypto";
+import type { ShopifyAdminClient, ShopifyStorefrontClient } from "@new-one-two/types";
 
-interface ShopifyClient {
-  get(path: string): Promise<unknown>;
-  post(path: string, body: unknown): Promise<unknown>;
-  graphql(query: string, variables?: Record<string, unknown>): Promise<unknown>;
-  readonly callCount: number;
-}
+// ─── Admin API client ─────────────────────────────────────────────────────────
+
+// ShopifyAdminClient and ShopifyStorefrontClient interfaces are defined in
+// @new-one-two/types so HandlerContext can reference them without a circular dep.
+// callCount is tracked locally inside each builder for harness-internal metrics.
 
 // In-memory token cache keyed by shopDomain.
 // Entries are refreshed when < REFRESH_WINDOW_MS remains before expiry.
@@ -51,11 +51,11 @@ async function getAccessToken(
   return data.access_token;
 }
 
-export async function buildShopifyClient(
+export function buildShopifyAdminClient(
   shopDomain: string,
   clientId: string | null,
   clientSecretName: string | null
-): Promise<ShopifyClient> {
+): ShopifyAdminClient & { readonly callCount: number } {
   let callCount = 0;
 
   // If no client credentials configured (e.g. backend-only apps), return a
@@ -70,6 +70,11 @@ export async function buildShopifyClient(
       post: async (path: string) => {
         callCount++;
         console.warn(`[shopify stub] POST ${path} — no client credentials configured`);
+        return {};
+      },
+      delete: async (path: string) => {
+        callCount++;
+        console.warn(`[shopify stub] DELETE ${path} — no client credentials configured`);
         return {};
       },
       graphql: async (query: string) => {
@@ -104,6 +109,18 @@ export async function buildShopifyClient(
       if (!res.ok) throw new Error(`Shopify POST ${path} failed: ${res.status}`);
       return res.json();
     },
+    async delete(path: string): Promise<unknown> {
+      callCount++;
+      const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+      const res = await fetch(`${baseUrl}${path}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
+      });
+      if (!res.ok) throw new Error(`Shopify DELETE ${path} failed: ${res.status}`);
+      // DELETE responses are often 200 with a body or 204 with no body
+      const text = await res.text();
+      return text ? JSON.parse(text) : {};
+    },
     async graphql(query: string, variables?: Record<string, unknown>): Promise<unknown> {
       callCount++;
       const token = await getAccessToken(shopDomain, clientId, clientSecretName);
@@ -118,5 +135,57 @@ export async function buildShopifyClient(
       return json.data;
     },
     get callCount() { return callCount; },
+  };
+}
+
+// ─── Storefront API client ────────────────────────────────────────────────────
+
+// Storefront API token — created at OAuth time, stored in Secret Manager,
+// injected by the deployer as STOREFRONT_TOKEN_SECRET_NAME.
+const STOREFRONT_TOKEN_SECRET_NAME = process.env["STOREFRONT_TOKEN_SECRET_NAME"] ?? "";
+
+// Resolved once per process lifetime — the token is long-lived.
+let _storefrontTokenPromise: Promise<string> | null = null;
+
+function resolveStorefrontToken(): Promise<string> {
+  if (!_storefrontTokenPromise) {
+    if (!STOREFRONT_TOKEN_SECRET_NAME) {
+      _storefrontTokenPromise = Promise.reject(
+        new Error(
+          "Storefront API not available — no storefront token was provisioned during merchant install. " +
+          "Re-install the app to provision one."
+        )
+      );
+    } else {
+      _storefrontTokenPromise = getSecret(STOREFRONT_TOKEN_SECRET_NAME);
+    }
+    // Suppress unhandled-rejection until first actual call.
+    _storefrontTokenPromise.catch(() => undefined);
+  }
+  return _storefrontTokenPromise;
+}
+
+// ShopifyStorefrontClient is imported from @new-one-two/types — re-export for convenience.
+export type { ShopifyStorefrontClient } from "@new-one-two/types";
+
+export function buildShopifyStorefrontClient(shopDomain: string): ShopifyStorefrontClient {
+  return {
+    async graphql(query: string, variables?: Record<string, unknown>): Promise<unknown> {
+      const token = await resolveStorefrontToken();
+      const res = await fetch(
+        `https://${shopDomain}/api/2026-01/graphql.json`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Shopify-Storefront-Access-Token": token,
+          },
+          body: JSON.stringify({ query, variables }),
+        }
+      );
+      const json = (await res.json()) as { data?: unknown; errors?: unknown[] };
+      if (json.errors?.length) throw new Error(JSON.stringify(json.errors));
+      return json.data;
+    },
   };
 }

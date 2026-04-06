@@ -45,6 +45,7 @@ class HandlerModule(BaseModel):
     code: str
     webhookTopics: List[str]
     cronSchedule: Optional[str] = None
+    npmPackages: List[str] = []
 
 
 class DbMigration(BaseModel):

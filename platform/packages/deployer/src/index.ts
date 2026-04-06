@@ -80,7 +80,7 @@ export async function deployAppVersion(appVersionId: string): Promise<{
   logger.info({ appVersionId }, "Starting deployment");
 
   const { version, app, tenant } = await fetchDeploymentContext(appVersionId);
-  const { webhookTopics } = parseMetadata(version.generatedCode);
+  const { webhookTopics, npmPackages } = parseMetadata(version.generatedCode);
   const imageName = dockerImageName(app.id, version.semver);
 
   await setVersionStatus(appVersionId, "building");
@@ -90,7 +90,7 @@ export async function deployAppVersion(appVersionId: string): Promise<{
 
   try {
     // 1. Create temp build directory with harness + tenant code
-    buildDir = await createBuildContext(app.id, version.semver, version.generatedCode);
+    buildDir = await createBuildContext(app.id, version.semver, version.generatedCode, npmPackages);
     logger.info({ appVersionId, buildDir }, "Build context created");
 
     // 2. Build Docker image
@@ -255,6 +255,7 @@ export async function deployFeatureBundle(params: {
         "_metadata.json": JSON.stringify({
           webhookTopics: bundle.handlerModule.webhookTopics,
           cronSchedule: bundle.handlerModule.cronSchedule,
+          npmPackages: bundle.handlerModule.npmPackages ?? [],
         }),
       },
     });

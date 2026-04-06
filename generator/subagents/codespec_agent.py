@@ -102,6 +102,28 @@ phases, write the state-update step first, then note between the phases:
   ensures the cron recovers from a webhook crash.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REST vs GRAPHQL — how to write steps for each:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The architect marks each Shopify operation as "rest" or "graphql". Write codeSpec steps
+that match — the handler generator implements steps literally.
+
+REST steps: use concrete REST paths and response field names.
+  ✅ "ctx.shopify.get('/orders/${orderId}.json') → order.email, order.line_items"
+  ✅ "ctx.shopify.post('/customers/${customerId}.json', { customer: { tags: newTags } })"
+  ✅ "ctx.shopify.get('/products.json?ids=${ids.join(',')}&fields=id,title,variants') → products[]"
+
+GraphQL steps: name the operation, variables, and response fields. Always note GID conversion.
+  ✅ "ctx.shopify.graphql tagsAdd mutation: id = gid://shopify/Order/${orderId}, tags = [array]"
+  ✅ "ctx.shopify.graphql metafieldsSet: write pdfUrl to Order metafield namespace/key"
+  ✅ "ctx.shopify.graphql discountCodeBulkAdd: priceRuleId, codes array → bulkOperation id"
+  ✅ "ctx.shopify.graphql query: inventoryItem(id: gid://shopify/InventoryItem/${id}) → variant.id, variant.legacyResourceId"
+
+GraphQL ID rule — always state the GID conversion explicitly in the step:
+  ✅ "convert numeric orderId from payload to GID: gid://shopify/Order/${orderId}"
+  ❌ "pass orderId to GraphQL query" — the handler generator must know to convert
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SHOPIFY API LOOP RULE — applies to EVERY path (webhook, cron, widget)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -127,6 +149,26 @@ Shopify batch endpoints:
     → build inventoryMap<inventory_item_id, storeWideTotal> by summing level.available across all locations
     → inventory_item_id MUST be stored in the DB table
   Orders/customers: no batch endpoint — use individual lookups only when N is guaranteed small (≤3)
+
+Full-catalog scans — ALWAYS use since_id REST cursor pagination:
+  The harness does NOT expose HTTP response headers — Link header parsing fails silently.
+  Use since_id to page through all records reliably:
+  ✅ "sinceId = 0; loop: GET /products.json?fields=id,images&limit=250&since_id=${sinceId}
+      → if products.length === 0: break
+      → process batch
+      → sinceId = products[products.length-1].id; if products.length < 250: break"
+  ❌ "parse response._headers['link']" — headers not available; this always fails
+  ❌ "GET /products.json without limit" — Shopify default is 50, silently truncates
+
+REST delete — use ctx.shopify.delete(path) to remove Shopify resources:
+  ✅ "ctx.shopify.delete('/products/${productId}/images/${imageId}.json')"
+  ❌ "ctx.shopify.post('/products/${productId}/images/${imageId}/delete.json')" — not how REST DELETE works
+
+Rate limiting in loops — add a short delay between per-item API operations:
+  When a cron/admin path must make one API call per item (no batch endpoint available),
+  add a 200ms delay between iterations to avoid rate-limit errors at scale:
+  ✅ "after each item: await new Promise(r => setTimeout(r, 200))"
+  setTimeout is available — use it for delays. Never busy-wait (while loop with Date.now()).
 
 Shopify entity boundary rule — never read fields across entity types without a separate fetch:
   Each Shopify API endpoint returns fields for ONE entity type only.

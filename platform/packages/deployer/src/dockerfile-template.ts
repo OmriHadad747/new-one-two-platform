@@ -1,4 +1,9 @@
-export function buildDockerfile(): string {
+export function buildDockerfile(npmPackages: string[] = []): string {
+  const installLine =
+    npmPackages.length > 0
+      ? `RUN npm install --omit=dev ${npmPackages.join(" ")}\n\n`
+      : "";
+
   return `FROM node:20-alpine AS runner
 WORKDIR /app
 
@@ -12,11 +17,8 @@ RUN npm install --omit=dev --ignore-scripts
 # Tenant-generated handler code
 COPY handler.js ./handler.js
 
-# Optional: tenant-supplied dependencies (may be an empty file)
-COPY tenant-package.json ./tenant-package.json
-RUN node -e "const p = require('./tenant-package.json'); if (Object.keys(p.dependencies || {}).length > 0) { require('child_process').execSync('npm install --omit=dev --ignore-scripts', { stdio: 'inherit' }); }"
-
-ENV PORT=8080
+# JS library dependencies declared by the generated handler (empty if none)
+${installLine}ENV PORT=8080
 ENV NODE_ENV=production
 EXPOSE 8080
 CMD ["node", "server.cjs"]

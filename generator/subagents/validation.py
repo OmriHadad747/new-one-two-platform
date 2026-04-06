@@ -212,6 +212,78 @@ def validate_architect_plan(
     return errors
 
 
+def _extract_js_fields(obj_literal: str) -> List[str]:
+    """
+    Extract property key names from a JS object literal fragment.
+
+    Handles shorthand  { email, variantId }
+    and explicit       { email: formData.email, variantId: someVar }
+
+    Returns sorted list of key identifiers only (not values).
+    Uses a split-based approach so the last field is always captured even when
+    the closing `}` is not present in the captured substring (common when the
+    field list is extracted via a regex group that stops before `}`).
+    """
+    keys: List[str] = []
+    seen: set = set()
+    # strip surrounding braces/whitespace in case the caller left them in
+    s = obj_literal.strip().strip("{}").strip()
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        # explicit "key: value" — take the key only; shorthand "key" — take as-is
+        key = part.split(":")[0].strip()
+        if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key) and key not in _NON_FIELD and key not in seen:
+            keys.append(key)
+            seen.add(key)
+    return sorted(keys)
+
+
+def extract_widget_field_contracts(widget_path: List[str]) -> Dict[str, List[str]]:
+    """
+    Parse codeSpec.widgetPath steps and extract the field contract for each path.
+
+    Returns {'/path': ['field1', 'field2']} based on host.call() body objects.
+    Both the handler and widget generators call this to get the authoritative field
+    list for each route — so both sides implement the exact same names.
+
+    Only paths with an explicit JS object literal in host.call() are returned.
+    Paths called with no body (GET-style) are omitted.
+    """
+    contracts: Dict[str, List[str]] = {}
+    call_re = re.compile(
+        r"host\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{([^}]*)\}",
+    )
+    for step in widget_path:
+        m = call_re.search(step)
+        if m:
+            path = m.group(1)
+            fields = _extract_js_fields(m.group(2))
+            if fields:
+                contracts[path] = fields
+    return contracts
+
+
+def extract_admin_field_contracts(admin_path: List[str]) -> Dict[str, List[str]]:
+    """
+    Same as extract_widget_field_contracts but for bridge.call() in adminPath steps.
+    Only paths that send a body are returned — GET-style paths with no body are skipped.
+    """
+    contracts: Dict[str, List[str]] = {}
+    call_re = re.compile(
+        r"bridge\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{([^}]*)\}",
+    )
+    for step in admin_path:
+        m = call_re.search(step)
+        if m:
+            path = m.group(1)
+            fields = _extract_js_fields(m.group(2))
+            if fields:
+                contracts[path] = fields
+    return contracts
+
+
 def validate_codespec_plan(
     codespec_output: Dict[str, Any],
     architect_output: Dict[str, Any],
@@ -231,8 +303,10 @@ def validate_codespec_plan(
       4. Atomic claim: every RETURNING step is immediately followed by a skip guard (all paths).
       5. No Shopify API calls inside per-item loop bodies.
       6. DB SELECT steps in webhook, cron, and admin paths must reference ctx.tenantId.
-         (field-name contract between widget/admin UI and handler is checked by the contract
-          validators at artifact level, where the actual generated code can be inspected)
+      7. Each widgetApiCatalog path must have an explicit host.call() body with JS field names
+         AND a matching ctx.widgetBody destructuring step with identical fields.
+      8. Each adminApiCatalog path that sends a body must have a matching ctx.adminBody
+         destructuring step with identical fields.
     """
     errors: List[str] = []
     impl = architect_output.get("implementationSpec") or {}
@@ -337,13 +411,8 @@ def validate_codespec_plan(
 
     # 6. DB SELECT steps must always be scoped to ctx.tenantId.
     #    Applies to webhook, cron, and admin paths — any path that queries tenant tables.
-    #    (widgetPath is excluded: widget queries are typically single-entity lookups and
-    #    the handler enforces tenant scoping at the artifact level via validate_handler_artifact.)
-    #
-    #    Field-name alignment between widget/admin UI and handler is NOT checked here.
-    #    Natural-language codeSpec steps are too imprecise for reliable regex parsing.
-    #    That contract is enforced at the artifact level by validate_widget_handler_contract
-    #    and validate_admin_handler_contract, where the real generated code can be inspected.
+    #    (widgetPath is excluded: widget queries are single-entity lookups scoped by the
+    #    entity ID from the widget body, tenant scoping enforced at artifact level.)
     select_re = re.compile(r"\bSELECT\b", re.IGNORECASE)
     tenant_re = re.compile(r"ctx\.tenantId", re.IGNORECASE)
     for path_name, path_steps in [
@@ -359,6 +428,107 @@ def validate_codespec_plan(
                     f"Every DB query must be scoped to the current tenant."
                 )
 
+    # 7. widgetPath field contract self-consistency.
+    #    Each widgetApiCatalog path that sends a body must have:
+    #      (a) a step with host.call('/path', { field1, field2 }) — explicit JS identifiers
+    #      (b) a step with const { field1, field2 } = ctx.widgetBody — exact same names
+    #    Catching this in the codeSpec prevents codegen agents from independently
+    #    inventing field names and producing a mismatch that only surfaces after codegen.
+    for entry in widget_catalog:
+        catalog_path = entry.get("path", "")
+        if not catalog_path:
+            continue
+        path_steps = [s for s in widget_path if catalog_path in s]
+
+        call_m = None
+        for step in path_steps:
+            m = re.search(
+                rf"host\.call\s*\(\s*['\"](?:{re.escape(catalog_path)})['\"].*?\{{([^}}]+)\}}",
+                step,
+            )
+            if m:
+                call_m = m
+                break
+
+        destr_m = None
+        for step in path_steps:
+            m = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody", step)
+            if m:
+                destr_m = m
+                break
+
+        if not call_m:
+            errors.append(
+                f"codeSpec.widgetPath for '{catalog_path}': missing explicit host.call() body — "
+                f"write the exact JS object: "
+                f"\"path {catalog_path}: widget calls host.call('{catalog_path}', {{ field1, field2 }})\" "
+                f"using camelCase identifiers only, no prose"
+            )
+
+        if not destr_m:
+            errors.append(
+                f"codeSpec.widgetPath for '{catalog_path}': missing ctx.widgetBody destructuring — "
+                f"write: \"path {catalog_path}: handler: const {{ field1, field2 }} = ctx.widgetBody\" "
+                f"with the same field names as the host.call() body"
+            )
+
+        if call_m and destr_m:
+            widget_fields = set(_extract_js_fields(call_m.group(1)))
+            handler_fields = set(_extract_js_fields(destr_m.group(1)))
+            if widget_fields != handler_fields:
+                errors.append(
+                    f"codeSpec.widgetPath '{catalog_path}' internal field mismatch: "
+                    f"host.call() sends {sorted(widget_fields)}, "
+                    f"ctx.widgetBody destructures {sorted(handler_fields)} — "
+                    f"both steps must use identical field names. Fix the codeSpec before codegen runs."
+                )
+
+    # 8. adminPath field contract self-consistency.
+    #    Same check for bridge.call() bodies vs ctx.adminBody destructuring.
+    #    GET-style paths (no body) are skipped — only paths with a body need the check.
+    for entry in admin_catalog:
+        catalog_path = entry.get("path", "")
+        if not catalog_path:
+            continue
+        path_steps_admin = [s for s in admin_path if catalog_path in s]
+
+        call_m = None
+        for step in path_steps_admin:
+            m = re.search(
+                rf"bridge\.call\s*\(\s*['\"](?:{re.escape(catalog_path)})['\"].*?\{{([^}}]+)\}}",
+                step,
+            )
+            if m:
+                call_m = m
+                break
+
+        if not call_m:
+            continue  # GET-style admin path with no body — no contract to validate
+
+        destr_m = None
+        for step in path_steps_admin:
+            m = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.adminBody", step)
+            if m:
+                destr_m = m
+                break
+
+        if not destr_m:
+            errors.append(
+                f"codeSpec.adminPath for '{catalog_path}': has bridge.call() body but no "
+                f"ctx.adminBody destructuring — write: "
+                f"\"path {catalog_path}: handler: const {{ field1, field2 }} = ctx.adminBody\""
+            )
+        elif call_m and destr_m:
+            admin_fields = set(_extract_js_fields(call_m.group(1)))
+            handler_fields = set(_extract_js_fields(destr_m.group(1)))
+            if admin_fields != handler_fields:
+                errors.append(
+                    f"codeSpec.adminPath '{catalog_path}' internal field mismatch: "
+                    f"bridge.call() sends {sorted(admin_fields)}, "
+                    f"ctx.adminBody destructures {sorted(handler_fields)} — "
+                    f"both steps must use identical field names."
+                )
+
     return errors
 
 
@@ -369,7 +539,6 @@ def validate_codespec_plan(
 # ── Handler ───────────────────────────────────────────────────────────────────
 
 FORBIDDEN_HANDLER_PATTERNS = [
-    (r"\brequire\s*\(", "require() calls are not allowed"),
     (
         r"\bfetch\s*\(",
         "raw fetch() calls are not allowed — use ctx.shopify or ctx.http.call()",
@@ -481,8 +650,72 @@ def validate_handler_artifact(
         errors.append("module.exports not found")
     if "webhookTopics" not in code:
         errors.append("webhookTopics not found in exports")
+    if "npmPackages" not in code:
+        errors.append("npmPackages not found in exports — add npmPackages: [] even if empty")
     if "handler" not in code:
         errors.append("handler function not found in exports")
+
+    # 2b. Every require('pkg') call must be declared in npmPackages,
+    #     and every npmPackages entry must be from the approved list.
+    #     Built-in Node modules are always exempt.
+    BUILTIN_MODULES = {
+        "path", "fs", "os", "crypto", "stream", "util", "events",
+        "buffer", "url", "http", "https", "net", "querystring",
+        "string_decoder", "child_process", "process", "zlib",
+    }
+    # Approved JS library packages — keep in sync with harness_contract.py.
+    # Only the base package name (no version), scoped packages use full @scope/name.
+    ALLOWED_NPM_PACKAGES = {
+        "qrcode",
+        "jsbarcode",
+        "@xmldom/xmldom",
+        "sharp",
+        "pdfkit",
+        "exceljs",
+        "csv-parse",
+        "csv-stringify",
+        "fast-xml-parser",
+        "handlebars",
+        "marked",
+        "dayjs",
+        "jszip",
+        "uuid",
+        "slugify",
+    }
+
+    def _pkg_base(name: str) -> str:
+        """Strip version from a package name, handling scoped packages."""
+        if name.startswith("@"):
+            # @scope/pkg@version → @scope/pkg
+            parts = name[1:].split("@")
+            return "@" + parts[0]
+        return name.split("@")[0]
+
+    npm_match = re.search(r"npmPackages\s*:\s*\[([^\]]*)\]", code)
+    declared_packages: set = set()
+    if npm_match:
+        raw = npm_match.group(1)
+        for pkg in re.findall(r"""['"]([^'"]+)['"]""", raw):
+            base = _pkg_base(pkg)
+            declared_packages.add(base)
+            if base not in ALLOWED_NPM_PACKAGES:
+                errors.append(
+                    f"npmPackages contains unsupported package '{pkg}' — "
+                    f"only these packages are available: {sorted(ALLOWED_NPM_PACKAGES)}"
+                )
+
+    for req_match in re.finditer(r"""\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)""", code):
+        pkg_name = req_match.group(1)
+        # Allow sub-path imports like 'csv-parse/sync' — base is still 'csv-parse'
+        base = _pkg_base(pkg_name.split("/")[0] if not pkg_name.startswith("@") else
+                         "/".join(pkg_name.split("/")[:2]))
+        if base in BUILTIN_MODULES:
+            continue
+        if base not in declared_packages:
+            errors.append(
+                f"require('{pkg_name}') used but '{pkg_name}' is not declared in npmPackages — "
+                f"add it to the npmPackages array in module.exports"
+            )
 
     # 3. Forbidden patterns
     for pattern, message in FORBIDDEN_HANDLER_PATTERNS:
@@ -866,31 +1099,10 @@ def validate_admin_ui_artifact(
 def _extract_call_keys(body_str: str) -> set:
     """
     Extract top-level property key names from a JavaScript object literal fragment.
-
-    Handles both shorthand  ``{ email, variantId }``
-    and explicit            ``{ email: formData.email, variantId: someVar }``
-
-    Returns only the key identifiers — not their value expressions — to avoid false
-    mismatches where value expressions happen to contain identifiers that look like
-    field names (e.g. ``{ email: formData.email }`` must yield ``{'email'}``, not
-    ``{'email', 'formData'}``.
-
-    Limitation: only top-level keys are extracted. Nested object values
-    (e.g. ``{ items: [{id: x}] }``) may cause inner keys to appear; in practice
-    widget/admin call bodies are flat objects so this is not an issue.
+    Delegates to _extract_js_fields which correctly handles the last field even when
+    the captured group does not include the closing `}`.
     """
-    keys: set = set()
-    # An object property key appears at the start of a property — immediately after
-    # ``{``, ``,``, or start-of-string — and is followed by ``:`` (explicit property)
-    # or ``,``/``}`` (shorthand property).
-    for m in re.finditer(
-        r"(?:(?:^|[,{])\s*)([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*[:,}])",
-        body_str.strip(),
-    ):
-        key = m.group(1)
-        if key not in _NON_FIELD:
-            keys.add(key)
-    return keys
+    return set(_extract_js_fields(body_str))
 
 _NON_FIELD = {
     "true",

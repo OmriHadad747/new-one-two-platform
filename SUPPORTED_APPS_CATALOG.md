@@ -1,149 +1,236 @@
 # Supported Apps Catalog
 
-This catalog details the specific Shopify app types supported by the platform during the MVP phase. It outlines how each app functions under the platform's architectural constraints (Widget ES module, TypeScript handler, Admin UI) and specifies the required services and Shopify infrastructure.
+Each app is categorised by its architectural shape. Services column uses the current surface:
+- **Platform:** `ctx.shopify`, `ctx.db`, `ctx.storefront`, `ctx.http`, `ctx.shop`
+- **ctx.services:** `email` (stub→Resend), `sms` (stub→Twilio), `files` (stub→GCS)
+- **JS lib:** handler declares `npmPackages`, uses `require()`
 
 ---
 
 ## Category A — Storefront + Backend
-*Widgets on the storefront. Backend stores configuration or processes webhook events into the DB. No Admin UI required (configuration happens via the platform's dashboard or storefront theme editor).*
+*Widget on the storefront. Backend stores config or processes webhook events. No Admin UI.*
 
 ### 1. Announcement Bar
-*   **Similar Real App:** Hextom: Free Shipping Bar / Quick Announcement Bar
-*   **Flow:** The storefront widget queries the backend handler (via App Proxy) or uses App Block settings to fetch the current announcement text, link, and styling. The widget renders the bar at the top of the page.
-*   **Services Needed:** `ctx.db` (to store configuration).
-*   **Shopify Infra:** Storefront Widget (Theme App Extension), Backend Config API.
+- **Similar app:** Hextom Free Shipping Bar, Quick Announcement Bar
+- **Flow:** Widget fetches announcement text, link, and styling from the handler on page load and renders a top-of-page bar. Handler stores merchant config in DB.
+- **Services:** `ctx.db`
+- **Shopify infra:** Storefront widget
 
 ### 2. Trust & Payment Badges
-*   **Similar Real App:** Trust Badge Master
-*   **Flow:** The widget fetches the merchant's configured trust badges from the backend and renders them below the 'Add to Cart' button or on the checkout page to increase conversion rates.
-*   **Services Needed:** `ctx.db`.
-*   **Shopify Infra:** Storefront Widget.
+- **Similar app:** Trust Badge Master
+- **Flow:** Widget fetches the merchant's configured badge set from the handler and renders it below the Add to Cart button.
+- **Services:** `ctx.db`
+- **Shopify infra:** Storefront widget
 
 ### 3. Cookie Consent Banner
-*   **Similar Real App:** GDPR Cookie Compiler
-*   **Flow:** Widget displays a consent banner on the first visit. Consent state is stored in the browser's `localStorage` or a Shopify Customer Metafield (if logged in). Backend handles the configuration of the banner text and styling.
-*   **Services Needed:** `ctx.db`.
-*   **Shopify Infra:** Storefront Widget, LocalStorage / Customer Privacy API.
+- **Similar app:** GDPR Cookie Compiler
+- **Flow:** Widget displays a consent banner on first visit. Consent stored in browser localStorage or a Shopify Customer Metafield. Handler stores banner config.
+- **Services:** `ctx.db`
+- **Shopify infra:** Storefront widget, Customer Privacy API
 
 ### 4. Flash Sale Countdown Timer
-*   **Similar Real App:** Hurrify - Countdown Timer
-*   **Flow:** Merchant configures an end date and target products in the backend. The widget polls the backend for the deadline, calculates the remaining time, and renders a live countdown timer on the product page.
-*   **Services Needed:** `ctx.db`.
-*   **Shopify Infra:** Storefront Widget.
+- **Similar app:** Hurrify Countdown Timer
+- **Flow:** Merchant configures an end date and target products via platform dashboard. Widget fetches the deadline from the handler and renders a live countdown.
+- **Services:** `ctx.db`
+- **Shopify infra:** Storefront widget
 
 ### 5. Free Shipping Progress Bar
-*   **Similar Real App:** Essential Free Shipping Bar
-*   **Flow:** Widget listens to cart updates via the Storefront Cart API. It compares the current cart total against a threshold fetched from the backend, rendering a progress bar indicating how much more the customer needs to spend to unlock free shipping.
-*   **Services Needed:** `ctx.db`.
-*   **Shopify Infra:** Storefront Widget, Storefront Cart API (AJAX).
+- **Similar app:** Essential Free Shipping Bar
+- **Flow:** Widget listens to cart updates via the Storefront Cart API. It compares the cart total against a threshold from the handler and renders a progress bar.
+- **Services:** `ctx.db`
+- **Shopify infra:** Storefront widget, Storefront Cart API (AJAX)
 
 ### 6. Recently Viewed Products
-*   **Similar Real App:** Vitals: All-in-One Marketing
-*   **Flow:** Widget tracks product page views in the browser's `localStorage`. When rendering the 'Recently Viewed' section, it queries the Storefront API for product details matching the stored IDs and displays a carousel.
-*   **Services Needed:** `ctx.db` (for widget styling/config).
-*   **Shopify Infra:** Storefront Widget, LocalStorage, Storefront API.
+- **Similar app:** Vitals All-in-One Marketing
+- **Flow:** Widget tracks product page views in localStorage. Fetches product details from the Storefront API for stored IDs and renders a carousel.
+- **Services:** `ctx.db` (widget config/styling)
+- **Shopify infra:** Storefront widget, Storefront API
 
 ### 7. Social Proof Sales Pop
-*   **Similar Real App:** Sales Pop up - Conversion Pro
-*   **Flow:** The backend listens to Shopify `orders/create` webhooks and stores anonymized purchase data (e.g., "Someone in NY bought a T-Shirt"). The widget polls the backend periodically and displays toast notifications to live visitors.
-*   **Services Needed:** `ctx.db`.
-*   **Shopify Infra:** Storefront Widget, `orders/create` webhook.
+- **Similar app:** Sales Pop up - Conversion Pro
+- **Flow:** Handler listens to `orders/create` webhooks and stores anonymised purchase data (city, product). Widget polls the handler and shows toast notifications to live visitors.
+- **Services:** `ctx.db`
+- **Shopify infra:** Storefront widget, `orders/create` webhook
 
 ### 8. Low Stock Urgency Badge
-*   **Similar Real App:** Stock Sync / Urgency Bear
-*   **Flow:** Backend listens to `inventory_levels/update` webhooks to keep an updated local cache of low-stock items. The widget on a product page fetches the stock level from the backend and displays a "Only X left in stock!" badge to drive urgency.
-*   **Services Needed:** `ctx.db`.
-*   **Shopify Infra:** Storefront Widget, `inventory_levels/update` webhook.
+- **Similar app:** Urgency Bear
+- **Flow:** Handler listens to `inventory_levels/update` and caches low-stock items in DB. Widget fetches the stock level and shows "Only X left in stock!" badge.
+- **Services:** `ctx.db`
+- **Shopify infra:** Storefront widget, `inventory_levels/update` webhook
 
 ### 9. Wishlists
-*   **Similar Real App:** Wishlist Plus
-*   **Flow:** Customer clicks a "heart" icon (Storefront Widget). The widget sends an authenticated request to the backend handler (via App Proxy) containing the customer ID and product ID. The backend saves the relation in the database.
-*   **Services Needed:** `ctx.db`.
-*   **Shopify Infra:** Storefront Widget, App Proxy (for secure customer identification).
+- **Similar app:** Wishlist Plus
+- **Flow:** Customer clicks a heart icon. Widget sends customer ID + product ID to the handler which saves the relation to DB. Widget re-fetches to show saved state.
+- **Services:** `ctx.db`
+- **Shopify infra:** Storefront widget
+
+### 10. Product Q&A Widget
+- **Similar app:** Hulk Product Q&A
+- **Flow:** Widget shows existing questions and answers fetched from the handler. Customers submit new questions. Handler stores them and notifies the merchant via email.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** Storefront widget
+
+### 11. Age Verification Gate
+- **Similar app:** Age Verification by Minimum
+- **Flow:** Handler provides age-gate config (threshold, styling). Widget blocks page content and prompts age confirmation. Result stored in localStorage / session.
+- **Services:** `ctx.db`
+- **Shopify infra:** Storefront widget
+
+### 12. Currency Switcher
+- **Similar app:** BEST Currency Converter
+- **Flow:** Handler fetches current exchange rates via `ctx.http` from a free rates API and caches them in DB (refreshed by cron). Widget reads the visitor's locale, calls the handler, and re-renders prices.
+- **Services:** `ctx.db`, `ctx.http`
+- **Shopify infra:** Storefront widget, cron (daily rate refresh)
 
 ---
 
 ## Category B — Storefront + Backend + Admin UI
-*Widgets on the storefront for customer interaction, plus a merchant-facing dashboard embedded in the Shopify Admin to manage data.*
+*Widget on the storefront for customer interaction + merchant dashboard in Shopify Admin.*
 
-### 10. Price Drop Alert
-*   **Similar Real App:** Price Drop Alert
-*   **Flow:** Customers use a Storefront Widget on a product page to subscribe to price drops for a specific variant. The backend stores the subscription. The backend listens to `products/update` webhooks; if a price decreases, it queries the DB and uses `ctx.services.email` to notify subscribers. The Admin UI allows merchants to view active subscriptions and tweak email templates.
-*   **Services Needed:** `ctx.db`, `ctx.services.email`.
-*   **Shopify Infra:** Storefront Widget, `products/update` webhook, Admin UI (React).
+### 13. Price Drop Alert
+- **Similar app:** Price Drop Alert
+- **Flow:** Customers subscribe to price drops for a specific variant via the widget. Handler stores subscriptions. On `products/update` webhook, if price decreased, handler queries DB and emails subscribers. Admin UI shows active subscriptions.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** Storefront widget, `products/update` webhook, Admin UI
 
-### 11. Back In Stock Notify Me (Category Ceiling)
-*   **Similar Real App:** Back in Stock: Customer Alerts
-*   **Flow:** Customers use a Storefront Widget to subscribe to out-of-stock variants. The backend stores the subscription. It listens to `inventory_levels/update` webhooks. When stock becomes positive, the handler retrieves all subscribers for that variant and fires off notifications via `ctx.services.email`. The Admin UI provides a dashboard of all subscribers, conversion rates, and manual trigger controls.
-*   **Services Needed:** `ctx.db`, `ctx.services.email`.
-*   **Shopify Infra:** Storefront Widget, `inventory_levels/update` webhook, Admin UI (React).
+### 14. Back In Stock Notify Me
+- **Similar app:** Back in Stock: Customer Alerts
+- **Flow:** Customers subscribe to out-of-stock variants. On `inventory_levels/update` webhook, when stock becomes positive, handler emails all subscribers for that variant. Admin UI shows subscribers, conversion rates, manual trigger.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** Storefront widget, `inventory_levels/update` webhook, Admin UI
+
+### 15. Spin-to-Win Discount Wheel
+- **Similar app:** Wheelio, Spin-a-Sale
+- **Flow:** Widget renders a spin wheel; customer enters email to spin. Handler generates a unique discount code via the Shopify Admin API and emails it. Admin UI shows spin results and code redemption stats.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** Storefront widget, Admin API (`discountCodeCreate`), Admin UI
+
+### 16. Product Waitlist
+- **Similar app:** Notify Me! Restock Alert
+- **Flow:** Widget shows a "Join Waitlist" form on sold-out products. Handler stores email + product. When merchant restocks (detected via `inventory_levels/update`), handler emails all waitlisted customers. Admin UI lists waitlisted products.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** Storefront widget, `inventory_levels/update` webhook, Admin UI
 
 ---
 
 ## Category C — Backend Only
-*No storefront widget, no custom Admin UI. Apps are fully automatic (webhook or cron triggered).*
+*No storefront widget, no custom Admin UI. Fully automatic — webhook or cron triggered.*
 
-### 12. Order Thank You Email
-*   **Similar Real App:** Klaviyo / Omnisend (for transactional emails)
-*   **Flow:** Backend listens to `orders/create`. Upon receiving the webhook, the handler extracts the customer's email and order details, renders a template, and sends a customized thank-you message via `ctx.services.email`.
-*   **Services Needed:** `ctx.db`, `ctx.services.email`.
-*   **Shopify Infra:** `orders/create` webhook.
+### 17. Order Thank You Email
+- **Similar app:** Klaviyo / Omnisend (transactional)
+- **Flow:** On `orders/create`, extracts customer email and order details and sends a personalised thank-you via `ctx.services.email`.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** `orders/create` webhook
 
-### 13. Abandoned Cart Recovery Email
-*   **Similar Real App:** Privy
-*   **Flow:** Backend listens to `checkouts/create` and `checkouts/update` webhooks. It schedules a delayed job (using `ctx.queue` or by storing a timestamp polled by cron). If no corresponding `orders/create` is received within the delay window, the handler sends a recovery email via `ctx.services.email`.
-*   **Services Needed:** `ctx.db`, `ctx.services.email`, (Future: `ctx.queue`).
-*   **Shopify Infra:** `checkouts/create` & `update` webhooks.
+### 18. Abandoned Cart Recovery Email
+- **Similar app:** Privy
+- **Flow:** On `checkouts/create`, stores checkout timestamp. Cron polls for checkouts older than 1 hour with no matching order and sends a recovery email.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** `checkouts/create` webhook, cron
 
-### 14. Post-Purchase Review Request
-*   **Similar Real App:** Loox / Judge.me
-*   **Flow:** Backend listens to `orders/fulfilled` webhooks. It stores a scheduled task in the DB for X days in the future. A daily cron job polls the DB and sends review request emails for mature orders via `ctx.services.email`.
-*   **Services Needed:** `ctx.db`, `ctx.services.email`.
-*   **Shopify Infra:** `orders/fulfilled` webhook, Cron scheduler.
+### 19. Post-Purchase Review Request
+- **Similar app:** Loox, Judge.me
+- **Flow:** On `orders/fulfilled`, stores a scheduled task. Daily cron sends review request emails for orders that fulfilled X days ago.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** `orders/fulfilled` webhook, cron
 
-### 15. Abandoned Cart Recovery SMS
-*   **Similar Real App:** SMSBump
-*   **Flow:** Similar to the Email recovery flow, but sends an SMS via `ctx.services.sms` to the customer's provided phone number.
-*   **Services Needed:** `ctx.db`, `ctx.services.sms`.
-*   **Shopify Infra:** `checkouts/update` webhook.
+### 20. Abandoned Cart Recovery SMS
+- **Similar app:** SMSBump
+- **Flow:** Same flow as email recovery but sends an SMS to the customer's phone number.
+- **Services:** `ctx.db`, `ctx.services.sms`
+- **Shopify infra:** `checkouts/update` webhook, cron
 
-### 16. Low Inventory Email Digest
-*   **Similar Real App:** Low Stock Alert
-*   **Flow:** A daily cron job triggers the handler. The handler queries the Shopify Admin GraphQL API for inventory levels across all locations. It compiles a list of variants below a configured threshold and sends a digest to the merchant via `ctx.services.email`.
-*   **Services Needed:** `ctx.db`, `ctx.services.email`.
-*   **Shopify Infra:** Cron (daily), Admin API (`inventoryLevels`).
+### 21. Low Inventory Email Digest
+- **Similar app:** Low Stock Alert
+- **Flow:** Daily cron queries Admin GraphQL for inventory levels across all locations. Compiles variants below a configured threshold and emails a digest to the merchant.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** cron, Admin API (`inventoryLevels`)
 
-### 20. Image Alt Text Generator
-*   **Similar Real App:** SEO Image Optimizer
-*   **Flow:** Backend listens to `products/create` and `products/update` webhooks. It identifies images without alt text, sends the image URL to an AI service via `ctx.services.ai` (or `ctx.http`) to generate a descriptive alt text, and updates the Shopify product media via the Admin API.
-*   **Services Needed:** `ctx.db`, `ctx.http` (or `ctx.services.ai`).
-*   **Shopify Infra:** `products/create` & `update` webhooks, Admin API (`productUpdate`).
+### 22. Auto Order Tagger (Automatic)
+- **Similar app:** Auto Tags
+- **Flow:** On `orders/create`, evaluates rule conditions (order value, product type, customer tag, country) and applies matching tags via `tagsAdd` GraphQL mutation. Rules stored in DB.
+- **Services:** `ctx.db`
+- **Shopify infra:** `orders/create` webhook, Admin API (`tagsAdd`)
 
-### 21. Image Size Optimizer (Category Ceiling)
-*   **Similar Real App:** Crush.pics
-*   **Flow:** Backend listens to `products/update` webhooks to detect new media. It downloads the image, sends it to an external compression API via `ctx.http`, temporarily stores the optimized image via `ctx.services.files`, and re-uploads it to replace the original image using the Shopify Admin API.
-*   **Services Needed:** `ctx.db`, `ctx.http`, `ctx.services.files`.
-*   **Shopify Infra:** `products/update` webhook, external HTTP API, Admin API (update media).
+### 23. Customer Win-Back Email
+- **Similar app:** Klaviyo win-back flows
+- **Flow:** Daily cron identifies customers whose last order was 60+ days ago and who haven't been contacted recently. Sends a personalised win-back email with a discount code generated via the Admin API.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** cron, Admin API (`discountCodeCreate`, orders query)
+
+### 24. Image Size Optimizer
+- **Similar app:** Crush.pics
+- **Flow:** On `products/update`, detects new product images. Downloads each image, resizes and compresses it with `sharp`, then re-uploads the optimised version via the Shopify Admin API (`productCreateMedia` / `stagedUploadsCreate`).
+- **Services:** `ctx.db`, `ctx.http`
+- **JS libs:** `sharp`
+- **Shopify infra:** `products/update` webhook, Admin API (media upload)
+
+### 25. Product Feed Generator (Google Shopping)
+- **Similar app:** Simprosys Google Shopping Feed
+- **Flow:** Daily cron fetches all products via Admin API, formats them as a Google Merchant Center XML feed using `fast-xml-parser`, and stores the result in DB. A widget endpoint serves the feed at a public URL.
+- **Services:** `ctx.db`
+- **JS libs:** `fast-xml-parser`
+- **Shopify infra:** cron, Admin API (products), storefront widget endpoint (serves XML)
+
+### 26. Packing Slip PDF Generator (Automatic)
+- **Similar app:** Order Printer Pro (automated variant)
+- **Flow:** On `orders/create`, generates a packing slip PDF using `pdfkit` from a merchant-configured HTML template and stores the PDF URL in the order metafield for fulfilment staff.
+- **Services:** `ctx.db`, `ctx.services.files`
+- **JS libs:** `pdfkit`
+- **Shopify infra:** `orders/create` webhook, Admin API (metafield write)
 
 ---
 
 ## Category D — Backend + Admin UI
-*No storefront widget. Includes a merchant-facing dashboard or control panel embedded in the Shopify Admin.*
+*No storefront widget. Merchant dashboard or control panel embedded in Shopify Admin.*
 
-### 17. Bulk Order Tagger
-*   **Similar Real App:** Auto Tags
-*   **Flow:** The Admin UI allows the merchant to define rules (e.g., "If order > $100, tag 'VIP'"). The merchant clicks a "Run Now" button in the Admin UI, which triggers the handler (`trigger: "admin"`). The handler queries recent orders and applies the tag via the Admin API (`tagsAdd` mutation).
-*   **Services Needed:** `ctx.db`.
-*   **Shopify Infra:** Admin UI (React), Admin API (`tagsAdd` mutation).
+### 27. Bulk Order Tagger (Manual)
+- **Similar app:** Auto Tags (manual mode)
+- **Flow:** Admin UI lets merchant define rules and click "Run Now". Handler evaluates rules against recent orders and applies tags via `tagsAdd`.
+- **Services:** `ctx.db`
+- **Shopify infra:** Admin UI, Admin API (`tagsAdd`)
 
-### 18. Custom Order CSV Exporter
-*   **Similar Real App:** EZ Exporter
-*   **Flow:** The Admin UI provides a dashboard to select date ranges and fields. The merchant triggers an export. The handler queries the orders via the Admin API, formats the data using `ctx.services.csv`, and returns a download link or emails the CSV file.
-*   **Services Needed:** `ctx.db`, `ctx.services.csv`.
-*   **Shopify Infra:** Admin UI (React), Admin API (query orders).
+### 28. Custom Order CSV Exporter
+- **Similar app:** EZ Exporter
+- **Flow:** Admin UI provides date range and field selection. Handler queries orders via Admin API, formats with `csv-stringify`, returns CSV string directly to the admin UI for browser download.
+- **Services:** `ctx.db`
+- **JS libs:** `csv-stringify`
+- **Shopify infra:** Admin UI, Admin API (orders query)
 
-### 19. Custom Packing Slip Printer
-*   **Similar Real App:** Order Printer Pro
-*   **Flow:** The merchant selects orders in the Admin UI and clicks "Print". The handler queries the order data, injects it into an HTML template, converts it to a PDF using `ctx.services.pdf`, and returns the file buffer to the frontend for printing/download.
-*   **Services Needed:** `ctx.db`, `ctx.services.pdf`.
-*   **Shopify Infra:** Admin UI (React), Admin API (query orders).
+### 29. Custom Packing Slip Printer
+- **Similar app:** Order Printer Pro
+- **Flow:** Merchant selects orders in Admin UI and clicks Print. Handler queries order data, injects it into an HTML template with `handlebars`, converts to PDF with `pdfkit`, and returns the buffer to the frontend.
+- **Services:** `ctx.db`
+- **JS libs:** `pdfkit`, `handlebars`
+- **Shopify infra:** Admin UI, Admin API (orders query)
+
+### 30. Discount Code Bulk Generator
+- **Similar app:** Bulk Discount Code Bot
+- **Flow:** Admin UI lets merchant configure prefix, count, and percentage. Handler generates unique codes via the Admin API (`discountCodeBulkAdd`) and offers a CSV download of the generated codes.
+- **Services:** `ctx.db`
+- **JS libs:** `csv-stringify`, `uuid`
+- **Shopify infra:** Admin UI, Admin API (`discountCodeBulkAdd`)
+
+### 31. Order Analytics Dashboard
+- **Similar app:** Better Reports
+- **Flow:** Admin UI shows revenue, AOV, top products, repeat purchase rate. Handler runs aggregation queries against DB (orders cached from webhooks) and returns chart-ready JSON.
+- **Services:** `ctx.db`
+- **Shopify infra:** Admin UI, `orders/create` + `orders/updated` webhooks (to populate local cache)
+
+### 32. Customer Segment Tagger
+- **Similar app:** Seguno, Klaviyo segments
+- **Flow:** Admin UI lets merchant define customer segments (spent > $X, ordered Y+ times, from country Z). Handler queries Admin GraphQL, applies customer tags in bulk. Shows progress and results in Admin UI.
+- **Services:** `ctx.db`
+- **Shopify infra:** Admin UI, Admin API (`tagsAdd`, customers query)
+
+### 33. Inventory Reorder Assistant
+- **Similar app:** Stocky
+- **Flow:** Admin UI shows products projected to run out within X days based on sales velocity. Handler runs a daily cron to compute velocity and threshold from order history + inventory levels. Merchant can trigger a reorder email to their supplier from the UI.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** Admin UI, cron, Admin API (orders + inventory)
+
+### 34. Returns & Refund Manager
+- **Similar app:** Loop Returns (simplified)
+- **Flow:** Admin UI lists open return requests submitted via a storefront widget (Category B variant possible). Handler processes refunds via Admin API (`refundCreate`), updates order tags, and notifies the customer by email.
+- **Services:** `ctx.db`, `ctx.services.email`
+- **Shopify infra:** Admin UI, Admin API (`refundCreate`, `tagsAdd`)

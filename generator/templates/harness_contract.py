@@ -27,6 +27,12 @@ ctx.shopify.post(path: string, body: object) → Promise<any>
   Example: await ctx.shopify.post('/customers/456.json', { customer: { id: 456, tags: 'VIP' } })
   Note: Shopify PUT endpoints also use shopify.post() — the harness always sends POST.
 
+ctx.shopify.delete(path: string) → Promise<any>
+  Shopify Admin REST DELETE. Use to remove Shopify resources.
+  Example: await ctx.shopify.delete(`/products/${productId}/images/${imageId}.json`)
+  Returns {} on 204 No Content. Throws on non-2xx responses.
+  Common uses: delete product images, metafields, webhook subscriptions, draft orders.
+
 ── Shopify GraphQL ───────────────────────────────────────────
 
 ctx.shopify.graphql(query: string, variables?: object) → Promise<any>
@@ -95,56 +101,33 @@ ctx.logger.error(msg)
 ctx.shop — Shopify store info
   ctx.shop.domain  — the store's myshopify.com domain, e.g. "example.myshopify.com"
 
-── Email ─────────────────────────────────────────────────────
+── Platform services (ctx.services.*) ───────────────────────
 
-ctx.email.send({ to, subject, templateId?, data? }) → Promise<void>
-  Send a transactional email to a customer. Also available as ctx.services.email.send().
-    to:         recipient email address (string)
-    subject:    email subject line (string)
+These are provided by the platform. No npm package needed — always available via ctx.
+
+ctx.services.email.send({ to, subject, templateId?, data? }) → Promise<void>
+  Send a transactional email. Stub in MVP (logs EMAIL_SENT) — real Resend in Phase 3.
+    to:         recipient email address
+    subject:    email subject line
     templateId: optional provider template ID (short opaque string like 'd-abc123', NEVER a URL)
-    data:       optional template variables, e.g. { firstName, productTitle, price, variantTitle }
-  Example: await ctx.email.send({ to: entry.customer_email, subject: 'Back in stock!', data: { productTitle, price } })
-
-── SMS ───────────────────────────────────────────────────────
+    data:       optional template variables, e.g. { firstName, productTitle }
+  Example: await ctx.services.email.send({ to: order.email, subject: 'Your order shipped!', data: { trackingNumber } })
 
 ctx.services.sms.send({ to, body }) → Promise<void>
-  Send an SMS notification. Currently a log stub — logs SMS_SENT; real Twilio integration in Phase 3.
+  Send an SMS. Stub in MVP (logs SMS_SENT) — real Twilio in Phase 3.
     to:   E.164 phone number, e.g. "+15551234567"
-    body: message text (max 160 chars for a single SMS segment)
-  Example: await ctx.services.sms.send({ to: customer.phone, body: `Your cart is waiting! ${checkoutUrl}` })
-  Note: Always log a human-readable description alongside — the stub does not deliver the message.
-
-── PDF ───────────────────────────────────────────────────────
-
-ctx.services.pdf.generate(html: string) → Promise<Buffer>
-  Render an HTML string to a PDF buffer. Currently a log stub — logs PDF_GENERATED; real PDFKit in Phase 3.
-  Example:
-    const html = `<h1>Order #${order.order_number}</h1><p>${order.line_items.map(i => i.title).join(', ')}</p>`
-    const pdfBuffer = await ctx.services.pdf.generate(html)
-    // then upload via ctx.services.files or return as a data URI
-
-── CSV ───────────────────────────────────────────────────────
-
-ctx.services.csv.generate(rows, headers?) → string
-  Serialize an array of objects to a CSV string. Pure in-process — always real.
-    rows:    array of plain objects (one row each)
-    headers: optional column ordering; defaults to Object.keys(rows[0])
-  Returns the CSV as a string. RFC 4180 compliant — commas and quotes in values are escaped.
-  Example:
-    const csv = ctx.services.csv.generate(orders, ['id', 'customer_email', 'total_price', 'created_at'])
-    // csv is a complete CSV string ready to return or upload
-
-── Files ─────────────────────────────────────────────────────
+    body: message text (max 160 chars)
+  Example: await ctx.services.sms.send({ to: customer.phone, body: `Your order is ready!` })
 
 ctx.services.files.upload(name, content, mimeType?) → Promise<string>
-  Upload a file to object storage. Currently a log stub — logs FILE_UPLOADED; real GCS in Phase 3.
+  Upload a file and get back a URL. Stub in MVP (logs FILE_UPLOADED) — real GCS in Phase 3.
   Returns a signed URL valid for 1 hour (stub returns a placeholder URL).
     name:     filename, e.g. "orders-2024-01.csv"
     content:  Buffer or string
-    mimeType: optional MIME type, e.g. "text/csv", "application/pdf"
+    mimeType: e.g. "text/csv", "application/pdf", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   Example:
-    const url = await ctx.services.files.upload('orders.csv', csv, 'text/csv')
-    // return the URL to the admin UI for download
+    const url = await ctx.services.files.upload('orders.csv', csvString, 'text/csv')
+    return { downloadUrl: url }
 
 ── External HTTP ─────────────────────────────────────────────
 
@@ -177,26 +160,145 @@ ctx.storefront.graphql(query, variables?) → Promise<any>
       { handle: productHandle }
     )
 
+── JS Library packages (require) ────────────────────────────
+
+For capabilities not available through ctx, declare npm packages in the npmPackages
+array and require() them at the top of the handler body. The deployer installs
+only declared packages — undeclared packages will not be present at runtime.
+
+  Available packages:
+  ┌─ Barcodes / QR codes ──────────────────────────────────────────────────────┐
+  │  qrcode@1.5.3          — QR code PNG buffer or SVG string                  │
+  │  jsbarcode@3.11.6      — Barcode SVG (CODE128, EAN13, UPC, CODE39, …)      │
+  │  @xmldom/xmldom@0.8.10 — DOM implementation required by jsbarcode           │
+  ├─ Images ───────────────────────────────────────────────────────────────────┤
+  │  sharp@0.33.5          — Image resize, crop, convert (JPEG/PNG/WebP/AVIF)  │
+  ├─ Documents ────────────────────────────────────────────────────────────────┤
+  │  pdfkit@0.15.0         — PDF generation (pure JS, no native deps)          │
+  │  exceljs@4.4.0         — Excel/XLSX workbook creation and export           │
+  ├─ Data parsing / serialization ─────────────────────────────────────────────┤
+  │  csv-parse@5.5.6       — CSV string/buffer → array of objects              │
+  │  csv-stringify@6.5.2   — Array of objects → CSV string                     │
+  │  fast-xml-parser@4.3.6 — XML → JS object (and back)                        │
+  ├─ Templating ───────────────────────────────────────────────────────────────┤
+  │  handlebars@4.7.8      — Mustache-style HTML/text templates                │
+  │  marked@15.0.0         — Markdown → HTML (for email bodies, previews)      │
+  ├─ Utilities ────────────────────────────────────────────────────────────────┤
+  │  dayjs@1.11.13         — Date parsing, formatting, and arithmetic          │
+  │  jszip@3.10.1          — In-memory ZIP archive creation                    │
+  │  uuid@9.0.1            — RFC 4122 UUID generation (v4 preferred)           │
+  │  slugify@1.6.6         — Convert strings to URL-safe slugs                 │
+  └────────────────────────────────────────────────────────────────────────────┘
+
+  Usage examples:
+
+    // QR code — declare: npmPackages: ['qrcode@1.5.3']
+    const QRCode = require('qrcode');
+    const svgString = await QRCode.toString(text, { type: 'svg', width: 300 });
+    const pngBuffer  = await QRCode.toBuffer(text, { width: 300 });
+
+    // Barcode — declare: npmPackages: ['jsbarcode@3.11.6', '@xmldom/xmldom@0.8.10']
+    const JsBarcode = require('jsbarcode');
+    const { DOMImplementation, XMLSerializer } = require('@xmldom/xmldom');
+    const doc    = new DOMImplementation().createDocument('http://www.w3.org/1999/xhtml', 'html', null);
+    const svgNode = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    JsBarcode(svgNode, value, { format: 'CODE128', width: 2, height: 100, xmlDocument: doc });
+    const svg = new XMLSerializer().serializeToString(svgNode);
+
+    // Image resize/convert — declare: npmPackages: ['sharp@0.33.5']
+    const sharp = require('sharp');
+    const resizedBuffer = await sharp(inputBuffer).resize(800, 600, { fit: 'cover' }).jpeg({ quality: 85 }).toBuffer();
+    const metadata = await sharp(inputBuffer).metadata(); // { width, height, format, size }
+
+    // PDF — declare: npmPackages: ['pdfkit@0.15.0']
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument();
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+    await new Promise(resolve => { doc.on('end', resolve); doc.text('Hello').end(); });
+    const pdfBuffer = Buffer.concat(chunks);
+
+    // Excel — declare: npmPackages: ['exceljs@4.4.0']
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Orders');
+    ws.columns = [{ header: 'ID', key: 'id' }, { header: 'Email', key: 'email' }];
+    rows.forEach(r => ws.addRow(r));
+    const xlsxBuffer = await wb.xlsx.writeBuffer();
+
+    // Date — declare: npmPackages: ['dayjs@1.11.13']
+    const dayjs = require('dayjs');
+    const label = dayjs(order.created_at).format('YYYY-MM-DD');
+
+    // Handlebars template — declare: npmPackages: ['handlebars@4.7.8']
+    const Handlebars = require('handlebars');
+    const html = Handlebars.compile('<h1>Hi {{name}}</h1>')({ name: customer.first_name });
+
+    // CSV parse — declare: npmPackages: ['csv-parse@5.5.6']
+    const { parse } = require('csv-parse/sync');
+    const records = parse(csvString, { columns: true, skip_empty_lines: true });
+
+    // CSV stringify — declare: npmPackages: ['csv-stringify@6.5.2']
+    const { stringify } = require('csv-stringify/sync');
+    const csvString = stringify(orders, { header: true, columns: ['id', 'email', 'total'] });
+
+  RULES:
+  - require() ONLY packages listed in your npmPackages array.
+  - Built-in Node.js modules (path, crypto, etc.) never need to be declared.
+  - Never use ES import() — CommonJS require() only.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SHOPIFY API PATTERNS — use these exact approaches:
+SHOPIFY API PATTERNS — REST vs GraphQL decision guide:
 
-To find a variant from an inventory item ID (two-step lookup):
-  ✅ const { inventory_item } = await ctx.shopify.get(`/inventory_items/${inventoryItemId}.json`)
-     const variantId = inventory_item.variant_id
-     const { variant } = await ctx.shopify.get(`/variants/${variantId}.json`)
-  ❌ NEVER use /variants.json?inventory_item_ids=... — that filter does not exist in the Shopify API
-  ❌ NEVER scan /products.json by iterating all results — paginated at 250, silently misses products
+Use ctx.shopify.get / ctx.shopify.post / ctx.shopify.delete (REST) when:
+  • Simple CRUD on a single known entity (fetch order, update customer, create fulfillment)
+  • Batch fetching one entity type with a batch endpoint (/products.json?ids=..., /inventory_levels.json?inventory_item_ids=...)
+  • Full-catalog scans — use since_id cursor pagination (see below)
+  • Deleting Shopify resources (product images, metafields, etc.) — use ctx.shopify.delete
+  ❌ NEVER use /variants.json?inventory_item_ids=... — that batch filter does not exist
+  ❌ NEVER search /customers.json with a filter and assume completeness — use /customers/${id}.json
 
-To check if a customer has a tag or attribute, fetch the customer directly:
-  ✅ await ctx.shopify.get(`/customers/${customerId}.json`)
-  ❌ NEVER search /customers.json with a filter and assume completeness
+REST full-catalog pagination — ALWAYS use since_id cursor (NOT Link headers):
+  The ctx.shopify.get response does NOT expose HTTP headers — Link header parsing will always fail.
+  Use since_id for reliable full-catalog traversal of products, orders, customers, etc.:
+  ✅ let sinceId = 0;
+     while (true) {
+       const { products } = await ctx.shopify.get(
+         `/products.json?fields=id,images&limit=250&since_id=${sinceId}`
+       );
+       if (!products || products.length === 0) break;
+       // process batch
+       sinceId = products[products.length - 1].id;
+       if (products.length < 250) break;  // last page
+     }
+  ❌ response._headers['link'] — headers are NOT available from ctx.shopify.get
+  ❌ /products.json without limit — returns at most 50 (Shopify default), silently truncated
+
+Use ctx.shopify.graphql (GraphQL) when:
+  • A mutation has no REST equivalent — bulk tags, metafields, bulk discount codes:
+      tagsAdd / tagsRemove             — add/remove tags on any resource
+      metafieldsSet                    — write metafields on orders, products, customers
+      discountCodeBulkAdd              — create many discount codes in one call
+  • REST would require 2+ sequential calls to assemble the data you need:
+      e.g. getting order + fulfillments + lineItems in one query
+  • A cross-entity relationship that REST does not expose as a direct field
+  GraphQL IDs MUST use GID format: `gid://shopify/TypeName/${numericId}`
+    Type name matches the GraphQL schema type: Order, Product, Customer, InventoryItem, …
+    Convert numeric IDs from webhooks and REST responses before use in GraphQL variables.
+  ✅ const result = await ctx.shopify.graphql(
+       `mutation TagsAdd($id: ID!, $tags: [String!]!) {
+          tagsAdd(id: $id, tags: $tags) { node { id } userErrors { message } }
+        }`,
+       { id: `gid://shopify/Order/${orderId}`, tags: ['VIP', 'high-value'] }
+     )
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REQUIRED OUTPUT FORMAT — exactly this CommonJS module shape:
-
+F
 module.exports = {
   webhookTopics: ['orders/create'],  // array of strings, empty [] for cron-only
   cronSchedule: null,                // cron string e.g. '0 9 * * *' or null
+  npmPackages: [],                   // npm packages to install, e.g. ['qrcode@1.5.3', 'jsbarcode@3.11.6', '@xmldom/xmldom@0.8.10']
   handler: async function(ctx) {
     // implementation
   }
@@ -205,28 +307,21 @@ module.exports = {
 
 ABSOLUTE RULES (violations will cause deployment failure):
 1.  Output ONLY the JavaScript code — no markdown fences, no explanation
-2.  Use module.exports = { webhookTopics, cronSchedule, handler } — exactly this shape
+2.  Use module.exports = { webhookTopics, cronSchedule, npmPackages, handler } — exactly this shape
 3.  handler MUST be an async function taking a single argument named ctx
-4.  NO require() or import() calls — the harness runtime has NO node_modules.
-    There is no sharp, axios, lodash, or any other npm package available at runtime.
-    Use ONLY capabilities exposed through ctx — they cover all MVP app types:
-      ctx.services.image.resize(url, {width, height, fit?}) → Promise<Buffer>
-      ctx.services.image.analyze(url) → Promise<{width, height, format, sizeBytes}>
-      ctx.services.qrcode.generate(text, {size?, format?}) → Promise<Buffer|string>
-      ctx.services.barcode.generate(value, {format?, width?, height?}) → Promise<string> (SVG)
-      ctx.services.pdf.generate(html) → Promise<Buffer>
-      ctx.services.csv.generate(rows, headers?) → string
-      ctx.services.files.upload(name, content, mimeType?) → Promise<string>
-      ctx.services.email.send({to, subject, body}) → Promise<void>
-      ctx.services.sms.send({to, body}) → Promise<void>
-      ctx.http.call(url, {method?, headers?, body?}) → Promise<unknown>
-5.  NO eval(), Function(), setTimeout(), setInterval(), setImmediate()
+4.  require() is ONLY allowed for packages declared in npmPackages.
+    NEVER require() a package that is not in your npmPackages array — it will not be installed.
+    Built-in Node.js modules (path, crypto, etc.) do NOT need to be declared.
+    ES module import() is NOT allowed — use CommonJS require() only.
+5.  NO eval(), Function(), setInterval(), setImmediate()
+    setTimeout is allowed ONLY for short rate-limit delays between API calls (≤500ms).
+    Example: await new Promise(r => setTimeout(r, 200))  // 200ms pause between loop iterations
 6.  NO process.exit(), process.kill(), or process.env access
 7.  NO global variable mutation
 8.  Handle errors with try/catch — never let the handler throw uncaught exceptions
 9.  ctx.shopify.get/post paths MUST be relative (e.g. '/orders.json') — NEVER full URLs
 10. https:// URLs are ONLY allowed as the first argument to ctx.http.call(url, ...).
-    NEVER use https:// anywhere else — not in ctx.email templateId, not in comments, not in other strings.
+    NEVER use https:// anywhere else — not in ctx.services.email templateId, not in comments, not in other strings.
     templateId is a short opaque string like 'd-abc123', never a URL.
     For all Shopify API calls use ctx.shopify.get/post/graphql with relative paths.
 11. webhookTopics must exactly match what is listed in the plan

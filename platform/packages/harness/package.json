@@ -20,14 +20,10 @@
     "@new-one-two/db": "workspace:*",
     "@new-one-two/crypto": "workspace:*",
     "@new-one-two/logger": "workspace:*",
-    "@new-one-two/types": "workspace:*",
-    "qrcode": "^1.5.4",
-    "jsbarcode": "^3.11.6",
-    "@xmldom/xmldom": "^0.9.8"
+    "@new-one-two/types": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
-    "@types/node": "^20.0.0",
-    "@types/qrcode": "^1.5.5"
+    "@types/node": "^20.0.0"
   }
 }

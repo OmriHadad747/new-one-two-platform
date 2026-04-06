@@ -165,18 +165,39 @@ def _format_catalog(catalog: List[Dict[str, Any]]) -> str:
 def _format_widget_spec(plan: Dict[str, Any]) -> str:
     """
     Render codeSpec.widgetPath steps as the authoritative host.call() contract.
-    The planner writes the exact field names the widget must send AND the exact
-    response shape the handler returns — both sides are generated from these steps.
+
+    Field contracts are extracted and surfaced as a dedicated block BEFORE the
+    numbered steps — so the model sees the exact field names it must use
+    before reading the narrative steps that might imply different names.
     """
+    from subagents.validation import extract_widget_field_contracts
+
     impl = plan.get("implementationSpec") or {}
     steps: List[str] = (impl.get("codeSpec") or {}).get("widgetPath") or []
     if not steps:
         return ""
+
+    contracts = extract_widget_field_contracts(steps)
+
+    parts: List[str] = []
+
+    if contracts:
+        parts.append(
+            "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "FIELD CONTRACTS — call host.call() with EXACTLY these fields.\n"
+            "Using any synonym, abbreviation, or different name will fail validation.\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        for path, fields in sorted(contracts.items()):
+            parts.append(f"  host.call('{path}', {{ {', '.join(fields)} }})")
+        parts.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
     numbered = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(steps))
-    return (
+    parts.append(
         f"\nWidget API contract (implement host.call() bodies and result checks exactly as specified):\n"
         f"{numbered}\n"
     )
+    return "\n".join(parts)
 
 
 def _format_ux_guidance(plan: Dict[str, Any]) -> str:

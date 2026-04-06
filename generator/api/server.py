@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from config import get_settings
 from contract.subscriber import subscribe_and_process
 from contract.validators import GenerationRequest
-from crews.feature_generator.agents import run_product_agent_analyze
+from subagents.product_agent import run_product_agent_analyze
 from crews.feature_generator.crew import run_feature_generation
 
 log = logging.getLogger(__name__)

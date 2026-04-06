@@ -14,6 +14,30 @@ import type { SessionBundle } from "@/types/dashboard";
 import { NameAppModal } from "@/components/features/generation/NameAppModal";
 import type { GenerationBundle, AnalyzeMessage } from "@/types/dashboard";
 
+/**
+ * Normalize the raw FeatureBundle from the API into the frontend GenerationBundle shape.
+ * The API returns { widgetModule, adminUiModule, handlerModule, explanation } —
+ * the UI needs hasWidget, hasAdminUI, triggerType derived from those fields.
+ */
+function normalizeBundleFromApi(raw: Record<string, unknown>): GenerationBundle {
+  const handler = (raw.handlerModule ?? {}) as Record<string, unknown>;
+  const topics = (handler.webhookTopics as string[] | undefined) ?? [];
+  const hasCron = !!handler.cronSchedule;
+  const hasWidget = !!raw.widgetModule;
+  const hasAdminUI = !!raw.adminUiModule;
+  const explanation = raw.explanation as Record<string, unknown> | string | undefined;
+
+  return {
+    explanation: typeof explanation === "string"
+      ? explanation
+      : (explanation as Record<string, unknown> | undefined)?.merchantFacing as string | undefined,
+    triggerTopics: topics,
+    triggerType: hasCron ? "cron" : hasAdminUI ? "admin" : hasWidget ? "widget" : "webhook",
+    hasWidget,
+    hasAdminUI,
+  };
+}
+
 const WELCOME: ChatMessage = {
   id: "welcome",
   role: "ai",
@@ -170,7 +194,7 @@ export function NewAppPage() {
       // Fetch the result bundle immediately so DeployPanel shows the real type/trigger
       if (gen.jobId) {
         api.generation.result(gen.jobId)
-          .then((res) => { if (res.bundle) setBundle(res.bundle); })
+          .then((res) => { if (res.bundle) setBundle(normalizeBundleFromApi(res.bundle as Record<string, unknown>)); })
           .catch(() => null);
       }
     }
@@ -379,7 +403,7 @@ export function NewAppPage() {
     try {
       await api.generation.approve(gen.jobId);
       const result = await api.generation.result(gen.jobId);
-      setBundle(result.bundle ?? null);
+      setBundle(result.bundle ? normalizeBundleFromApi(result.bundle as Record<string, unknown>) : null);
       setDeployed(true);
       void activeAppQuery.refetch();
       setMessages((prev) => [

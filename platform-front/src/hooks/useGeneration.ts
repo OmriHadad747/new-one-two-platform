@@ -20,12 +20,21 @@ const INITIAL: GenerationState = {
 export function useGeneration() {
   const [state, setState] = useState<GenerationState>(INITIAL);
   const esRef = useRef<EventSource | null>(null);
+  // Mirror state in a ref so onerror can read it without stale closures
+  const stateRef = useRef<GenerationState>(INITIAL);
+  const _setState = useCallback((updater: GenerationState | ((s: GenerationState) => GenerationState)) => {
+    setState((s) => {
+      const next = typeof updater === "function" ? updater(s) : updater;
+      stateRef.current = next;
+      return next;
+    });
+  }, []);
 
   const reset = useCallback(() => {
     esRef.current?.close();
     esRef.current = null;
-    setState(INITIAL);
-  }, []);
+    _setState(INITIAL);
+  }, [_setState]);
 
   /** Shared SSE wiring — used by both start() and startRevision(). */
   const _openStream = useCallback((jobId: string) => {
@@ -41,7 +50,7 @@ export function useGeneration() {
       }
 
       if (event.type === "progress") {
-        setState((s) => ({
+        _setState((s) => ({
           ...s,
           events: [...s.events, event as ProgressEvent],
         }));
@@ -49,7 +58,7 @@ export function useGeneration() {
         const completed = event as CompletedEvent;
         es.close();
         esRef.current = null;
-        setState((s) => ({
+        _setState((s) => ({
           ...s,
           status: completed.status === "success" ? "completed" : "failed",
           completedEvent: completed,
@@ -59,36 +68,36 @@ export function useGeneration() {
     };
 
     es.onerror = () => {
+      // Guard: if we already transitioned out of "running", the completed message
+      // was already processed — this is just the stream closing normally.
+      if (stateRef.current.status !== "running") return;
+
       es.close();
       esRef.current = null;
-      // The stream may have closed because the job finished while we were away.
-      // Fetch the result to find the true final status before marking as failed.
-      setState((s) => {
-        if (s.status !== "running") return s;
-        // Trigger async result check; update state once resolved.
-        api.generation.result(jobId)
-          .then((res) => {
-            setState((prev) => ({
-              ...prev,
-              status: "completed",
-              completedEvent: null,
-              error: null,
-              // Merge bundle info from result if needed
-            }));
-            void res; // suppress unused warning
-          })
-          .catch(() => {
-            setState((prev) => ({
-              ...prev,
-              status: "failed",
-              error: "Connection lost",
-            }));
-          });
-        // Temporarily stay in running state while we check
-        return s;
-      });
+
+      // Stream closed before we got a "completed" message (e.g. deploy finished
+      // while navigating away, or connection dropped). Check the server for the
+      // real final status — do NOT leave the UI stuck at "running".
+      api.generation.result(jobId)
+        .then((res) => {
+          const sessionStatus = (res as { status?: string }).status;
+          const succeeded = sessionStatus === "completed" || res.bundle != null;
+          _setState((prev) => ({
+            ...prev,
+            status: succeeded ? "completed" : "failed",
+            completedEvent: null,
+            error: succeeded ? null : ((res as { errorMessage?: string }).errorMessage ?? "Generation failed"),
+          }));
+        })
+        .catch(() => {
+          _setState((prev) => ({
+            ...prev,
+            status: "failed",
+            error: "Connection lost",
+          }));
+        });
     };
-  }, []);
+  }, [_setState]);
 
   /** Start a brand-new generation job. */
   const start = useCallback(

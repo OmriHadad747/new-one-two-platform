@@ -40,11 +40,9 @@ from contract.validators import (
     TechnicalExplanation,
     AgentTraceEntry,
 )
-from crews.feature_generator.agents import (
-    fetch_api_context,
-    run_explanation_agent,
-    run_product_agent,
-)
+from crews.feature_generator.agents import fetch_api_context
+from subagents.product_agent import run_product_agent
+from subagents.explanation_agent import run_explanation_agent
 from subagents.base import CodegenContext, Generator
 from subagents.architect_agent import run_architect_agent
 from subagents.codespec_agent import run_codespec_agent
@@ -64,6 +62,19 @@ _MAX_PLAN_ATTEMPTS = 2  # attempts for both Architect and CodeSpec (1 initial + 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _parse_npm_packages(handler_code: str) -> list:
+    """
+    Extract the npmPackages array from the handler's module.exports declaration.
+    Returns an empty list if no npmPackages field is found or parsing fails.
+    """
+    import re
+    match = re.search(r"npmPackages\s*:\s*\[([^\]]*)\]", handler_code)
+    if not match:
+        return []
+    raw = match.group(1)
+    return re.findall(r"""['"]([^'"]+)['"]""", raw)
 
 
 def _emit(
@@ -423,13 +434,15 @@ def run_feature_generation(request: GenerationRequest) -> None:
         technical = explanation_raw.get("technical", {})
         shopify_plan = plan.get("shopifyPlan", {})
 
+        handler_code = artifacts.get("handler", "")
         bundle = Bundle(
             widgetModule=artifacts.get("widget_js") if is_storefront else None,
             adminUiModule=artifacts.get("admin_ui") if is_admin_ui else None,
             handlerModule=HandlerModule(
-                code=artifacts.get("handler", ""),
+                code=handler_code,
                 webhookTopics=shopify_plan.get("webhookTopics", []),
                 cronSchedule=shopify_plan.get("cronSchedule"),
+                npmPackages=_parse_npm_packages(handler_code),
             ),
             dbMigration=DbMigration(sql=artifacts.get("migration", "")),
             explanation=FeatureExplanation(
@@ -505,6 +518,38 @@ def run_codegen_parallel(
         if name in error_map or name not in artifacts:
             to_run.append(gen)
 
+    # Coupled retries: any generator that shares a field contract with the handler
+    # must be retried alongside it. If the handler regenerates for ANY reason it may
+    # silently change ctx.widgetBody / ctx.adminBody destructuring, breaking the
+    # contract with the other side. Coupling ensures both sides re-align together.
+    #
+    # Pairs enforced:
+    #   handler ↔ widget_js   (storefront_backend, storefront_backend_admin)
+    #   handler ↔ admin_ui    (backend_admin, storefront_backend_admin)
+    if artifacts:  # non-empty = this is a retry, not the first run
+        to_run_names = {gen.name for gen in to_run}
+        coupled_pairs: List[tuple] = []
+        if is_storefront:
+            coupled_pairs.append(
+                ("handler", "widget_js",
+                 "Re-generating to stay in sync with the handler. "
+                 "Ensure every host.call() field name exactly matches the codeSpec widgetPath steps.")
+            )
+        if is_admin_ui:
+            coupled_pairs.append(
+                ("handler", "admin_ui",
+                 "Re-generating to stay in sync with the handler. "
+                 "Ensure every bridge.call() field name exactly matches the codeSpec adminPath steps.")
+            )
+        for a, b, hint in coupled_pairs:
+            pair = {a, b}
+            if pair & to_run_names:  # at least one of the pair is already running
+                for name in pair - to_run_names:
+                    if name in GENERATORS and name in artifacts:
+                        error_map.setdefault(name, [hint])
+                        to_run.append(GENERATORS[name])
+                        to_run_names.add(name)  # prevent double-add if both pairs share handler
+
     if not to_run:
         return artifacts
 
@@ -553,13 +598,11 @@ def validate_artifacts(
         if errs:
             error_map[name] = errs
 
-    # Cross-artifact field-name check: only when both widget and handler passed
-    # their individual validators (no point checking contract if either is broken)
-    if (
-        is_storefront
-        and "widget_js" not in error_map
-        and "handler" not in error_map
-    ):
+    # Cross-artifact field-name check: always run for storefront apps.
+    # Skipping this when handler has individual errors (e.g. missing npmPackages)
+    # causes the mismatch to go undetected — the next retry only re-runs the handler,
+    # which may silently change field names again and re-introduce the mismatch.
+    if is_storefront:
         cross_errors = validate_widget_handler_contract(
             artifacts.get("widget_js", ""),
             artifacts.get("handler", ""),
@@ -568,13 +611,8 @@ def validate_artifacts(
             if errs:
                 error_map.setdefault(gen_name, []).extend(errs)
 
-    # Admin UI ↔ handler cross-artifact check: verify bridge.call() paths and
-    # field names are handled inside the ctx.trigger === 'admin' block
-    if (
-        is_admin_ui
-        and "admin_ui" not in error_map
-        and "handler" not in error_map
-    ):
+    # Admin UI ↔ handler cross-artifact check: always run for admin apps.
+    if is_admin_ui:
         admin_cross_errors = validate_admin_handler_contract(
             artifacts.get("admin_ui", ""),
             artifacts.get("handler", ""),

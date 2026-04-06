@@ -20,15 +20,18 @@ export async function fetchDeploymentContext(appVersionId: string): Promise<{
 
 export function parseMetadata(generatedCode: Record<string, string>): {
   webhookTopics: string[];
+  npmPackages: string[];
 } {
   const raw = generatedCode["_metadata.json"];
   if (!raw) {
-    // Default: no webhook topics (deployer will still create the function, just no subscriptions)
-    return { webhookTopics: [] };
+    return { webhookTopics: [], npmPackages: [] };
   }
   try {
-    const meta = JSON.parse(raw) as { webhookTopics?: string[] };
-    return { webhookTopics: meta.webhookTopics ?? [] };
+    const meta = JSON.parse(raw) as { webhookTopics?: string[]; npmPackages?: string[] };
+    return {
+      webhookTopics: meta.webhookTopics ?? [],
+      npmPackages: meta.npmPackages ?? [],
+    };
   } catch {
     throw new Error("generatedCode['_metadata.json'] is not valid JSON");
   }

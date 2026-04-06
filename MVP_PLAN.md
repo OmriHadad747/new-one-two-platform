@@ -88,26 +88,76 @@ All `POST /admin-ui/:shop/:appId/admin/*` requests from the embedded shell carry
 
 ---
 
-## Services Supported in MVP
+## Services Architecture
 
-| Service | Status | Notes |
-|---------|--------|-------|
-| `ctx.shopify` (Admin API) | Real | Already working |
-| `ctx.db` (Postgres, tenant-isolated) | Real | Already working |
-| `ctx.http` | Real | Thin fetch wrapper with logging |
-| `ctx.storefront` (Storefront GraphQL) | Real | Storefront Access Token created at OAuth, stored per tenant |
-| `ctx.shop` (`{ domain }`) | Real | From env var |
-| `ctx.services.email` | Stub → real Phase 3 | Logs `EMAIL_SENT` in dev; real impl uses Resend |
-| `ctx.services.sms` | Stub → real Phase 3 | Logs `SMS_SENT` in dev; real impl uses Twilio |
-| `ctx.services.pdf` | Stub → real Phase 3 | Real impl uses PDFKit (in-process, no external API) |
-| `ctx.services.csv` | Real | Pure in-process, zero external dependency |
-| `ctx.services.files` | Stub → real Phase 3 | Real impl uses GCS |
-| `ctx.services.image.resize` | Stub → real Phase 3 | Stub fetches URL and returns original bytes; real impl uses sharp |
-| `ctx.services.image.analyze` | Stub → real Phase 3 | Stub returns zero dims; real impl uses sharp metadata |
-| `ctx.services.qrcode` | Real | Pure JS (`qrcode` package); returns PNG Buffer or SVG string |
-| `ctx.services.barcode` | Real | Pure JS (`jsbarcode` + `@xmldom/xmldom`); returns SVG string |
+Handler capabilities fall into two distinct categories.
 
-**Not in MVP:** `ctx.queue`, `ctx.cache`, `ctx.billing`, `ctx.services.ai`
+### Category 1 — Platform Services (`ctx.*`)
+
+Provided by the harness. Always available — no npm package needed. Require platform credentials or routing that the handler must not own.
+
+| Service | Interface | MVP Status | Notes |
+|---------|-----------|------------|-------|
+| `ctx.shopify` | `.get()` `.post()` `.graphql()` | Real | Shopify Admin API, token from Secret Manager |
+| `ctx.db` | postgres.js tagged template | Real | Postgres, RLS-scoped to tenant |
+| `ctx.storefront` | `.graphql()` | Real | Storefront Access Token created at OAuth |
+| `ctx.http` | `.call(url, opts)` | Real | Thin fetch wrapper with per-call logging |
+| `ctx.shop` | `{ domain }` | Real | From env var |
+| `ctx.services.email` | `.send({ to, subject, data? })` | Stub → Phase 3 | Logs EMAIL_SENT; real impl: Resend |
+| `ctx.services.sms` | `.send({ to, body })` | Stub → Phase 3 | Logs SMS_SENT; real impl: Twilio |
+| `ctx.services.files` | `.upload(name, content, mime?)` | Stub → Phase 3 | Logs FILE_UPLOADED; real impl: GCS |
+
+**Not in MVP:** `ctx.queue`, `ctx.cache`, `ctx.billing`
+
+### Category 2 — JS Libraries (`require()`)
+
+Pure npm packages installed per-app at Docker build time. The handler declares them in `npmPackages`; the deployer runs `RUN npm install` for that app's container only. The harness base image never changes.
+
+```js
+// module.exports in handler.js
+npmPackages: ['pdfkit@0.15.0', 'dayjs@1.11.13'],
+handler: async function(ctx) {
+  const PDFDocument = require('pdfkit');
+  const dayjs = require('dayjs');
+  // ...
+}
+```
+
+**Currently supported JS libraries:**
+
+| Package | Version | Use case |
+|---------|---------|----------|
+| `qrcode` | 1.5.3 | QR code PNG buffer or SVG string |
+| `jsbarcode` | 3.11.6 | Barcode SVG (CODE128, EAN13, UPC…) |
+| `@xmldom/xmldom` | 0.8.10 | DOM implementation required by jsbarcode |
+| `sharp` | 0.33.5 | Image resize, crop, format convert |
+| `pdfkit` | 0.15.0 | PDF generation |
+| `exceljs` | 4.4.0 | Excel / XLSX export |
+| `csv-parse` | 5.5.6 | CSV string → array of objects |
+| `csv-stringify` | 6.5.2 | Array of objects → CSV string |
+| `fast-xml-parser` | 4.3.6 | XML ↔ JS object |
+| `handlebars` | 4.7.8 | HTML / text templating |
+| `marked` | 15.0.0 | Markdown → HTML |
+| `dayjs` | 1.11.13 | Date parsing, formatting, arithmetic |
+| `jszip` | 3.10.1 | In-memory ZIP archive |
+| `uuid` | 9.0.1 | RFC 4122 UUID v4 generation |
+| `slugify` | 1.6.6 | URL-safe slug generation |
+
+**Adding a new JS library:** add it to `ALLOWED_NPM_PACKAGES` in `validation.py` and the library table in `harness_contract.py`. Zero harness changes.
+
+### Why this separation matters
+
+| | Platform Services | JS Libraries |
+|---|---|---|
+| **Credentials** | Owned by the platform | None needed |
+| **Per-app isolation** | No — shared platform infrastructure | Yes — each app installs only what it needs |
+| **Harness base image** | Never changes | Never changes |
+| **Adding new capability** | New microservice deployment | Two-line change in generator config |
+| **MVP status** | Real (Shopify, DB, HTTP) or stub (email, SMS, files) | Always real |
+
+### Platform limitation detection
+
+When the generator determines an app concept requires a capability outside this surface (e.g. real-time WebSockets, native GPU), the pipeline fails immediately before codegen with `errorCode: "platform_limitation"` and a merchant-friendly message. The frontend shows a distinct "Not supported yet" state rather than suggesting a retry.
 
 ### Platform limitation detection
 
@@ -117,23 +167,23 @@ When the architect determines an app concept requires a capability outside the c
 
 ## App Categories & Types
 
-We support three primary categories of applications. For a detailed breakdown of all 21 specific app types, including their required services, Shopify API usage, and architectural flows, please see the **[Supported Apps Catalog](./SUPPORTED_APPS_CATALOG.md)**.
+We support four primary categories of applications. For the full catalog of supported app types see **[Supported Apps Catalog](./SUPPORTED_APPS_CATALOG.md)**.
 
 ### Category A — Storefront + Backend
 Widget on the storefront. Backend stores config or processes webhook events into DB. No admin UI.
-*(Examples: Announcement Bar, Trust Badges, Free Shipping Progress Bar)*
+*(12 apps: Announcement Bar, Trust Badges, Free Shipping Progress Bar, Social Proof Pop, Currency Switcher, Age Gate…)*
 
 ### Category B — Storefront + Backend + Admin UI
 Widget on the storefront for customer interaction, plus a merchant-facing dashboard embedded in the Shopify Admin.
-*(Examples: Price Drop Alert, Back In Stock Notify Me)*
+*(4 apps: Price Drop Alert, Back In Stock Notify Me, Spin-to-Win Discount Wheel, Product Waitlist)*
 
 ### Category C — Backend Only
 No storefront widget, no custom Admin UI. Apps are fully automatic (webhook or cron triggered).
-*(Examples: Order Thank You Email, Abandoned Cart SMS, Image Size Optimizer)*
+*(10 apps: Order Thank You Email, Abandoned Cart SMS, Auto Order Tagger, Image Size Optimizer, Product Feed Generator…)*
 
 ### Category D — Backend + Admin UI
-No storefront widget. Includes a merchant-facing dashboard or control panel embedded in the Shopify Admin.
-*(Examples: Bulk Order Tagger, Custom Order CSV Exporter, App Configuration Dashboard)*
+No storefront widget. Merchant-facing dashboard or control panel embedded in Shopify Admin.
+*(8 apps: Bulk Order Tagger, CSV Exporter, Packing Slip Printer, Discount Code Generator, Analytics Dashboard…)*
 
 ---
 
@@ -198,4 +248,4 @@ Email (Resend), SMS (Twilio), PDF (PDFKit), Files (GCS) replace their stubs. Usa
 
 ## The Core Bet
 
-A merchant paying $19/mo for "Notify Me," $29/mo for "Sales Pop," and $15/mo for "Announcement Bar" — three separate apps totalling $63/mo — will immediately see the value in paying $35/mo for a platform that generates all three (and 18 more) from a prompt.
+A merchant paying $19/mo for "Notify Me," $29/mo for "Sales Pop," and $15/mo for "Announcement Bar" — three separate apps totalling $63/mo — will immediately see the value in paying $35/mo for a platform that generates all three (and 31 more) from a prompt.

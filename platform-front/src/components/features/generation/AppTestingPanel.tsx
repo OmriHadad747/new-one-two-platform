@@ -399,15 +399,31 @@ function LivePanel({
             </a>
           )}
           {hasWidget && themeEditorUrl && (
-            <a
-              href={themeEditorUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-between px-3.5 py-2.5 bg-white/[0.03] border border-white/[0.07] rounded-lg text-muted text-[12px] font-semibold hover:bg-white/[0.06] transition-colors no-underline"
-            >
-              <span>Theme editor — add app block</span>
-              <span className="material-symbols-outlined text-[14px]">arrow_outward</span>
-            </a>
+            <div className="space-y-1.5">
+              <a
+                href={themeEditorUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between px-3.5 py-2.5 bg-white/[0.03] border border-white/[0.07] rounded-lg text-muted text-[12px] font-semibold hover:bg-white/[0.06] transition-colors no-underline"
+              >
+                <span>Theme editor — add app block</span>
+                <span className="material-symbols-outlined text-[14px]">arrow_outward</span>
+              </a>
+              {app?.id && (
+                <p className="text-[10px] text-faint px-1 leading-relaxed">
+                  In the theme editor: Apps → Browse apps → find the block, then set{" "}
+                  <span className="font-mono bg-white/[0.05] px-1 py-0.5 rounded text-faint/80">App ID</span>{" "}
+                  to{" "}
+                  <span
+                    className="font-mono bg-white/[0.05] px-1 py-0.5 rounded text-accent/80 cursor-pointer select-all"
+                    title="Click to copy"
+                    onClick={() => navigator.clipboard.writeText(app.id)}
+                  >
+                    {app.id}
+                  </span>
+                </p>
+              )}
+            </div>
           )}
           {adminUrl && (
             <a

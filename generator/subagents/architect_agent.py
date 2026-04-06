@@ -56,11 +56,16 @@ operations: Shopify API calls made by the handler, in execution order.
       (e.g. order + fulfillments + lineItems + customer in a single query)
     • The REST equivalent would require 2 or more sequential calls to assemble needed fields
     • You need precise field selection to avoid over-fetching large payloads
+    • Mutations with no REST equivalent: tagsAdd, metafieldsSet, discountCodeBulkAdd, productDeleteMedia
   Prefer "rest" when:
-    • Simple CRUD on a single flat resource (get order, update customer tags)
+    • Simple CRUD on a single flat resource (get order, update customer, delete image)
     • Batch fetching of the same entity type (/products.json?ids=...)
-    • Mutations with well-known REST shapes (fulfillments, tags, metafields)
+    • Full-catalog scans — use since_id cursor: /products.json?limit=250&since_id=${sinceId}
+    • Deleting resources that have a REST DELETE endpoint (product images, metafields, draft orders)
+      → use ctx.shopify.delete('/products/${productId}/images/${imageId}.json')
     • No significant nesting benefit — GraphQL overhead outweighs the gain
+  NOTE: REST responses do NOT include HTTP headers in ctx — Link header pagination fails.
+    Always use since_id cursor for full-catalog REST scans.
   GraphQL IDs use GID format: "gid://shopify/TypeName/${numericId}"
     Convert numeric IDs from webhooks/REST before passing to GraphQL variables.
     The GID type name matches the GraphQL schema type (Order, Product, Customer, …).
@@ -77,21 +82,20 @@ stateMachine: null if the feature does NOT need to detect state transitions.
 
 platformGaps: What this feature needs that ctx cannot deliver.
   ctx provides (use these — do NOT list them as gaps):
-    ctx.shopify.get/post/graphql  — Shopify Admin REST + GraphQL
-    ctx.db                        — Postgres (RLS-scoped to tenant)
+    ctx.shopify.get(path)          — Shopify Admin REST GET
+    ctx.shopify.post(path, body)   — Shopify Admin REST POST/PUT
+    ctx.shopify.graphql(query, vars) — Shopify Admin GraphQL API (GID IDs required)
+    ctx.db                         — Postgres (RLS-scoped to tenant)
     ctx.tenantId / ctx.shop.domain
     ctx.payload, ctx.logger
-    ctx.email.send(...)           — transactional email (stub → real Phase 3)
-    ctx.services.sms.send(...)    — SMS (stub → real Phase 3; logs SMS_SENT)
-    ctx.services.pdf.generate(html) → Buffer  (stub → real Phase 3)
-    ctx.services.csv.generate(rows) → string  (always real, pure in-process)
-    ctx.services.files.upload(name, content) → Promise<string>  (stub → real Phase 3)
-    ctx.services.image.resize(url, {width, height, fit?}) → Buffer  (stub → real Phase 3)
-    ctx.services.image.analyze(url) → {width, height, format, sizeBytes}  (stub → real Phase 3)
-    ctx.services.qrcode.generate(text, {size?, format?}) → Buffer|string  (always real)
-    ctx.services.barcode.generate(value, {format?, width?, height?}) → string SVG  (always real)
-    ctx.http.call(url, options)   — external HTTP (real; https:// URLs allowed here only)
-    ctx.storefront.graphql(...)   — Shopify Storefront API (real)
+    ctx.http.call(url, options)    — external HTTP (real; https:// URLs allowed here only)
+    ctx.storefront.graphql(...)    — Shopify Storefront API (real)
+    ctx.services.email.send(...)   — transactional email (stub → real Phase 3)
+    ctx.services.sms.send(...)     — SMS (stub → real Phase 3)
+    ctx.services.files.upload(...) — file upload → URL (stub → real Phase 3)
+    JS libraries via require()     — qrcode, jsbarcode, sharp, pdfkit, exceljs, csv-parse,
+                                     csv-stringify, fast-xml-parser, handlebars, marked,
+                                     dayjs, jszip, uuid, slugify (declare in npmPackages)
   ctx does NOT provide: push notifications, Slack, WhatsApp, real-time WebSockets,
   in-process native binaries, GPU processing, or real-time data streams.
   For each genuine gap, specify the exact mitigation the handler should use (usually:
@@ -104,8 +108,9 @@ feasibility: CRITICAL — assess whether this app is BUILDABLE with the ctx surf
       that ctx does NOT provide (e.g. real-time WebSocket push, GPU inference,
       native OS binary execution, live voice/video processing).
     • There is no reasonable mitigation (a stub + logging is NOT a blocked reason).
-  Image resize, PDF, QR codes, barcodes, email, SMS, CSV, files are all available
-  through ctx.services — do NOT mark these as blocked.
+  Email, SMS, files are available through ctx.services. Image resize, PDF, QR codes,
+  barcodes, CSV, Excel, XML, and other document/data work are available as JS libraries
+  via require() — declare them in npmPackages. Do NOT mark any of these as blocked.
   When feasibility is "blocked", set blockedReason to a single merchant-friendly
   sentence explaining what's missing (e.g. "This app requires real-time WebSocket
   push notifications, which aren't supported yet.").

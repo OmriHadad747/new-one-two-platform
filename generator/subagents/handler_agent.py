@@ -52,7 +52,7 @@ class HandlerGenerator(Generator):
         catalog_block = _format_widget_catalog(ctx.platform_api_catalog)
         admin_catalog_block = _format_admin_catalog(ctx.plan)
         prior_block = _format_prior_handler(ctx.prior_handler_code)
-
+        field_contracts_block = _format_field_contracts(ctx.plan)
         routing_checklist = _format_routing_checklist(ctx.platform_api_catalog, ctx.plan)
 
         return (
@@ -64,6 +64,7 @@ class HandlerGenerator(Generator):
             f"{catalog_block}"
             f"{admin_catalog_block}"
             f"{spec_block}"
+            f"{field_contracts_block}"
             f"{prior_block}"
             f"{routing_checklist}"
             "Generate the handler.js module. Output ONLY the JavaScript code."
@@ -237,6 +238,46 @@ def _format_platform_gaps(plan: Dict[str, Any]) -> str:
         return ""
     lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
     return f"\nPlatform limitations (ctx cannot provide these — handle exactly as stated):\n{lines}\n"
+
+
+def _format_field_contracts(plan: Dict[str, Any]) -> str:
+    """
+    Extract field contracts from the validated codeSpec and surface them as a
+    dedicated, immutable section the handler must follow exactly.
+
+    For each widgetApiCatalog path that sends a body:
+      const { field1, field2 } = ctx.widgetBody   ← exact names, no synonyms
+
+    For each adminApiCatalog path that sends a body:
+      const { field1, field2 } = ctx.adminBody    ← exact names, no synonyms
+
+    These are extracted from the same codeSpec steps both generators read —
+    using exactly these names is the only way validation passes.
+    """
+    from subagents.validation import extract_widget_field_contracts, extract_admin_field_contracts
+
+    impl = plan.get("implementationSpec") or {}
+    widget_path: List[str] = (impl.get("codeSpec") or {}).get("widgetPath") or []
+    admin_path: List[str] = (impl.get("codeSpec") or {}).get("adminPath") or []
+
+    widget_contracts = extract_widget_field_contracts(widget_path)
+    admin_contracts = extract_admin_field_contracts(admin_path)
+
+    if not widget_contracts and not admin_contracts:
+        return ""
+
+    lines = [
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "FIELD CONTRACTS — destructure ctx.widgetBody / ctx.adminBody with EXACTLY these names.",
+        "Using any synonym, abbreviation, or different name will fail validation.",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+    for path, fields in sorted(widget_contracts.items()):
+        lines.append(f"  {path}:  const {{ {', '.join(fields)} }} = ctx.widgetBody")
+    for path, fields in sorted(admin_contracts.items()):
+        lines.append(f"  {path}:  const {{ {', '.join(fields)} }} = ctx.adminBody")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    return "\n".join(lines)
 
 
 def _format_routing_checklist(

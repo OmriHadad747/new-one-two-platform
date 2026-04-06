@@ -1043,7 +1043,7 @@ export async function createApp(params: {
       ${params.tenantId},
       ${params.slug},
       ${params.name},
-      'active',
+      'draft',
       ${params.shopDomain},
       ${params.appArchetype ?? "backend"},
       ${params.shopifyClientId ?? "dev-api-key"},
@@ -1507,7 +1507,7 @@ export async function getActiveWebhookSubscriptionsForApp(
 export async function deactivateAppInfrastructure(appId: string): Promise<void> {
   await sql`
     UPDATE deployed_functions
-    SET is_active = FALSE, updated_at = NOW()
+    SET is_active = FALSE
     WHERE app_id = ${appId} AND is_active = TRUE
   `;
   await sql`
