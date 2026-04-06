@@ -8,9 +8,16 @@ isolated here and never leak to callers.
 Public API
 ----------
   prefetch_for_run(resources, intent_description) -> str
-      Main entry point. Call once before each pipeline run. Warms both the
-      resource-context cache and the webhook-topics cache in a single MCP
-      session. Returns the combined API context string for agent prompts.
+      Main entry point. Call once per pipeline run before the Architect agent.
+      Warms the webhook-topics cache and the per-resource REST/doc cache in a
+      single MCP session. Returns the combined API context string.
+
+  refetch_for_operations(operations) -> str
+      Called after the Architect locks its specific API operations and before
+      the CodeSpec agent starts. Fetches precise GraphQL schemas and REST docs
+      for each operation. Results are written to cache (keyed by operation set)
+      but the cache is never read — ensures fresh data per run while avoiding
+      duplicate MCP traffic on retries within the same pipeline run.
 
   get_webhook_topics() -> list[str]
       Returns the cached webhook topic list (REST format, e.g. "orders/create").
@@ -22,11 +29,16 @@ Public API
 
 Caching
 -------
-  All results are stored under generator/mcp/cache/ as JSON files:
-    webhook_topics.json          — full topic list, 24 h TTL
-    resources_<sha256>.json      — per resource-set context, 24 h TTL
+  Results are stored under generator/shopify_mcp/cache/ as JSON files:
+    webhook_topics.json              — full topic list, 24 h TTL
+    resources_<sha256>.json          — per resource-set context, 24 h TTL
+    operations_<sha256>.json         — per operation-set precise schemas, 24 h TTL
 
-  Cache is read on every call; no in-process state beyond imports.
+  Cache reads: prefetch_for_run and get_webhook_topics read from cache.
+  Cache writes: all three fetch functions write results to cache.
+  refetch_for_operations always executes MCP calls (never reads cache) but
+  writes its result so repeated identical operation sets in future runs are free.
+
   Thread-safe: each disk write is an atomic rename-replace (write temp → rename).
 
 Graceful degradation
@@ -401,3 +413,95 @@ def search_docs(query: str) -> str:
     """
     results = _call_mcp([("search_docs_chunks", {"prompt": query, "api_name": "admin"})])
     return _extract_text(results[0]) if results else ""
+
+
+def refetch_for_operations(operations: list[dict]) -> str:
+    """
+    Fetch precise MCP documentation for the specific operations the Architect locked.
+
+    Called after the Architect agent completes and before the CodeSpec agent starts.
+    Queries MCP for:
+      - GraphQL: introspect_graphql_schema for each unique root operation name
+        extracted from operationHint (e.g. "stagedUploadsCreate(input: ...)" → "stagedUploadsCreate")
+      - REST: search_docs_chunks for each unique resource derived from the path
+        (e.g. /admin/api/.../products/images.json → "products images")
+
+    Always executes MCP calls (never reads cache) to ensure the CodeSpec agent
+    always gets the latest schemas for this run. Results are written to cache
+    so identical operation sets in future pipeline runs avoid redundant MCP traffic.
+
+    Returns context string to append to the upfront api_context.
+    Returns "" on any failure or when MCP is unavailable.
+    """
+    if not operations or not _MCP_AVAILABLE:
+        return ""
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+    labels: list[str] = []
+    seen_graphql: set[str] = set()
+    seen_rest: set[str] = set()
+
+    for op in operations:
+        protocol = op.get("protocol", "")
+
+        if protocol == "graphql":
+            hint = (op.get("operationHint") or "").strip()
+            # Extract root name: "stagedUploadsCreate(input: ...)" → "stagedUploadsCreate"
+            m = re.match(r"(\w+)", hint)
+            if m:
+                name = m.group(1)
+                if name and name not in seen_graphql:
+                    seen_graphql.add(name)
+                    calls.append(("introspect_graphql_schema", {"api": "admin", "query": name}))
+                    labels.append(f"GraphQL:{name}")
+
+        elif protocol == "rest":
+            path = (op.get("path") or "").strip()
+            if path and path not in seen_rest:
+                seen_rest.add(path)
+                # Derive a human-readable resource label from the REST path.
+                # Skip: version segments (2026-01), numeric IDs, template vars (${...}),
+                # .json suffix parts, and generic path components (admin, api).
+                parts = [
+                    p for p in path.split("/")
+                    if p
+                    and not p.startswith("${")
+                    and p not in ("admin", "api")
+                    and not re.fullmatch(r"\d{4}-\d{2}", p)  # version segment
+                    and "." not in p  # skip segments containing ".json"
+                    and not p[0].isdigit()  # skip numeric IDs
+                ]
+                resource_hint = " ".join(parts[-2:]) if len(parts) >= 2 else " ".join(parts)
+                if resource_hint:
+                    calls.append(("search_docs_chunks", {
+                        "prompt": f"Shopify {resource_hint} REST API endpoint fields parameters responses",
+                        "api_name": "admin",
+                    }))
+                    labels.append(f"REST:{resource_hint}")
+
+    if not calls:
+        return ""
+
+    results = _call_mcp(calls)
+
+    sections: list[str] = []
+    for label, result in zip(labels, results):
+        text = _extract_text(result)
+        if text.strip():
+            sections.append(f"── {label} — precise schema ──\n{text.strip()}")
+
+    context = "\n\n".join(sections)
+
+    if context:
+        # Build a stable cache key from the sorted set of operation identifiers
+        op_key = "operations_" + "_".join(sorted(
+            f"{op.get('protocol','')}-{op.get('operationHint') or op.get('path','')}"
+            for op in operations
+        ))
+        try:
+            _write_cache(op_key, context)
+            log.debug("MCP: cached operation schemas for %d operations", len(operations))
+        except Exception as exc:
+            log.warning("Failed to write operations cache: %s", exc)
+
+    return context

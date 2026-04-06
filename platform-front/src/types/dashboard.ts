@@ -114,6 +114,7 @@ export type GenerationAgent =
   | "widget_js"
   | "admin_ui"
   | "validation"
+  | "validator"
   | "explanation";
 
 export interface ProgressEvent {

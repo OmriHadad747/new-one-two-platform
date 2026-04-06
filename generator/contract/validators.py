@@ -28,8 +28,8 @@ class GenerationRequest(BaseModel):
 class ProgressEvent(BaseModel):
     jobId: str
     agent: Literal[
-        "product", "architect", "codespec", "handler", "migration", 
-        "widget_js", "admin_ui", "validation", "explanation"
+        "product", "architect", "codespec", "handler", "migration",
+        "widget_js", "admin_ui", "validation", "validator", "explanation"
     ]
     status: Literal["running", "completed", "failed", "retrying"]
     message: str

@@ -1,0 +1,1 @@
+I run promotions a lot and I'm always manually creating discount codes one by one in Shopify which is a nightmare. I want something where I can just say "give me 500 codes with 15% off" and it does it for me. Would be great if I could download them as a spreadsheet too to share with my team.

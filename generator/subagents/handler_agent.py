@@ -13,8 +13,9 @@ requires them, keeping the context window focused on what actually applies:
 The codeSpec from the Planner is rendered as a numbered algorithm the generator
 implements literally — no interpretation, no gap-filling.
 
-Model: claude-sonnet-4-6 (prefers_code_model = True)
+Model: claude-sonnet-4-6 (via agent_models.py)
 """
+
 from __future__ import annotations
 
 import json
@@ -22,7 +23,7 @@ import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
-from subagents.validation import validate_handler_artifact
+from subagents.static_validation import validate_handler_artifact
 from templates.harness_contract import (
     HARNESS_BASE,
     HARNESS_SECTION_ADMIN,
@@ -36,7 +37,6 @@ from templates.harness_contract import (
 
 class HandlerGenerator(Generator):
     name = "handler"
-    prefers_code_model = True
     max_tokens = 8192
 
     # ── Generator interface ────────────────────────────────────────────────────
@@ -53,7 +53,9 @@ class HandlerGenerator(Generator):
         admin_catalog_block = _format_admin_catalog(ctx.plan)
         prior_block = _format_prior_handler(ctx.prior_handler_code)
         field_contracts_block = _format_field_contracts(ctx.plan)
-        routing_checklist = _format_routing_checklist(ctx.platform_api_catalog, ctx.plan)
+        routing_checklist = _format_routing_checklist(
+            ctx.platform_api_catalog, ctx.plan
+        )
 
         return (
             f"{retry_block}"
@@ -80,13 +82,17 @@ class HandlerGenerator(Generator):
         impl = ctx.plan.get("implementationSpec") or {}
         widget_catalog = impl.get("widgetApiCatalog") or []
         admin_catalog = impl.get("adminApiCatalog") or []
-        return validate_handler_artifact(artifact, topics, widget_catalog, admin_catalog)
+        return validate_handler_artifact(
+            artifact, topics, widget_catalog, admin_catalog
+        )
 
 
 # ── JIT harness section builder (Change 3) ────────────────────────────────────
 
 
-def _build_jit_sections(plan: Dict[str, Any], platform_api_catalog: List[Dict[str, str]]) -> str:
+def _build_jit_sections(
+    plan: Dict[str, Any], platform_api_catalog: List[Dict[str, str]]
+) -> str:
     """
     Inject only the harness pattern sections relevant to this specific plan.
     Irrelevant sections are omitted so the model focuses on what applies.
@@ -110,7 +116,9 @@ def _build_jit_sections(plan: Dict[str, Any], platform_api_catalog: List[Dict[st
     if platform_api_catalog:
         sections.append(HARNESS_SECTION_WIDGET)
 
-    storefront_reads = (plan.get("implementationSpec") or {}).get("storefrontReads") or []
+    storefront_reads = (plan.get("implementationSpec") or {}).get(
+        "storefrontReads"
+    ) or []
     widget_guidance = (plan.get("implementationSpec") or {}).get("widgetGuidance") or ""
     if storefront_reads or "host.storefront" in widget_guidance:
         sections.append(HARNESS_SECTION_WIDGET_STOREFRONT)
@@ -139,7 +147,13 @@ def _format_code_spec(plan: Dict[str, Any]) -> str:
     admin_path: List[str] = code_spec.get("adminPath") or []
     functions: List[Dict[str, Any]] = code_spec.get("functions") or []
 
-    if not webhook_path and not cron_path and not widget_path and not admin_path and not functions:
+    if (
+        not webhook_path
+        and not cron_path
+        and not widget_path
+        and not admin_path
+        and not functions
+    ):
         return ""
 
     parts: List[str] = [
@@ -254,7 +268,10 @@ def _format_field_contracts(plan: Dict[str, Any]) -> str:
     These are extracted from the same codeSpec steps both generators read —
     using exactly these names is the only way validation passes.
     """
-    from subagents.validation import extract_widget_field_contracts, extract_admin_field_contracts
+    from subagents.static_validation import (
+        extract_widget_field_contracts,
+        extract_admin_field_contracts,
+    )
 
     impl = plan.get("implementationSpec") or {}
     widget_path: List[str] = (impl.get("codeSpec") or {}).get("widgetPath") or []
@@ -294,9 +311,9 @@ def _format_routing_checklist(
     Only emitted when at least one catalog is non-empty — backend-only apps
     (no widget, no admin) have no routes to check and get no checklist.
     """
-    admin_catalog: List[Dict[str, Any]] = (
-        (plan.get("implementationSpec") or {}).get("adminApiCatalog") or []
-    )
+    admin_catalog: List[Dict[str, Any]] = (plan.get("implementationSpec") or {}).get(
+        "adminApiCatalog"
+    ) or []
     if not widget_catalog and not admin_catalog:
         return ""
 

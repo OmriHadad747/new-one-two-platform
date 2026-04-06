@@ -11,6 +11,7 @@ when logging and when building the artifacts dict. Keep logically related
 generators adjacent (handler before migration since migration schema reflects
 handler needs; admin_ui last since it depends on the backend catalog).
 """
+
 from __future__ import annotations
 
 from typing import Dict

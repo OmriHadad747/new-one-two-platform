@@ -30,21 +30,32 @@ const STATIC_STEPS: { agent: string; label: string }[] = [
   { agent: "explanation", label: "Preparing summary"           },
 ];
 
-// Optional codegen agents inserted between migration and validation when present.
+// Optional agents inserted dynamically when the backend emits them.
+// widget_js / admin_ui go before validation; validator goes after.
 const OPTIONAL_AGENTS: Record<string, string> = {
   widget_js: "Generating storefront widget",
   admin_ui:  "Generating admin panel",
+  validator: "Semantic alignment check",
 };
 
 function buildSteps(byAgent: Record<string, ProgressEvent>) {
   const steps = [...STATIC_STEPS];
   const validationIdx = steps.findIndex((s) => s.agent === "validation");
-  const toInsert = Object.entries(OPTIONAL_AGENTS)
-    .filter(([agent]) => agent in byAgent)
-    .map(([agent, label]) => ({ agent, label }));
-  if (toInsert.length > 0) {
-    steps.splice(validationIdx, 0, ...toInsert);
+
+  // widget_js / admin_ui go before validation
+  const beforeValidation = ["widget_js", "admin_ui"]
+    .filter((a) => a in byAgent)
+    .map((a) => ({ agent: a, label: OPTIONAL_AGENTS[a] }));
+  if (beforeValidation.length > 0) {
+    steps.splice(validationIdx, 0, ...beforeValidation);
   }
+
+  // validator goes after validation (only when LLM_VALIDATION_ENABLED)
+  if ("validator" in byAgent) {
+    const newValidationIdx = steps.findIndex((s) => s.agent === "validation");
+    steps.splice(newValidationIdx + 1, 0, { agent: "validator", label: OPTIONAL_AGENTS["validator"] });
+  }
+
   return steps;
 }
 
@@ -298,6 +309,15 @@ function LivePanel({
 
   return (
     <div className="space-y-7">
+
+      {/* ── Live status ─────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2.5 p-3 bg-teal/8 border border-teal/15 rounded-xl">
+        <span className="w-2 h-2 rounded-full bg-teal shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-[12px] font-semibold text-teal">App is live</p>
+          <p className="text-[11px] text-muted mt-0.5">Something wrong? Type in the chat to revise.</p>
+        </div>
+      </div>
 
       {/* ── Validate ───────────────────────────────────────────────────── */}
       <section>

@@ -22,7 +22,7 @@ WHERE:
 
 Only runs for storefront_backend_admin apps and backend apps with trigger="admin".
 
-Model: claude-sonnet-4-6 (prefers_code_model = True)
+Model: claude-sonnet-4-6 (via agent_models.py)
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
-from subagents.validation import validate_admin_ui_artifact
+from subagents.static_validation import validate_admin_ui_artifact
 
 
 _SYSTEM_PROMPT = """You are generating a Shopify Admin embedded panel as a self-contained JavaScript ES module.
@@ -193,7 +193,6 @@ LAYOUT PATTERNS:
 
 class AdminUiGenerator(Generator):
     name = "admin_ui"
-    prefers_code_model = True
     max_tokens = 16000
 
     # ── Generator interface ────────────────────────────────────────────────────

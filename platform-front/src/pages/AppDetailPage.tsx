@@ -619,8 +619,12 @@ export function AppDetailPage() {
         subtitle={app?.slug}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate(`/app/new?appId=${appId}`)}>
-              Edit in AI
+            <Button
+              variant={app?.status === "active" ? "primary" : "ghost"}
+              size="sm"
+              onClick={() => navigate(`/app/new?appId=${appId}`)}
+            >
+              {app?.status === "active" ? "Revise →" : "Edit in AI"}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => navigate("/app/apps")}>
               ← Apps
@@ -805,25 +809,38 @@ export function AppDetailPage() {
 
                 <SidebarSection title="Actions">
                   <div className="space-y-2">
-                    <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => navigate(`/app/new?appId=${appId}`)}>
-                      <span className="material-symbols-outlined text-[15px] mr-2">edit</span>
-                      Edit in AI
-                    </Button>
+                    {/* Primary action changes based on status */}
+                    {app.status === "active" ? (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        className="w-full justify-start"
+                        onClick={() => navigate(`/app/new?appId=${appId}`)}
+                      >
+                        <span className="material-symbols-outlined text-[15px] mr-2">edit</span>
+                        Revise this app
+                      </Button>
+                    ) : (
+                      <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => navigate(`/app/new?appId=${appId}`)}>
+                        <span className="material-symbols-outlined text-[15px] mr-2">edit</span>
+                        Edit in AI
+                      </Button>
+                    )}
                     {isGenerating ? (
                       <div className="flex items-center gap-2 px-3 py-2 text-[12px] text-faint">
                         <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />
                         Building your app…
                       </div>
-                    ) : latestSession?.status === "completed" ? (
+                    ) : latestSession?.status === "completed" && app.status === "draft" ? (
                       <Button
                         variant="ghost"
                         size="sm"
-                        className={`w-full justify-start ${app.status === "draft" ? "text-amber hover:bg-amber/10" : ""}`}
+                        className="w-full justify-start text-amber hover:bg-amber/10"
                         onClick={handleDeployDraft}
                         disabled={deploying}
                       >
                         <span className="material-symbols-outlined text-[15px] mr-2">rocket_launch</span>
-                        {deploying ? "Deploying..." : app.status === "draft" ? "Deploy" : "Redeploy"}
+                        {deploying ? "Deploying..." : "Deploy now"}
                       </Button>
                     ) : null}
                     <div className="border-t border-white/[0.06] mt-3 pt-3">

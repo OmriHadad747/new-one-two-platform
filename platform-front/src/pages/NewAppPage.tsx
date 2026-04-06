@@ -124,6 +124,11 @@ export function NewAppPage() {
     const sb = session.bundle as SessionBundle | null | undefined;
     if (!sb?.handlerModule) return;
 
+    // Wait for the app query to settle before deciding "live vs. ready to deploy".
+    // If session loads before the app record does, activeApp is null and we'd show
+    // the wrong message. Both queries always fire together — this guard is cheap.
+    if (!activeAppQuery.isSuccess) return;
+
     const restoredBundle: GenerationBundle = {
       explanation: sb.explanation?.merchantFacing,
       triggerTopics: sb.handlerModule.webhookTopics ?? session.webhookTopics,
@@ -153,7 +158,7 @@ export function NewAppPage() {
       },
     ]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestSessionQuery.data, activeApp?.status]);
+  }, [latestSessionQuery.data, activeApp?.status, activeAppQuery.isSuccess]);
 
   // Intentionally no auto-selection: null means "create a new app" on confirm.
 

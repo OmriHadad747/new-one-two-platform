@@ -15,6 +15,7 @@ import re
 from typing import Any, Dict
 
 from models.adapter import get_llm, invoke, extract_json
+from models.agent_models import get_agent_model
 
 
 EXPLANATION_SYSTEM = """You are writing feature explanations for non-technical Shopify merchants.
@@ -116,7 +117,7 @@ def run_explanation_agent(
         platform_gaps_section=platform_gaps_section,
     )
 
-    llm = get_llm(max_tokens=2048)
+    llm = get_llm(model=get_agent_model("explanation"), max_tokens=2048)
     for attempt in range(2):
         result = invoke(llm, EXPLANATION_SYSTEM, user)
         raw = extract_json(result.content)

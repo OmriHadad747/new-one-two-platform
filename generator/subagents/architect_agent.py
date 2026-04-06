@@ -24,7 +24,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from models.adapter import get_code_llm, invoke, extract_json
+from models.adapter import get_llm, invoke, extract_json
+from models.agent_models import get_agent_model
 
 
 ARCHITECT_SYSTEM = """You are a senior Shopify automation architect. Your output is consumed by a CodeSpec agent that writes step-by-step algorithms — your job is structural decisions only, not algorithms.
@@ -329,7 +330,7 @@ def run_architect_agent(
         api_context_section=api_context_section,
     )
 
-    llm = get_code_llm(max_tokens=3000)
+    llm = get_llm(model=get_agent_model("architect"), max_tokens=3000)
     current_user = user
     for attempt in range(2):
         result = invoke(llm, ARCHITECT_SYSTEM, current_user)

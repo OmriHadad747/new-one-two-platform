@@ -15,6 +15,7 @@ import json
 from typing import Any, Dict, List
 
 from models.adapter import get_llm, invoke, invoke_conversation, extract_json
+from models.agent_models import get_agent_model
 
 
 # ─── One-shot product agent ───────────────────────────────────────────────────
@@ -64,7 +65,7 @@ OUTPUT RULES:
 
 def run_product_agent(prompt: str) -> Dict[str, Any]:
     """Agent 1: Parse merchant prompt into a product feature specification."""
-    llm = get_llm(max_tokens=512)
+    llm = get_llm(model=get_agent_model("product"), max_tokens=512)
     result = invoke(llm, PRODUCT_SYSTEM, f"Merchant request: {prompt}")
     raw = extract_json(result.content)
     return json.loads(raw)
@@ -126,7 +127,7 @@ def run_product_agent_analyze(history: List[Dict[str, Any]]) -> Dict[str, Any]:
     Returns either {"status": "needs_clarification", "question": "..."} or
     {"status": "ready", "summary": "...", "intent": {...}}.
     """
-    llm = get_llm(max_tokens=512)
+    llm = get_llm(model=get_agent_model("product"), max_tokens=512)
     result = invoke_conversation(llm, PRODUCT_ANALYZE_SYSTEM, history)
     raw = extract_json(result.content)
     return json.loads(raw)

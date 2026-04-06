@@ -13,7 +13,7 @@ The implementationSpec contributes two things:
 Only runs for storefront_backend / storefront_backend_admin apps — the registry entry is always present but
 crew.py skips this generator for backend apps.
 
-Model: claude-sonnet-4-6 (prefers_code_model = True)
+Model: claude-sonnet-4-6 (via agent_models.py)
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
-from subagents.validation import validate_widget_artifact
+from subagents.static_validation import validate_widget_artifact
 
 _SYSTEM_PROMPT = """You are generating a Shopify storefront widget as a self-contained JavaScript ES module.
 
@@ -85,7 +85,6 @@ There are no restrictions on widget type — only on how it communicates with th
 
 class WidgetJsGenerator(Generator):
     name = "widget_js"
-    prefers_code_model = True
     max_tokens = 16000
 
     # ── Generator interface ────────────────────────────────────────────────────
@@ -170,7 +169,7 @@ def _format_widget_spec(plan: Dict[str, Any]) -> str:
     numbered steps — so the model sees the exact field names it must use
     before reading the narrative steps that might imply different names.
     """
-    from subagents.validation import extract_widget_field_contracts
+    from subagents.static_validation import extract_widget_field_contracts
 
     impl = plan.get("implementationSpec") or {}
     steps: List[str] = (impl.get("codeSpec") or {}).get("widgetPath") or []

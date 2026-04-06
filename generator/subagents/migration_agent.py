@@ -11,7 +11,7 @@ The implementationSpec contributes schema decisions: the state column must be
 NULLABLE when the state machine uses null as the unknown sentinel, and any
 migration-specific guidance from migrationGuidance.
 
-Model: claude-haiku (prefers_code_model = False — DDL is simpler than handler code)
+Model: claude-sonnet-4-6 (via agent_models.py)
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
-from subagents.validation import validate_migration_artifact
+from subagents.static_validation import validate_migration_artifact
 
 _SYSTEM_PROMPT = """You are a PostgreSQL database expert generating tenant-scoped migrations.
 
@@ -74,7 +74,6 @@ _SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMEN
 
 class MigrationGenerator(Generator):
     name = "migration"
-    prefers_code_model = False
     max_tokens = 2048
 
     # ── Generator interface ────────────────────────────────────────────────────

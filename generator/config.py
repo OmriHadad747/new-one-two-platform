@@ -24,8 +24,11 @@ class Settings(BaseSettings):
 
     # ── LLM ───────────────────────────────────────────────────────────────────
     anthropic_api_key: str
-    llm_model: str = "claude-haiku-4-5-20251001"
-    llm_model_code: str = "claude-sonnet-4-6"
+
+    # ── Feature flags ──────────────────────────────────────────────────────────
+    # LLM_VALIDATION_ENABLED=true  →  run semantic alignment check after static
+    # validation passes. On HIGH-confidence failure, triggers one revision pass.
+    llm_validation_enabled: bool = False
 
 
 @lru_cache(maxsize=1)

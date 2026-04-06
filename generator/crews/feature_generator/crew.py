@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import contract.publisher as _contract_publisher
 from contract.validators import (
@@ -40,14 +40,16 @@ from contract.validators import (
     TechnicalExplanation,
     AgentTraceEntry,
 )
-from crews.feature_generator.agents import fetch_api_context
+from shopify_mcp.client import prefetch_for_run, refetch_for_operations
 from subagents.product_agent import run_product_agent
 from subagents.explanation_agent import run_explanation_agent
 from subagents.base import CodegenContext, Generator
 from subagents.architect_agent import run_architect_agent
 from subagents.codespec_agent import run_codespec_agent
+from subagents.revision_agent import run_revision_agent
+from subagents.validator_agent import run_validator_agent
 from subagents.registry import GENERATORS
-from subagents.validation import (
+from subagents.static_validation import (
     validate_architect_plan,
     validate_codespec_plan,
     validate_widget_handler_contract,
@@ -56,47 +58,58 @@ from subagents.validation import (
 
 log = logging.getLogger(__name__)
 
-_MAX_RETRIES = 3        # total codegen attempts (1 initial + 2 retries)
-_MAX_PLAN_ATTEMPTS = 2  # attempts for both Architect and CodeSpec (1 initial + 1 retry each)
+_MAX_RETRIES = 3  # total codegen attempts (1 initial + 2 retries)
+_MAX_PLAN_ATTEMPTS = (
+    2  # attempts for both Architect and CodeSpec (1 initial + 1 retry each)
+)
+
+
+# ── Pipeline control ───────────────────────────────────────────────────────────
+
+
+class _PipelineAbort(Exception):
+    """Raised after a failure event is published to halt the pipeline cleanly."""
 
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _parse_npm_packages(handler_code: str) -> list:
-    """
-    Extract the npmPackages array from the handler's module.exports declaration.
-    Returns an empty list if no npmPackages field is found or parsing fails.
-    """
-    import re
-    match = re.search(r"npmPackages\s*:\s*\[([^\]]*)\]", handler_code)
-    if not match:
-        return []
-    raw = match.group(1)
-    return re.findall(r"""['"]([^'"]+)['"]""", raw)
-
-
-def _emit(
-    request: GenerationRequest,
-    agent: str,
-    status: str,
-    message: str,
-) -> None:
+def _emit(request: GenerationRequest, agent: str, status: str, message: str) -> None:
     """Publish a ProgressEvent and log it."""
     try:
-        event = ProgressEvent(
-            jobId=request.jobId,
-            agent=agent,
-            status=status,  # type: ignore[arg-type]
-            message=message,
-            timestampMs=_now_ms(),
+        _contract_publisher.publish_progress(
+            ProgressEvent(
+                jobId=request.jobId,
+                agent=agent,
+                status=status,  # type: ignore[arg-type]
+                message=message,
+                timestampMs=_now_ms(),
+            )
         )
-        _contract_publisher.publish_progress(event)
     except Exception:
         log.exception(
             "Failed to publish progress event agent=%s status=%s", agent, status
         )
+
+
+def _fail_and_abort(
+    request: GenerationRequest,
+    agent: str,
+    progress_msg: str,
+    error: str,
+    error_code: Optional[str] = None,
+) -> None:
+    """Publish a failure progress event + completion failure, then raise _PipelineAbort."""
+    _emit(request, agent, "failed", progress_msg)
+    payload: Dict = {"jobId": request.jobId, "status": "failed", "error": error}
+    if error_code:
+        payload["errorCode"] = error_code
+    _contract_publisher.publish_completed(FeatureBundleMessage(**payload))
+    raise _PipelineAbort
+
+
+# ── Pipeline entry point ───────────────────────────────────────────────────────
 
 
 def run_feature_generation(request: GenerationRequest) -> None:
@@ -108,371 +121,65 @@ def run_feature_generation(request: GenerationRequest) -> None:
     agent_trace: List[AgentTraceEntry] = []
 
     try:
-        # ── Agent 1: Product ─────────────────────────────────────────────────
-        if request.preComputedIntent:
-            intent = request.preComputedIntent
-            _emit(request, "product", "completed", "Feature spec ready")
-            log.info("job=%s intent=%s (pre-computed)", request.jobId, intent)
-        else:
-            _emit(request, "product", "running", "Understanding your request…")
-            t0 = _now_ms()
-            intent = run_product_agent(request.prompt)
-            agent_trace.append(
-                AgentTraceEntry(agent="product", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
-            )
-            _emit(request, "product", "completed", "Feature spec ready")
-            log.info("job=%s intent=%s", request.jobId, intent)
+        intent = _phase_product(request, agent_trace)
 
-        # ── Agent 2: Architect (+ validate_architect gate) ───────────────────
-        _emit(request, "architect", "running", "Planning Shopify API surface…")
-        t0 = _now_ms()
-
-        # appCategory (product agent) is the ground truth for archetype decision.
-        archetype = intent.get("appCategory")
-
-        api_context = fetch_api_context(
-            intent.get("resources", []),
-            intent_description=intent.get("desiredOutcome", ""),
-        )
-        architect_output: Optional[Dict] = None
-        arch_errors: List[str] = []
-
-        for arch_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
-            architect_output = run_architect_agent(
-                prompt=request.prompt,
-                intent=intent,
-                app_archetype=archetype,
-                api_context=api_context,
-                validation_errors=arch_errors if arch_attempt > 1 else None,
-            )
-            arch_errors = validate_architect_plan(architect_output, app_archetype=archetype)
-
-            if not arch_errors:
-                break
-
-            log.warning(
-                "job=%s architect validation attempt=%d errors=%s",
-                request.jobId,
-                arch_attempt,
-                arch_errors,
-            )
-
-            if arch_attempt == _MAX_PLAN_ATTEMPTS:
-                _emit(
-                    request,
-                    "architect",
-                    "failed",
-                    f"Architect validation failed: {arch_errors[0]}",
-                )
-                _contract_publisher.publish_completed(
-                    FeatureBundleMessage(
-                        jobId=request.jobId,
-                        status="failed",
-                        error=f"Architect produced invalid plan after {_MAX_PLAN_ATTEMPTS} attempts: {arch_errors}",
-                    )
-                )
-                return
-
-            _emit(
-                request,
-                "architect",
-                "running",
-                f"Fixing architect plan (attempt {arch_attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
-            )
-
-        # ── Feasibility gate — platform limitation check ─────────────────────
-        # If the architect flagged that the app concept requires a capability
-        # that ctx cannot deliver, fail immediately with a merchant-friendly message.
-        # Do NOT proceed to codegen — retrying won't help.
-        impl_spec = architect_output.get("implementationSpec") or {}
-        if impl_spec.get("feasibility") == "blocked":
-            blocked_reason: str = impl_spec.get(
-                "blockedReason",
-                "This app requires capabilities that aren't available on the platform yet.",
-            )
-            _emit(request, "architect", "failed", blocked_reason)
-            _contract_publisher.publish_completed(
-                FeatureBundleMessage(
-                    jobId=request.jobId,
-                    status="failed",
-                    error=blocked_reason,
-                    errorCode="platform_limitation",
-                )
-            )
-            return
-
-        agent_trace.append(
-            AgentTraceEntry(agent="architect", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
-        )
-        _emit(request, "architect", "completed", "Structural plan ready")
-        log.info(
-            "job=%s architect topics=%s cron=%s has_catalog=%s",
-            request.jobId,
-            (architect_output.get("shopifyPlan") or {}).get("webhookTopics"),
-            (architect_output.get("shopifyPlan") or {}).get("cronSchedule"),
-            bool((architect_output.get("implementationSpec") or {}).get("widgetApiCatalog")),
-        )
-
-        # ── Agent 3: CodeSpec (+ validate_codespec gate) ─────────────────────
-        _emit(request, "codespec", "running", "Writing implementation algorithms…")
-        t0 = _now_ms()
-
-        codespec_output: Optional[Dict] = None
-        cs_errors: List[str] = []
-
-        for cs_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
-            codespec_output = run_codespec_agent(
-                prompt=request.prompt,
-                intent=intent,
-                architect_output=architect_output,
-                api_context=api_context,
-                validation_errors=cs_errors if cs_attempt > 1 else None,
-            )
-            cs_errors = validate_codespec_plan(codespec_output, architect_output)
-
-            if not cs_errors:
-                break
-
-            log.warning(
-                "job=%s codespec validation attempt=%d errors=%s",
-                request.jobId,
-                cs_attempt,
-                cs_errors,
-            )
-
-            if cs_attempt == _MAX_PLAN_ATTEMPTS:
-                _emit(
-                    request,
-                    "codespec",
-                    "failed",
-                    f"CodeSpec validation failed: {cs_errors[0]}",
-                )
-                _contract_publisher.publish_completed(
-                    FeatureBundleMessage(
-                        jobId=request.jobId,
-                        status="failed",
-                        error=f"CodeSpec produced invalid spec after {_MAX_PLAN_ATTEMPTS} attempts: {cs_errors}",
-                    )
-                )
-                return
-
-            _emit(
-                request,
-                "codespec",
-                "running",
-                f"Fixing code spec (attempt {cs_attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
-            )
-
-        # Merge into the complete plan dict — identical shape to what generators consume
-        plan: Dict = {
-            **architect_output,
-            "implementationSpec": {
-                **(architect_output.get("implementationSpec") or {}),
-                "codeSpec": codespec_output.get("codeSpec") or {},
-            },
-        }
-
-        agent_trace.append(
-            AgentTraceEntry(agent="codespec", latencyMs=_now_ms() - t0, inputTokens=0, outputTokens=0)
-        )
-        _emit(request, "codespec", "completed", "Implementation spec ready")
-        log.info(
-            "job=%s codespec webhook_steps=%d cron_steps=%d widget_steps=%d",
-            request.jobId,
-            len((plan.get("implementationSpec") or {}).get("codeSpec", {}).get("webhookPath") or []),
-            len((plan.get("implementationSpec") or {}).get("codeSpec", {}).get("cronPath") or []),
-            len((plan.get("implementationSpec") or {}).get("codeSpec", {}).get("widgetPath") or []),
-        )
-
-        # ── Agent 4: Parallel CodeGen + Agent 5: Validation (retry loop) ────
-        
-        # appCategory (product agent) is the ground truth for archetype decision.
         archetype = intent["appCategory"]
         is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
         is_admin_ui = archetype in ("storefront_backend_admin", "backend_admin")
+        log.info(
+            "job=%s archetype=%s is_storefront=%s is_admin_ui=%s",
+            request.jobId,
+            archetype,
+            is_storefront,
+            is_admin_ui,
+        )
 
-        log.info("job=%s decided_archetype=%s is_storefront=%s is_admin_ui=%s", 
-                 request.jobId, archetype, is_storefront, is_admin_ui)
+        architect_output, api_context = _phase_architect(request, intent, agent_trace)
+        plan = _phase_codespec(
+            request, intent, architect_output, api_context, agent_trace
+        )
 
-        _emit(request, "handler", "running", "Generating backend handler…")
-        _emit(request, "migration", "running", "Writing DB migration…")
-        if is_storefront:
-            _emit(request, "widget_js", "running", "Generating storefront widget…")
-        if is_admin_ui:
-            _emit(request, "admin_ui", "running", "Generating admin panel…")
-        
-        t0 = _now_ms()
-
-        # widgetApiCatalog is decided by the Architect agent based on what this
-        # specific feature needs — not hardcoded by the platform.
-        catalog_dicts = (plan.get("implementationSpec") or {}).get("widgetApiCatalog") or []
-
-        # ── Extract prior artifacts for revision context ─────────────────────
         prior_bundle = request.priorBundle or {}
-        prior_handler_code: Optional[str] = (
-            (prior_bundle.get("handlerModule") or {}).get("code") or None
-        )
-        prior_widget_code: Optional[str] = prior_bundle.get("widgetModule") or None
-        prior_migration_sql: Optional[str] = (
-            (prior_bundle.get("dbMigration") or {}).get("sql") or None
-        )
-        prior_admin_ui_code: Optional[str] = prior_bundle.get("adminUiModule") or None
-
         base_ctx = CodegenContext(
             intent=intent,
             plan=plan,
-            platform_api_catalog=catalog_dicts,
-            prior_handler_code=prior_handler_code,
-            prior_widget_code=prior_widget_code,
-            prior_migration_sql=prior_migration_sql,
-            prior_admin_ui_code=prior_admin_ui_code,
-        )
-
-        artifacts: Dict[str, str] = {}
-        error_map: Dict[str, List[str]] = {}
-
-        for attempt in range(1, _MAX_RETRIES + 1):
-            # On retries, emit "running" for every generator being re-run so the
-            # console shows spinners rather than going silent for the full LLM round-trip.
-            if attempt > 1:
-                for name in error_map:
-                    _emit(request, name, "running", f"Retrying (attempt {attempt}/{_MAX_RETRIES})…")  # type: ignore[arg-type]
-
-            artifacts = run_codegen_parallel(
-                base_ctx,
-                is_storefront=is_storefront,
-                is_admin_ui=is_admin_ui,
-                error_map=error_map,
-                artifacts=artifacts,
+            platform_api_catalog=(plan.get("implementationSpec") or {}).get(
+                "widgetApiCatalog"
             )
-
-            if attempt == 1:
-                agent_trace.append(
-                    AgentTraceEntry(
-                        agent="codegen",
-                        latencyMs=_now_ms() - t0,
-                        inputTokens=0,
-                        outputTokens=0,
-                    )
-                )
-                _emit(request, "handler", "completed", "Handler complete")
-                _emit(request, "migration", "completed", "Migration complete")
-                if is_storefront:
-                    _emit(request, "widget_js", "completed", "Widget complete")
-                if is_admin_ui:
-                    _emit(request, "admin_ui", "completed", "Admin UI complete")
-            else:
-                # Emit completed for each generator that was retried
-                for name in list(error_map.keys()):
-                    _emit(request, name, "completed", f"Retry {attempt} complete")  # type: ignore[arg-type]
-
-            _emit(request, "validation", "running", "Validating generated artifacts…")
-
-            error_map = validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
-
-            if not error_map:
-                break
-
-            log.warning(
-                "job=%s validation attempt=%d failing_generators=%s errors=%s",
-                request.jobId,
-                attempt,
-                list(error_map.keys()),
-                {name: errs for name, errs in error_map.items()},
-            )
-
-            if attempt == _MAX_RETRIES:
-                all_errors = [
-                    f"{name}: {e}" for name, errs in error_map.items() for e in errs
-                ]
-                _emit(
-                    request,
-                    "validation",
-                    "failed",
-                    f"Validation failed: {all_errors[0]}",
-                )
-                _contract_publisher.publish_completed(
-                    FeatureBundleMessage(
-                        jobId=request.jobId,
-                        status="failed",
-                        error=f"Validation failed after {_MAX_RETRIES} attempts: {all_errors}",
-                    )
-                )
-                return
-
-            failing = ", ".join(error_map.keys())
-            _emit(
-                request,
-                "validation",
-                "retrying",
-                f"Fixing {failing} (attempt {attempt + 1}/{_MAX_RETRIES})…",
-            )
-
-        _emit(request, "validation", "completed", "All artifacts validated")
-
-        # ── Agent 6: Explanation ─────────────────────────────────────────────
-        _emit(request, "explanation", "running", "Writing feature summary…")
-        t0 = _now_ms()
-        explanation_raw = run_explanation_agent(
-            intent=intent,
-            plan=plan,
-            widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
-            handler_code=artifacts.get("handler", ""),
-            migration_sql=artifacts.get("migration", ""),
-        )
-        agent_trace.append(
-            AgentTraceEntry(
-                agent="explanation",
-                latencyMs=_now_ms() - t0,
-                inputTokens=0,
-                outputTokens=0,
-            )
-        )
-        _emit(request, "explanation", "completed", "Summary complete")
-
-        # ── Build final bundle ────────────────────────────────────────────────
-        technical = explanation_raw.get("technical", {})
-        shopify_plan = plan.get("shopifyPlan", {})
-
-        handler_code = artifacts.get("handler", "")
-        bundle = Bundle(
-            widgetModule=artifacts.get("widget_js") if is_storefront else None,
-            adminUiModule=artifacts.get("admin_ui") if is_admin_ui else None,
-            handlerModule=HandlerModule(
-                code=handler_code,
-                webhookTopics=shopify_plan.get("webhookTopics", []),
-                cronSchedule=shopify_plan.get("cronSchedule"),
-                npmPackages=_parse_npm_packages(handler_code),
+            or [],
+            prior_handler_code=(
+                (prior_bundle.get("handlerModule") or {}).get("code") or None
             ),
-            dbMigration=DbMigration(sql=artifacts.get("migration", "")),
-            explanation=FeatureExplanation(
-                merchantFacing=explanation_raw.get("merchantFacing", ""),
-                technical=TechnicalExplanation(
-                    webhookTopics=technical.get("webhookTopics", []),
-                    dbTables=technical.get("dbTables", []),
-                    estimatedMonthlyExecutions=technical.get("estimatedMonthlyExecutions", 0),
-                    estimatedMonthlyCost=technical.get("estimatedMonthlyCost", "$0"),
-                ),
+            prior_widget_code=(prior_bundle.get("widgetModule") or None),
+            prior_migration_sql=(
+                (prior_bundle.get("dbMigration") or {}).get("sql") or None
             ),
+            prior_admin_ui_code=(prior_bundle.get("adminUiModule") or None),
         )
 
-        total_ms = _now_ms() - start_ms
-        meta = GenerationMeta(
-            totalInputTokens=0,
-            totalOutputTokens=0,
-            generationMs=total_ms,
-            agentTrace=agent_trace,
+        artifacts = _phase_codegen(
+            request, base_ctx, is_storefront, is_admin_ui, agent_trace
+        )
+        artifacts = _phase_llm_validation(
+            request, base_ctx, artifacts, is_storefront, is_admin_ui, agent_trace
+        )
+        explanation = _phase_explanation(
+            request, intent, plan, artifacts, is_storefront, agent_trace
         )
 
-        _contract_publisher.publish_completed(
-            FeatureBundleMessage(
-                jobId=request.jobId,
-                status="success",
-                bundle=bundle,
-                meta=meta,
-            )
+        _publish_success(
+            request,
+            plan,
+            artifacts,
+            is_storefront,
+            is_admin_ui,
+            explanation,
+            agent_trace,
+            start_ms,
         )
-        log.info("job=%s completed in %dms", request.jobId, total_ms)
+
+    except _PipelineAbort:
+        pass  # failure event already published by _fail_and_abort
 
     except Exception as exc:
         log.exception("job=%s unhandled error in run_feature_generation", request.jobId)
@@ -486,6 +193,528 @@ def run_feature_generation(request: GenerationRequest) -> None:
             )
         except Exception:
             log.exception("job=%s failed to publish failure event", request.jobId)
+
+
+# ── Phase functions ────────────────────────────────────────────────────────────
+
+
+def _phase_product(
+    request: GenerationRequest,
+    agent_trace: List[AgentTraceEntry],
+) -> Dict:
+    """Agent 1: translate merchant prompt into a feature intent dict."""
+    if request.preComputedIntent:
+        _emit(request, "product", "completed", "Feature spec ready")
+        log.info("job=%s intent pre-computed", request.jobId)
+        return request.preComputedIntent
+
+    _emit(request, "product", "running", "Understanding your request…")
+    t0 = _now_ms()
+    intent = run_product_agent(request.prompt)
+    agent_trace.append(
+        AgentTraceEntry(
+            agent="product",
+            latencyMs=_now_ms() - t0,
+            inputTokens=0,
+            outputTokens=0,
+        )
+    )
+    _emit(request, "product", "completed", "Feature spec ready")
+    log.info("job=%s intent=%s", request.jobId, intent)
+    return intent
+
+
+def _phase_architect(
+    request: GenerationRequest,
+    intent: Dict,
+    agent_trace: List[AgentTraceEntry],
+) -> Tuple[Dict, str]:
+    """
+    Agent 2: produce shopifyPlan + implementationSpec.
+
+    Returns (architect_output, api_context) where api_context is the enriched
+    MCP context for the CodeSpec agent — broad resource docs from the upfront
+    prefetch, supplemented by precise operation-level schemas fetched after the
+    architect locks its specific API calls.
+    """
+    _emit(request, "architect", "running", "Planning Shopify API surface…")
+    t0 = _now_ms()
+
+    archetype = intent.get("appCategory")
+    api_context = prefetch_for_run(
+        intent.get("resources", []), intent.get("desiredOutcome", "")
+    )
+
+    architect_output: Optional[Dict] = None
+    arch_errors: List[str] = []
+
+    for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
+        architect_output = run_architect_agent(
+            prompt=request.prompt,
+            intent=intent,
+            app_archetype=archetype,
+            api_context=api_context,
+            validation_errors=arch_errors if attempt > 1 else None,
+        )
+        arch_errors = validate_architect_plan(architect_output, app_archetype=archetype)
+
+        if not arch_errors:
+            break
+
+        log.warning(
+            "job=%s architect validation attempt=%d errors=%s",
+            request.jobId,
+            attempt,
+            arch_errors,
+        )
+
+        if attempt == _MAX_PLAN_ATTEMPTS:
+            _fail_and_abort(
+                request,
+                "architect",
+                f"Architect validation failed: {arch_errors[0]}",
+                f"Architect produced invalid plan after {_MAX_PLAN_ATTEMPTS} attempts: {arch_errors}",
+            )
+
+        _emit(
+            request,
+            "architect",
+            "running",
+            f"Fixing architect plan (attempt {attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
+        )
+
+    # Feasibility gate — fail immediately when ctx cannot deliver the core value.
+    impl_spec = architect_output.get("implementationSpec") or {}
+    if impl_spec.get("feasibility") == "blocked":
+        blocked_reason: str = impl_spec.get(
+            "blockedReason",
+            "This app requires capabilities that aren't available on the platform yet.",
+        )
+        _fail_and_abort(
+            request,
+            "architect",
+            blocked_reason,
+            blocked_reason,
+            error_code="platform_limitation",
+        )
+
+    agent_trace.append(
+        AgentTraceEntry(
+            agent="architect",
+            latencyMs=_now_ms() - t0,
+            inputTokens=0,
+            outputTokens=0,
+        )
+    )
+    _emit(request, "architect", "completed", "Structural plan ready")
+    log.info(
+        "job=%s architect topics=%s cron=%s has_catalog=%s",
+        request.jobId,
+        (architect_output.get("shopifyPlan") or {}).get("webhookTopics"),
+        (architect_output.get("shopifyPlan") or {}).get("cronSchedule"),
+        bool(impl_spec.get("widgetApiCatalog")),
+    )
+
+    # Post-architect re-fetch: precise schemas for the specific operations the
+    # architect locked. Supplements the broad resource-level docs from prefetch_for_run.
+    architect_operations = (architect_output.get("shopifyPlan") or {}).get(
+        "operations"
+    ) or []
+    if architect_operations:
+        refined = refetch_for_operations(architect_operations)
+        if refined:
+            api_context = "\n\n".join(
+                filter(
+                    None,
+                    [
+                        api_context,
+                        "── Post-architect precise schemas ──\n\n" + refined,
+                    ],
+                )
+            )
+            log.info(
+                "job=%s post-architect context enriched (+%d chars)",
+                request.jobId,
+                len(refined),
+            )
+
+    return architect_output, api_context
+
+
+def _phase_codespec(
+    request: GenerationRequest,
+    intent: Dict,
+    architect_output: Dict,
+    api_context: str,
+    agent_trace: List[AgentTraceEntry],
+) -> Dict:
+    """
+    Agent 3: write step-by-step algorithms against the locked architect output.
+
+    Returns the merged plan dict consumed by all codegen generators.
+    """
+    _emit(request, "codespec", "running", "Writing implementation algorithms…")
+    t0 = _now_ms()
+
+    codespec_output: Optional[Dict] = None
+    cs_errors: List[str] = []
+
+    for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
+        codespec_output = run_codespec_agent(
+            prompt=request.prompt,
+            intent=intent,
+            architect_output=architect_output,
+            api_context=api_context,
+            validation_errors=cs_errors if attempt > 1 else None,
+        )
+        cs_errors = validate_codespec_plan(codespec_output, architect_output)
+
+        if not cs_errors:
+            break
+
+        log.warning(
+            "job=%s codespec validation attempt=%d errors=%s",
+            request.jobId,
+            attempt,
+            cs_errors,
+        )
+
+        if attempt == _MAX_PLAN_ATTEMPTS:
+            _fail_and_abort(
+                request,
+                "codespec",
+                f"CodeSpec validation failed: {cs_errors[0]}",
+                f"CodeSpec produced invalid spec after {_MAX_PLAN_ATTEMPTS} attempts: {cs_errors}",
+            )
+
+        _emit(
+            request,
+            "codespec",
+            "running",
+            f"Fixing code spec (attempt {attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
+        )
+
+    plan: Dict = {
+        **architect_output,
+        "implementationSpec": {
+            **(architect_output.get("implementationSpec") or {}),
+            "codeSpec": codespec_output.get("codeSpec") or {},
+        },
+    }
+
+    agent_trace.append(
+        AgentTraceEntry(
+            agent="codespec",
+            latencyMs=_now_ms() - t0,
+            inputTokens=0,
+            outputTokens=0,
+        )
+    )
+    _emit(request, "codespec", "completed", "Implementation spec ready")
+    impl = plan.get("implementationSpec") or {}
+    log.info(
+        "job=%s codespec webhook_steps=%d cron_steps=%d widget_steps=%d",
+        request.jobId,
+        len((impl.get("codeSpec") or {}).get("webhookPath") or []),
+        len((impl.get("codeSpec") or {}).get("cronPath") or []),
+        len((impl.get("codeSpec") or {}).get("widgetPath") or []),
+    )
+
+    return plan
+
+
+def _phase_codegen(
+    request: GenerationRequest,
+    base_ctx: CodegenContext,
+    is_storefront: bool,
+    is_admin_ui: bool,
+    agent_trace: List[AgentTraceEntry],
+) -> Dict[str, str]:
+    """
+    Agents 4 + 5: parallel code generation with a validation-and-retry loop.
+
+    On revision runs (priorBundle present) the first attempt uses the holistic
+    revision agent. Subsequent retry attempts always use individual generators.
+    """
+    _emit(request, "handler", "running", "Generating backend handler…")
+    _emit(request, "migration", "running", "Writing DB migration…")
+    if is_storefront:
+        _emit(request, "widget_js", "running", "Generating storefront widget…")
+    if is_admin_ui:
+        _emit(request, "admin_ui", "running", "Generating admin panel…")
+
+    artifacts: Dict[str, str] = {}
+    error_map: Dict[str, List[str]] = {}
+    t0 = _now_ms()
+
+    for attempt in range(1, _MAX_RETRIES + 1):
+        if attempt > 1:
+            for name in error_map:
+                _emit(
+                    request,
+                    name,
+                    "running",  # type: ignore[arg-type]
+                    f"Retrying (attempt {attempt}/{_MAX_RETRIES})…",
+                )
+
+        artifacts = _generate_artifacts(
+            base_ctx,
+            is_storefront,
+            is_admin_ui,
+            error_map,
+            artifacts,
+            attempt,
+        )
+
+        if attempt == 1:
+            agent_trace.append(
+                AgentTraceEntry(
+                    agent="codegen",
+                    latencyMs=_now_ms() - t0,
+                    inputTokens=0,
+                    outputTokens=0,
+                )
+            )
+            _emit(request, "handler", "completed", "Handler complete")
+            _emit(request, "migration", "completed", "Migration complete")
+            if is_storefront:
+                _emit(request, "widget_js", "completed", "Widget complete")
+            if is_admin_ui:
+                _emit(request, "admin_ui", "completed", "Admin UI complete")
+        else:
+            for name in list(error_map.keys()):
+                _emit(request, name, "completed", f"Retry {attempt} complete")  # type: ignore[arg-type]
+
+        _emit(request, "validation", "running", "Validating generated artifacts…")
+        error_map = validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
+
+        if not error_map:
+            break
+
+        log.warning(
+            "job=%s validation attempt=%d failing=%s errors=%s",
+            request.jobId,
+            attempt,
+            list(error_map.keys()),
+            {name: errs for name, errs in error_map.items()},
+        )
+
+        if attempt == _MAX_RETRIES:
+            all_errors = [f"{n}: {e}" for n, errs in error_map.items() for e in errs]
+            _fail_and_abort(
+                request,
+                "validation",
+                f"Validation failed: {all_errors[0]}",
+                f"Validation failed after {_MAX_RETRIES} attempts: {all_errors}",
+            )
+
+        _emit(
+            request,
+            "validation",
+            "retrying",
+            f"Fixing {', '.join(error_map.keys())} (attempt {attempt + 1}/{_MAX_RETRIES})…",
+        )
+
+    _emit(request, "validation", "completed", "All artifacts validated")
+    return artifacts
+
+
+def _generate_artifacts(
+    base_ctx: CodegenContext,
+    is_storefront: bool,
+    is_admin_ui: bool,
+    error_map: Dict[str, List[str]],
+    artifacts: Dict[str, str],
+    attempt: int,
+) -> Dict[str, str]:
+    """
+    Produce artifacts for one codegen attempt.
+
+    Attempt 1 on a revision run uses the holistic revision agent (single LLM call,
+    reasons across all artifacts simultaneously). All other attempts use the standard
+    parallel individual generators.
+    """
+    is_revision_first_attempt = attempt == 1 and base_ctx.prior_handler_code is not None
+
+    if is_revision_first_attempt:
+        revision = run_revision_agent(
+            base_ctx, is_storefront=is_storefront, is_admin_ui=is_admin_ui
+        )
+        if revision.get("handler") and revision.get("migration"):
+            log.info("revision_agent produced all artifacts")
+            return revision
+        log.warning(
+            "revision_agent returned incomplete output — falling back to parallel codegen"
+        )
+
+    return run_codegen_parallel(
+        base_ctx,
+        is_storefront=is_storefront,
+        is_admin_ui=is_admin_ui,
+        error_map=error_map,
+        artifacts=artifacts,
+    )
+
+
+def _phase_llm_validation(
+    request: GenerationRequest,
+    base_ctx: CodegenContext,
+    artifacts: Dict[str, str],
+    is_storefront: bool,
+    is_admin_ui: bool,
+    agent_trace: List[AgentTraceEntry],
+) -> Dict[str, str]:
+    """
+    Optional Agent 5b: LLM semantic alignment check (LLM_VALIDATION_ENABLED=true).
+
+    Runs 5 targeted questions against the generated artifacts. Only HIGH-confidence
+    issues trigger one revision pass. Returns the (possibly revised) artifacts.
+    Fail-open: any error returns the original artifacts unchanged.
+    """
+    from config import get_settings
+
+    if not get_settings().llm_validation_enabled:
+        return artifacts
+
+    _emit(request, "validator", "running", "Checking semantic alignment…")
+    t0 = _now_ms()
+    issues = run_validator_agent(artifacts, base_ctx, is_storefront, is_admin_ui)
+    agent_trace.append(
+        AgentTraceEntry(
+            agent="validator",
+            latencyMs=_now_ms() - t0,
+            inputTokens=0,
+            outputTokens=0,
+        )
+    )
+
+    if not issues:
+        _emit(request, "validator", "completed", "Semantic check passed")
+        return artifacts
+
+    issue_summary = "; ".join(f"{i['question']}: {i['issue']}" for i in issues)
+    log.info(
+        "job=%s validator_agent: %d high-confidence issue(s): %s",
+        request.jobId,
+        len(issues),
+        issue_summary,
+    )
+    _emit(
+        request,
+        "validator",
+        "retrying",
+        f"Fixing {len(issues)} semantic issue(s)…",
+    )
+
+    revised = run_revision_agent(
+        base_ctx,
+        is_storefront=is_storefront,
+        is_admin_ui=is_admin_ui,
+        validation_issues=issues,
+    )
+    if revised.get("handler") and revised.get("migration"):
+        _emit(request, "validator", "completed", "Semantic issues resolved")
+        return {**artifacts, **revised}
+
+    log.warning(
+        "job=%s validator_agent: revision returned incomplete output — keeping originals",
+        request.jobId,
+    )
+    _emit(request, "validator", "completed", "Semantic check complete")
+    return artifacts
+
+
+def _phase_explanation(
+    request: GenerationRequest,
+    intent: Dict,
+    plan: Dict,
+    artifacts: Dict[str, str],
+    is_storefront: bool,
+    agent_trace: List[AgentTraceEntry],
+) -> Dict:
+    """Agent 6: write the merchant-facing feature summary."""
+    _emit(request, "explanation", "running", "Writing feature summary…")
+    t0 = _now_ms()
+    explanation = run_explanation_agent(
+        intent=intent,
+        plan=plan,
+        widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
+        handler_code=artifacts.get("handler", ""),
+        migration_sql=artifacts.get("migration", ""),
+    )
+    agent_trace.append(
+        AgentTraceEntry(
+            agent="explanation",
+            latencyMs=_now_ms() - t0,
+            inputTokens=0,
+            outputTokens=0,
+        )
+    )
+    _emit(request, "explanation", "completed", "Summary complete")
+    return explanation
+
+
+def _publish_success(
+    request: GenerationRequest,
+    plan: Dict,
+    artifacts: Dict[str, str],
+    is_storefront: bool,
+    is_admin_ui: bool,
+    explanation: Dict,
+    agent_trace: List[AgentTraceEntry],
+    start_ms: int,
+) -> None:
+    """Build the final Bundle and publish a success completion event."""
+    import re
+
+    handler_code = artifacts.get("handler", "")
+    shopify_plan = plan.get("shopifyPlan", {})
+    technical = explanation.get("technical", {})
+
+    def _parse_npm_packages(code: str) -> list:
+        match = re.search(r"npmPackages\s*:\s*\[([^\]]*)\]", code)
+        if not match:
+            return []
+        return re.findall(r"""['"]([^'"]+)['"]""", match.group(1))
+
+    bundle = Bundle(
+        widgetModule=artifacts.get("widget_js") if is_storefront else None,
+        adminUiModule=artifacts.get("admin_ui") if is_admin_ui else None,
+        handlerModule=HandlerModule(
+            code=handler_code,
+            webhookTopics=shopify_plan.get("webhookTopics", []),
+            cronSchedule=shopify_plan.get("cronSchedule"),
+            npmPackages=_parse_npm_packages(handler_code),
+        ),
+        dbMigration=DbMigration(sql=artifacts.get("migration", "")),
+        explanation=FeatureExplanation(
+            merchantFacing=explanation.get("merchantFacing", ""),
+            technical=TechnicalExplanation(
+                webhookTopics=technical.get("webhookTopics", []),
+                dbTables=technical.get("dbTables", []),
+                estimatedMonthlyExecutions=technical.get(
+                    "estimatedMonthlyExecutions", 0
+                ),
+                estimatedMonthlyCost=technical.get("estimatedMonthlyCost", "$0"),
+            ),
+        ),
+    )
+
+    total_ms = _now_ms() - start_ms
+    _contract_publisher.publish_completed(
+        FeatureBundleMessage(
+            jobId=request.jobId,
+            status="success",
+            bundle=bundle,
+            meta=GenerationMeta(
+                totalInputTokens=0,
+                totalOutputTokens=0,
+                generationMs=total_ms,
+                agentTrace=agent_trace,
+            ),
+        )
+    )
+    log.info("job=%s completed in %dms", request.jobId, total_ms)
 
 
 # ── Parallel CodeGen ───────────────────────────────────────────────────────────
@@ -531,15 +760,21 @@ def run_codegen_parallel(
         coupled_pairs: List[tuple] = []
         if is_storefront:
             coupled_pairs.append(
-                ("handler", "widget_js",
-                 "Re-generating to stay in sync with the handler. "
-                 "Ensure every host.call() field name exactly matches the codeSpec widgetPath steps.")
+                (
+                    "handler",
+                    "widget_js",
+                    "Re-generating to stay in sync with the handler. "
+                    "Ensure every host.call() field name exactly matches the codeSpec widgetPath steps.",
+                )
             )
         if is_admin_ui:
             coupled_pairs.append(
-                ("handler", "admin_ui",
-                 "Re-generating to stay in sync with the handler. "
-                 "Ensure every bridge.call() field name exactly matches the codeSpec adminPath steps.")
+                (
+                    "handler",
+                    "admin_ui",
+                    "Re-generating to stay in sync with the handler. "
+                    "Ensure every bridge.call() field name exactly matches the codeSpec adminPath steps.",
+                )
             )
         for a, b, hint in coupled_pairs:
             pair = {a, b}
@@ -548,7 +783,7 @@ def run_codegen_parallel(
                     if name in GENERATORS and name in artifacts:
                         error_map.setdefault(name, [hint])
                         to_run.append(GENERATORS[name])
-                        to_run_names.add(name)  # prevent double-add if both pairs share handler
+                        to_run_names.add(name)
 
     if not to_run:
         return artifacts
@@ -574,6 +809,9 @@ def run_codegen_parallel(
             artifacts[name] = future.result()  # raises on sub-agent exception
 
     return artifacts
+
+
+# ── Validation ─────────────────────────────────────────────────────────────────
 
 
 def validate_artifacts(
@@ -603,21 +841,19 @@ def validate_artifacts(
     # causes the mismatch to go undetected — the next retry only re-runs the handler,
     # which may silently change field names again and re-introduce the mismatch.
     if is_storefront:
-        cross_errors = validate_widget_handler_contract(
+        for gen_name, errs in validate_widget_handler_contract(
             artifacts.get("widget_js", ""),
             artifacts.get("handler", ""),
-        )
-        for gen_name, errs in cross_errors.items():
+        ).items():
             if errs:
                 error_map.setdefault(gen_name, []).extend(errs)
 
-    # Admin UI ↔ handler cross-artifact check: always run for admin apps.
+    # Admin UI ↔ handler cross-artifact check.
     if is_admin_ui:
-        admin_cross_errors = validate_admin_handler_contract(
+        for gen_name, errs in validate_admin_handler_contract(
             artifacts.get("admin_ui", ""),
             artifacts.get("handler", ""),
-        )
-        for gen_name, errs in admin_cross_errors.items():
+        ).items():
             if errs:
                 error_map.setdefault(gen_name, []).extend(errs)
 

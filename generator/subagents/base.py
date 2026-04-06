@@ -3,8 +3,7 @@ Base abstractions for all code-generation sub-agents.
 
 Every generator in the pipeline implements the Generator ABC:
 
-  name               — stable identifier used as the artifacts dict key
-  prefers_code_model — True → claude-sonnet (code quality), False → claude-haiku (cost)
+  name               — stable identifier used as the artifacts dict key and agent_models.py key
   max_tokens         — output token budget (default 2048, override when needed)
   system_prompt()    — static system prompt (defines constraints + output format)
   user_prompt(ctx)   — dynamic user prompt built from CodegenContext
@@ -93,9 +92,6 @@ class Generator(ABC):
     #: Stable key used in the artifacts dict and error routing.
     name: str
 
-    #: True → uses llm_model_code (Sonnet); False → uses llm_model (Haiku).
-    prefers_code_model: bool
-
     #: Max tokens for LLM output. Override in subclasses that generate longer code.
     max_tokens: int = 2048
 
@@ -148,12 +144,9 @@ class Generator(ABC):
         This is the only entry point the orchestrator needs to call.
         It must not be overridden — customise system_prompt, user_prompt, and parse.
         """
-        from models.adapter import get_code_llm, get_llm, invoke
+        from models.adapter import get_llm, invoke
+        from models.agent_models import get_agent_model
 
-        llm = (
-            get_code_llm(max_tokens=self.max_tokens)
-            if self.prefers_code_model
-            else get_llm(max_tokens=self.max_tokens)
-        )
+        llm = get_llm(model=get_agent_model(self.name), max_tokens=self.max_tokens)
         result = invoke(llm, self.system_prompt(), self.user_prompt(ctx))
         return self.parse(result.content)

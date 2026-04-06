@@ -34,24 +34,16 @@ def get_llm(max_tokens: int = 2048, model: Optional[str] = None) -> ChatAnthropi
     """
     Returns a configured ChatAnthropic instance.
 
-    Model precedence:
-      1. Explicit `model` argument
-      2. LLM_MODEL env var
-      3. claude-haiku-4-5-20251001 (default, cheapest)
+    All callers pass an explicit model resolved via get_agent_model(agent_name).
+    The model parameter is required in practice; the default is a safe fallback only.
     """
     settings = get_settings()
-    resolved_model = model or settings.llm_model
+    resolved_model = model or "claude-haiku-4-5-20251001"
     return ChatAnthropic(
         model=resolved_model,  # type: ignore[call-arg]
         max_tokens=max_tokens,
         api_key=settings.anthropic_api_key,
     )
-
-
-def get_code_llm(max_tokens: int = 2048) -> ChatAnthropic:
-    """Returns the code-generation model (sonnet by default, highest quality)."""
-    model = get_settings().llm_model_code
-    return get_llm(model=model, max_tokens=max_tokens)
 
 
 def invoke(llm: ChatAnthropic, system: str, user: str) -> LLMResponse:
