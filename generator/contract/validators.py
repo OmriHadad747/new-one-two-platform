@@ -5,6 +5,7 @@ and the Zod schemas in platform/packages/pubsub-client/src/schemas.ts.
 Source of truth: /contract/*.schema.json
 When the contract changes, update this file, schemas.ts, and the JSON Schema files.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 
 
 # ─── GenerationRequest ────────────────────────────────────────────────────────
+
 
 class GenerationRequest(BaseModel):
     jobId: str
@@ -25,11 +27,21 @@ class GenerationRequest(BaseModel):
 
 # ─── ProgressEvent ────────────────────────────────────────────────────────────
 
+
 class ProgressEvent(BaseModel):
     jobId: str
     agent: Literal[
-        "product", "architect", "codespec", "handler", "migration",
-        "widget_js", "admin_ui", "validation", "validator", "explanation"
+        "product",
+        "architect",
+        "codespec",
+        "handler",
+        "migration",
+        "widget_js",
+        "admin_ui",
+        "validation",
+        "validator",
+        "revision",
+        "explanation",
     ]
     status: Literal["running", "completed", "failed", "retrying"]
     message: str
@@ -38,7 +50,6 @@ class ProgressEvent(BaseModel):
 
 
 # ─── FeatureBundleMessage ─────────────────────────────────────────────────────
-
 
 
 class HandlerModule(BaseModel):
@@ -65,8 +76,12 @@ class FeatureExplanation(BaseModel):
 
 
 class Bundle(BaseModel):
-    widgetModule: Optional[str] = None   # storefront ES module (storefront_backend / storefront_backend_admin apps)
-    adminUiModule: Optional[str] = None  # admin panel ES module (storefront_backend_admin apps)
+    widgetModule: Optional[str] = (
+        None  # storefront ES module (storefront_backend / storefront_backend_admin apps)
+    )
+    adminUiModule: Optional[str] = (
+        None  # admin panel ES module (storefront_backend_admin apps)
+    )
     handlerModule: HandlerModule
     dbMigration: DbMigration
     explanation: FeatureExplanation

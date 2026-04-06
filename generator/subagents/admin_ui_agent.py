@@ -171,6 +171,20 @@ RULES:
 9. Output ONLY the raw JavaScript — no markdown fences, no explanation, no comments outside the code.
 10. Handle all bridge.call() rejections gracefully — show an error message in the UI.
 11. If adminApiCatalog is empty, render a clear "Backend not configured" message.
+12. NEVER use React, JSX, or any JavaScript framework — vanilla DOM only.
+    FORBIDDEN: import statements of any kind (import React, import { useState }, etc.)
+    FORBIDDEN: export default function — the only allowed export is export function mount
+    FORBIDDEN: JSX syntax — use document.createElement() / innerHTML for all DOM construction
+    FORBIDDEN: React.createElement(), useState(), useEffect(), useRef(), or any React API
+13. NEVER hardcode hex colors except #008060 (Shopify brand green — safe to hardcode).
+    For ALL other colors use Polaris CSS custom properties (--p-color-*).
+    Example: color: var(--p-color-text) NOT color: #1a1a1a
+    Hardcoded hex colors break the merchant's theme (dark mode, high-contrast accessibility).
+14. NEVER use container.innerHTML += after any container.appendChild() call.
+    innerHTML-assign serializes the DOM back to an HTML string and re-parses it, destroying
+    all previously appended DOM nodes and their event listeners.
+    Safe pattern: assign container.innerHTML = '...' ONCE at the start of mount() to set the
+    full HTML skeleton, then call container.appendChild(styleEl) to append the <style> last.
 
 LAYOUT PATTERNS:
   Read-only dashboard (list + stats):

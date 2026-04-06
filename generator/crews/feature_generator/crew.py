@@ -160,7 +160,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
         artifacts = _phase_codegen(
             request, base_ctx, is_storefront, is_admin_ui, agent_trace
         )
-        artifacts = _phase_llm_validation(
+        artifacts = _phase_validator(
             request, base_ctx, artifacts, is_storefront, is_admin_ui, agent_trace
         )
         explanation = _phase_explanation(
@@ -458,6 +458,7 @@ def _phase_codegen(
                 )
 
         artifacts = _generate_artifacts(
+            request,
             base_ctx,
             is_storefront,
             is_admin_ui,
@@ -520,6 +521,7 @@ def _phase_codegen(
 
 
 def _generate_artifacts(
+    request: GenerationRequest,
     base_ctx: CodegenContext,
     is_storefront: bool,
     is_admin_ui: bool,
@@ -537,15 +539,18 @@ def _generate_artifacts(
     is_revision_first_attempt = attempt == 1 and base_ctx.prior_handler_code is not None
 
     if is_revision_first_attempt:
+        _emit(request, "revision", "running", "Applying merchant changes…")
         revision = run_revision_agent(
             base_ctx, is_storefront=is_storefront, is_admin_ui=is_admin_ui
         )
         if revision.get("handler") and revision.get("migration"):
             log.info("revision_agent produced all artifacts")
+            _emit(request, "revision", "completed", "Revision complete")
             return revision
         log.warning(
             "revision_agent returned incomplete output — falling back to parallel codegen"
         )
+        _emit(request, "revision", "completed", "Revision incomplete — regenerating")
 
     return run_codegen_parallel(
         base_ctx,
@@ -556,7 +561,7 @@ def _generate_artifacts(
     )
 
 
-def _phase_llm_validation(
+def _phase_validator(
     request: GenerationRequest,
     base_ctx: CodegenContext,
     artifacts: Dict[str, str],
@@ -602,10 +607,11 @@ def _phase_llm_validation(
     _emit(
         request,
         "validator",
-        "retrying",
-        f"Fixing {len(issues)} semantic issue(s)…",
+        "completed",
+        f"{len(issues)} semantic issue(s) found — revising…",
     )
 
+    _emit(request, "revision", "running", f"Fixing {len(issues)} semantic issue(s)…")
     revised = run_revision_agent(
         base_ctx,
         is_storefront=is_storefront,
@@ -613,14 +619,14 @@ def _phase_llm_validation(
         validation_issues=issues,
     )
     if revised.get("handler") and revised.get("migration"):
-        _emit(request, "validator", "completed", "Semantic issues resolved")
+        _emit(request, "revision", "completed", "Semantic issues resolved")
         return {**artifacts, **revised}
 
     log.warning(
         "job=%s validator_agent: revision returned incomplete output — keeping originals",
         request.jobId,
     )
-    _emit(request, "validator", "completed", "Semantic check complete")
+    _emit(request, "revision", "completed", "Revision incomplete — keeping originals")
     return artifacts
 
 

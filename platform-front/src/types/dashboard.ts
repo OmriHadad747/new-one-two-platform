@@ -115,6 +115,7 @@ export type GenerationAgent =
   | "admin_ui"
   | "validation"
   | "validator"
+  | "revision"
   | "explanation";
 
 export interface ProgressEvent {

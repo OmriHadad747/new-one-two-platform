@@ -205,9 +205,16 @@ adminApiCatalog: REQUIRED (non-null, non-empty) when app archetype is "storefron
   - method "GET" = read-only (list data, load config), "POST" = action or mutation
   - responseShape: the EXACT JSON the handler returns on success.
   - Design around what the merchant actually needs — no speculative extras.
+  On-demand cron trigger — REQUIRED when cronSchedule is non-null:
+    ALWAYS include a POST "/run" path in adminApiCatalog so merchants can trigger an
+    immediate execution without waiting for the next scheduled run.
+    The cron handler checks for a pending "/run" request row at startup and sets its
+    runMode to "on-demand" vs "scheduled" accordingly, then marks the request fulfilled.
+    The CodeSpec agent will generate the run_requests table and the cron check automatically
+    when this path is present in adminApiCatalog.
   Examples:
     storefront_backend_admin (dashboard): [{ "method": "GET", "path": "/subscribers", "responseShape": { "total": 0, "rows": [] } }]
-    backend_admin (admin-triggered action): [{ "method": "POST", "path": "/run", "responseShape": { "processed": 0 } }]
+    backend_admin (admin-triggered action): [{ "method": "POST", "path": "/run", "responseShape": { "accepted": true } }]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):

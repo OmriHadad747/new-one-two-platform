@@ -10,6 +10,7 @@ USAGE
 -----
   python run_local.py "notify me when a product is back in stock"
   python run_local.py --file prompt.txt
+  python run_local.py --dir test_prompts/
 
 OUTPUT
 ------
@@ -53,12 +54,15 @@ _LABELS: Dict[str, str] = {
     "widget_js": "Widget JS",
     "admin_ui": "Admin UI",
     "validation": "Validation",
+    "validator": "Validator",
+    "revision": "Revision",
     "explanation": "Explanation",
 }
 
 # Report row order — agents that may or may not appear are added conditionally.
 _PLAN_AGENTS = ["product", "architect", "codespec"]
 _CODEGEN_AGENTS = ["handler", "migration", "widget_js", "admin_ui"]
+# Tail agents always present; validator+revision inserted only when they actually ran.
 _TAIL_AGENTS = ["validation", "explanation"]
 
 
@@ -161,6 +165,10 @@ def _save_report(result: Dict[str, Any]) -> Path:
         if a == "admin_ui" and not is_admin_ui:
             continue
         agent_rows.append(a)
+    # Insert optional agents (validator, revision) before explanation only if they ran.
+    for a in ["validator", "revision"]:
+        if a in stages:
+            agent_rows.append(a)
     agent_rows.extend(_TAIL_AGENTS)
 
     for agent in agent_rows:
@@ -171,16 +179,44 @@ def _save_report(result: Dict[str, Any]) -> Path:
         lines += ["", "## Artifacts", ""]
 
         if artifacts.get("handler"):
-            lines += ["### handler.js", "", "```javascript", artifacts["handler"], "```", ""]
+            lines += [
+                "### handler.js",
+                "",
+                "```javascript",
+                artifacts["handler"],
+                "```",
+                "",
+            ]
 
         if artifacts.get("migration"):
-            lines += ["### migration.sql", "", "```sql", artifacts["migration"], "```", ""]
+            lines += [
+                "### migration.sql",
+                "",
+                "```sql",
+                artifacts["migration"],
+                "```",
+                "",
+            ]
 
         if artifacts.get("widget_js"):
-            lines += ["### widget.js", "", "```javascript", artifacts["widget_js"], "```", ""]
+            lines += [
+                "### widget.js",
+                "",
+                "```javascript",
+                artifacts["widget_js"],
+                "```",
+                "",
+            ]
 
         if artifacts.get("admin_ui"):
-            lines += ["### admin_ui.js", "", "```javascript", artifacts["admin_ui"], "```", ""]
+            lines += [
+                "### admin_ui.js",
+                "",
+                "```javascript",
+                artifacts["admin_ui"],
+                "```",
+                "",
+            ]
 
     explanation = result.get("explanation")
     if explanation:
@@ -301,6 +337,37 @@ def run(prompt: str) -> None:
         sys.exit(1)
 
 
+def run_dir(dir_path: Path) -> None:
+    """Run every *.txt file in dir_path as a separate prompt, one by one."""
+    files = sorted(dir_path.glob("*.txt"))
+    if not files:
+        print(f"No .txt files found in {dir_path}")
+        sys.exit(1)
+
+    print(f"Found {len(files)} prompt file(s) in {dir_path.name}/")
+    print()
+
+    failed: List[str] = []
+    for i, f in enumerate(files, 1):
+        prompt = f.read_text().strip()
+        if not prompt:
+            print(f"[{i}/{len(files)}] Skipping {f.name} — empty")
+            continue
+        print(f"[{i}/{len(files)}] {f.name}")
+        try:
+            run(prompt=prompt)
+        except SystemExit as exc:
+            # run() calls sys.exit(1) on failure — catch so the loop continues
+            failed.append(f.name)
+
+    print()
+    if failed:
+        print(f"FAILED ({len(failed)}/{len(files)}): {', '.join(failed)}")
+        sys.exit(1)
+    else:
+        print(f"All {len(files)} prompts completed successfully.")
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 
@@ -316,21 +383,29 @@ def main() -> None:
     parser.add_argument(
         "--file", "-f", metavar="PATH", help="Read prompt from a text file."
     )
+    parser.add_argument(
+        "--dir",
+        "-d",
+        metavar="DIR",
+        help="Run all *.txt files in DIR as prompts, one by one.",
+    )
 
     args = parser.parse_args()
 
-    if args.file:
+    if args.dir:
+        run_dir(Path(args.dir))
+    elif args.file:
         prompt = Path(args.file).read_text().strip()
+        if not prompt:
+            parser.error("Prompt file is empty.")
+        run(prompt=prompt)
     elif args.prompt:
         prompt = args.prompt.strip()
+        if not prompt:
+            parser.error("Prompt is empty.")
+        run(prompt=prompt)
     else:
-        parser.error("Provide a prompt as a positional argument or via --file.")
-        return
-
-    if not prompt:
-        parser.error("Prompt is empty.")
-
-    run(prompt=prompt)
+        parser.error("Provide a prompt, --file PATH, or --dir DIR.")
 
 
 if __name__ == "__main__":

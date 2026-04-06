@@ -36,6 +36,7 @@ const OPTIONAL_AGENTS: Record<string, string> = {
   widget_js: "Generating storefront widget",
   admin_ui:  "Generating admin panel",
   validator: "Semantic alignment check",
+  revision:  "Applying revisions",
 };
 
 function buildSteps(byAgent: Record<string, ProgressEvent>) {
@@ -50,10 +51,15 @@ function buildSteps(byAgent: Record<string, ProgressEvent>) {
     steps.splice(validationIdx, 0, ...beforeValidation);
   }
 
-  // validator goes after validation (only when LLM_VALIDATION_ENABLED)
+  // validator goes after validation, revision goes after validator (both optional)
   if ("validator" in byAgent) {
     const newValidationIdx = steps.findIndex((s) => s.agent === "validation");
     steps.splice(newValidationIdx + 1, 0, { agent: "validator", label: OPTIONAL_AGENTS["validator"] });
+  }
+  if ("revision" in byAgent) {
+    const validatorIdx = steps.findIndex((s) => s.agent === "validator");
+    const insertAfter = validatorIdx !== -1 ? validatorIdx : steps.findIndex((s) => s.agent === "validation");
+    steps.splice(insertAfter + 1, 0, { agent: "revision", label: OPTIONAL_AGENTS["revision"] });
   }
 
   return steps;

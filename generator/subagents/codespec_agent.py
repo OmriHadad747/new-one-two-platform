@@ -78,6 +78,15 @@ State upsert is unconditional — when a handler tracks state transitions, the D
   exit before the upsert means the baseline is never established and future transitions
   will be silently missed.
 
+Config enforcement — every value loaded from a config table MUST be referenced in a downstream step:
+  If the algorithm reads a config row (e.g. SELECT delay_minutes, max_items FROM config),
+  EVERY loaded column must appear in a subsequent enforcement step.
+  Do NOT load config fields that the algorithm never uses — unused reads are dead code.
+  ❌ "load config: delayMinutes, maxItems" — never references maxItems anywhere else
+  ✅ "load config: delayMinutes, maxItems"
+     "filter pending rows: SELECT ... WHERE created_at < NOW() - INTERVAL '${delayMinutes} minutes'"
+     "slice to first ${maxItems} rows before processing loop"
+
 Webhook payload scoping — MANDATORY:
   Every DB read and write in the webhook path MUST be scoped to the specific entity
   from the payload (e.g. the variant_id, order_id, customer_id, inventory_item_id
@@ -293,6 +302,17 @@ Rules:
   - POST-style paths (trigger, save): body IS sent; MUST include explicit ctx.adminBody destructuring step
   - Always scope DB reads to ctx.tenantId
   - Follow the same atomic claim and error-guard rules as webhookPath/cronPath
+
+On-demand run path (/run) — when adminApiCatalog contains a POST /run path:
+  adminPath steps for /run:
+    "path /run: admin panel calls bridge.call('/run') with no body"
+    "path /run: handler: INSERT INTO <feature>_run_requests (id, tenant_id, requested_at) VALUES (gen_random_uuid(), ctx.tenantId, NOW())"
+    "path /run: handler returns { accepted: true }"
+  cronPath MUST start with:
+    "check pending on-demand request: SELECT id FROM <feature>_run_requests WHERE tenant_id = ${ctx.tenantId} AND fulfilled_at IS NULL ORDER BY requested_at ASC LIMIT 1"
+    "set runMode = pendingRequest.length > 0 ? 'on-demand' : 'scheduled'"
+  cronPath MUST end with (before returning):
+    "if runMode === 'on-demand': UPDATE <feature>_run_requests SET fulfilled_at = NOW() WHERE id = ${pendingRequest[0].id} AND tenant_id = ${ctx.tenantId}"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):
