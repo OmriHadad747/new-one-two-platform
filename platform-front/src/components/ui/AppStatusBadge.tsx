@@ -4,11 +4,12 @@ import type { App } from "@/types/dashboard";
 // ─── Single source of truth for app status colors ────────────────────────────
 
 export const APP_STATUS_CFG: Record<string, { label: string; dot: string; badge: string }> = {
-  active:   { label: "Live",     dot: "bg-green-500 animate-pulse", badge: "bg-green-500/10 text-green-500 border-green-500/25"        },
-  draft:    { label: "Draft",    dot: "bg-faint",                   badge: "bg-white/[0.05] text-faint border-white/15 border-dashed"  },
-  inactive: { label: "Inactive", dot: "bg-danger",                  badge: "bg-danger/10 text-danger border-danger/25"                 },
-  deleted:  { label: "Deleted",  dot: "bg-danger opacity-50",       badge: "bg-danger/5 text-danger/60 border-danger/15"              },
-  building: { label: "Building", dot: "bg-accent animate-pulse",    badge: "bg-accent/10 text-accent border-accent/20"                },
+  draft:    { label: "Draft",       dot: "bg-faint",                          badge: "bg-white/[0.05] text-faint border-white/15 border-dashed"  },
+  building: { label: "Building",    dot: "bg-accent animate-pulse",           badge: "bg-accent/10 text-accent border-accent/20"                 },
+  ready:    { label: "Ready",       dot: "bg-orange-400 animate-pulse",       badge: "bg-orange-400/10 text-orange-300 border-orange-400/25"     },
+  active:   { label: "Live",        dot: "bg-green-500 animate-pulse",        badge: "bg-green-500/10 text-green-500 border-green-500/25"        },
+  inactive: { label: "Inactive",    dot: "bg-danger",                         badge: "bg-danger/10 text-danger border-danger/25"                 },
+  deleted:  { label: "Deleted",     dot: "bg-danger opacity-50",              badge: "bg-danger/5 text-danger/60 border-danger/15"              },
 };
 
 interface AppStatusBadgeProps {

@@ -23,6 +23,8 @@ import {
   cancelGenerationSession,
   getLatestSessionForApp,
   saveChatMessages,
+  updateAppStatus,
+  getAppByIdOnly,
 } from "@new-one-two/db";
 import { deployFeatureBundle, deployAppVersion } from "@new-one-two/deployer";
 import type {
@@ -81,6 +83,8 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
               bundleMsg.bundle as unknown as Record<string, unknown>,
               "completed"
             );
+            // Transition app to "ready" — bundle is stored, awaiting merchant deploy.
+            await updateAppStatus(appId, "ready");
           } else {
             await storeBundleInSession(
               jobId,
@@ -88,6 +92,8 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
               "failed",
               bundleMsg.error ?? "Generation failed"
             );
+            // Failed generation: revert app to "draft" so it can be re-generated.
+            await updateAppStatus(appId, "draft");
           }
           logger.info({ jobId, status: bundleMsg.status }, "Bundle stored in DB");
         }
@@ -220,6 +226,17 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         return reply.status(422).send({ error: "Cannot deploy a failed generation" });
       }
 
+      // Verify the app is in "ready" state — i.e. generation succeeded and
+      // the merchant has not yet deployed this build.
+      if (session.appId) {
+        const appRecord = await getAppByIdOnly(session.appId);
+        if (!appRecord || appRecord.status !== "ready") {
+          return reply.status(409).send({
+            error: `App must be in 'ready' state to deploy (current: ${appRecord?.status ?? "unknown"})`,
+          });
+        }
+      }
+
       const bundleKeys = session.bundle ? Object.keys(session.bundle as Record<string, unknown>) : [];
       if (bundleKeys.length > 0 && session.appId && session.tenantId) {
         // New path: Python-generated FeatureBundle
@@ -305,6 +322,8 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
               bundleMsg.bundle as unknown as Record<string, unknown>,
               "completed"
             );
+            // Revision succeeded: move app back to "ready" for merchant to re-deploy.
+            await updateAppStatus(session.appId!, "ready");
           } else {
             await storeBundleInSession(
               newJobId,
@@ -312,6 +331,7 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
               "failed",
               bundleMsg.error ?? "Revision failed"
             );
+            // Revision failed: keep app in current status (already active or ready).
           }
         }
       );

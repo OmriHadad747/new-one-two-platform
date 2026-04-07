@@ -2,7 +2,7 @@
 // Consumed by: db, deployer, api
 
 export type TenantStatus = "active" | "suspended" | "pending";
-export type AppStatus = "active" | "inactive" | "deleted" | "draft";
+export type AppStatus = "draft" | "ready" | "active" | "inactive" | "deleted";
 export type VersionStatus = "draft" | "building" | "ready" | "failed" | "archived";
 export type DeployedFunctionRuntime = "nodejs20" | "nodejs18";
 export type LogLevel = "info" | "warn" | "error" | "debug";

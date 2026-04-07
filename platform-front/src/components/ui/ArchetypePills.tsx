@@ -1,9 +1,9 @@
 import type { AppArchetype } from "@/types/dashboard";
 
 const PILLS: Record<string, { icon: string; label: string; cls: string; dotCls: string }> = {
-  Backend: { icon: "bolt",                 label: "Backend",          cls: "bg-slate-500/10 text-slate-400 border border-slate-500/20", dotCls: "bg-slate-500/15 text-slate-400" },
-  Widget:  { icon: "widgets",              label: "Storefront Widget", cls: "bg-teal/10   text-teal   border border-teal/20",   dotCls: "bg-teal/15   text-teal"   },
-  Admin:   { icon: "admin_panel_settings", label: "Admin UI",         cls: "bg-amber/10  text-amber  border border-amber/20",  dotCls: "bg-amber/15  text-amber"  },
+  Backend: { icon: "bolt",                 label: "Backend",           cls: "bg-emerald-400/[.12]  text-emerald-300  border border-emerald-400/[.2]",  dotCls: "bg-emerald-400/[.15]  text-emerald-300"  },
+  Widget:  { icon: "widgets",              label: "Storefront Widget", cls: "bg-sky-400/[.12]      text-sky-300      border border-sky-400/[.2]",      dotCls: "bg-sky-400/[.15]      text-sky-300"      },
+  Admin:   { icon: "admin_panel_settings", label: "Admin UI",          cls: "bg-orange-400/[.12]  text-orange-300  border border-orange-400/[.2]",  dotCls: "bg-orange-400/[.15]  text-orange-300"  },
 };
 
 interface ArchetypePillsProps {
