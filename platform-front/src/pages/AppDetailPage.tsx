@@ -520,6 +520,55 @@ function buildValidationSteps({
   return steps;
 }
 
+// ─── How it works card ────────────────────────────────────────────────────────
+
+function HowItWorksCard({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const sentences = text
+    .replace(/\n+/g, " ")
+    .match(/[^.!?]+[.!?]+/g)
+    ?.map((s) => s.trim())
+    .filter(Boolean) ?? [text];
+  const PREVIEW = 3;
+  const visible  = expanded ? sentences : sentences.slice(0, PREVIEW);
+  const hasMore  = sentences.length > PREVIEW;
+
+  return (
+    <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-white/[0.06] bg-white/[0.02] flex items-center gap-2">
+        <span className="material-symbols-outlined text-accent text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
+        <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How it works</h3>
+      </div>
+      <div className="px-5 py-4">
+        <div className="relative pl-4">
+          {/* vertical guide line */}
+          <div className="absolute left-[5px] top-2 bottom-2 w-px bg-white/[0.08]" />
+          <div className="space-y-3.5">
+            {visible.map((sentence, i) => (
+              <div key={i} className="relative flex gap-3">
+                <span className="absolute -left-4 top-[5px] w-2 h-2 rounded-full bg-accent/40 ring-2 ring-accent/10 shrink-0" />
+                <p className="text-[12px] font-medium text-muted leading-relaxed">{sentence}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        {hasMore && (
+          <button
+            type="button"
+            onClick={() => setExpanded((e) => !e)}
+            className="mt-3.5 flex items-center gap-1 text-[11px] text-accent/70 hover:text-accent transition-colors bg-transparent border-0 cursor-pointer p-0"
+          >
+            {expanded ? "Show less" : `+${sentences.length - PREVIEW} more`}
+            <span className="material-symbols-outlined text-[13px]">
+              {expanded ? "expand_less" : "expand_more"}
+            </span>
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // ─── Overview tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({
@@ -541,9 +590,15 @@ function OverviewTab({
   deploying: boolean;
   isBuilding: boolean;
 }) {
-  const webhookTopics = latestSession?.webhookTopics ?? [];
-  const cronSchedule  = latestSession?.cronSchedule ?? null;
-  const prompt        = latestSession?.prompt ?? null;
+  const webhookTopics  = latestSession?.webhookTopics ?? [];
+  const cronSchedule   = latestSession?.cronSchedule ?? null;
+  const prompt         = latestSession?.prompt ?? null;
+  const appExplanation = (() => {
+    const exp = latestSession?.bundle?.explanation;
+    if (!exp) return null;
+    if (typeof exp === "string") return exp;
+    return exp.merchantFacing ?? null;
+  })();
 
   const hasWidget  = !!(latestSession?.bundle?.widgetModule  ?? (app.appArchetype === "storefront_backend" || app.appArchetype === "storefront_backend_admin"));
   const hasAdminUI = !!(latestSession?.bundle?.adminUiModule ?? (app.appArchetype === "backend_admin"      || app.appArchetype === "storefront_backend_admin"));
@@ -600,7 +655,7 @@ function OverviewTab({
               <div className="divide-y divide-white/[0.05]">
                 {webhookTopics.length > 0 && (
                   <div className="px-5 py-3.5">
-                    <p className="text-[11px] text-faint mb-2">Active webhooks</p>
+                    <p className="text-[11px] font-semibold text-faint mb-2">Active webhooks</p>
                     <div className="flex flex-wrap gap-1.5">
                       {webhookTopics.map((t) => (
                         <span key={t} className="text-[11px] font-mono px-2 py-0.5 bg-white/[0.05] border border-white/[0.07] rounded-md text-ink">
@@ -612,13 +667,13 @@ function OverviewTab({
                 )}
                 {cronSchedule && (
                   <div className="px-5 py-3.5">
-                    <p className="text-[11px] text-faint mb-1.5">Cron schedule</p>
+                    <p className="text-[11px] font-semibold text-faint mb-1.5">Cron schedule</p>
                     <div className="flex items-center gap-3">
                       <code className="text-[12px] font-mono text-ink bg-white/[0.04] px-2.5 py-1 rounded-lg border border-white/[0.07]">
                         {cronSchedule}
                       </code>
                       {humanizeCron(cronSchedule) && (
-                        <span className="text-[11px] text-faint">{humanizeCron(cronSchedule)}</span>
+                        <span className="text-[11px] font-medium text-muted">{humanizeCron(cronSchedule)}</span>
                       )}
                     </div>
                   </div>
@@ -657,14 +712,10 @@ function OverviewTab({
           </section>
           )}
 
-          {/* Original prompt */}
-          {latestSession !== null && prompt && (
-            <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/[0.06] bg-white/[0.02]">
-                <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Original Prompt</h3>
-              </div>
-              <p className="px-5 py-4 text-[12px] text-faint leading-relaxed whitespace-pre-wrap">{prompt}</p>
-            </section>
+
+          {/* App explanation */}
+          {appExplanation && (
+            <HowItWorksCard text={appExplanation} />
           )}
         </div>
 
@@ -679,7 +730,7 @@ function OverviewTab({
             </div>
             {latestSession !== null && (
               <div className="px-4 pb-4 space-y-2 border-t border-white/[0.06] pt-3">
-                {latestSession?.status === "completed" && app.status === "draft" && (
+                {latestSession?.status === "completed" && (app.status === "draft" || app.status === "ready") && (
                   <button type="button" onClick={onDeploy} disabled={deploying}
                     className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-green-500/10 hover:bg-green-500/18 border border-green-500/25 text-green-500 text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-50">
                     <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>rocket_launch</span>
@@ -794,9 +845,9 @@ function OverviewTab({
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2">
-      <span className="text-[9.5px] font-bold uppercase tracking-wider text-faint w-[68px] shrink-0">{label}</span>
-      <span className="text-[12.5px] text-ink flex-1 min-w-0">{value}</span>
+    <div className="flex items-center gap-3 px-5 py-3">
+      <span className="text-[11px] font-semibold text-faint w-[68px] shrink-0">{label}</span>
+      <span className="text-[12.5px] font-medium text-ink flex-1 min-w-0">{value}</span>
     </div>
   );
 }
@@ -847,6 +898,24 @@ function SettingsPanel({
     finally { setDeleting(false); setDeleteConfirm(false); }
   };
 
+  const [permDeleteInput, setPermDeleteInput] = useState("");
+  const [permDeleteOpen, setPermDeleteOpen]   = useState(false);
+  const [permDeleting, setPermDeleting]       = useState(false);
+  const [permDeleteError, setPermDeleteError] = useState<string | null>(null);
+  const handlePermanentDelete = async () => {
+    if (permDeleteInput !== app.name) return;
+    setPermDeleting(true);
+    setPermDeleteError(null);
+    try {
+      await api.apps.permanentDelete(tenantId, app.id);
+      onDelete();
+    } catch (err) {
+      setPermDeleteError(err instanceof Error ? err.message : "Delete failed. Please try again.");
+    } finally {
+      setPermDeleting(false);
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto py-8 px-6 space-y-8">
 
@@ -881,24 +950,80 @@ function SettingsPanel({
       {app.status !== "deleted" && (
         <section>
           <h2 className="text-[11px] font-bold text-danger uppercase tracking-wider mb-4">Danger Zone</h2>
-          <div className="bg-danger/5 border border-danger/20 rounded-xl px-5 py-4 flex items-center justify-between gap-4">
-            <div>
-              <p className="text-[13px] font-medium text-ink">Delete this app</p>
-              <p className="text-[11px] text-faint mt-0.5">Permanently removes the app and stops all processing.</p>
-            </div>
-            {deleteConfirm ? (
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-[11px] text-danger">Are you sure?</span>
-                <Button size="sm" variant="ghost" className="text-danger hover:bg-danger/10 border border-danger/30" onClick={() => void handleDelete()} disabled={deleting}>
-                  {deleting ? "Deleting…" : "Yes, delete"}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setDeleteConfirm(false)}>Cancel</Button>
+          <div className="bg-danger/5 border border-danger/20 rounded-xl divide-y divide-danger/10">
+
+            {/* Soft delete */}
+            <div className="px-5 py-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-[13px] font-medium text-ink">Archive this app</p>
+                <p className="text-[11px] text-faint mt-0.5">Stops all processing and hides the app. Reversible.</p>
               </div>
-            ) : (
-              <Button size="sm" variant="ghost" className="text-danger hover:bg-danger/10 border border-danger/30 shrink-0" onClick={() => setDeleteConfirm(true)}>
-                Delete app
-              </Button>
-            )}
+              {deleteConfirm ? (
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11px] text-danger">Are you sure?</span>
+                  <Button size="sm" variant="ghost" className="text-danger hover:bg-danger/10 border border-danger/30" onClick={() => void handleDelete()} disabled={deleting}>
+                    {deleting ? "Archiving…" : "Yes, archive"}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setDeleteConfirm(false)}>Cancel</Button>
+                </div>
+              ) : (
+                <Button size="sm" variant="ghost" className="text-danger hover:bg-danger/10 border border-danger/30 shrink-0" onClick={() => setDeleteConfirm(true)}>
+                  Archive
+                </Button>
+              )}
+            </div>
+
+            {/* Hard delete */}
+            <div className="px-5 py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[13px] font-medium text-ink">Permanently delete</p>
+                  <p className="text-[11px] text-faint mt-0.5">
+                    Removes all data, DB tables, images, and webhooks. Cannot be undone.
+                  </p>
+                </div>
+                {!permDeleteOpen && (
+                  <Button size="sm" variant="ghost" className="text-danger hover:bg-danger/10 border border-danger/30 shrink-0" onClick={() => setPermDeleteOpen(true)}>
+                    Delete forever
+                  </Button>
+                )}
+              </div>
+              {permDeleteOpen && (
+                <div className="mt-4 p-4 bg-danger/5 border border-danger/20 rounded-xl space-y-3">
+                  <p className="text-[12px] text-danger leading-relaxed">
+                    This will destroy everything associated with <span className="font-semibold">{app.name}</span>. Type the app name to confirm.
+                  </p>
+                  <input
+                    autoFocus
+                    value={permDeleteInput}
+                    onChange={(e) => { setPermDeleteInput(e.target.value); setPermDeleteError(null); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void handlePermanentDelete();
+                      if (e.key === "Escape") { setPermDeleteOpen(false); setPermDeleteInput(""); setPermDeleteError(null); }
+                    }}
+                    placeholder={app.name}
+                    className="w-full text-[13px] text-ink bg-raised border border-danger/40 rounded-lg px-3 py-2 outline-none focus:border-danger/70 transition-colors placeholder:text-faint/50"
+                  />
+                  {permDeleteError && (
+                    <p className="text-[11px] text-danger">{permDeleteError}</p>
+                  )}
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm" variant="ghost"
+                      className="text-danger hover:bg-danger/15 border border-danger/40 disabled:opacity-40"
+                      onClick={() => void handlePermanentDelete()}
+                      disabled={permDeleting || permDeleteInput !== app.name}
+                    >
+                      {permDeleting ? "Deleting…" : "Delete forever"}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setPermDeleteOpen(false); setPermDeleteInput(""); setPermDeleteError(null); }}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
           </div>
         </section>
       )}
@@ -935,10 +1060,13 @@ export function AppDetailPage() {
   const activeGen     = useGenerationStore((s) => s.active);
   const isGenerating  = activeGen?.appId === appId && activeGen?.status === "running";
 
+  const invalidateAppCache = () =>
+    queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+
   const handleDeployDraft = async () => {
     if (!latestSession?.jobId) return;
     setDeploying(true);
-    try { await approve(latestSession.jobId); await appQuery.refetch(); }
+    try { await approve(latestSession.jobId); await appQuery.refetch(); void invalidateAppCache(); }
     catch (err) { alert(err instanceof Error ? err.message : "Deployment failed"); }
     finally { setDeploying(false); }
   };
@@ -946,7 +1074,7 @@ export function AppDetailPage() {
   const handleRedeploy = async () => {
     if (!tenantId || !appId) return;
     setDeploying(true);
-    try { await api.apps.setStatus(tenantId, appId, "active"); await appQuery.refetch(); }
+    try { await api.apps.setStatus(tenantId, appId, "active"); await appQuery.refetch(); void invalidateAppCache(); }
     catch (err) { alert(err instanceof Error ? err.message : "Redeployment failed"); }
     finally { setDeploying(false); }
   };
@@ -954,7 +1082,7 @@ export function AppDetailPage() {
   const handleDeactivate = async () => {
     if (!tenantId || !appId) return;
     setDeploying(true);
-    try { await api.apps.setStatus(tenantId, appId, "inactive"); await appQuery.refetch(); }
+    try { await api.apps.setStatus(tenantId, appId, "inactive"); await appQuery.refetch(); void invalidateAppCache(); }
     catch (err) { alert(err instanceof Error ? err.message : "Deactivation failed"); }
     finally { setDeploying(false); }
   };

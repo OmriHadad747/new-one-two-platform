@@ -40,3 +40,25 @@ export async function dockerPush(imageName: string): Promise<void> {
   await runCommand("docker", ["push", imageName], process.cwd());
   logger.info({ imageName }, "Docker image pushed");
 }
+
+/**
+ * Deletes a Docker image from the local daemon (local mode) or GCR (cloud mode).
+ * Non-fatal — logs a warning and continues on failure.
+ */
+export async function deleteDockerImage(imageName: string): Promise<void> {
+  const deployMode = process.env["DEPLOY_MODE"] ?? "cloudrun";
+  try {
+    if (deployMode === "local") {
+      await runCommand("docker", ["rmi", "-f", imageName], process.cwd());
+    } else {
+      await runCommand(
+        "gcloud",
+        ["container", "images", "delete", imageName, "--force-delete-tags", "--quiet"],
+        process.cwd()
+      );
+    }
+    logger.info({ imageName }, "Docker image deleted");
+  } catch (err) {
+    logger.warn({ err, imageName }, "Failed to delete Docker image (continuing)");
+  }
+}

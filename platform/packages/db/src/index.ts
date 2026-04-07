@@ -1540,6 +1540,36 @@ export async function deactivateAppInfrastructure(appId: string): Promise<void> 
   `;
 }
 
+export async function getAppVersionSemvers(appId: string): Promise<string[]> {
+  const rows = await sql<{ semver: string }[]>`
+    SELECT semver FROM app_versions WHERE app_id = ${appId} ORDER BY created_at ASC
+  `;
+  return rows.map((r) => r.semver);
+}
+
+export async function getLatestMigrationSqlForApp(appId: string): Promise<string | null> {
+  const rows = await sql<{ migSql: string | null }[]>`
+    SELECT bundle->'dbMigration'->>'sql' AS "migSql"
+    FROM generation_sessions
+    WHERE app_id = ${appId}
+      AND status = 'completed'
+      AND bundle IS NOT NULL
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return rows[0]?.migSql ?? null;
+}
+
+export async function hardDeleteApp(appId: string): Promise<void> {
+  // Two ON DELETE RESTRICT FKs block the cascade if we delete apps directly:
+  //   webhook_subscriptions.deployed_function_id → deployed_functions(id) RESTRICT
+  //   deployed_functions.app_version_id          → app_versions(id)       RESTRICT
+  // Break those chains first, then let the remaining cascades handle the rest.
+  await sql`DELETE FROM webhook_subscriptions WHERE app_id = ${appId}`;
+  await sql`DELETE FROM deployed_functions     WHERE app_id = ${appId}`;
+  await sql`DELETE FROM apps                   WHERE id    = ${appId}`;
+}
+
 export async function upsertWebhookSubscription(params: {
   appId: string;
   tenantId: string;

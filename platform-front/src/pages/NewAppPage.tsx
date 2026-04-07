@@ -93,6 +93,9 @@ export function NewAppPage() {
   const prevStatus = useRef<string>("idle");
   const genMsgIdRef = useRef<string | null>(null);
   const prevRouteAppId = useRef<string | undefined>(routeAppId);
+  // Tracks whether hydration has run for the current mount of this component.
+  // Resets to false on every mount so navigation back to the same app re-hydrates.
+  const hasHydratedRef = useRef(false);
 
   // Deployment state
   const [deployed, setDeployed]   = useState(false);
@@ -123,6 +126,7 @@ export function NewAppPage() {
     if (routeAppId === prevRouteAppId.current) return;
     prevRouteAppId.current = routeAppId;
     genMsgIdRef.current = null;
+    hasHydratedRef.current = false;
     reset();
     setSelectedAppId(routeAppId ?? null);
     setDeployed(false);
@@ -136,38 +140,53 @@ export function NewAppPage() {
   // ── Hydrate state from the persisted latest session ─────────────────────────
   useEffect(() => {
     const session = latestSessionQuery.data;
-    if (!session || gen.status !== "idle") return;
+    if (!session || hasHydratedRef.current) return;
 
     if (session.status === "running" && session.jobId) {
+      // Don't reconnect if already connected to this job
+      if (gen.status !== "idle") return;
       const cached = activeGenStore?.jobId === session.jobId ? activeGenStore : null;
       // Don't reconnect to a job the user already cancelled this session
       if (cached?.status === "failed") return;
+      hasHydratedRef.current = true;
       reconnect(session.jobId, cached?.events ?? []);
+
+      // Priority 1: DB-persisted chat history (survives hard navigation).
+      const dbMessages = session.chatMessages as ChatMessage[] | null | undefined;
+      if (dbMessages?.length) {
+        // Ensure the generating card is present — the user is still mid-build.
+        const hasGeneratingCard = dbMessages.some((m) => m.type === "generating");
+        if (hasGeneratingCard) {
+          const genMsg = dbMessages.find((m) => m.type === "generating");
+          if (genMsg) genMsgIdRef.current = genMsg.id;
+          setMessages(dbMessages);
+        } else {
+          const genMsgId = crypto.randomUUID();
+          genMsgIdRef.current = genMsgId;
+          setMessages([...dbMessages, { id: genMsgId, role: "ai", type: "generating" }]);
+        }
+        return;
+      }
+
+      // Priority 2: In-memory Zustand store (survives soft navigation).
       if (cached?.messages?.length) {
         setMessages(cached.messages);
-      } else {
-        const genMsgId = "resume-gen";
-        genMsgIdRef.current = genMsgId;
-        setMessages([WELCOME, { id: genMsgId, role: "ai", type: "generating" }]);
+        return;
       }
+
+      // Priority 3: Bare generating card fallback.
+      const genMsgId = "resume-gen";
+      genMsgIdRef.current = genMsgId;
+      setMessages([WELCOME, { id: genMsgId, role: "ai", type: "generating" }]);
       return;
     }
 
     if (session.status !== "completed" && session.status !== "failed") return;
-
-    const sb = session.bundle as SessionBundle | null | undefined;
-    if (!sb?.handlerModule) return;
     if (!activeAppQuery.isSuccess) return;
 
-    const restoredBundle: GenerationBundle = {
-      explanation: sb.explanation?.merchantFacing,
-      triggerTopics: sb.handlerModule.webhookTopics ?? session.webhookTopics,
-      triggerType: sb.handlerModule.cronSchedule
-        ? "cron" : sb.adminUiModule ? "admin" : sb.widgetModule ? "widget" : "webhook",
-      hasWidget:  !!sb.widgetModule,
-      hasAdminUI: !!sb.adminUiModule,
-    };
+    hasHydratedRef.current = true;
 
+    const sb = session.bundle as SessionBundle | null | undefined;
     const alreadyDeployed = activeApp !== null && activeApp.status === "active";
     if (session.jobId) restore(session.jobId);
     setDeployed(alreadyDeployed);
@@ -187,6 +206,15 @@ export function NewAppPage() {
     }
 
     // Priority 3: Rebuild a minimal summary card from session metadata.
+    if (!sb?.handlerModule) return;
+    const restoredBundle: GenerationBundle = {
+      explanation: sb.explanation?.merchantFacing,
+      triggerTopics: sb.handlerModule.webhookTopics ?? session.webhookTopics,
+      triggerType: sb.handlerModule.cronSchedule
+        ? "cron" : sb.adminUiModule ? "admin" : sb.widgetModule ? "widget" : "webhook",
+      hasWidget:  !!sb.widgetModule,
+      hasAdminUI: !!sb.adminUiModule,
+    };
     const resumeMsgId = "resume-card";
     genMsgIdRef.current = resumeMsgId;
 
@@ -202,7 +230,7 @@ export function NewAppPage() {
           },
     ]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestSessionQuery.data, activeApp?.status, activeAppQuery.isSuccess]);
+  }, [latestSessionQuery.data, gen.status, activeApp?.status, activeAppQuery.isSuccess]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -227,8 +255,11 @@ export function NewAppPage() {
     () => messages.map(({ actions: _actions, ...msg }) => msg as Record<string, unknown>),
     [messages]
   );
+  // Always hold the latest save state so the unmount flush can use it.
+  const pendingSaveRef = useRef<{ jobId: string; messages: Array<Record<string, unknown>> } | null>(null);
   useEffect(() => {
     if (!gen.jobId || messages.length <= 1) return;
+    pendingSaveRef.current = { jobId: gen.jobId, messages: serializableMessages };
     if (saveChatTimerRef.current) clearTimeout(saveChatTimerRef.current);
     saveChatTimerRef.current = setTimeout(() => {
       api.generation.saveChat(gen.jobId!, serializableMessages).catch(() => null);
@@ -237,6 +268,13 @@ export function NewAppPage() {
       if (saveChatTimerRef.current) clearTimeout(saveChatTimerRef.current);
     };
   }, [gen.jobId, serializableMessages, messages.length]);
+  // Flush immediately on unmount so navigation away never loses the last save.
+  useEffect(() => {
+    return () => {
+      const p = pendingSaveRef.current;
+      if (p) api.generation.saveChat(p.jobId, p.messages).catch(() => null);
+    };
+  }, []);
 
   // Sync global generation store
   useEffect(() => {
@@ -511,6 +549,7 @@ export function NewAppPage() {
       await api.generation.result(gen.jobId);
       setDeployed(true);
       void activeAppQuery.refetch();
+      void queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
 
       const genMsgId  = genMsgIdRef.current;
       const liveAppId = selectedAppId;
@@ -565,6 +604,7 @@ export function NewAppPage() {
           messages={messages}
           isAnalyzing={isAnalyzing}
           liveGenEvents={gen.events}
+          generationCompleted={gen.status === "completed"}
           onDeploy={handleDeploy}
           deploying={deploying}
           onClarifyAnswer={handleClarifyAnswer}

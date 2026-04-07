@@ -9,14 +9,13 @@
  * The migration runs inside withTenantContext so RLS is active.
  * Empty sql is a no-op (some features may not need a DB table).
  */
-import { withTenantContext, sql } from "@new-one-two/db";
+import { withTenantContext } from "@new-one-two/db";
 import { logger } from "@new-one-two/logger";
 
 const FORBIDDEN_PATTERNS = [
   /\bDROP\s+TABLE\b/i,
   /\bDROP\s+COLUMN\b/i,
   /\bTRUNCATE\b/i,
-  /\bALTER\s+TABLE\b(?!\s+\w+\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY)/i,
 ];
 
 function validateMigrationSql(migrationSql: string): void {
@@ -29,9 +28,24 @@ function validateMigrationSql(migrationSql: string): void {
     }
   }
 
+  // ALTER TABLE is only allowed for ENABLE ROW LEVEL SECURITY.
+  // Match each ALTER TABLE statement up to its semicolon so we can inspect
+  // the full command regardless of table name format (plain, quoted, schema-qualified).
+  const alterMatches = migrationSql.match(/\bALTER\s+TABLE\b[^;]+;/gi);
+  if (alterMatches) {
+    for (const stmt of alterMatches) {
+      if (!/\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b/i.test(stmt)) {
+        throw new Error(
+          `ALTER TABLE is only allowed for ENABLE ROW LEVEL SECURITY. ` +
+            `Forbidden statement: ${stmt.substring(0, 120)}`
+        );
+      }
+    }
+  }
+
   // Every CREATE TABLE must include tenant_id
   const createTableMatches = migrationSql.match(
-    /CREATE\s+TABLE\s+\w+\s*\([\s\S]*?\);/gi
+    /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\w."]+\s*\([\s\S]*?\);/gi
   );
   if (createTableMatches) {
     for (const stmt of createTableMatches) {

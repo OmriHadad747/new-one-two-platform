@@ -1,9 +1,18 @@
 import type { AppArchetype } from "@/types/dashboard";
+import { useThemeStore } from "@/stores/theme";
 
-const PILLS: Record<string, { icon: string; label: string; cls: string; dotCls: string }> = {
-  Backend: { icon: "bolt",                 label: "Backend",           cls: "bg-emerald-400/[.12]  text-emerald-300  border border-emerald-400/[.2]",  dotCls: "bg-emerald-400/[.15]  text-emerald-300"  },
-  Widget:  { icon: "widgets",              label: "Storefront Widget", cls: "bg-sky-400/[.12]      text-sky-300      border border-sky-400/[.2]",      dotCls: "bg-sky-400/[.15]      text-sky-300"      },
+type PillDef = { icon: string; label: string; cls: string; dotCls: string };
+
+const PILLS_DARK: Record<string, PillDef> = {
+  Backend: { icon: "bolt",                 label: "Backend",           cls: "bg-emerald-400/[.12] text-emerald-300 border border-emerald-400/[.2]", dotCls: "bg-emerald-400/[.15] text-emerald-300" },
+  Widget:  { icon: "widgets",              label: "Storefront Widget", cls: "bg-sky-400/[.12]     text-sky-300     border border-sky-400/[.2]",     dotCls: "bg-sky-400/[.15]     text-sky-300"     },
   Admin:   { icon: "admin_panel_settings", label: "Admin UI",          cls: "bg-orange-400/[.12]  text-orange-300  border border-orange-400/[.2]",  dotCls: "bg-orange-400/[.15]  text-orange-300"  },
+};
+
+const PILLS_LIGHT: Record<string, PillDef> = {
+  Backend: { icon: "bolt",                 label: "Backend",           cls: "bg-emerald-600/[.08] text-emerald-700 border border-emerald-600/[.18]", dotCls: "bg-emerald-600/[.1] text-emerald-700" },
+  Widget:  { icon: "widgets",              label: "Storefront Widget", cls: "bg-sky-600/[.08]     text-sky-700     border border-sky-600/[.18]",     dotCls: "bg-sky-600/[.1]     text-sky-700"     },
+  Admin:   { icon: "admin_panel_settings", label: "Admin UI",          cls: "bg-orange-600/[.08]  text-orange-700  border border-orange-600/[.18]",  dotCls: "bg-orange-600/[.1]  text-orange-700"  },
 };
 
 interface ArchetypePillsProps {
@@ -13,6 +22,9 @@ interface ArchetypePillsProps {
 }
 
 export function ArchetypePills({ archetype, compact }: ArchetypePillsProps) {
+  const theme = useThemeStore((s) => s.theme);
+  const PILLS = theme === "light" ? PILLS_LIGHT : PILLS_DARK;
+
   const hasWidget = archetype === "storefront_backend" || archetype === "storefront_backend_admin";
   const hasAdmin  = archetype === "backend_admin"      || archetype === "storefront_backend_admin";
 

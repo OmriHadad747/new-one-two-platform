@@ -84,15 +84,66 @@ function buildSteps(byAgent: Record<string, ProgressEvent>) {
 
 // ─── Inline cards ─────────────────────────────────────────────────────────────
 
-function GeneratingCard({ events }: { events: ProgressEvent[] }) {
+/**
+ * Resolves the display status for a step, using two inference rules:
+ *
+ * 1. Order inference — steps run sequentially. If a later step has started,
+ *    earlier steps without a completion event must already be done.
+ *
+ * 2. Completion override — once generation is done, any step still showing
+ *    "running" (because the backend never sent its completion event) is
+ *    treated as "completed".
+ */
+function resolveStepStatus(
+  agent: string,
+  stepIndex: number,
+  byAgent: Record<string, ProgressEvent>,
+  steps: { agent: string }[],
+  isCompleted: boolean,
+): "waiting" | "running" | "completed" | "failed" | "retrying" {
+  const event = byAgent[agent];
+
+  // Furthest step index that has received any event
+  const furthestActive = steps.reduce((max, s, i) => (byAgent[s.agent] ? Math.max(max, i) : max), -1);
+
+  if (event) {
+    if (isCompleted && event.status === "running") return "completed";
+    return event.status;
+  }
+
+  // No event for this step — infer from context
+  if (stepIndex < furthestActive || isCompleted) return "completed";
+  return "waiting";
+}
+
+function GeneratingCard({ events, isCompleted }: { events: ProgressEvent[]; isCompleted?: boolean }) {
   const byAgent = events.reduce<Record<string, ProgressEvent>>((acc, e) => {
     acc[e.agent] = e;
     return acc;
   }, {});
   const steps = buildSteps(byAgent);
-  const latestMessage = [...events].reverse().find(
-    (e) => e.status === "running" || e.status === "retrying"
-  )?.message;
+
+  // Agents currently running in parallel (ordered by step position for determinism).
+  const runningAgents = isCompleted
+    ? []
+    : steps
+        .map((s) => s.agent)
+        .filter((a) => byAgent[a]?.status === "running" || byAgent[a]?.status === "retrying");
+
+  // Cycle through parallel agents every 2s when >1 active.
+  const [cycleIdx, setCycleIdx] = useState(0);
+  useEffect(() => {
+    if (runningAgents.length <= 1) return;
+    const id = setInterval(() => setCycleIdx((i) => i + 1), 2000);
+    return () => clearInterval(id);
+  }, [runningAgents.length]);
+
+  // The one agent whose message and dot are "highlighted" this cycle.
+  const activeAgent = runningAgents.length > 0
+    ? runningAgents[cycleIdx % runningAgents.length]
+    : null;
+
+  const latestMessage = activeAgent ? (byAgent[activeAgent]?.message ?? null) : null;
 
   return (
     <div className="mt-2.5 bg-white/[0.04] border border-white/[0.07] rounded-xl p-4 max-w-[420px]">
@@ -100,16 +151,21 @@ function GeneratingCard({ events }: { events: ProgressEvent[] }) {
         Building your app
       </p>
       <div className="space-y-3">
-        {steps.map(({ agent, label }) => {
-          const status = byAgent[agent]?.status ?? "waiting";
+        {steps.map(({ agent, label }, idx) => {
+          const status = resolveStepStatus(agent, idx, byAgent, steps, isCompleted ?? false);
+          // Parallel sibling: running but not the currently highlighted agent.
+          const isParallelSibling = status === "running" && agent !== activeAgent;
           return (
             <div key={agent} className="flex items-center gap-3">
               <div className="w-5 h-5 flex items-center justify-center shrink-0">
                 {status === "completed" && (
-                  <span className="material-symbols-outlined text-teal text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                  <span className="material-symbols-outlined text-accent/70 text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>task_alt</span>
                 )}
-                {status === "running" && (
+                {status === "running" && !isParallelSibling && (
                   <span className="w-2 h-2 rounded-full bg-accent animate-pulse-subtle block" />
+                )}
+                {status === "running" && isParallelSibling && (
+                  <span className="w-2 h-2 rounded-full bg-accent/30 block" />
                 )}
                 {status === "failed" && (
                   <span className="material-symbols-outlined text-danger text-[15px]">cancel</span>
@@ -117,16 +173,17 @@ function GeneratingCard({ events }: { events: ProgressEvent[] }) {
                 {status === "retrying" && (
                   <span className="material-symbols-outlined text-amber text-[15px] animate-spin">refresh</span>
                 )}
-                {!["completed", "running", "failed", "retrying"].includes(status) && (
-                  <span className="w-2 h-2 rounded-full bg-white/10 block" />
+                {status === "waiting" && (
+                  <span className="w-2 h-2 rounded-full bg-faint/30 block" />
                 )}
               </div>
               <span className={cn(
                 "text-[12.5px]",
-                status === "completed" ? "text-muted" :
-                status === "running"   ? "text-ink font-medium" :
-                status === "failed"    ? "text-danger" :
-                status === "retrying"  ? "text-amber" :
+                status === "completed"              ? "text-muted" :
+                status === "running" && !isParallelSibling ? "text-ink font-medium" :
+                status === "running" && isParallelSibling  ? "text-muted" :
+                status === "failed"                 ? "text-danger" :
+                status === "retrying"               ? "text-amber" :
                 "text-faint"
               )}>
                 {label}
@@ -139,6 +196,40 @@ function GeneratingCard({ events }: { events: ProgressEvent[] }) {
         <div className="mt-3 pt-3 border-t border-white/[0.06]">
           <p className="text-[11px] text-accent animate-pulse-subtle leading-relaxed">{latestMessage}</p>
         </div>
+      )}
+    </div>
+  );
+}
+
+function ExplanationText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const sentences = text
+    .replace(/\n+/g, " ")
+    .match(/[^.!?]+[.!?]+/g)
+    ?.map((s) => s.trim())
+    .filter(Boolean) ?? [text];
+  const preview = sentences.slice(0, 2).join(" ");
+  const rest = sentences.slice(2);
+
+  return (
+    <div className="text-[12px] text-muted leading-relaxed">
+      <p>{preview}</p>
+      {expanded && rest.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {rest.map((s, i) => <p key={i}>{s}</p>)}
+        </div>
+      )}
+      {rest.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="mt-2 text-[11px] text-accent/70 hover:text-accent transition-colors bg-transparent border-0 cursor-pointer p-0 flex items-center gap-0.5"
+        >
+          {expanded ? "Show less" : `Show more`}
+          <span className="material-symbols-outlined text-[13px]">
+            {expanded ? "expand_less" : "expand_more"}
+          </span>
+        </button>
       )}
     </div>
   );
@@ -164,7 +255,7 @@ function DeployReadyCard({
       {/* Summary card */}
       <div className="bg-white/[0.04] border border-white/[0.07] rounded-xl p-4 space-y-3">
         <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-teal text-[19px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+          <span className="material-symbols-outlined text-accent text-[19px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
           <span className="text-[15px] font-bold text-ink">Generation complete</span>
         </div>
         {bundle && (
@@ -180,9 +271,9 @@ function DeployReadyCard({
           </div>
         )}
         {bundle?.explanation && (
-          <p className="text-[12.5px] text-muted leading-relaxed pt-2.5 border-t border-white/[0.06]">
-            {bundle.explanation.split("\n")[0]}
-          </p>
+          <div className="pt-2.5 border-t border-white/[0.06]">
+            <ExplanationText text={bundle.explanation} />
+          </div>
         )}
       </div>
 
@@ -308,85 +399,90 @@ interface ChatMessagesProps {
   messages: ChatMessage[];
   isAnalyzing?: boolean;
   liveGenEvents?: ProgressEvent[];
+  /** True once gen.status === "completed" — clears stale "running" step states */
+  generationCompleted?: boolean;
   onDeploy?: () => void;
   deploying?: boolean;
   onClarifyAnswer?: (text: string) => void;
 }
 
 export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
-  ({ messages, isAnalyzing, liveGenEvents = [], onDeploy, deploying, onClarifyAnswer }, ref) => (
+  ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, onDeploy, deploying, onClarifyAnswer }, ref) => (
     <div className="flex-1 overflow-y-auto">
-      <div className="px-6 py-6 flex flex-col gap-5 w-full max-w-[800px] mx-auto">
-        {messages.map((msg) => (
-          <div key={msg.id} className="flex gap-3">
-            <div
-              className={`w-[30px] h-[30px] rounded-lg shrink-0 flex items-center justify-center text-[13px] font-bold select-none
-                ${msg.role === "ai"
-                  ? "bg-gradient-to-br from-accent to-teal text-white"
-                  : "bg-raised border border-white/13 text-muted"
-                }`}
-            >
-              {msg.role === "ai" ? "A" : "M"}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-[11px] font-semibold text-faint mb-1.5 tracking-wide uppercase">
-                {msg.role === "ai" ? "Ton" : "You"}
-              </div>
-
-              {msg.text && (
-                <p className={`text-sm leading-relaxed ${msg.role === "user" ? "text-muted" : "text-ink"}`}>
-                  {msg.text}
-                </p>
-              )}
-
-              {msg.type === "generating" && (
-                <GeneratingCard events={liveGenEvents} />
-              )}
-
-              {msg.type === "deploy-ready" && (
-                <DeployReadyCard bundle={msg.deployBundle} onDeploy={onDeploy} deploying={deploying} />
-              )}
-
-              {msg.type === "live" && (
-                <LiveCard appId={msg.liveAppId} />
-              )}
-
-              {msg.type === "clarifying" && msg.clarifyingData && (
-                <ClarifyingCard data={msg.clarifyingData} onAnswer={onClarifyAnswer} />
-              )}
-
-              {msg.actions && msg.actions.length > 0 && (
-                <div className="flex gap-2 mt-3 flex-wrap">
-                  {msg.actions.map((action) => (
-                    <button
-                      key={action.label}
-                      type="button"
-                      onClick={action.onClick}
-                      className={
-                        action.variant === "ghost"
-                          ? "text-xs px-3 py-1.5 rounded-lg border border-white/13 text-muted hover:text-ink hover:border-white/25 transition-all duration-150 cursor-pointer bg-transparent"
-                          : "text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hi transition-all duration-150 cursor-pointer border-0"
-                      }
-                    >
-                      {action.label}
-                    </button>
-                  ))}
+      <div className="px-5 py-6 flex flex-col gap-6 w-full max-w-[760px] mx-auto">
+        {messages.map((msg) => {
+          if (msg.role === "user") {
+            return (
+              <div key={msg.id} className="flex justify-end">
+                <div className="max-w-[72%] bg-raised border border-white/[0.12] rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-sm">
+                  {msg.text && (
+                    <p className="text-[13px] text-ink leading-relaxed">{msg.text}</p>
+                  )}
                 </div>
-              )}
+              </div>
+            );
+          }
+
+          // AI message
+          return (
+            <div key={msg.id} className="flex gap-3 items-start">
+              <div className="w-[28px] h-[28px] rounded-lg shrink-0 flex items-center justify-center text-[12px] font-bold select-none bg-gradient-to-br from-accent to-teal text-white mt-0.5">
+                A
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] font-bold text-accent mb-2 tracking-wide">Ton</div>
+
+                {msg.text && (
+                  <p className="text-[13px] text-ink leading-relaxed">{msg.text}</p>
+                )}
+
+                {msg.type === "generating" && (
+                  <GeneratingCard events={liveGenEvents} isCompleted={generationCompleted} />
+                )}
+
+                {msg.type === "deploy-ready" && (
+                  <DeployReadyCard bundle={msg.deployBundle} onDeploy={onDeploy} deploying={deploying} />
+                )}
+
+                {msg.type === "live" && (
+                  <LiveCard appId={msg.liveAppId} />
+                )}
+
+                {msg.type === "clarifying" && msg.clarifyingData && (
+                  <ClarifyingCard data={msg.clarifyingData} onAnswer={onClarifyAnswer} />
+                )}
+
+                {msg.actions && msg.actions.length > 0 && (
+                  <div className="flex gap-2 mt-3 flex-wrap">
+                    {msg.actions.map((action) => (
+                      <button
+                        key={action.label}
+                        type="button"
+                        onClick={action.onClick}
+                        className={
+                          action.variant === "ghost"
+                            ? "text-xs px-3 py-1.5 rounded-lg border border-white/13 text-muted hover:text-ink hover:border-white/25 transition-all duration-150 cursor-pointer bg-transparent"
+                            : "text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hi transition-all duration-150 cursor-pointer border-0"
+                        }
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {isAnalyzing && (
-          <div className="flex gap-3">
-            <div className="w-[30px] h-[30px] rounded-lg shrink-0 flex items-center justify-center text-[13px] font-bold bg-gradient-to-br from-accent to-teal text-white select-none">
+          <div className="flex gap-3 items-start">
+            <div className="w-[28px] h-[28px] rounded-lg shrink-0 flex items-center justify-center text-[12px] font-bold bg-gradient-to-br from-accent to-teal text-white select-none mt-0.5">
               A
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-[11px] font-semibold text-faint mb-1.5 tracking-wide uppercase">
-                Ton
-              </div>
-              <p className="text-sm text-faint animate-pulse">Thinking…</p>
+              <div className="text-[11px] font-bold text-accent mb-2 tracking-wide">Ton</div>
+              <p className="text-[13px] text-faint animate-pulse">Thinking…</p>
             </div>
           </div>
         )}

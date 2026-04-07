@@ -1,16 +1,29 @@
 import { cn } from "@/lib/cn";
 import type { App } from "@/types/dashboard";
+import { useThemeStore } from "@/stores/theme";
 
-// ─── Single source of truth for app status colors ────────────────────────────
+type StatusCfg = { label: string; dot: string; badge: string };
 
-export const APP_STATUS_CFG: Record<string, { label: string; dot: string; badge: string }> = {
-  draft:    { label: "Draft",       dot: "bg-faint",                          badge: "bg-white/[0.05] text-faint border-white/15 border-dashed"  },
-  building: { label: "Building",    dot: "bg-accent animate-pulse",           badge: "bg-accent/10 text-accent border-accent/20"                 },
-  ready:    { label: "Ready",       dot: "bg-orange-400 animate-pulse",       badge: "bg-orange-400/10 text-orange-300 border-orange-400/25"     },
-  active:   { label: "Live",        dot: "bg-green-500 animate-pulse",        badge: "bg-green-500/10 text-green-500 border-green-500/25"        },
-  inactive: { label: "Inactive",    dot: "bg-danger",                         badge: "bg-danger/10 text-danger border-danger/25"                 },
-  deleted:  { label: "Deleted",     dot: "bg-danger opacity-50",              badge: "bg-danger/5 text-danger/60 border-danger/15"              },
+const CFG_DARK: Record<string, StatusCfg> = {
+  draft:    { label: "Draft",    dot: "bg-faint",                        badge: "bg-white/[0.05] text-faint border-white/15 border-dashed"           },
+  building: { label: "Building", dot: "bg-accent animate-pulse",         badge: "bg-accent/10 text-accent border-accent/20"                          },
+  ready:    { label: "Ready",    dot: "bg-amber-400 animate-pulse",      badge: "bg-amber-400/[.12] text-amber-300 border-amber-400/[.25]"            },
+  active:   { label: "Live",     dot: "bg-emerald-500 animate-pulse",    badge: "bg-emerald-500/[.12] text-emerald-400 border-emerald-500/[.25]"      },
+  inactive: { label: "Inactive", dot: "bg-danger",                       badge: "bg-danger/10 text-danger border-danger/25"                          },
+  deleted:  { label: "Deleted",  dot: "bg-danger opacity-50",            badge: "bg-danger/5 text-danger/60 border-danger/15"                        },
 };
+
+const CFG_LIGHT: Record<string, StatusCfg> = {
+  draft:    { label: "Draft",    dot: "bg-faint",                        badge: "bg-black/[0.04] text-faint border-black/[.12] border-dashed"        },
+  building: { label: "Building", dot: "bg-accent animate-pulse",         badge: "bg-accent/10 text-accent border-accent/20"                          },
+  ready:    { label: "Ready",    dot: "bg-amber-600 animate-pulse",      badge: "bg-amber-600/[.08] text-amber-700 border-amber-600/[.22]"            },
+  active:   { label: "Live",     dot: "bg-emerald-600 animate-pulse",    badge: "bg-emerald-600/[.08] text-emerald-700 border-emerald-600/[.22]"      },
+  inactive: { label: "Inactive", dot: "bg-danger",                       badge: "bg-danger/10 text-danger border-danger/25"                          },
+  deleted:  { label: "Deleted",  dot: "bg-danger opacity-50",            badge: "bg-danger/5 text-danger/60 border-danger/15"                        },
+};
+
+// Re-exported so other components (e.g. inline status displays) can reuse colors.
+export const APP_STATUS_CFG = CFG_DARK;
 
 interface AppStatusBadgeProps {
   status: App["status"];
@@ -21,8 +34,11 @@ interface AppStatusBadgeProps {
 }
 
 export function AppStatusBadge({ status, isBuilding, size = "md" }: AppStatusBadgeProps) {
+  const theme = useThemeStore((s) => s.theme);
+  const CFG = theme === "light" ? CFG_LIGHT : CFG_DARK;
+
   const effectiveStatus = isBuilding ? "building" : status;
-  const cfg = APP_STATUS_CFG[effectiveStatus] ?? APP_STATUS_CFG.deleted;
+  const cfg = CFG[effectiveStatus] ?? CFG.deleted;
 
   if (size === "sm") {
     return (

@@ -1,7 +1,7 @@
 import { logger } from "@new-one-two/logger";
 import { fetchDeploymentContext, parseMetadata } from "./build-context.js";
 import { createBuildContext, removeBuildContext } from "./fs-builder.js";
-import { dockerBuild, dockerPush } from "./docker-ops.js";
+import { dockerBuild, dockerPush, deleteDockerImage } from "./docker-ops.js";
 import { deployToDockerLocal, stopDockerLocal } from "./cloud-run-dev.js";
 import { deployToCloudRun, deleteCloudRunService } from "./cloud-run-ops.js";
 import {
@@ -23,6 +23,9 @@ import {
   deactivateAppInfrastructure,
   getTenantById,
   getAppByIdOnly,
+  getAppVersionSemvers,
+  getLatestMigrationSqlForApp,
+  hardDeleteApp,
 } from "@new-one-two/db";
 import type { FeatureBundle } from "@new-one-two/types";
 
@@ -342,4 +345,75 @@ export async function teardownApp(appId: string): Promise<void> {
   }
 
   logger.info({ appId }, "App teardown complete");
+}
+
+/**
+ * Permanently deletes an app and all its associated resources:
+ *   1. Unregisters Shopify webhooks
+ *   2. Stops/deletes the harness (Cloud Run service or local Docker container)
+ *   3. Deletes Docker images from the registry
+ *   4. Drops tenant-scoped DB tables created by the app's migration
+ *   5. Hard-deletes the app row (cascades clean all related records)
+ *
+ * Steps 1–4 are non-fatal — failures are logged and execution continues.
+ * Step 5 (DB delete) is the authoritative cleanup and will throw on failure.
+ */
+export async function permanentDeleteApp(appId: string): Promise<void> {
+  const app = await getAppByIdOnly(appId);
+  if (!app) {
+    logger.warn({ appId }, "permanentDeleteApp: app not found, skipping");
+    return;
+  }
+
+  const tenant = await getTenantById(app.tenantId);
+
+  // 1. Unregister Shopify webhooks
+  try {
+    const webhooks = await getActiveWebhookSubscriptionsForApp(appId);
+    if (webhooks.length > 0 && tenant) {
+      await unregisterShopifyWebhooks({
+        shop: app.shopDomain,
+        accessTokenSecretName: tenant.shopifyAccessTokenSecretName,
+        webhooks,
+      });
+    }
+  } catch (err) {
+    logger.warn({ err, appId }, "permanentDeleteApp: Shopify webhook unregistration failed (continuing)");
+  }
+
+  // 2. Stop/delete the harness
+  try {
+    if (DEPLOY_MODE === "local") {
+      await stopDockerLocal(appId);
+    } else {
+      await deleteCloudRunService(appId);
+    }
+  } catch (err) {
+    logger.warn({ err, appId }, "permanentDeleteApp: harness teardown failed (continuing)");
+  }
+
+  // 3. Delete Docker images from the registry
+  try {
+    const semvers = await getAppVersionSemvers(appId);
+    for (const semver of semvers) {
+      await deleteDockerImage(dockerImageName(appId, semver));
+    }
+  } catch (err) {
+    logger.warn({ err, appId }, "permanentDeleteApp: image deletion failed (continuing)");
+  }
+
+  // 4. Drop tenant-scoped tables created by the app's bundle migration
+  try {
+    const migrationSql = await getLatestMigrationSqlForApp(appId);
+    if (migrationSql) {
+      await rollbackTenantMigration(app.tenantId, migrationSql);
+    }
+  } catch (err) {
+    logger.warn({ err, appId }, "permanentDeleteApp: tenant table drop failed (continuing)");
+  }
+
+  // 5. Hard delete — cascades remove all FK-linked rows
+  await hardDeleteApp(appId);
+
+  logger.info({ appId }, "App permanently deleted");
 }

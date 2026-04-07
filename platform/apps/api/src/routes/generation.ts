@@ -24,6 +24,7 @@ import {
   getLatestSessionForApp,
   saveChatMessages,
   updateAppStatus,
+  updateAppArchetype,
   getAppByIdOnly,
 } from "@new-one-two/db";
 import { deployFeatureBundle, deployAppVersion } from "@new-one-two/deployer";
@@ -31,7 +32,18 @@ import type {
   StartGenerationRequest,
   ReviseGenerationRequest,
   FeatureBundle,
+  AppArchetype,
 } from "@new-one-two/types";
+
+/** Derive AppArchetype from a raw bundle object. */
+function archetypeFromBundle(bundle: Record<string, unknown>): AppArchetype {
+  const hasWidget = bundle["widgetModule"] != null;
+  const hasAdmin  = bundle["adminUiModule"] != null;
+  if (hasWidget && hasAdmin) return "storefront_backend_admin";
+  if (hasAdmin)              return "backend_admin";
+  if (hasWidget)             return "storefront_backend";
+  return "backend";
+}
 
 /**
  * Platform-owned widget API catalog.
@@ -78,12 +90,12 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         async (bundleMsg: FeatureBundleMessage) => {
           unsubCompleted(); // self-cleanup
           if (bundleMsg.status === "success" && bundleMsg.bundle) {
-            await storeBundleInSession(
-              jobId,
-              bundleMsg.bundle as unknown as Record<string, unknown>,
-              "completed"
-            );
-            // Transition app to "ready" — bundle is stored, awaiting merchant deploy.
+            const bundle = bundleMsg.bundle as unknown as Record<string, unknown>;
+            await storeBundleInSession(jobId, bundle, "completed");
+            // Set archetype immediately so app detail shows correct type badges
+            // before the merchant deploys.
+            await updateAppArchetype(appId, archetypeFromBundle(bundle));
+            // Transition app to "ready" — bundle stored, awaiting merchant deploy.
             await updateAppStatus(appId, "ready");
           } else {
             await storeBundleInSession(
@@ -317,11 +329,10 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         async (bundleMsg: FeatureBundleMessage) => {
           unsubCompleted();
           if (bundleMsg.status === "success" && bundleMsg.bundle) {
-            await storeBundleInSession(
-              newJobId,
-              bundleMsg.bundle as unknown as Record<string, unknown>,
-              "completed"
-            );
+            const bundle = bundleMsg.bundle as unknown as Record<string, unknown>;
+            await storeBundleInSession(newJobId, bundle, "completed");
+            // Update archetype in case the revision changed the bundle shape.
+            await updateAppArchetype(session.appId!, archetypeFromBundle(bundle));
             // Revision succeeded: move app back to "ready" for merchant to re-deploy.
             await updateAppStatus(session.appId!, "ready");
           } else {

@@ -15,8 +15,12 @@ import type {
 const BASE = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const hasBody = init?.body != null;
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      ...init?.headers,
+    },
     ...init,
   });
   if (!res.ok) {
@@ -62,6 +66,10 @@ export const api = {
       request<App>(`/tenants/${tenantId}/apps/${appId}`, {
         method: "PATCH",
         body: JSON.stringify({ status: "deleted" }),
+      }),
+    permanentDelete: (tenantId: string, appId: string) =>
+      request<{ deleted: boolean }>(`/tenants/${tenantId}/apps/${appId}`, {
+        method: "DELETE",
       }),
     widgetLogs: (tenantId: string, appId: string, limit = 50) =>
       request<InvocationLogEntry[]>(`/tenants/${tenantId}/apps/${appId}/widget-logs?limit=${limit}`),

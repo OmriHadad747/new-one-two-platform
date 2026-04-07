@@ -23,7 +23,7 @@ import {
   getWidgetInvocationLogs,
   getAdminInvocationLogs,
 } from "@new-one-two/db";
-import { teardownApp } from "@new-one-two/deployer";
+import { teardownApp, permanentDeleteApp } from "@new-one-two/deployer";
 import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
 
 export const tenantsRoute: FastifyPluginAsync = async (app) => {
@@ -183,6 +183,19 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
       const updated = await getAppById(tenantId, appId);
       return reply.send(updated);
+    }
+  );
+
+  // ─── DELETE /tenants/:tenantId/apps/:appId ─────────────────────────────────
+
+  app.delete<{ Params: { tenantId: string; appId: string } }>(
+    "/:tenantId/apps/:appId",
+    async (req: FastifyRequest<{ Params: { tenantId: string; appId: string } }>, reply: FastifyReply) => {
+      const { tenantId, appId } = req.params;
+      const foundApp = await getAppById(tenantId, appId);
+      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      await permanentDeleteApp(appId);
+      return reply.status(200).send({ deleted: true });
     }
   );
 
