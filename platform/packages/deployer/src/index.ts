@@ -26,6 +26,7 @@ import {
   getAppVersionSemvers,
   getLatestMigrationSqlForApp,
   hardDeleteApp,
+  getLatestDeployedVersionForApp,
 } from "@new-one-two/db";
 import type { FeatureBundle } from "@new-one-two/types";
 
@@ -292,6 +293,82 @@ export async function deployFeatureBundle(params: {
 
     throw err;
   }
+}
+
+/**
+ * Reactivates a previously deactivated app:
+ *   1. Restarts the container from the existing Docker image (no rebuild)
+ *   2. Re-registers Shopify webhooks
+ *   3. Re-activates deployed_functions + webhook_subscriptions in DB
+ *   4. Marks app as active
+ */
+export async function reactivateApp(appId: string): Promise<void> {
+  const app = await getAppByIdOnly(appId);
+  if (!app) {
+    throw new Error(`reactivateApp: app ${appId} not found`);
+  }
+
+  const tenant = await getTenantById(app.tenantId);
+  if (!tenant) {
+    throw new Error(`reactivateApp: tenant not found for app ${appId}`);
+  }
+
+  const latest = await getLatestDeployedVersionForApp(appId);
+  if (!latest) {
+    throw new Error(`reactivateApp: no prior deployment found for app ${appId}`);
+  }
+
+  const { semver, webhookTopics } = latest;
+  const imageName = dockerImageName(appId, semver);
+
+  const envVars = buildHarnessEnvVars({
+    tenantId: tenant.id,
+    appId: app.id,
+    shopDomain: app.shopDomain,
+    clientId: app.shopifyClientId,
+    clientSecretName: app.shopifySecretName,
+    storefrontTokenSecretName: tenant.storefrontAccessTokenSecretName ?? null,
+  });
+
+  // 1. Restart container from existing image
+  const { functionUrl } =
+    DEPLOY_MODE === "local"
+      ? await deployToDockerLocal(appId, imageName, envVars)
+      : await deployToCloudRun(appId, imageName, envVars);
+
+  logger.info({ appId, functionUrl }, "reactivateApp: container restarted");
+
+  // 2. Write new deployed_functions row (deactivates previous)
+  const { id: deployedFunctionId } = await writeDeployedFunction({
+    appVersionId: latest.appVersionId,
+    appId: app.id,
+    tenantId: tenant.id,
+    functionUrl,
+    runtime: "nodejs20",
+    memoryMb: 256,
+    timeoutSec: 30,
+  });
+
+  // 3. Re-register webhooks
+  if (webhookTopics.length > 0) {
+    const appCallbackUrl = callbackUrl(tenant.slug, app.slug);
+    const shopifyWebhookIds = await registerShopifyWebhooks({
+      shop: app.shopDomain,
+      accessTokenSecretName: tenant.shopifyAccessTokenSecretName,
+      topics: webhookTopics,
+      callbackUrl: appCallbackUrl,
+    });
+    await writeWebhookSubscriptions({
+      appId: app.id,
+      tenantId: tenant.id,
+      deployedFunctionId,
+      topics: webhookTopics,
+      callbackUrl: appCallbackUrl,
+      shopifyWebhookIds,
+    });
+  }
+
+  logger.info({ appId }, "reactivateApp: app is active");
 }
 
 /**

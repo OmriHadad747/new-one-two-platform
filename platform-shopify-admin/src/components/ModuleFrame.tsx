@@ -99,12 +99,16 @@ export function ModuleFrame({ shop, app, bridge }: Props) {
         return;
       }
 
-      // ── 3. Inject shared base styles, then mount ────────────────────────
+      // ── 3. Inject shared base styles into <head> (not container) then mount ─
+      // Styles must live in <head> so that generated mount() functions that
+      // call `container.innerHTML = '…'` don't wipe them.
       try {
-        const sharedStyle = document.createElement("style");
-        sharedStyle.setAttribute("data-admin-shell", "base");
-        sharedStyle.textContent = ADMIN_SHELL_CSS;
-        container.appendChild(sharedStyle);
+        if (!document.head.querySelector("[data-admin-shell='base']")) {
+          const sharedStyle = document.createElement("style");
+          sharedStyle.setAttribute("data-admin-shell", "base");
+          sharedStyle.textContent = ADMIN_SHELL_CSS;
+          document.head.appendChild(sharedStyle);
+        }
         mod.mount(container, bridge);
         moduleRef.current = mod;
         setState({ phase: "mounted" });

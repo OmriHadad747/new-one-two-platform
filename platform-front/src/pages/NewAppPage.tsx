@@ -194,14 +194,29 @@ export function NewAppPage() {
     // Priority 1: DB-persisted chat history (survives page reload, most durable).
     const dbMessages = session.chatMessages as ChatMessage[] | null | undefined;
     if (dbMessages?.length) {
-      setMessages(dbMessages);
+      // If the app is already live, replace any stale deploy-ready card with a live card.
+      const sanitized = alreadyDeployed
+        ? dbMessages.map((m) =>
+            m.type === "deploy-ready"
+              ? { id: m.id, role: "ai" as const, type: "live" as const, liveAppId: selectedAppId ?? undefined }
+              : m
+          )
+        : dbMessages;
+      setMessages(sanitized);
       return;
     }
 
     // Priority 2: In-memory Zustand store (survives navigation without reload).
     const cachedForSession = activeGenStore?.jobId === session.jobId ? activeGenStore : null;
     if (cachedForSession?.messages?.length) {
-      setMessages(cachedForSession.messages);
+      const sanitized = alreadyDeployed
+        ? cachedForSession.messages.map((m) =>
+            m.type === "deploy-ready"
+              ? { id: m.id, role: "ai" as const, type: "live" as const, liveAppId: selectedAppId ?? undefined }
+              : m
+          )
+        : cachedForSession.messages;
+      setMessages(sanitized);
       return;
     }
 

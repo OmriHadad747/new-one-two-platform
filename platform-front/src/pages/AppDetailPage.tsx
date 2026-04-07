@@ -295,7 +295,7 @@ function LogTable({ pathHeader = "Event / Error", children }: { pathHeader?: str
   );
 }
 
-function LogRow({ entry, last }: { entry: WebhookInvocationLogEntry; last: boolean }) {
+function LogRow({ entry, last, showSource }: { entry: WebhookInvocationLogEntry; last: boolean; showSource?: boolean }) {
   const cfg = LOG_STATUS_CFG[entry.status];
   return (
     <div className={cn("flex items-start gap-4 px-5 py-3", !last && "border-b border-white/[0.05]")}>
@@ -303,6 +303,7 @@ function LogRow({ entry, last }: { entry: WebhookInvocationLogEntry; last: boole
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12px] font-mono text-ink truncate">{entry.topic}</span>
+          {showSource && <span className="text-[9.5px] font-bold uppercase tracking-wide text-faint border border-white/15 px-1 py-0.5 rounded">webhook</span>}
           <span className={cn("text-[10px] font-bold uppercase tracking-wide", cfg.cls)}>{cfg.label}</span>
         </div>
         {entry.errorMessage && <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>}
@@ -315,7 +316,7 @@ function LogRow({ entry, last }: { entry: WebhookInvocationLogEntry; last: boole
   );
 }
 
-function InvocationLogRow({ entry, last }: { entry: InvocationLogEntry; last: boolean }) {
+function InvocationLogRow({ entry, last, source }: { entry: InvocationLogEntry; last: boolean; source?: "widget" | "admin" }) {
   const cfg = INVOCATION_STATUS_CFG[entry.status];
   return (
     <div className={cn("flex items-start gap-4 px-5 py-3", !last && "border-b border-white/[0.05]")}>
@@ -323,6 +324,7 @@ function InvocationLogRow({ entry, last }: { entry: InvocationLogEntry; last: bo
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12px] font-mono text-ink truncate">{entry.path}</span>
+          {source && <span className="text-[9.5px] font-bold uppercase tracking-wide text-faint border border-white/15 px-1 py-0.5 rounded">{source}</span>}
           <span className={cn("text-[10px] font-bold uppercase tracking-wide", cfg.cls)}>{cfg.label}</span>
         </div>
         {entry.errorMessage && <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>}
@@ -572,7 +574,7 @@ function HowItWorksCard({ text }: { text: string }) {
 // ─── Overview tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({
-  app, latestSession, recentLogs, recentLogsLoading, shopDomain, onLogsTab,
+  app, latestSession, recentLogs, recentWidgetLogs, recentAdminLogs, recentLogsLoading, shopDomain, onLogsTab,
   onDeploy, onRedeploy, onDeactivate, deploying, isBuilding,
 }: {
   app: App;
@@ -581,6 +583,8 @@ function OverviewTab({
     prompt?: string | null; bundle?: SessionBundle | null;
   } | null;
   recentLogs: WebhookInvocationLogEntry[];
+  recentWidgetLogs: InvocationLogEntry[];
+  recentAdminLogs: InvocationLogEntry[];
   recentLogsLoading: boolean;
   shopDomain: string | null;
   onLogsTab: () => void;
@@ -683,34 +687,47 @@ function OverviewTab({
           )}
 
           {/* Recent activity — only for generated apps */}
-          {latestSession !== null && (
-          <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-white/[0.06] bg-white/[0.02] flex items-center justify-between">
-              <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Recent Activity</h3>
-              <button type="button" onClick={onLogsTab}
-                className="text-[10px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer"
-              >
-                All logs →
-              </button>
-            </div>
-            {recentLogsLoading ? (
-              <div className="px-5 py-4 space-y-2">
-                {[1, 2, 3].map((i) => <div key={i} className="h-8 bg-white/[0.03] rounded-lg animate-pulse-subtle" />)}
+          {latestSession !== null && (() => {
+            type AnyEntry =
+              | { kind: "webhook"; data: WebhookInvocationLogEntry; ts: string }
+              | { kind: "widget" | "admin";  data: InvocationLogEntry;        ts: string };
+            const allActivity: AnyEntry[] = [
+              ...recentLogs.map((d) => ({ kind: "webhook" as const, data: d, ts: d.queuedAt })),
+              ...recentWidgetLogs.map((d) => ({ kind: "widget" as const,  data: d, ts: d.invokedAt })),
+              ...recentAdminLogs.map((d)  => ({ kind: "admin"  as const,  data: d, ts: d.invokedAt })),
+            ].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, 15);
+
+            return (
+            <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-white/[0.06] bg-white/[0.02] flex items-center justify-between">
+                <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Recent Activity</h3>
+                <button type="button" onClick={onLogsTab}
+                  className="text-[10px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer"
+                >
+                  All logs →
+                </button>
               </div>
-            ) : recentLogs.length === 0 ? (
-              <div className="px-5 py-6 text-center">
-                <p className="text-[12px] text-faint">No executions yet</p>
-                <p className="text-[11px] text-faint opacity-60 mt-1">Logs appear once Shopify sends events.</p>
-              </div>
-            ) : (
-              <div>
-                {recentLogs.slice(0, 5).map((entry, i, arr) => (
-                  <LogRow key={entry.id} entry={entry} last={i === arr.length - 1} />
-                ))}
-              </div>
-            )}
-          </section>
-          )}
+              {recentLogsLoading ? (
+                <div className="px-5 py-4 space-y-2">
+                  {[1, 2, 3].map((i) => <div key={i} className="h-8 bg-white/[0.03] rounded-lg animate-pulse-subtle" />)}
+                </div>
+              ) : allActivity.length === 0 ? (
+                <div className="px-5 py-6 text-center">
+                  <p className="text-[12px] text-faint">No executions yet</p>
+                  <p className="text-[11px] text-faint opacity-60 mt-1">Logs appear once Shopify sends events.</p>
+                </div>
+              ) : (
+                <div className="max-h-[420px] overflow-y-auto">
+                  {allActivity.map((entry, i, arr) =>
+                    entry.kind === "webhook"
+                      ? <LogRow key={entry.data.id} entry={entry.data} last={i === arr.length - 1} showSource />
+                      : <InvocationLogRow key={entry.data.id} entry={entry.data} source={entry.kind} last={i === arr.length - 1} />
+                  )}
+                </div>
+              )}
+            </section>
+            );
+          })()}
 
 
           {/* App explanation */}
@@ -730,9 +747,9 @@ function OverviewTab({
             </div>
             {latestSession !== null && (
               <div className="px-4 pb-4 space-y-2 border-t border-white/[0.06] pt-3">
-                {latestSession?.status === "completed" && (app.status === "draft" || app.status === "ready") && (
+                {latestSession?.status === "completed" && app.status === "ready" && (
                   <button type="button" onClick={onDeploy} disabled={deploying}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-green-500/10 hover:bg-green-500/18 border border-green-500/25 text-green-500 text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-50">
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent/10 hover:bg-accent/18 border border-accent/25 text-accent text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-50">
                     <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>rocket_launch</span>
                     {deploying ? "Deploying…" : "Deploy to store"}
                   </button>
@@ -740,13 +757,13 @@ function OverviewTab({
                 {app.status === "inactive" && (
                   <button type="button" onClick={onRedeploy} disabled={deploying}
                     className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-green-500/10 hover:bg-green-500/18 border border-green-500/25 text-green-500 text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-50">
-                    <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>power_settings_new</span>
+                    <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>play_circle</span>
                     {deploying ? "Activating…" : "Activate"}
                   </button>
                 )}
                 {app.status === "active" && (
                   <button type="button" onClick={onDeactivate} disabled={deploying}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.07] border border-white/15 text-faint text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-50">
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-danger/10 hover:bg-danger/18 border border-danger/25 text-danger text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-50">
                     <span className="material-symbols-outlined text-[15px]">pause_circle</span>
                     {deploying ? "Deactivating…" : "Deactivate"}
                   </button>
@@ -1048,8 +1065,8 @@ export function AppDetailPage() {
   const [deploying, setDeploying]     = useState(false);
 
   const logsEnabled       = (mainTab === "logs" && activeLogTab === "webhook") || mainTab === "overview";
-  const widgetLogsEnabled = mainTab === "logs" && activeLogTab === "widget";
-  const adminLogsEnabled  = mainTab === "logs" && activeLogTab === "admin";
+  const widgetLogsEnabled = (mainTab === "logs" && activeLogTab === "widget")  || mainTab === "overview";
+  const adminLogsEnabled  = (mainTab === "logs" && activeLogTab === "admin")   || mainTab === "overview";
 
   const logsQuery       = useWebhookAppLogs(tenantId, appId ?? null, logsEnabled);
   const widgetLogsQuery = useWidgetLogs(tenantId, appId ?? null, widgetLogsEnabled);
@@ -1166,7 +1183,9 @@ export function AppDetailPage() {
               app={app}
               latestSession={latestSession}
               recentLogs={logsQuery.data ?? []}
-              recentLogsLoading={logsQuery.isLoading}
+              recentWidgetLogs={widgetLogsQuery.data ?? []}
+              recentAdminLogs={adminLogsQuery.data ?? []}
+              recentLogsLoading={logsQuery.isLoading || widgetLogsQuery.isLoading || adminLogsQuery.isLoading}
               shopDomain={shopDomain}
               onLogsTab={() => setMainTab("logs")}
               onDeploy={handleDeployDraft}

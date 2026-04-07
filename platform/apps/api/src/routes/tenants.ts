@@ -23,7 +23,7 @@ import {
   getWidgetInvocationLogs,
   getAdminInvocationLogs,
 } from "@new-one-two/db";
-import { teardownApp, permanentDeleteApp } from "@new-one-two/deployer";
+import { teardownApp, permanentDeleteApp, reactivateApp } from "@new-one-two/deployer";
 import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
 
 export const tenantsRoute: FastifyPluginAsync = async (app) => {
@@ -172,7 +172,20 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       }
 
       if (name?.trim()) await updateAppName(tenantId, appId, name.trim());
-      if (status === "active" || status === "inactive") await updateAppStatus(appId, status);
+      if (status === "active") {
+        await updateAppStatus(appId, "active");
+        // Fire-and-forget — restart container + re-register webhooks without blocking response
+        reactivateApp(appId).catch((err: unknown) => {
+          app.log.error({ err, appId }, "Background reactivation failed");
+        });
+      }
+      if (status === "inactive") {
+        await updateAppStatus(appId, "inactive");
+        // Fire-and-forget — stop container + unregister webhooks without blocking response
+        teardownApp(appId).catch((err: unknown) => {
+          app.log.error({ err, appId }, "Background teardown on deactivation failed");
+        });
+      }
       if (status === "deleted") {
         await updateAppStatus(appId, "deleted");
         // Fire-and-forget teardown — don't block the response

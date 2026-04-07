@@ -1560,6 +1560,39 @@ export async function getLatestMigrationSqlForApp(appId: string): Promise<string
   return rows[0]?.migSql ?? null;
 }
 
+/**
+ * Returns the latest app_version for an app along with its deployed function URL,
+ * used by reactivateApp to restart the container without rebuilding.
+ */
+export async function getLatestDeployedVersionForApp(appId: string): Promise<{
+  appVersionId: string;
+  semver: string;
+  functionUrl: string;
+  webhookTopics: string[];
+} | null> {
+  const rows = await sql<Array<{
+    appVersionId: string;
+    semver: string;
+    functionUrl: string;
+    webhookTopics: string[];
+  }>>`
+    SELECT
+      av.id          AS "appVersionId",
+      av.semver,
+      df.function_url AS "functionUrl",
+      COALESCE(
+        (SELECT array_agg(topic) FROM webhook_subscriptions WHERE app_id = ${appId}),
+        '{}'::text[]
+      ) AS "webhookTopics"
+    FROM app_versions av
+    JOIN deployed_functions df ON df.app_version_id = av.id
+    WHERE av.app_id = ${appId}
+    ORDER BY av.created_at DESC
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
 export async function hardDeleteApp(appId: string): Promise<void> {
   // Two ON DELETE RESTRICT FKs block the cascade if we delete apps directly:
   //   webhook_subscriptions.deployed_function_id → deployed_functions(id) RESTRICT
