@@ -1,7 +1,8 @@
 import { useNavigate } from "react-router";
-import { Badge } from "@/components/ui/Badge";
 import type { App } from "@/types/dashboard";
 import { cn } from "@/lib/cn";
+import { AppStatusBadge } from "@/components/ui/AppStatusBadge";
+import { ArchetypePills } from "@/components/ui/ArchetypePills";
 
 function appIcon(name: string): { icon: string; bg: string } {
   const lower = name.toLowerCase();
@@ -23,8 +24,6 @@ function timeAgo(iso: string): string {
 
 function AppCard({ app, onClick }: { app: App; onClick: () => void }) {
   const { icon, bg } = appIcon(app.name);
-  const statusVariant =
-    app.status === "active" ? "live" : app.status === "inactive" ? "draft" : "failed";
 
   return (
     <button
@@ -36,18 +35,13 @@ function AppCard({ app, onClick }: { app: App; onClick: () => void }) {
         <div className={cn("w-10 h-10 rounded-[10px] flex items-center justify-center text-lg", bg)}>
           {icon}
         </div>
-        <Badge variant={statusVariant}>
-          {app.status === "active" ? "live" : app.status}
-        </Badge>
+        <AppStatusBadge status={app.status} size="sm" />
       </div>
       <div className="text-sm font-bold text-ink mb-1">{app.name}</div>
-      <div className="text-xs text-faint leading-relaxed capitalize">
-        {app.appArchetype.replace("_", " ")}
+      <div className="mt-1.5">
+        <ArchetypePills archetype={app.appArchetype} />
       </div>
       <div className="flex items-center justify-between mt-3.5 pt-3.5 border-t border-white/7">
-        <div className="text-[11px] text-faint capitalize">
-          {app.appArchetype.replace("_", " ")}
-        </div>
         <div className="text-[11px] text-faint">Updated {timeAgo(app.updatedAt)}</div>
       </div>
     </button>

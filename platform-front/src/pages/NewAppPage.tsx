@@ -1,24 +1,20 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams, useParams } from "react-router";
 import { TopBar } from "@/components/layout/TopBar";
-import { Button } from "@/components/ui/Button";
-import { ChatMessages, type ChatMessage } from "@/components/features/generation/ChatMessages";
+import { ChatMessages, type ChatMessage, type DeployBundle } from "@/components/features/generation/ChatMessages";
 import { ChatInput } from "@/components/features/generation/ChatInput";
-import { AppTestingPanel } from "@/components/features/generation/AppTestingPanel";
 import { useGeneration, useLatestSession } from "@/hooks/useGeneration";
 import { useSessionStore } from "@/stores/session";
 import { useGenerationStore } from "@/stores/generation";
 import { useApps, useApp } from "@/hooks/useApps";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { SessionBundle } from "@/types/dashboard";
+import type { SessionBundle, GenerationBundle } from "@/types/dashboard";
 import { NameAppModal } from "@/components/features/generation/NameAppModal";
-import type { GenerationBundle, AnalyzeMessage } from "@/types/dashboard";
+import type { AnalyzeMessage } from "@/types/dashboard";
 
-/**
- * Normalize the raw FeatureBundle from the API into the frontend GenerationBundle shape.
- * The API returns { widgetModule, adminUiModule, handlerModule, explanation } —
- * the UI needs hasWidget, hasAdminUI, triggerType derived from those fields.
- */
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function normalizeBundleFromApi(raw: Record<string, unknown>): GenerationBundle {
   const handler = (raw.handlerModule ?? {}) as Record<string, unknown>;
   const topics = (handler.webhookTopics as string[] | undefined) ?? [];
@@ -26,7 +22,6 @@ function normalizeBundleFromApi(raw: Record<string, unknown>): GenerationBundle 
   const hasWidget = !!raw.widgetModule;
   const hasAdminUI = !!raw.adminUiModule;
   const explanation = raw.explanation as Record<string, unknown> | string | undefined;
-
   return {
     explanation: typeof explanation === "string"
       ? explanation
@@ -35,6 +30,27 @@ function normalizeBundleFromApi(raw: Record<string, unknown>): GenerationBundle 
     triggerType: hasCron ? "cron" : hasAdminUI ? "admin" : hasWidget ? "widget" : "webhook",
     hasWidget,
     hasAdminUI,
+  };
+}
+
+function computeArchetype(bundle: GenerationBundle | null): DeployBundle["archetype"] {
+  const hasAdmin  = !!bundle?.hasAdminUI;
+  const hasWidget = !!bundle?.hasWidget;
+  if (hasAdmin && hasWidget) return "storefront_backend_admin";
+  if (hasAdmin)  return "backend_admin";
+  if (hasWidget) return "storefront_backend";
+  return "backend";
+}
+
+function bundleToDeployBundle(bundle: GenerationBundle | null): DeployBundle | undefined {
+  if (!bundle) return undefined;
+  return {
+    triggerType:   bundle.triggerType   ?? "webhook",
+    triggerTopics: bundle.triggerTopics ?? [],
+    hasWidget:     !!bundle.hasWidget,
+    hasAdminUI:    !!bundle.hasAdminUI,
+    archetype:     computeArchetype(bundle),
+    explanation:   typeof bundle.explanation === "string" ? bundle.explanation : null,
   };
 }
 
@@ -52,69 +68,87 @@ function nameFromPrompt(prompt: string): string {
 
 function slugFromName(name: string): string {
   return (
-    name
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-]/g, "")
-      .slice(0, 30) +
-    "-" +
-    Math.random().toString(36).slice(2, 6)
+    name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").slice(0, 30) +
+    "-" + Math.random().toString(36).slice(2, 6)
   );
 }
 
-export function NewAppPage() {
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const { tenantId, shopDomain } = useSessionStore();
-  const appsQuery = useApps(tenantId);
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
-  const [selectedAppId, setSelectedAppId] = useState<string | null>(searchParams.get("appId"));
+export function NewAppPage() {
+  const { appId: routeAppId } = useParams<{ appId?: string }>();
+  const [searchParams] = useSearchParams();
+  const { tenantId } = useSessionStore();
+  const appsQuery = useApps(tenantId);
+  const queryClient = useQueryClient();
+
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(
+    routeAppId ?? searchParams.get("appId")
+  );
   const apps = appsQuery.data ?? [];
 
-  const [input, setInput] = useState("");
+  const [input, setInput]     = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevStatus = useRef<string>("idle");
+  const genMsgIdRef = useRef<string | null>(null);
+  const prevRouteAppId = useRef<string | undefined>(routeAppId);
 
   // Deployment state
-  const [deployed, setDeployed] = useState(false);
+  const [deployed, setDeployed]   = useState(false);
   const [deploying, setDeploying] = useState(false);
-  const [bundle, setBundle] = useState<GenerationBundle | null>(null);
 
-  // Name modal state
-  const [nameModal, setNameModal] = useState<{ suggestedName: string; onConfirm: (name: string) => void } | null>(null);
+  // Name modal
+  const [nameModal, setNameModal] = useState<{
+    suggestedName: string;
+    onConfirm: (name: string) => void;
+  } | null>(null);
 
-  // Analyze conversation state
+  // Analyze conversation
   const [analyzeHistory, setAnalyzeHistory] = useState<AnalyzeMessage[]>([]);
-  const [analyzePhase, setAnalyzePhase] = useState<"idle" | "thinking" | "awaiting_confirm">("idle");
-  const [, setPendingIntent] = useState<Record<string, unknown> | null>(null);
+  const [analyzePhase, setAnalyzePhase]     = useState<"idle" | "thinking" | "awaiting_confirm">("idle");
+  const [, setPendingIntent]                = useState<Record<string, unknown> | null>(null);
 
   const { state: gen, start, startRevision, reconnect, restore, reset, cancel } = useGeneration();
   const { setActive, updateStatus, updateEvents, updateMessages, active: activeGenStore } = useGenerationStore();
-  const isStreaming = gen.status === "running";
-  const isAnalyzing = analyzePhase === "thinking";
+  const isStreaming  = gen.status === "running";
+  const isAnalyzing  = analyzePhase === "thinking";
 
-  const activeAppQuery = useApp(tenantId, selectedAppId);
-  const activeApp = activeAppQuery.data ?? null;
+  const activeAppQuery   = useApp(tenantId, selectedAppId);
+  const activeApp        = activeAppQuery.data ?? null;
   const latestSessionQuery = useLatestSession(selectedAppId);
 
-  // Hydrate generation state from the persisted latest session when the user
-  // returns to an app that was generating or has a completed generation.
+  // ── Reset all state when the user navigates to a different app's revise page ─
+  useEffect(() => {
+    if (routeAppId === prevRouteAppId.current) return;
+    prevRouteAppId.current = routeAppId;
+    genMsgIdRef.current = null;
+    reset();
+    setSelectedAppId(routeAppId ?? null);
+    setDeployed(false);
+    setMessages([WELCOME]);
+    setAnalyzeHistory([]);
+    setAnalyzePhase("idle");
+    setPendingIntent(null);
+    prevStatus.current = "idle";
+  }, [routeAppId, reset]);
+
+  // ── Hydrate state from the persisted latest session ─────────────────────────
   useEffect(() => {
     const session = latestSessionQuery.data;
     if (!session || gen.status !== "idle") return;
 
-    // Still running — reconnect the SSE stream and restore cached state
     if (session.status === "running" && session.jobId) {
       const cached = activeGenStore?.jobId === session.jobId ? activeGenStore : null;
+      // Don't reconnect to a job the user already cancelled this session
+      if (cached?.status === "failed") return;
       reconnect(session.jobId, cached?.events ?? []);
       if (cached?.messages?.length) {
         setMessages(cached.messages);
       } else {
-        setMessages([
-          WELCOME,
-          { id: "resume", role: "ai", text: "Welcome back! Your app is still being built — follow the progress on the right →" },
-        ]);
+        const genMsgId = "resume-gen";
+        genMsgIdRef.current = genMsgId;
+        setMessages([WELCOME, { id: genMsgId, role: "ai", type: "generating" }]);
       }
       return;
     }
@@ -123,102 +157,105 @@ export function NewAppPage() {
 
     const sb = session.bundle as SessionBundle | null | undefined;
     if (!sb?.handlerModule) return;
-
-    // Wait for the app query to settle before deciding "live vs. ready to deploy".
-    // If session loads before the app record does, activeApp is null and we'd show
-    // the wrong message. Both queries always fire together — this guard is cheap.
     if (!activeAppQuery.isSuccess) return;
 
     const restoredBundle: GenerationBundle = {
       explanation: sb.explanation?.merchantFacing,
       triggerTopics: sb.handlerModule.webhookTopics ?? session.webhookTopics,
       triggerType: sb.handlerModule.cronSchedule
-        ? "cron"
-        : sb.adminUiModule
-          ? "admin"
-          : sb.widgetModule
-            ? "widget"
-            : "webhook",
-      hasWidget: !!sb.widgetModule,
+        ? "cron" : sb.adminUiModule ? "admin" : sb.widgetModule ? "widget" : "webhook",
+      hasWidget:  !!sb.widgetModule,
       hasAdminUI: !!sb.adminUiModule,
     };
 
-    const alreadyDeployed = activeApp !== null && activeApp.status !== "draft";
+    const alreadyDeployed = activeApp !== null && activeApp.status === "active";
     if (session.jobId) restore(session.jobId);
-    setBundle(restoredBundle);
     setDeployed(alreadyDeployed);
+
+    const resumeMsgId = "resume-card";
+    genMsgIdRef.current = resumeMsgId;
+
     setMessages([
       WELCOME,
-      {
-        id: "resume",
-        role: "ai",
-        text: alreadyDeployed
-          ? "Welcome back! This app is live. Describe what you'd like to change and I'll revise it."
-          : "Welcome back! Your last generation is ready to deploy. Hit Deploy when you're ready, or describe changes first.",
-      },
+      alreadyDeployed
+        ? { id: resumeMsgId, role: "ai", type: "live", liveAppId: selectedAppId ?? undefined }
+        : {
+            id: resumeMsgId,
+            role: "ai",
+            type: "deploy-ready",
+            deployBundle: bundleToDeployBundle(restoredBundle),
+          },
     ]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestSessionQuery.data, activeApp?.status, activeAppQuery.isSuccess]);
-
-  // Intentionally no auto-selection: null means "create a new app" on confirm.
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAnalyzing]);
 
-  // Sync events to the store so they survive navigation
+  // Sync events to store
   useEffect(() => {
-    if (gen.jobId && gen.events.length > 0) {
-      updateEvents(gen.jobId, gen.events);
-    }
+    if (gen.jobId && gen.events.length > 0) updateEvents(gen.jobId, gen.events);
   }, [gen.jobId, gen.events, updateEvents]);
 
-  // Sync messages to the store so they survive navigation
+  // Sync messages to store
   useEffect(() => {
-    if (gen.jobId) {
-      updateMessages(gen.jobId, messages);
-    }
+    if (gen.jobId) updateMessages(gen.jobId, messages);
   }, [gen.jobId, messages, updateMessages]);
 
-  // Sync global generation store so sidebar can show spinner on the right app
+  // Sync global generation store
   useEffect(() => {
     if (gen.jobId && selectedAppId) {
       setActive(selectedAppId, gen.jobId, gen.status as "idle" | "running" | "completed" | "failed");
     } else if (gen.jobId) {
       updateStatus(gen.jobId, gen.status as "idle" | "running" | "completed" | "failed");
     }
+
     if (prevStatus.current === "running" && gen.status === "completed") {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "ai",
-          text: "Done! Review the output in the chat, then hit Deploy in the right panel whenever you're ready.",
-        },
-      ]);
-      // Fetch the result bundle immediately so DeployPanel shows the real type/trigger
       if (gen.jobId) {
         api.generation.result(gen.jobId)
-          .then((res) => { if (res.bundle) setBundle(normalizeBundleFromApi(res.bundle as Record<string, unknown>)); })
-          .catch(() => null);
+          .then((res) => {
+            const newBundle = res.bundle
+              ? normalizeBundleFromApi(res.bundle as Record<string, unknown>)
+              : null;
+            const genMsgId = genMsgIdRef.current;
+            setMessages((prev) => prev.map((m) =>
+              m.id === genMsgId
+                ? {
+                    id: m.id,
+                    role: "ai" as const,
+                    type: "deploy-ready" as const,
+                    deployBundle: bundleToDeployBundle(newBundle),
+                  }
+                : m
+            ));
+          })
+          .catch(() => {
+            const genMsgId = genMsgIdRef.current;
+            setMessages((prev) => prev.map((m) =>
+              m.id === genMsgId
+                ? { id: m.id, role: "ai" as const, type: "deploy-ready" as const }
+                : m
+            ));
+          });
       }
     }
+
     if (prevStatus.current === "running" && gen.status === "failed") {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "ai",
-          text: gen.error === "Cancelled"
-            ? "Generation cancelled."
-            : `Generation failed: ${gen.error ?? "Unknown error. Please try again."}`,
-        },
-      ]);
+      const genMsgId = genMsgIdRef.current;
+      const text = gen.error === "Cancelled"
+        ? "Generation cancelled."
+        : `Generation failed: ${gen.error ?? "Unknown error. Please try again."}`;
+      setMessages((prev) => prev.map((m) =>
+        m.id === genMsgId ? { id: m.id, role: "ai" as const, text } : m
+      ));
     }
+
     prevStatus.current = gen.status;
   }, [gen.status, gen.jobId, gen.error, updateStatus]);
 
-  /** Run the /analyze conversation step with the current history. */
+  // ── Analyze ──────────────────────────────────────────────────────────────────
+
   const runAnalyze = useCallback(async (history: AnalyzeMessage[], appIdForGen: string | null) => {
     setAnalyzePhase("thinking");
     let result;
@@ -238,26 +275,30 @@ export function NewAppPage() {
     }
 
     if (result.status === "needs_clarification") {
-      const question = result.question ?? "Could you tell me more about what you want to build?";
-      const updatedHistory: AnalyzeMessage[] = [...history, { role: "assistant", content: question }];
-      setAnalyzeHistory(updatedHistory);
+      const question    = result.question    ?? "Could you tell me more about what you want to build?";
+      const suggestions = result.suggestions ?? [];
+      setAnalyzeHistory([...history, { role: "assistant", content: question }]);
       setAnalyzePhase("idle");
       setMessages((prev) => [
         ...prev,
-        { id: crypto.randomUUID(), role: "ai", text: question },
+        {
+          id: crypto.randomUUID(),
+          role: "ai",
+          text: question,
+          type: "clarifying" as const,
+          clarifyingData: { suggestions },
+        },
       ]);
     } else {
-      // ready
       const summary = result.summary ?? "I understand your request. Ready to generate.";
-      const intent = result.intent ?? {};
+      const intent  = result.intent ?? {};
       setPendingIntent(intent);
-
       const confirmMsgId = crypto.randomUUID();
       setAnalyzePhase("awaiting_confirm");
 
       const handleConfirm = () => {
         const originalPrompt = history[0]?.content ?? "New App";
-        const suggestedName = appIdForGen
+        const suggestedName  = appIdForGen
           ? (apps.find((a) => a.id === appIdForGen)?.name ?? nameFromPrompt(originalPrompt))
           : nameFromPrompt(originalPrompt);
 
@@ -265,8 +306,6 @@ export function NewAppPage() {
           suggestedName,
           onConfirm: async (chosenName: string) => {
             setNameModal(null);
-
-            // Remove the action buttons from the confirm message
             setMessages((prev) =>
               prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m))
             );
@@ -278,7 +317,7 @@ export function NewAppPage() {
                 const newApp = await api.apps.create(tenantId!, { slug, name: chosenName });
                 appId = newApp.id;
                 setSelectedAppId(newApp.id);
-                await appsQuery.refetch();
+                await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
               } catch (err) {
                 setMessages((prev) => [
                   ...prev,
@@ -292,19 +331,21 @@ export function NewAppPage() {
                 return;
               }
             } else {
-              // Rename existing app if the merchant changed the name
               const existing = apps.find((a) => a.id === appId);
               if (existing && existing.name !== chosenName) {
                 await api.apps.rename(tenantId!, appId, chosenName).catch(() => null);
-                await appsQuery.refetch();
+                await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
               }
             }
 
             setAnalyzePhase("idle");
             setPendingIntent(null);
+
+            const genMsgId = crypto.randomUUID();
+            genMsgIdRef.current = genMsgId;
             setMessages((prev) => [
               ...prev,
-              { id: crypto.randomUUID(), role: "ai", text: "Your app is being built — follow the progress on the right →" },
+              { id: genMsgId, role: "ai", type: "generating" },
             ]);
             await start({ appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: intent });
           },
@@ -323,7 +364,9 @@ export function NewAppPage() {
               label: "Change request",
               variant: "ghost" as const,
               onClick: () => {
-                setMessages((prev) => prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m)));
+                setMessages((prev) => prev.map((m) =>
+                  m.id === confirmMsgId ? { ...m, actions: [] } : m
+                ));
                 setAnalyzePhase("idle");
                 setAnalyzeHistory([]);
                 setPendingIntent(null);
@@ -335,6 +378,8 @@ export function NewAppPage() {
     }
   }, [tenantId, appsQuery, start]);
 
+  // ── Send ─────────────────────────────────────────────────────────────────────
+
   const handleSend = useCallback(async () => {
     if (!input.trim() || isStreaming || isAnalyzing || deploying) return;
     if (!tenantId) return;
@@ -342,83 +387,102 @@ export function NewAppPage() {
     const prompt = input.trim();
     setInput("");
 
-    // ── Revision path: deployed app, user describing a problem ───────────
+    // Deployed app — start revision
     if (gen.jobId && deployed) {
+      const genMsgId = crypto.randomUUID();
+      genMsgIdRef.current = genMsgId;
       setMessages((prev) => [
         ...prev,
         { id: crypto.randomUUID(), role: "user", text: prompt },
-        { id: crypto.randomUUID(), role: "ai", text: "Got it — revising the app..." },
+        { id: genMsgId, role: "ai", type: "generating" },
       ]);
       setDeployed(false);
-      setBundle(null);
-      await startRevision(gen.jobId, prompt);
+        await startRevision(gen.jobId, prompt);
       return;
     }
 
-    // ── Pre-deploy change: generation done but not yet deployed ───────────
+    // Generation done, not yet deployed — revise before deploy
     if (gen.jobId && gen.status === "completed" && !deployed) {
+      const genMsgId = crypto.randomUUID();
+      genMsgIdRef.current = genMsgId;
       setMessages((prev) => [
         ...prev,
         { id: crypto.randomUUID(), role: "user", text: prompt },
-        { id: crypto.randomUUID(), role: "ai", text: "Revising before deploy..." },
+        { id: genMsgId, role: "ai", type: "generating" },
       ]);
       await startRevision(gen.jobId, prompt);
       return;
     }
 
-    // ── Analyze conversation ──────────────────────────────────────────────
-    setMessages((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), role: "user", text: prompt },
-    ]);
-
+    // Analyze conversation
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", text: prompt }]);
     const newHistory: AnalyzeMessage[] = [...analyzeHistory, { role: "user", content: prompt }];
     setAnalyzeHistory(newHistory);
-
-    // If user typed while awaiting confirm, treat as a new request
     if (analyzePhase === "awaiting_confirm") {
       setPendingIntent(null);
       setAnalyzeHistory(newHistory);
     }
 
-    await runAnalyze(newHistory, selectedAppId);
+    // First message with no app yet → create a draft immediately so it appears in the sidebar
+    let appIdForAnalyze = selectedAppId;
+    if (!selectedAppId && analyzeHistory.length === 0 && tenantId) {
+      try {
+        const draftName = nameFromPrompt(prompt);
+        const newApp = await api.apps.create(tenantId, { slug: slugFromName(draftName), name: draftName });
+        appIdForAnalyze = newApp.id;
+        setSelectedAppId(newApp.id);
+        void queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+      } catch {
+        // non-fatal — continue without pre-created app
+      }
+    }
+
+    await runAnalyze(newHistory, appIdForAnalyze);
   }, [
-    input,
-    isStreaming,
-    isAnalyzing,
-    deploying,
-    tenantId,
-    selectedAppId,
-    gen.jobId,
-    gen.status,
-    deployed,
-    analyzeHistory,
-    analyzePhase,
-    startRevision,
-    runAnalyze,
+    input, isStreaming, isAnalyzing, deploying, tenantId, selectedAppId,
+    gen.jobId, gen.status, deployed, analyzeHistory, analyzePhase,
+    startRevision, runAnalyze,
   ]);
 
   const handleStop = useCallback(() => {
     if (gen.jobId) void cancel(gen.jobId);
   }, [gen.jobId, cancel]);
 
+  const handleClarifyAnswer = useCallback((text: string) => {
+    // Mark the last unanswered clarifying message as answered
+    setMessages((prev) => {
+      const lastClarifyIdx = [...prev].reverse().findIndex(
+        (m) => m.type === "clarifying" && !m.clarifyingData?.answeredText
+      );
+      if (lastClarifyIdx === -1) return prev;
+      const idx = prev.length - 1 - lastClarifyIdx;
+      return prev.map((m, i) =>
+        i === idx ? { ...m, clarifyingData: { ...m.clarifyingData!, answeredText: text } } : m
+      );
+    });
+    // Add user message and continue the analyze loop
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", text }]);
+    const newHistory: AnalyzeMessage[] = [...analyzeHistory, { role: "user", content: text }];
+    setAnalyzeHistory(newHistory);
+    void runAnalyze(newHistory, selectedAppId);
+  }, [analyzeHistory, runAnalyze, selectedAppId]);
+
   const handleDeploy = useCallback(async () => {
     if (!gen.jobId) return;
     setDeploying(true);
     try {
       await api.generation.approve(gen.jobId);
-      const result = await api.generation.result(gen.jobId);
-      setBundle(result.bundle ? normalizeBundleFromApi(result.bundle as Record<string, unknown>) : null);
+      await api.generation.result(gen.jobId);
       setDeployed(true);
       void activeAppQuery.refetch();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "ai",
-          text: "Deployed! Use the right panel to validate the app. If something's wrong, describe it here and I'll revise.",
-        },
-      ]);
+
+      const genMsgId  = genMsgIdRef.current;
+      const liveAppId = selectedAppId;
+      setMessages((prev) => prev.map((m) =>
+        m.id === genMsgId
+          ? { id: m.id, role: "ai" as const, type: "live" as const, liveAppId: liveAppId ?? undefined }
+          : m
+      ));
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -431,27 +495,17 @@ export function NewAppPage() {
     } finally {
       setDeploying(false);
     }
-  }, [gen.jobId, activeAppQuery]);
+  }, [gen.jobId, selectedAppId, activeAppQuery]);
 
-  const handleNewSession = () => {
-    reset();
-    setSelectedAppId(null);
-    setDeployed(false);
-    setBundle(null);
-    setMessages([WELCOME]);
-    setAnalyzeHistory([]);
-    setAnalyzePhase("idle");
-    setPendingIntent(null);
-    prevStatus.current = "idle";
-  };
-
-  const chatPlaceholder = deployed
-    ? "Describe what's wrong to revise and redeploy..."
-    : gen.status === "completed"
-      ? "Ask for a change before deploying..."
-      : analyzePhase === "awaiting_confirm"
-        ? "Or type here to change your request..."
-        : undefined;
+  const chatPlaceholder = isStreaming
+    ? "Generating your app…"
+    : deployed
+      ? "Describe what's wrong to revise and redeploy..."
+      : gen.status === "completed"
+        ? "Ask for a change before deploying..."
+        : analyzePhase === "awaiting_confirm"
+          ? "Or type here to change your request..."
+          : undefined;
 
   return (
     <>
@@ -463,70 +517,43 @@ export function NewAppPage() {
         />
       )}
       <TopBar
-        title="New App"
+        title={activeApp ? activeApp.name : "New App"}
         subtitle={
-          deployed && activeApp
-            ? `${activeApp.name} · live`
-            : activeApp
-              ? activeApp.name
-              : "Prompt to widget"
+          deployed ? "live" : activeApp ? "revision" : "Prompt to widget"
         }
         actions={
-          <>
-            {apps.length > 1 && !deployed && (
-              <select
-                value={selectedAppId ?? ""}
-                onChange={(e) => setSelectedAppId(e.target.value)}
-                className="text-xs bg-raised border border-white/13 text-muted rounded-lg px-2.5 py-1.5 outline-none focus:border-accent"
-              >
-                <option value="">New app</option>
-                {apps.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            )}
-            {(deployed || gen.status !== "idle") && (
-              <Button variant="ghost" size="sm" onClick={handleNewSession}>
-                + New
-              </Button>
-            )}
-            <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
-              ← Back
-            </Button>
-          </>
+          apps.length > 1 && !deployed ? (
+            <select
+              value={selectedAppId ?? ""}
+              onChange={(e) => setSelectedAppId(e.target.value)}
+              className="text-xs bg-raised border border-white/13 text-muted rounded-lg px-2.5 py-1.5 outline-none focus:border-accent"
+            >
+              <option value="">New app</option>
+              {apps.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          ) : undefined
         }
       />
 
-      <div className="flex-1 overflow-hidden flex">
-        {/* ── Left: chat ─────────────────────────────────────────────────── */}
-        <div className="flex-1 flex flex-col border-r border-white/7 overflow-hidden min-w-0">
-          <ChatMessages
-            ref={bottomRef}
-            messages={messages}
-            isAnalyzing={isAnalyzing}
-          />
-          <ChatInput
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSend}
-            disabled={isStreaming || isAnalyzing || deploying}
-            placeholder={chatPlaceholder}
-            onStop={isStreaming ? handleStop : undefined}
-          />
-        </div>
-
-        {/* ── Right: testing / deploy panel ──────────────────────────────── */}
-        <AppTestingPanel
-          gen={gen}
-          bundle={bundle}
-          app={activeApp}
-          shopDomain={shopDomain}
-          tenantId={tenantId}
-          deployed={deployed}
+      <div className="flex-1 overflow-hidden flex flex-col">
+        <ChatMessages
+          ref={bottomRef}
+          messages={messages}
+          isAnalyzing={isAnalyzing}
+          liveGenEvents={gen.events}
           onDeploy={handleDeploy}
           deploying={deploying}
+          onClarifyAnswer={handleClarifyAnswer}
+        />
+        <ChatInput
+          value={input}
+          onChange={setInput}
+          onSubmit={handleSend}
+          disabled={isStreaming || isAnalyzing || deploying}
+          placeholder={chatPlaceholder}
+          onStop={isStreaming ? handleStop : undefined}
         />
       </div>
     </>

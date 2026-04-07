@@ -42,11 +42,15 @@ const router = createBrowserRouter([
           { path: "new", element: <NewAppPage /> },
           { path: "apps", element: <AppsPage /> },
           { path: "apps/:appId", element: <AppDetailPage /> },
+          { path: "apps/:appId/revise", element: <NewAppPage /> },
           { path: "settings", element: <SettingsPage /> },
         ],
       },
     ],
   },
+
+  // ─── Catch-all — redirect any unmatched URL to the landing page ──────────
+  { path: "*", element: <Navigate to="/" replace /> },
 ]);
 
 export function App() {

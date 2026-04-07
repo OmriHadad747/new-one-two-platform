@@ -10,20 +10,15 @@ import type { App } from "@/types/dashboard";
 
 function AppStatusDot({ app, isGenerating }: { app: App; isGenerating: boolean }) {
   if (isGenerating) {
-    return (
-      <span
-        className="w-2 h-2 rounded-full bg-accent animate-pulse shrink-0"
-        title="Generating…"
-      />
-    );
+    return <span className="w-2 h-2 rounded-full bg-accent animate-pulse shrink-0" title="Generating…" />;
   }
-  const cls = {
-    active:   "bg-teal",
-    draft:    "bg-amber",
-    inactive: "bg-faint opacity-50",
-    deleted:  "bg-danger opacity-50",
-  }[app.status] ?? "bg-faint";
-  return <span className={cn("w-2 h-2 rounded-full shrink-0", cls)} />;
+  if (app.status === "active")
+    return <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" title="Live" />;
+  if (app.status === "draft")
+    return <span className="w-2 h-2 rounded-full bg-faint opacity-50 shrink-0" title="Draft" />;
+  if (app.status === "inactive")
+    return <span className="w-2 h-2 rounded-full bg-danger opacity-70 shrink-0" title="Inactive" />;
+  return <span className="w-2 h-2 rounded-full bg-danger opacity-50 shrink-0" title={app.status} />;
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -67,20 +62,31 @@ export function Sidebar() {
         </button>
       </div>
 
-      {/* New App CTA */}
-      <div className="px-3 py-3 border-b border-white/7">
+      {/* New App */}
+      <div className="px-3 pt-3 pb-2">
         <button
           type="button"
           onClick={() => navigate("/app/new")}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/10 hover:bg-accent/15 text-accent text-[13px] font-semibold transition-colors border-0 cursor-pointer"
+          className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.07] border border-white/[0.08] text-[13px] font-medium text-ink transition-colors cursor-pointer"
         >
-          <span className="text-[15px] leading-none">✦</span>
-          New App
+          <div className="flex items-center gap-2.5">
+            <span className="text-accent text-[14px] leading-none">✦</span>
+            <span>New App</span>
+          </div>
+          <span className="material-symbols-outlined text-[15px] text-faint">edit_square</span>
         </button>
       </div>
 
+      {/* Divider */}
+      <div className="mx-3 border-t border-white/[0.06]" />
+
+      {/* Section label */}
+      <div className="px-4 pt-2.5 pb-1">
+        <span className="text-[10px] font-bold text-faint uppercase tracking-wider">My Apps</span>
+      </div>
+
       {/* App list */}
-      <nav className="flex-1 overflow-y-auto py-2 px-2">
+      <nav className="flex-1 overflow-y-auto py-1 px-2">
         {apps.length === 0 && !appsQuery.isLoading && (
           <p className="text-[11px] text-faint text-center py-6 px-3 leading-relaxed">
             No apps yet — build your first one above.
@@ -113,24 +119,6 @@ export function Sidebar() {
             >
               <AppStatusDot app={app} isGenerating={isGenerating} />
               <span className="flex-1 text-[13px] font-medium truncate min-w-0">{app.name}</span>
-              {/* Edit in AI — appears on hover when not generating */}
-              {!isGenerating && (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  title="Edit in AI"
-                  onClick={(e) => { e.stopPropagation(); navigate(`/app/new?appId=${app.id}`); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); navigate(`/app/new?appId=${app.id}`); } }}
-                  className={cn(
-                    "material-symbols-outlined text-[14px] shrink-0 transition-all",
-                    isActive
-                      ? "text-faint hover:text-accent"
-                      : "opacity-0 group-hover:opacity-100 text-faint hover:text-accent"
-                  )}
-                >
-                  edit
-                </span>
-              )}
             </button>
           );
         })}

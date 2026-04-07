@@ -229,13 +229,50 @@ function DeployPanel({
 
 // ─── Live panel (post-deploy) ─────────────────────────────────────────────────
 
-/** Build a sensible default payload for a given webhook topic or trigger type. */
+/** Realistic Shopify webhook payloads keyed by topic. */
+const WEBHOOK_PAYLOADS: Record<string, Record<string, unknown>> = {
+  "orders/create": { id: 820982911, email: "customer@example.com", total_price: "199.65", currency: "USD", financial_status: "pending", fulfillment_status: null, line_items: [{ id: 866550311, title: "Sample Product", quantity: 1, price: "199.00", sku: "SKU-001", variant_id: 808950810, product_id: 632910392 }], customer: { id: 207119551, email: "customer@example.com", first_name: "Jane", last_name: "Doe" }, shipping_address: { first_name: "Jane", last_name: "Doe", address1: "123 Main St", city: "Toronto", province: "Ontario", country: "Canada", zip: "M1M 1M1" }, created_at: "2024-01-15T12:00:00-05:00" },
+  "orders/updated": { id: 820982911, email: "customer@example.com", total_price: "199.65", financial_status: "paid", fulfillment_status: null, updated_at: "2024-01-15T13:00:00-05:00" },
+  "orders/cancelled": { id: 820982911, email: "customer@example.com", total_price: "199.65", cancel_reason: "customer", cancelled_at: "2024-01-15T14:00:00-05:00" },
+  "orders/paid": { id: 820982911, email: "customer@example.com", total_price: "199.65", financial_status: "paid", transactions: [{ id: 1068278461, amount: "199.65", kind: "sale", status: "success" }] },
+  "orders/fulfilled": { id: 820982911, email: "customer@example.com", fulfillment_status: "fulfilled", fulfillments: [{ id: 255858046, status: "success", tracking_company: "UPS", tracking_number: "1Z001985ZY58723423" }] },
+  "orders/partially_fulfilled": { id: 820982911, email: "customer@example.com", fulfillment_status: "partial", fulfillments: [{ id: 255858046, status: "success", line_items: [{ id: 866550311, quantity: 1 }] }] },
+  "products/create": { id: 632910392, title: "Sample Product", status: "active", variants: [{ id: 808950810, title: "Default Title", price: "199.00", sku: "SKU-001", inventory_quantity: 10 }], created_at: "2024-01-15T12:00:00-05:00" },
+  "products/update": { id: 632910392, title: "Sample Product", status: "active", variants: [{ id: 808950810, title: "Default Title", price: "199.00", sku: "SKU-001", inventory_quantity: 8 }], updated_at: "2024-01-15T13:00:00-05:00" },
+  "products/delete": { id: 632910392 },
+  "customers/create": { id: 207119551, email: "customer@example.com", first_name: "Jane", last_name: "Doe", orders_count: 0, total_spent: "0.00", state: "enabled", created_at: "2024-01-15T12:00:00-05:00" },
+  "customers/update": { id: 207119551, email: "customer@example.com", first_name: "Jane", last_name: "Doe", orders_count: 3, total_spent: "598.95", state: "enabled", updated_at: "2024-01-15T13:00:00-05:00" },
+  "customers/delete": { id: 207119551 },
+  "customers/enable": { id: 207119551, email: "customer@example.com", first_name: "Jane", last_name: "Doe", state: "enabled" },
+  "customers/disable": { id: 207119551, email: "customer@example.com", first_name: "Jane", last_name: "Doe", state: "disabled" },
+  "inventory_levels/update": { inventory_item_id: 808950810, location_id: 655441491, available: 6, updated_at: "2024-01-15T13:00:00-05:00", admin_graphql_api_id: "gid://shopify/InventoryLevel/655441491?inventory_item_id=808950810" },
+  "inventory_levels/connect": { inventory_item_id: 808950810, location_id: 655441491, available: 10 },
+  "inventory_levels/disconnect": { inventory_item_id: 808950810, location_id: 655441491 },
+  "inventory_items/create": { id: 808950810, sku: "SKU-001", tracked: true, created_at: "2024-01-15T12:00:00-05:00" },
+  "inventory_items/update": { id: 808950810, sku: "SKU-001", tracked: true, cost: "120.00", updated_at: "2024-01-15T13:00:00-05:00" },
+  "inventory_items/delete": { id: 808950810 },
+  "collections/create": { id: 841564295, title: "Summer Collection", handle: "summer-collection", published: true, created_at: "2024-01-15T12:00:00-05:00" },
+  "collections/update": { id: 841564295, title: "Summer Collection", handle: "summer-collection", published: true, updated_at: "2024-01-15T13:00:00-05:00" },
+  "collections/delete": { id: 841564295 },
+  "fulfillments/create": { id: 255858046, order_id: 820982911, status: "pending", tracking_company: "UPS", tracking_number: "1Z001985ZY58723423", line_items: [{ id: 466157049, title: "Sample Product", quantity: 1 }], created_at: "2024-01-15T12:00:00-05:00" },
+  "fulfillments/update": { id: 255858046, order_id: 820982911, status: "success", tracking_company: "UPS", tracking_number: "1Z001985ZY58723423", updated_at: "2024-01-15T13:00:00-05:00" },
+  "refunds/create": { id: 509562969, order_id: 820982911, note: "Item returned by customer", refund_line_items: [{ id: 104689539, quantity: 1, subtotal: "199.00" }], transactions: [{ id: 1068278461, amount: "199.00", kind: "refund", status: "success" }], created_at: "2024-01-15T12:00:00-05:00" },
+  "draft_orders/create": { id: 72885271, status: "open", email: "customer@example.com", total_price: "199.65", line_items: [{ title: "Sample Product", quantity: 1, price: "199.00" }], created_at: "2024-01-15T12:00:00-05:00" },
+  "draft_orders/update": { id: 72885271, status: "open", email: "customer@example.com", total_price: "199.65", updated_at: "2024-01-15T13:00:00-05:00" },
+  "checkouts/create": { id: 450789469, token: "2a1ace52255252df566af0fafc39b3c2", email: "customer@example.com", total_price: "199.65", line_items: [{ title: "Sample Product", quantity: 1, price: "199.00" }], created_at: "2024-01-15T12:00:00-05:00" },
+  "checkouts/update": { id: 450789469, token: "2a1ace52255252df566af0fafc39b3c2", email: "customer@example.com", total_price: "199.65", completed_at: null, updated_at: "2024-01-15T13:00:00-05:00" },
+  "checkouts/delete": { id: 450789469, token: "2a1ace52255252df566af0fafc39b3c2" },
+  "carts/create": { id: "539e1c1eab6e52a591e0b6c13c96b56a", token: "539e1c1eab6e52a591e0b6c13c96b56a", line_items: [{ variant_id: 808950810, quantity: 1, title: "Sample Product", price: "199.00" }], created_at: "2024-01-15T12:00:00-05:00" },
+  "carts/update": { id: "539e1c1eab6e52a591e0b6c13c96b56a", token: "539e1c1eab6e52a591e0b6c13c96b56a", line_items: [{ variant_id: 808950810, quantity: 2, title: "Sample Product", price: "199.00" }], updated_at: "2024-01-15T13:00:00-05:00" },
+  "app/uninstalled": { id: 1234567, domain: "shop.myshopify.com", name: "My Store" },
+};
+
+/** Build a realistic test payload for a given webhook topic or trigger type. */
 function defaultPayload(triggerType: string, topics: string[]): Record<string, unknown> {
-  const topic = topics[0] ?? "";
-  if (topic.startsWith("orders/")) return { id: 1001, email: "customer@example.com", total_price: "49.99", line_items: [{ title: "Example Product", quantity: 1 }] };
-  if (topic.startsWith("products/")) return { id: 2001, title: "Example Product", status: "active" };
-  if (topic.startsWith("customers/")) return { id: 3001, email: "customer@example.com", first_name: "Jane", last_name: "Doe" };
-  if (triggerType === "cron") return { scheduled_at: new Date().toISOString() };
+  for (const topic of topics) {
+    if (topic in WEBHOOK_PAYLOADS) return WEBHOOK_PAYLOADS[topic];
+  }
+  if (triggerType === "cron") return { scheduled_at: "2024-01-15T12:00:00-05:00", run_id: "cron_test_001" };
   if (triggerType === "admin" || triggerType === "widget") return { action: "test", value: "example" };
   return { test: true };
 }
@@ -284,86 +321,49 @@ function LivePanel({
     }
   };
 
-  const hasWidget = bundle?.hasWidget ?? (app?.appArchetype === "storefront_backend" || app?.appArchetype === "storefront_backend_admin");
-  const storeFrontUrl = shopDomain ? `https://${shopDomain}` : null;
-  const themeEditorUrl = shopDomain ? `https://${shopDomain}/admin/themes/current/editor` : null;
-  const adminUrl = shopDomain ? `https://${shopDomain}/admin/apps` : null;
-
-  const triggerTopics = bundle?.triggerTopics ?? [];
-  const topicHint = triggerTopics.length > 0 ? `(${triggerTopics[0]})` : "in Shopify";
-
-  const explanationText: string | null =
-    typeof bundle?.explanation === "string"
-      ? bundle.explanation
-      : typeof bundle?.explanation === "object" && bundle?.explanation !== null
-        ? ((bundle.explanation as unknown as { merchantFacing?: string }).merchantFacing ?? null)
-        : null;
-
-  const validateSteps = explanationText
-    ? explanationText.split(/\n+/).filter(Boolean)
-    : hasWidget
-      ? [
-          "Open your store and navigate to a product page.",
-          "The widget should appear — interact with it.",
-          "Something wrong? Describe it in the chat to revise.",
-        ]
-      : [
-          `Trigger a real event ${topicHint} — e.g. create a test order.`,
-          "Verify the expected action occurred in your store.",
-          "Something wrong? Describe it in the chat to revise.",
-        ];
-
   return (
-    <div className="space-y-7">
+    <div className="space-y-4">
 
       {/* ── Live status ─────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2.5 p-3 bg-teal/8 border border-teal/15 rounded-xl">
-        <span className="w-2 h-2 rounded-full bg-teal shrink-0" />
+      <div className="flex items-center gap-2.5 p-3.5 bg-teal/8 border border-teal/15 rounded-xl">
+        <span className="w-2 h-2 rounded-full bg-teal shrink-0 animate-pulse" />
         <div className="flex-1 min-w-0">
-          <p className="text-[12px] font-semibold text-teal">App is live</p>
-          <p className="text-[11px] text-muted mt-0.5">Something wrong? Type in the chat to revise.</p>
+          <p className="text-[13px] font-semibold text-teal">App is live</p>
+          <p className="text-[11px] text-muted mt-0.5">Describe what's wrong in the chat to revise.</p>
         </div>
       </div>
 
-      {/* ── Validate ───────────────────────────────────────────────────── */}
-      <section>
-        <div className="flex items-center gap-2 mb-3.5">
-          <span className="material-symbols-outlined text-accent text-[16px]">checklist</span>
-          <span className="text-[11px] font-bold text-ink uppercase tracking-wider">Validate</span>
-        </div>
-        <ol className="space-y-3">
-          {validateSteps.map((step, i) => (
-            <li key={i} className="flex gap-3 text-[13px] text-muted leading-relaxed">
-              <span className="w-5 h-5 rounded-full bg-accent/12 flex items-center justify-center text-accent text-[10px] font-bold shrink-0 mt-0.5">
-                {i + 1}
-              </span>
-              <span>{step}</span>
-            </li>
-          ))}
-        </ol>
+      {/* ── View App Details ────────────────────────────────────────────── */}
+      {app?.id && (
+        <button
+          type="button"
+          onClick={() => navigate(`/app/apps/${app.id}`)}
+          className="w-full flex items-center justify-between px-4 py-3 bg-white/[0.04] border border-white/[0.08] rounded-xl text-[13px] font-semibold text-muted hover:bg-white/[0.07] hover:text-ink transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-2.5">
+            <span className="material-symbols-outlined text-[16px]">dashboard</span>
+            <span>View App Details</span>
+          </div>
+          <span className="material-symbols-outlined text-[14px] text-faint">arrow_forward</span>
+        </button>
+      )}
 
-        {canTrigger && (
-          <div className="mt-4 space-y-2">
-            {/* Editable payload */}
-            <div>
-              <label className="text-[10px] font-semibold text-faint uppercase tracking-wider block mb-1.5">
-                Event payload
-              </label>
-              <textarea
-                value={payloadJson}
-                onChange={(e) => { setPayloadJson(e.target.value); setPayloadError(null); }}
-                spellCheck={false}
-                rows={6}
-                className={cn(
-                  "w-full font-mono text-[11px] bg-raised border rounded-lg px-3 py-2.5 text-ink resize-none outline-none leading-relaxed",
-                  payloadError ? "border-danger/50 focus:border-danger" : "border-white/[0.08] focus:border-accent/50"
-                )}
-              />
-              {payloadError && (
-                <p className="text-[10px] text-danger mt-1">{payloadError}</p>
+      {/* ── Test trigger (cron / admin / widget apps only) ──────────────── */}
+      {canTrigger && (
+        <section>
+          <p className="text-[10px] font-bold text-faint uppercase tracking-wider mb-2">Test event</p>
+          <div className="space-y-2">
+            <textarea
+              value={payloadJson}
+              onChange={(e) => { setPayloadJson(e.target.value); setPayloadError(null); }}
+              spellCheck={false}
+              rows={5}
+              className={cn(
+                "w-full font-mono text-[11px] bg-raised border rounded-lg px-3 py-2.5 text-ink resize-none outline-none leading-relaxed",
+                payloadError ? "border-danger/50 focus:border-danger" : "border-white/[0.08] focus:border-accent/50"
               )}
-            </div>
-
+            />
+            {payloadError && <p className="text-[10px] text-danger">{payloadError}</p>}
             <button
               type="button"
               onClick={handleTrigger}
@@ -375,7 +375,6 @@ function LivePanel({
               </span>
               {triggerState === "loading" ? "Firing…" : "Fire test event"}
             </button>
-
             {triggerOut && (
               <pre className={cn(
                 "p-3 rounded-lg font-mono text-[10px] leading-relaxed overflow-x-auto",
@@ -385,85 +384,8 @@ function LivePanel({
               </pre>
             )}
           </div>
-        )}
-      </section>
-
-      {/* ── Logs link ──────────────────────────────────────────────────── */}
-      {app?.id && (
-        <section>
-          <button
-            type="button"
-            onClick={() => navigate(`/app/apps/${app.id}`)}
-            className="w-full flex items-center justify-between px-3.5 py-2.5 bg-white/[0.03] border border-white/[0.07] rounded-lg text-muted text-[12px] font-semibold hover:bg-white/[0.06] hover:text-ink transition-colors border-0 cursor-pointer"
-          >
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-[15px]">terminal</span>
-              <span>View logs</span>
-            </div>
-            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-          </button>
         </section>
       )}
-
-      {/* ── Open in Shopify ─────────────────────────────────────────────── */}
-      <section>
-        <div className="flex items-center gap-2 mb-3.5">
-          <span className="material-symbols-outlined text-faint text-[16px]">open_in_new</span>
-          <span className="text-[11px] font-bold text-ink uppercase tracking-wider">Open in Shopify</span>
-        </div>
-
-        <div className="space-y-2">
-          {hasWidget && storeFrontUrl && (
-            <a
-              href={storeFrontUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-between px-3.5 py-2.5 bg-teal/8 border border-teal/15 rounded-lg text-teal text-[12px] font-semibold hover:bg-teal/15 transition-colors no-underline"
-            >
-              <span>View storefront</span>
-              <span className="material-symbols-outlined text-[14px]">arrow_outward</span>
-            </a>
-          )}
-          {hasWidget && themeEditorUrl && (
-            <div className="space-y-1.5">
-              <a
-                href={themeEditorUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-between px-3.5 py-2.5 bg-white/[0.03] border border-white/[0.07] rounded-lg text-muted text-[12px] font-semibold hover:bg-white/[0.06] transition-colors no-underline"
-              >
-                <span>Theme editor — add app block</span>
-                <span className="material-symbols-outlined text-[14px]">arrow_outward</span>
-              </a>
-              {app?.id && (
-                <p className="text-[10px] text-faint px-1 leading-relaxed">
-                  In the theme editor: Apps → Browse apps → find the block, then set{" "}
-                  <span className="font-mono bg-white/[0.05] px-1 py-0.5 rounded text-faint/80">App ID</span>{" "}
-                  to{" "}
-                  <span
-                    className="font-mono bg-white/[0.05] px-1 py-0.5 rounded text-accent/80 cursor-pointer select-all"
-                    title="Click to copy"
-                    onClick={() => navigator.clipboard.writeText(app.id)}
-                  >
-                    {app.id}
-                  </span>
-                </p>
-              )}
-            </div>
-          )}
-          {adminUrl && (
-            <a
-              href={adminUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-between px-3.5 py-2.5 bg-white/[0.03] border border-white/[0.07] rounded-lg text-muted text-[12px] font-semibold hover:bg-white/[0.06] transition-colors no-underline"
-            >
-              <span>Shopify Admin — Apps</span>
-              <span className="material-symbols-outlined text-[14px]">arrow_outward</span>
-            </a>
-          )}
-        </div>
-      </section>
     </div>
   );
 }

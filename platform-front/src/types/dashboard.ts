@@ -94,6 +94,7 @@ export interface AnalyzeMessage {
 export interface AnalyzeResult {
   status: "needs_clarification" | "ready";
   question?: string;
+  suggestions?: string[];
   summary?: string;
   intent?: Record<string, unknown>;
 }

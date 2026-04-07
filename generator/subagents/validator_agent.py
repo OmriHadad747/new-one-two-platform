@@ -46,13 +46,18 @@ Alignment must hold in both directions (caller→handler body, handler→caller 
 for both callers.
 
 Answer exactly 7 targeted alignment questions. For each question:
-- Decide whether the artifacts are aligned (true) or misaligned (false).
-- If misaligned, state the specific issue concisely (exact field/table/route names).
-- Rate your confidence: "high" (you are certain of the specific mismatch)
-  or "medium" (something looks suspicious but may be correct in context).
+- Set "aligned": true if the artifacts agree on this dimension. Set "aligned": false ONLY if
+  you can name the exact identifier that is wrong (a specific field, column, or table name).
+- "issue": must be null when aligned is true. When aligned is false, name the EXACT mismatch
+  (e.g. "widget sends customerId but handler reads userId for route /subscribe").
+  NEVER write an issue that says the code is correct or that things align — that contradicts
+  aligned=false and is a logic error.
+- "confidence": "high" means you are certain of the specific mismatch you named.
+  "medium" means something looks suspicious but context might explain it.
+  When aligned is true, set confidence to "high".
 
-HIGH confidence = you can name the exact identifier that is wrong.
-MEDIUM confidence = possible issue, but context might explain it.
+CRITICAL RULE: aligned=false + issue saying "both align correctly" or similar is FORBIDDEN.
+If you believe the code is correct, set aligned=true and issue=null.
 
 Respond with ONLY this JSON (no markdown fences, no explanation):
 {
@@ -217,6 +222,18 @@ def run_validator_agent(
         log.warning("validator_agent: failed to get/parse response (%s) — fail-open", exc)
         return []
 
+    # Phrases that indicate the LLM contradicted itself by flagging a non-issue.
+    _SELF_CONTRADICTING = (
+        "align correctly",
+        "both align",
+        "correctly aligned",
+        "are aligned",
+        "both routes align",
+        "no misalignment",
+        "fields match",
+        "correctly match",
+    )
+
     issues: List[Dict] = []
     for q_key, data in result.items():
         if not isinstance(data, dict):
@@ -226,6 +243,18 @@ def run_validator_agent(
         issue_text = data.get("issue")
 
         if not aligned and issue_text:
+            # Guard: reject self-contradicting issues where the issue text itself
+            # says the code is correct (LLM confused aligned=false with aligned=true).
+            lower = issue_text.lower()
+            if any(phrase in lower for phrase in _SELF_CONTRADICTING):
+                log.warning(
+                    "validator_agent: %s flagged as misaligned but issue says code is correct "
+                    "— treating as false positive and skipping: %s",
+                    q_key,
+                    issue_text,
+                )
+                continue
+
             if confidence == "high":
                 log.info(
                     "validator_agent: %s HIGH confidence issue — %s", q_key, issue_text

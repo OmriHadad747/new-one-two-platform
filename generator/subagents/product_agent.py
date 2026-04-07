@@ -82,8 +82,11 @@ OUTPUT FORMAT — respond ONLY with one of these JSON objects (no markdown fence
 If you need clarification:
 {
   "status": "needs_clarification",
-  "question": "Your specific question here"
+  "question": "Your specific question here",
+  "suggestions": ["Short option A", "Short option B"]
 }
+
+suggestions: 2-4 concrete short answer options (under 8 words each). Only include the ones that are genuinely likely choices — don't invent options for the sake of it. Minimum 2, maximum 4.
 
 If you understand the request:
 {

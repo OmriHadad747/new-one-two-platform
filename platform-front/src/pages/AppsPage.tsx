@@ -1,11 +1,11 @@
 import { useNavigate } from "react-router";
 import { TopBar } from "@/components/layout/TopBar";
 import { Button } from "@/components/ui/Button";
-import { cn } from "@/lib/cn";
 import { useSessionStore } from "@/stores/session";
 import { useGenerationStore } from "@/stores/generation";
 import { useApps } from "@/hooks/useApps";
-import type { App } from "@/types/dashboard";
+import { AppStatusBadge } from "@/components/ui/AppStatusBadge";
+import { ArchetypePills } from "@/components/ui/ArchetypePills";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -14,34 +14,92 @@ function timeAgo(iso: string): string {
   return `${Math.round(diff / 86_400_000)}d ago`;
 }
 
-function StatusBadge({ status }: { status: App["status"] }) {
-  const cfg = {
-    active:   { label: "Live",     cls: "bg-teal/12 text-teal"            },
-    draft:    { label: "Draft",    cls: "bg-amber/12 text-amber"          },
-    inactive: { label: "Inactive", cls: "bg-white/[0.06] text-faint"      },
-    deleted:  { label: "Deleted",  cls: "bg-danger/12 text-danger"        },
-  }[status] ?? { label: status, cls: "bg-white/[0.06] text-faint" };
+const AVATAR_GRADIENTS = [
+  "from-violet-500 to-indigo-600",
+  "from-blue-500 to-cyan-600",
+  "from-teal-500 to-emerald-600",
+  "from-amber-500 to-orange-600",
+  "from-rose-500 to-pink-600",
+  "from-fuchsia-500 to-purple-600",
+  "from-sky-500 to-blue-600",
+  "from-lime-500 to-green-600",
+];
+
+function AppCard({
+  app,
+  isGenerating,
+  onOpen,
+  onRevise,
+}: {
+  app: { id: string; name: string; slug: string; status: string; appArchetype: string; updatedAt: string };
+  isGenerating: boolean;
+  onOpen: () => void;
+  onRevise: (e: React.MouseEvent) => void;
+}) {
+  const initials = app.name.split(" ").slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
+  const seed = app.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+  const gradient = AVATAR_GRADIENTS[seed % AVATAR_GRADIENTS.length];
 
   return (
-    <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide", cfg.cls)}>
-      {cfg.label}
-    </span>
-  );
-}
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group w-full text-left bg-white/[0.03] border border-white/[0.07] rounded-2xl overflow-hidden hover:bg-white/[0.055] hover:border-white/[0.12] transition-all cursor-pointer"
+    >
+      {/* Card body */}
+      <div className="p-4 space-y-3">
 
-function ArchetypeBadge({ archetype }: { archetype: App["appArchetype"] }) {
-  const label =
-    archetype === "backend"
-      ? "Backend only"
-      : archetype === "storefront_backend"
-        ? "Widget + Backend"
-        : archetype === "backend_admin"
-          ? "Backend + Admin"
-          : "Widget + Backend + Admin";
-  return (
-    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-accent/8 text-accent">
-      {label}
-    </span>
+        {/* Top row: avatar + name + status */}
+        <div className="flex items-start gap-3">
+          {/* Avatar */}
+          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${gradient} flex items-center justify-center shrink-0`}>
+            <span className="text-white text-[13px] font-bold">{initials}</span>
+          </div>
+
+          {/* Name + slug */}
+          <div className="flex-1 min-w-0 pt-0.5">
+            <p className="text-[14px] font-semibold text-ink leading-tight truncate">{app.name}</p>
+            <p className="text-[11px] text-faint font-mono truncate mt-0.5">{app.slug}</p>
+          </div>
+
+          {/* Status */}
+          <div className="shrink-0 pt-0.5">
+            <AppStatusBadge status={app.status as never} isBuilding={isGenerating} size="sm" />
+          </div>
+        </div>
+
+        {/* Archetype pills */}
+        {!isGenerating && (
+          <div>
+            <ArchetypePills archetype={app.appArchetype as never} />
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div className="px-4 py-2.5 border-t border-white/[0.05] flex items-center justify-between">
+        <span className="text-[11px] text-faint">Updated {timeAgo(app.updatedAt)}</span>
+
+        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={onRevise}
+            title="Revise with AI"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-faint hover:text-accent hover:bg-accent/10 transition-colors bg-transparent border-0 cursor-pointer opacity-0 group-hover:opacity-100"
+          >
+            <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onOpen(); }}
+            title="View details"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-faint hover:text-ink hover:bg-white/[0.08] transition-colors bg-transparent border-0 cursor-pointer opacity-0 group-hover:opacity-100"
+          >
+            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+          </button>
+        </div>
+      </div>
+    </button>
   );
 }
 
@@ -54,22 +112,15 @@ export function AppsPage() {
 
   return (
     <>
-      <TopBar
-        title="My Apps"
-        actions={
-          <Button variant="primary" size="sm" onClick={() => navigate("/app/new")}>
-            ✦ New App
-          </Button>
-        }
-      />
+      <TopBar title="My Apps" />
 
-      <main className="flex-1 overflow-y-auto p-7 max-w-[960px]">
+      <main className="flex-1 overflow-y-auto p-7">
 
         {/* Loading */}
         {appsQuery.isLoading && (
-          <div className="space-y-2">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-16 bg-white/[0.03] rounded-xl animate-pulse-subtle border border-white/[0.06]" />
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-36 bg-white/[0.03] rounded-2xl animate-pulse-subtle border border-white/[0.06]" />
             ))}
           </div>
         )}
@@ -104,79 +155,19 @@ export function AppsPage() {
           </div>
         )}
 
-        {/* List */}
+        {/* Grid */}
         {apps.length > 0 && (
-          <div className="bg-surface border border-white/[0.07] rounded-xl overflow-hidden">
-            {/* Table header */}
-            <div className="grid grid-cols-[1fr_140px_100px_100px_80px] gap-4 px-5 py-2.5 border-b border-white/[0.07] bg-white/[0.02]">
-              <span className="text-[10px] font-bold text-faint uppercase tracking-wider">App</span>
-              <span className="text-[10px] font-bold text-faint uppercase tracking-wider">Type</span>
-              <span className="text-[10px] font-bold text-faint uppercase tracking-wider">Status</span>
-              <span className="text-[10px] font-bold text-faint uppercase tracking-wider">Updated</span>
-              <span className="text-[10px] font-bold text-faint uppercase tracking-wider text-right">Actions</span>
-            </div>
-
-            {apps.map((app, i) => {
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
+            {apps.map((app) => {
               const isGenerating = activeGen?.appId === app.id && activeGen.status === "running";
               return (
-              <div
-                key={app.id}
-                className={cn(
-                  "grid grid-cols-[1fr_140px_100px_100px_80px] gap-4 px-5 py-3.5 items-center transition-colors hover:bg-white/[0.02] cursor-pointer",
-                  i < apps.length - 1 && "border-b border-white/[0.05]"
-                )}
-                onClick={() => navigate(`/app/apps/${app.id}`)}
-              >
-                {/* Name */}
-                <div className="min-w-0 flex items-center gap-2">
-                  {isGenerating && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse shrink-0" />
-                  )}
-                  <div className="min-w-0">
-                    <div className="text-[13px] font-semibold text-ink truncate">{app.name}</div>
-                    <div className="text-[11px] text-faint font-mono truncate mt-0.5">{app.slug}</div>
-                  </div>
-                </div>
-
-                {/* Archetype */}
-                <div>
-                  {!isGenerating && <ArchetypeBadge archetype={app.appArchetype} />}
-                </div>
-
-                {/* Status */}
-                <div>
-                  {isGenerating ? (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent">
-                      Building…
-                    </span>
-                  ) : (
-                    <StatusBadge status={app.status} />
-                  )}
-                </div>
-
-                {/* Updated */}
-                <div className="text-[12px] text-faint">{timeAgo(app.updatedAt)}</div>
-
-                {/* Actions */}
-                <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/app/new?appId=${app.id}`)}
-                    title="Edit in AI"
-                    className="w-7 h-7 rounded-md flex items-center justify-center text-faint hover:text-accent hover:bg-accent/10 transition-colors bg-transparent border-0 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[15px]">edit</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/app/apps/${app.id}`)}
-                    title="View details"
-                    className="w-7 h-7 rounded-md flex items-center justify-center text-faint hover:text-ink hover:bg-white/[0.06] transition-colors bg-transparent border-0 cursor-pointer"
-                  >
-                    <span className="material-symbols-outlined text-[15px]">arrow_forward</span>
-                  </button>
-                </div>
-              </div>
+                <AppCard
+                  key={app.id}
+                  app={app}
+                  isGenerating={isGenerating}
+                  onOpen={() => navigate(`/app/apps/${app.id}`)}
+                  onRevise={(e) => { e.stopPropagation(); navigate(`/app/apps/${app.id}/revise`); }}
+                />
               );
             })}
           </div>

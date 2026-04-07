@@ -1008,6 +1008,14 @@ def validate_widget_artifact(
 
 FORBIDDEN_ADMIN_UI_PATTERNS = [
     (
+        r"\bexport\s+default\b",
+        "export default is forbidden — use named export only: export function mount(container, bridge) { ... }",
+    ),
+    (
+        r"\bimport\s+",
+        "import statements are forbidden — admin UI must be self-contained vanilla JS with no imports",
+    ),
+    (
         r"\bfetch\s*\(",
         "raw fetch() not allowed — use bridge.call() for backend requests",
     ),

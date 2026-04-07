@@ -64,15 +64,7 @@ export function DashboardPage() {
 
   return (
     <>
-      <TopBar
-        title="Dashboard"
-        subtitle={shopDomain ?? tenantId}
-        actions={
-          <Button variant="primary" onClick={() => navigate("/app/new")}>
-            ✦ New App
-          </Button>
-        }
-      />
+      <TopBar title="Dashboard" subtitle={shopDomain ?? tenantId} />
       <main className="flex-1 overflow-y-auto p-7">
         {/* Stats */}
         {statsQuery.isLoading ? (
