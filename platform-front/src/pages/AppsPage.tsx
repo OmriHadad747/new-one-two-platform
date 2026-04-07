@@ -41,65 +41,60 @@ function AppCard({
   const gradient = AVATAR_GRADIENTS[seed % AVATAR_GRADIENTS.length];
 
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="group w-full text-left bg-white/[0.03] border border-white/[0.07] rounded-2xl overflow-hidden hover:bg-white/[0.055] hover:border-white/[0.12] transition-all cursor-pointer"
-    >
-      {/* Card body */}
-      <div className="p-4 space-y-3">
+    <div className="group bg-white/[0.03] border border-white/[0.07] rounded-xl overflow-hidden hover:border-white/[0.13] hover:bg-white/[0.05] transition-colors duration-150 flex flex-col">
 
-        {/* Top row: avatar + name + status */}
-        <div className="flex items-start gap-3">
-          {/* Avatar */}
+      {/* Clickable body */}
+      <button
+        type="button"
+        onClick={onOpen}
+        className="text-left flex flex-col flex-1 px-5 pt-5 pb-4 gap-0 bg-transparent border-0 cursor-pointer w-full"
+      >
+        {/* Avatar + name + status */}
+        <div className="flex items-center gap-3">
           <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${gradient} flex items-center justify-center shrink-0`}>
             <span className="text-white text-[13px] font-bold">{initials}</span>
           </div>
-
-          {/* Name + slug */}
-          <div className="flex-1 min-w-0 pt-0.5">
-            <p className="text-[14px] font-semibold text-ink leading-tight truncate">{app.name}</p>
-            <p className="text-[11px] text-faint font-mono truncate mt-0.5">{app.slug}</p>
+          <div className="flex-1 min-w-0">
+            <p className="text-[14px] font-semibold text-ink leading-snug truncate">{app.name}</p>
+            <p className="text-[11.5px] text-faint font-mono truncate mt-0.5">{app.slug}</p>
           </div>
-
-          {/* Status */}
-          <div className="shrink-0 pt-0.5">
+          <div className="shrink-0">
             <AppStatusBadge status={app.status as never} isBuilding={isGenerating} size="sm" />
           </div>
         </div>
 
-        {/* Archetype pills */}
-        {!isGenerating && (
-          <div>
-            <ArchetypePills archetype={app.appArchetype as never} />
-          </div>
-        )}
-      </div>
+        {/* Pills — flex-nowrap so they never wrap to a second line */}
+        <div className="mt-4 flex items-center gap-1.5 flex-nowrap overflow-hidden">
+          {isGenerating
+            ? <span className="text-[11px] text-accent animate-pulse-subtle">Building…</span>
+            : <ArchetypePills archetype={app.appArchetype as never} />
+          }
+        </div>
+      </button>
 
       {/* Footer */}
-      <div className="px-4 py-2.5 border-t border-white/[0.05] flex items-center justify-between">
-        <span className="text-[11px] text-faint">Updated {timeAgo(app.updatedAt)}</span>
-
-        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <div className="px-5 py-3 border-t border-white/[0.05] flex items-center justify-between shrink-0">
+        <span className="text-[11px] text-faint/70">{timeAgo(app.updatedAt)}</span>
+        <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={onRevise}
-            title="Revise with AI"
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-faint hover:text-accent hover:bg-accent/10 transition-colors bg-transparent border-0 cursor-pointer opacity-0 group-hover:opacity-100"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-accent hover:bg-accent/10 border-0 cursor-pointer transition-colors bg-transparent"
           >
-            <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+            <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+            Revise
           </button>
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); onOpen(); }}
-            title="View details"
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-faint hover:text-ink hover:bg-white/[0.08] transition-colors bg-transparent border-0 cursor-pointer opacity-0 group-hover:opacity-100"
+            onClick={onOpen}
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-faint hover:text-ink hover:bg-white/[0.07] border-0 cursor-pointer transition-colors bg-transparent"
           >
-            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+            Open
+            <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
           </button>
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -116,11 +111,11 @@ export function AppsPage() {
 
       <main className="flex-1 overflow-y-auto p-7">
 
-        {/* Loading */}
+        {/* Loading skeleton */}
         {appsQuery.isLoading && (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-36 bg-white/[0.03] rounded-2xl animate-pulse-subtle border border-white/[0.06]" />
+              <div key={i} className="h-[130px] bg-white/[0.03] rounded-2xl animate-pulse-subtle border border-white/[0.06]" />
             ))}
           </div>
         )}
@@ -139,7 +134,7 @@ export function AppsPage() {
           </div>
         )}
 
-        {/* Empty */}
+        {/* Empty state */}
         {!appsQuery.isLoading && !appsQuery.isError && apps.length === 0 && (
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
             <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
@@ -147,7 +142,7 @@ export function AppsPage() {
             </div>
             <div>
               <p className="text-sm font-semibold text-faint">No apps yet</p>
-              <p className="text-[12px] text-faint mt-1 opacity-60">Describe your first feature and the AI will build it.</p>
+              <p className="text-[12px] text-faint mt-1 opacity-60">Describe your first feature and Ton will build it.</p>
             </div>
             <Button variant="primary" onClick={() => navigate("/app/new")}>
               Build your first app
@@ -157,7 +152,7 @@ export function AppsPage() {
 
         {/* Grid */}
         {apps.length > 0 && (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
             {apps.map((app) => {
               const isGenerating = activeGen?.appId === app.id && activeGen.status === "running";
               return (
@@ -170,6 +165,21 @@ export function AppsPage() {
                 />
               );
             })}
+
+            {/* New App card */}
+            <button
+              type="button"
+              onClick={() => navigate("/app/new")}
+              className="group flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-white/[0.09] hover:border-accent/40 hover:bg-accent/[0.04] transition-all duration-200 cursor-pointer bg-transparent min-h-[130px]"
+            >
+              <div className="w-10 h-10 rounded-xl bg-white/[0.04] group-hover:bg-accent/12 flex items-center justify-center transition-colors duration-200">
+                <span className="material-symbols-outlined text-faint group-hover:text-accent text-[22px] transition-colors duration-200">add</span>
+              </div>
+              <div className="text-center">
+                <p className="text-[13px] font-semibold text-faint group-hover:text-ink transition-colors duration-200">New App</p>
+                <p className="text-[11px] text-faint/60 mt-0.5">Build with Ton</p>
+              </div>
+            </button>
           </div>
         )}
       </main>

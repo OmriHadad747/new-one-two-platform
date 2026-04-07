@@ -46,6 +46,7 @@
 [data-theme="light"] .border-white\/7,
 [data-theme="light"] [class*="border-white/7"] { border-color: rgba(0,0,0,0.09) !important; }
 
+[data-theme="light"] [class~="border-white/[0.09]"] { border-color: rgba(0,0,0,0.14) !important; }
 [data-theme="light"] [class~="border-white/[0.07]"] { border-color: rgba(0,0,0,0.09) !important; }
 [data-theme="light"] [class~="border-white/[0.06]"] { border-color: rgba(0,0,0,0.08) !important; }
 [data-theme="light"] [class~="border-white/[0.05]"] { border-color: rgba(0,0,0,0.07) !important; }

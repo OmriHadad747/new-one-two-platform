@@ -98,6 +98,16 @@ export const api = {
       }),
     cancel: (jobId: string) =>
       request<{ ok: boolean }>(`/generation/${jobId}/cancel`, { method: "POST", body: "{}" }),
+    /**
+     * Persists frontend chat history for a session.
+     * Fire-and-forget — call errors are silently swallowed by the caller.
+     * `messages` must have `actions` stripped (onClick closures are not serializable).
+     */
+    saveChat: (jobId: string, messages: Array<Record<string, unknown>>) =>
+      request<void>(`/generation/${jobId}/chat`, {
+        method: "PATCH",
+        body: JSON.stringify({ messages }),
+      }),
   },
   widgets: {
     /**

@@ -336,12 +336,15 @@ function InvocationLogRow({ entry, last }: { entry: InvocationLogEntry; last: bo
 }
 
 function TabBar<T extends string>({
-  tabs, active, onChange, end,
+  tabs, active, onChange, end, action,
 }: {
   tabs: { id: T; label: string }[];
   active: T;
   onChange: (t: T) => void;
+  /** Renders flush-right (e.g. refresh button inside a sub-tab bar). */
   end?: React.ReactNode;
+  /** Renders right after the last tab with a hairline separator — use for primary page actions. */
+  action?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-1 border-b border-white/[0.07] pb-0">
@@ -353,6 +356,12 @@ function TabBar<T extends string>({
           )}
         >{t.label}</button>
       ))}
+      {action && (
+        <>
+          <span className="w-px h-3.5 bg-white/[0.12] mx-1.5 self-center shrink-0" />
+          <div className="-mb-px">{action}</div>
+        </>
+      )}
       {end && <div className="flex-1 flex items-center justify-end gap-2 mb-0.5">{end}</div>}
     </div>
   );
@@ -504,7 +513,7 @@ function buildValidationSteps({
   }
 
   steps.push({
-    text: "Found a logic error, wrong behavior, or missing functionality? Click Revise → and describe the issue — the AI will fix it.",
+    text: "Found a logic error, wrong behavior, or missing functionality? Click Revise → and describe the issue — Ton will fix it.",
     isRevise: true,
   });
 
@@ -539,9 +548,12 @@ function OverviewTab({
   const hasWidget  = !!(latestSession?.bundle?.widgetModule  ?? (app.appArchetype === "storefront_backend" || app.appArchetype === "storefront_backend_admin"));
   const hasAdminUI = !!(latestSession?.bundle?.adminUiModule ?? (app.appArchetype === "backend_admin"      || app.appArchetype === "storefront_backend_admin"));
 
-  const storeFrontUrl  = shopDomain ? `https://${shopDomain}` : null;
-  const themeEditorUrl = shopDomain ? `https://${shopDomain}/admin/themes/current/editor` : null;
-  const adminUrl       = shopDomain ? `https://${shopDomain}/admin/apps` : null;
+  // Prefer app.shopDomain (always authoritative for this app) over the session-store
+  // shopDomain (may be stale or null after store rehydration).
+  const effectiveShop  = app.shopDomain || shopDomain || null;
+  const storeFrontUrl  = effectiveShop ? `https://${effectiveShop}` : null;
+  const themeEditorUrl = effectiveShop ? `https://${effectiveShop}/admin/themes/current/editor` : null;
+  const adminUrl       = effectiveShop ? `https://${effectiveShop}/admin/apps` : null;
 
   const navigate = useNavigate();
   const validateSteps = buildValidationSteps({ webhookTopics, cronSchedule, hasWidget, hasAdminUI });
@@ -702,7 +714,7 @@ function OverviewTab({
                 </div>
                 <div>
                   <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
-                  <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and the AI will generate it.</p>
+                  <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
                 </div>
                 <button
                   type="button"
@@ -710,7 +722,7 @@ function OverviewTab({
                   className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0"
                 >
                   <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
-                  Start building with AI
+                  Start building with Ton
                 </button>
               </div>
             </section>
@@ -729,7 +741,7 @@ function OverviewTab({
                   className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-accent text-white text-[12px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0"
                 >
                   <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
-                  Revise with AI
+                  Revise with Ton
                 </button>
               </div>
               <ol className="px-4 pb-4 pt-1 space-y-3">
@@ -955,8 +967,19 @@ export function AppDetailPage() {
   return (
     <>
       <TopBar
-        title={app?.name ?? "App"}
-        actions={<Button variant="ghost" size="sm" onClick={() => navigate("/app/apps")}>My Apps →</Button>}
+        title={
+          <div className="flex items-center gap-2 text-sm">
+            <button
+              type="button"
+              onClick={() => navigate("/app/apps")}
+              className="text-faint hover:text-ink transition-colors font-medium bg-transparent border-0 cursor-pointer p-0"
+            >
+              My Apps
+            </button>
+            <span className="text-faint/40 select-none">/</span>
+            <span className="text-ink font-semibold truncate">{app?.name ?? "App"}</span>
+          </div>
+        }
       />
 
       {appQuery.isLoading ? (
@@ -996,6 +1019,16 @@ export function AppDetailPage() {
               ]}
               active={mainTab}
               onChange={setMainTab}
+              action={
+                <button
+                  type="button"
+                  onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                  className="flex items-center gap-1 px-3 py-2 text-[12px] font-semibold text-accent border-b-2 border-accent bg-transparent border-x-0 border-t-0 cursor-pointer hover:text-accent/80 transition-colors"
+                >
+                  <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+                  Revise
+                </button>
+              }
             />
           </div>
 

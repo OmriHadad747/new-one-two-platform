@@ -3,7 +3,6 @@
 
 export type TenantStatus = "active" | "suspended" | "pending";
 export type AppStatus = "active" | "inactive" | "deleted" | "draft";
-export type VersionStatus = "draft" | "building" | "ready" | "failed" | "archived";
 export type AppArchetype = "storefront_backend" | "storefront_backend_admin" | "backend" | "backend_admin";
 
 export interface Tenant {
@@ -196,4 +195,6 @@ export interface LatestSessionResult {
   prompt: string;
   webhookTopics: string[];
   cronSchedule: string | null;
+  /** Persisted frontend chat history (actions stripped). Null until first save. */
+  chatMessages?: Array<Record<string, unknown>> | null;
 }

@@ -35,6 +35,8 @@ export const ProgressEventSchema = z.object({
     "widget_js",
     "admin_ui",
     "validation",
+    "validator",
+    "revision",
     "explanation",
   ]),
   status: z.enum(["running", "completed", "failed", "retrying"]),

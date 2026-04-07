@@ -27,7 +27,7 @@ export function MerchantCallbackPage() {
     api.tenants.get(tenantId)
       .then((tenant) => {
         setTenant(tenant.id, tenant.shopDomain ?? "", tenant.plan);
-        navigate("/app", { replace: true });
+        navigate("/app/apps", { replace: true });
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "Failed to load store.");

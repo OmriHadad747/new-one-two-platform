@@ -15,6 +15,7 @@ export function InstallPage() {
 
   const [prefix, setPrefix] = useState(prefixFromDomain(shopDomain));
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleInstall = () => {
@@ -25,6 +26,7 @@ export function InstallPage() {
       return;
     }
     setError(null);
+    setLoading(true);
     window.location.href = `${INSTALL_URL}?shop=${encodeURIComponent(`${clean}.myshopify.com`)}`;
   };
 
@@ -45,7 +47,7 @@ export function InstallPage() {
           <span className="material-symbols-outlined text-[18px]">arrow_back</span>
           Back
         </button>
-        <span className="text-base font-bold text-accent">NewOneTwo</span>
+        <span className="text-base font-bold text-accent">New One Two</span>
         <div className="w-16" /> {/* spacer */}
       </header>
 
@@ -59,9 +61,9 @@ export function InstallPage() {
               {/* App logo */}
               <div className="flex flex-col items-center gap-1.5">
                 <div className="w-14 h-14 bg-elevated rounded-xl flex items-center justify-center" style={{ boxShadow: "0 0 20px rgba(167,139,250,0.1)" }}>
-                  <span className="font-bold text-accent text-xl tracking-tighter">N12</span>
+                  <span className="font-bold text-accent text-xl tracking-tighter">N</span>
                 </div>
-                <span className="text-[10px] uppercase tracking-[0.2em] text-faint">NewOneTwo</span>
+                <span className="text-[10px] uppercase tracking-[0.2em] text-faint">New One Two</span>
               </div>
 
               {/* Link connector */}
@@ -88,7 +90,7 @@ export function InstallPage() {
 
             <div className="space-y-2">
               <h1 className="text-3xl font-bold text-ink tracking-tight">
-                Connect NewOneTwo<br />to Your Store
+                Connect New One Two<br />to Your Store
               </h1>
               <p className="text-muted text-sm leading-relaxed">
                 You'll be redirected to Shopify to approve access.
@@ -139,15 +141,25 @@ export function InstallPage() {
             <button
               type="button"
               onClick={handleInstall}
-              className="kinetic-btn w-full py-3.5 bg-gradient-to-br from-accent to-accent/70 text-white rounded-xl text-sm font-bold border-0 cursor-pointer transition-all duration-300 flex items-center justify-center gap-2"
+              disabled={loading}
+              className="kinetic-btn w-full py-3.5 bg-gradient-to-br from-accent to-accent/70 text-white rounded-xl text-sm font-bold border-0 cursor-pointer transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              <span
-                className="material-symbols-outlined text-[18px]"
-                style={{ fontVariationSettings: "'FILL' 1" }}
-              >
-                shopping_bag
-              </span>
-              Connect with Shopify
+              {loading ? (
+                <>
+                  <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  Redirecting to Shopify…
+                </>
+              ) : (
+                <>
+                  <span
+                    className="material-symbols-outlined text-[18px]"
+                    style={{ fontVariationSettings: "'FILL' 1" }}
+                  >
+                    shopping_bag
+                  </span>
+                  Connect with Shopify
+                </>
+              )}
             </button>
 
             <p className="text-[11px] text-faint text-center">

@@ -1,7 +1,6 @@
 import { forwardRef, useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { cn } from "@/lib/cn";
-import { ArtifactBlock } from "./ArtifactBlock";
 import { ArchetypePills } from "@/components/ui/ArchetypePills";
 import type { ProgressEvent } from "@/types/dashboard";
 
@@ -40,7 +39,6 @@ export interface ChatMessage {
   liveAppId?: string;
   /** For "clarifying" messages. */
   clarifyingData?: ClarifyingData;
-  artifacts?: string[];
   actions?: ChatMessageAction[];
 }
 
@@ -332,7 +330,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-[11px] font-semibold text-faint mb-1.5 tracking-wide uppercase">
-                {msg.role === "ai" ? "New One Two AI" : "You"}
+                {msg.role === "ai" ? "Ton" : "You"}
               </div>
 
               {msg.text && (
@@ -355,10 +353,6 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
 
               {msg.type === "clarifying" && msg.clarifyingData && (
                 <ClarifyingCard data={msg.clarifyingData} onAnswer={onClarifyAnswer} />
-              )}
-
-              {msg.artifacts && msg.artifacts.length > 0 && (
-                <ArtifactBlock label="Output" files={msg.artifacts} />
               )}
 
               {msg.actions && msg.actions.length > 0 && (
@@ -390,7 +384,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-[11px] font-semibold text-faint mb-1.5 tracking-wide uppercase">
-                New One Two AI
+                Ton
               </div>
               <p className="text-sm text-faint animate-pulse">Thinking…</p>
             </div>

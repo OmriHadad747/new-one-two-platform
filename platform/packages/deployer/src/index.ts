@@ -234,9 +234,9 @@ export async function deployFeatureBundle(params: {
 
     // Step 2: Set archetype, store widget JS and admin UI JS.
     const archetype =
-      bundle.adminUiModule !== null && bundle.widgetModule !== null ? "storefront_backend_admin" :
-      bundle.adminUiModule !== null  ? "backend_admin" :
-      bundle.widgetModule !== null   ? "storefront_backend" :
+      bundle.adminUiModule != null && bundle.widgetModule != null ? "storefront_backend_admin" :
+      bundle.adminUiModule != null  ? "backend_admin" :
+      bundle.widgetModule  != null  ? "storefront_backend" :
       "backend";
     await updateAppArchetype(appId, archetype);
     if (bundle.widgetModule !== null) {

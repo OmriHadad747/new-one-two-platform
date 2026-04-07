@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 interface TopBarProps {
-  title: string;
+  title: ReactNode;
   subtitle?: string;
   actions?: ReactNode;
 }

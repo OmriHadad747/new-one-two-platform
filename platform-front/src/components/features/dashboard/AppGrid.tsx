@@ -22,29 +22,39 @@ function timeAgo(iso: string): string {
   return `${Math.round(diff / 86_400_000)}d ago`;
 }
 
-function AppCard({ app, onClick }: { app: App; onClick: () => void }) {
+function AppCard({ app, onClick, onRevise }: { app: App; onClick: () => void; onRevise: () => void }) {
   const { icon, bg } = appIcon(app.name);
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="bg-white/[0.03] border border-white/7 rounded-xl p-[18px] text-left w-full cursor-pointer transition-all duration-150 hover:bg-white/[0.055] hover:border-white/13 hover:-translate-y-0.5"
-    >
-      <div className="flex items-start justify-between mb-3.5">
-        <div className={cn("w-10 h-10 rounded-[10px] flex items-center justify-center text-lg", bg)}>
-          {icon}
+    <div className="bg-white/[0.03] border border-white/7 rounded-xl text-left w-full transition-all duration-150 hover:bg-white/[0.055] hover:border-white/13 hover:-translate-y-0.5 flex flex-col overflow-hidden">
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex-1 p-[18px] bg-transparent border-0 cursor-pointer text-left w-full"
+      >
+        <div className="flex items-start justify-between mb-3.5">
+          <div className={cn("w-10 h-10 rounded-[10px] flex items-center justify-center text-lg", bg)}>
+            {icon}
+          </div>
+          <AppStatusBadge status={app.status} size="sm" />
         </div>
-        <AppStatusBadge status={app.status} size="sm" />
-      </div>
-      <div className="text-sm font-bold text-ink mb-1">{app.name}</div>
-      <div className="mt-1.5">
-        <ArchetypePills archetype={app.appArchetype} />
-      </div>
-      <div className="flex items-center justify-between mt-3.5 pt-3.5 border-t border-white/7">
+        <div className="text-sm font-bold text-ink mb-1">{app.name}</div>
+        <div className="mt-1.5">
+          <ArchetypePills archetype={app.appArchetype} />
+        </div>
+      </button>
+      <div className="flex items-center justify-between px-[18px] py-3 border-t border-white/7">
         <div className="text-[11px] text-faint">Updated {timeAgo(app.updatedAt)}</div>
+        <button
+          type="button"
+          onClick={onRevise}
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-accent hover:bg-accent/10 border-0 cursor-pointer transition-colors bg-transparent"
+        >
+          <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+          Revise
+        </button>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -53,7 +63,7 @@ function NewAppCard() {
   return (
     <button
       type="button"
-      onClick={() => navigate("/new")}
+      onClick={() => navigate("/app/new")}
       className="bg-transparent border-2 border-dashed border-white/7 rounded-xl p-[18px] cursor-pointer transition-all duration-150 hover:border-accent hover:bg-accent/[0.04] flex flex-col items-center justify-center min-h-[160px] gap-2.5 w-full"
     >
       <span className="text-3xl text-faint">+</span>
@@ -62,11 +72,19 @@ function NewAppCard() {
   );
 }
 
-export function AppGrid({ apps, onSelect }: { apps: App[]; onSelect: (app: App) => void }) {
+export function AppGrid({
+  apps,
+  onSelect,
+  onRevise,
+}: {
+  apps: App[];
+  onSelect: (app: App) => void;
+  onRevise: (app: App) => void;
+}) {
   return (
     <div className="grid grid-cols-3 gap-3.5">
       {apps.map((app) => (
-        <AppCard key={app.id} app={app} onClick={() => onSelect(app)} />
+        <AppCard key={app.id} app={app} onClick={() => onSelect(app)} onRevise={() => onRevise(app)} />
       ))}
       <NewAppCard />
     </div>

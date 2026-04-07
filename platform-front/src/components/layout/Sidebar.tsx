@@ -80,9 +80,16 @@ export function Sidebar() {
       {/* Divider */}
       <div className="mx-3 border-t border-white/[0.06]" />
 
-      {/* Section label */}
-      <div className="px-4 pt-2.5 pb-1">
-        <span className="text-[10px] font-bold text-faint uppercase tracking-wider">My Apps</span>
+      {/* Section label — clickable to go to full apps list */}
+      <div className="px-3 pt-2.5 pb-1">
+        <button
+          type="button"
+          onClick={() => navigate("/app/apps")}
+          className="group w-full flex items-center justify-between px-1.5 py-1 rounded-md hover:bg-white/[0.05] transition-colors bg-transparent border-0 cursor-pointer"
+        >
+          <span className="text-[10px] font-bold text-faint uppercase tracking-wider group-hover:text-ink transition-colors">My Apps</span>
+          <span className="material-symbols-outlined text-[13px] text-faint/50 group-hover:text-accent transition-colors">chevron_right</span>
+        </button>
       </div>
 
       {/* App list */}
@@ -106,20 +113,34 @@ export function Sidebar() {
           const isActive = activeAppId === app.id;
 
           return (
-            <button
-              key={app.id}
-              type="button"
-              onClick={() => navigate(`/app/apps/${app.id}`)}
-              className={cn(
-                "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-all duration-150 mb-px border-0 cursor-pointer group",
-                isActive
-                  ? "bg-accent/10 text-ink"
-                  : "text-muted hover:bg-white/[0.05] hover:text-ink"
-              )}
-            >
-              <AppStatusDot app={app} isGenerating={isGenerating} />
-              <span className="flex-1 text-[13px] font-medium truncate min-w-0">{app.name}</span>
-            </button>
+            <div key={app.id} className="relative group/app mb-px">
+              <button
+                type="button"
+                onClick={() => navigate(`/app/apps/${app.id}`)}
+                className={cn(
+                  "w-full flex items-center gap-2.5 pl-2.5 pr-8 py-2 rounded-lg text-left transition-all duration-150 border-0 cursor-pointer",
+                  isActive
+                    ? "bg-accent/10 text-ink"
+                    : "text-muted hover:bg-white/[0.05] hover:text-ink"
+                )}
+              >
+                <AppStatusDot app={app} isGenerating={isGenerating} />
+                <span className="flex-1 text-[13px] font-medium truncate min-w-0">{app.name}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                title="Revise with Ton"
+                className={cn(
+                  "absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-md transition-all border-0 cursor-pointer bg-transparent",
+                  isActive
+                    ? "opacity-100 text-accent/60 hover:text-accent hover:bg-accent/10"
+                    : "opacity-0 group-hover/app:opacity-100 text-faint hover:text-accent hover:bg-accent/10"
+                )}
+              >
+                <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+              </button>
+            </div>
           );
         })}
       </nav>

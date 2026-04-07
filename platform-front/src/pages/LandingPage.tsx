@@ -3,28 +3,28 @@ import { useSessionStore } from "@/stores/session";
 
 const FEATURES = [
   {
-    icon: "precision_manufacturing",
+    icon: "account_tree",
     iconColor: "text-accent",
     iconBg: "bg-accent/10",
     accentBar: "bg-accent",
-    title: "Prompt to widget",
-    desc: "Describe a feature in plain English — New One Two generates the widget, backend handler, and DB migration.",
+    title: "Full-stack from one prompt",
+    desc: "Describe a feature in plain English. Ton figures out every layer — storefront, backend, database — and ships them together. You never get half a feature.",
   },
   {
-    icon: "dashboard_customize",
+    icon: "manage_history",
     iconColor: "text-teal",
     iconBg: "bg-teal/10",
     accentBar: "bg-teal",
-    title: "One dashboard",
-    desc: "All your custom apps in one place. No tab-switching, no separate accounts.",
+    title: "Built-in revision loop",
+    desc: "Ton validates its own output, flags issues, and revises automatically. What you get is already reviewed — not a first draft.",
   },
   {
-    icon: "integration_instructions",
+    icon: "deployed_code",
     iconColor: "text-amber",
     iconBg: "bg-amber/10",
     accentBar: "bg-amber",
-    title: "Native to your store",
-    desc: "Apps deploy directly into your Shopify theme — no iframe, no lag, no bloat.",
+    title: "Ships straight to your store",
+    desc: "Generated code deploys directly into your Shopify theme and database. No copy-paste, no manual config, no iframe overhead.",
   },
 ];
 
@@ -47,7 +47,7 @@ export function LandingPage() {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="fixed top-0 inset-x-0 z-50 flex items-center justify-between px-8 h-16 bg-base/80 backdrop-blur-xl border-b border-white/[0.06]">
         <div className="flex items-center gap-6">
-          <span className="text-xl font-bold tracking-tighter text-accent">NewOneTwo</span>
+          <span className="text-xl font-bold tracking-tighter text-accent">New One Two</span>
           {isConnected && shopDomain && (
             <span className="text-sm text-faint border-l border-white/[0.1] pl-6">
               {shopDomain}
@@ -84,7 +84,7 @@ export function LandingPage() {
           <div className="w-full lg:w-1/2 space-y-7 z-10">
             <span className="inline-flex items-center gap-2 px-3 py-1 bg-accent/10 border border-accent/20 rounded-full text-[11px] font-semibold text-teal tracking-widest uppercase">
               <span className="w-1.5 h-1.5 rounded-full bg-teal animate-pulse-subtle" />
-              AI-Powered Shopify Apps
+              Ton-Powered Shopify Apps
             </span>
 
             <h1 className="text-5xl md:text-[68px] font-bold text-ink leading-[0.95] tracking-tight">
@@ -191,6 +191,139 @@ export function LandingPage() {
           </div>
         </section>
 
+        {/* ── Meet Ton ─────────────────────────────────────────────────────── */}
+        <section className="py-16 border-t border-white/[0.06]">
+          <div className="flex flex-col lg:flex-row gap-12 items-start">
+
+            {/* Left — headline */}
+            <div className="lg:w-2/5 space-y-4 lg:sticky lg:top-24">
+              <span className="inline-flex items-center gap-2 px-3 py-1 bg-accent/10 border border-accent/20 rounded-full text-[10px] font-bold text-accent tracking-widest uppercase">
+                <span className="w-1 h-1 rounded-full bg-accent" />
+                The engine inside
+              </span>
+              <h2 className="text-3xl font-bold text-ink leading-tight">
+                Meet <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-teal">Ton.</span>
+              </h2>
+              <p className="text-muted text-sm leading-relaxed">
+                Ton is the AI at the core of New One Two. Not a generic code assistant — a Shopify specialist that plans, builds, reviews, and ships, all in one shot.
+              </p>
+            </div>
+
+            {/* Right — capability grid */}
+            <div className="lg:w-3/5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[
+                {
+                  icon: "psychology",
+                  color: "text-accent",
+                  bg: "bg-accent/10",
+                  title: "Plans before it codes",
+                  desc: "Ton reads your request, designs the architecture, and writes step-by-step algorithms before generating a single line of code.",
+                },
+                {
+                  icon: "verified",
+                  color: "text-teal",
+                  bg: "bg-teal/10",
+                  title: "Reviews its own work",
+                  desc: "Every artifact goes through static analysis and a semantic alignment pass. What you receive has already been checked — not just generated.",
+                },
+                {
+                  icon: "storefront",
+                  color: "text-amber",
+                  bg: "bg-amber/10",
+                  title: "Speaks Shopify natively",
+                  desc: "Ton knows Shopify's webhook surface, API scopes, and storefront constraints. It doesn't adapt generic code — it reasons about your store.",
+                },
+                {
+                  icon: "do_not_disturb_on",
+                  color: "text-[#a78bfa]",
+                  bg: "bg-purple-500/10",
+                  title: "Honest about limits",
+                  desc: "When something is beyond the platform's current scope, Ton says so upfront instead of generating code that won't work.",
+                },
+              ].map(({ icon, color, bg, title, desc }) => (
+                <div key={title} className="bg-surface border border-white/[0.06] rounded-xl p-5 flex flex-col gap-3 hover:border-white/[0.12] transition-colors">
+                  <div className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center ${color} shrink-0`}>
+                    <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-bold text-ink mb-1">{title}</p>
+                    <p className="text-[12px] text-muted leading-relaxed">{desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── Artifacts ────────────────────────────────────────────────────── */}
+        <section className="py-16 border-t border-white/[0.06]">
+          <div className="text-center mb-10 space-y-3">
+            <p className="text-[10px] font-bold tracking-widest uppercase text-faint">Generated output</p>
+            <h2 className="text-3xl font-bold text-ink leading-tight">
+              Exactly what your feature needs.
+              <br />
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-teal">Nothing it doesn't.</span>
+            </h2>
+            <p className="text-sm text-muted max-w-sm mx-auto">
+              Ton reads your prompt and decides which pieces to build — no bloat, no missing parts.
+            </p>
+          </div>
+          <div className="glass-card rounded-xl overflow-hidden">
+            {/* File tree header */}
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-white/[0.06] bg-elevated/40">
+              <span className="material-symbols-outlined text-faint text-[15px]">folder_open</span>
+              <span className="text-[11px] font-mono text-faint">your-app/</span>
+            </div>
+
+            {/* Always generated */}
+            <div className="px-5 pt-3 pb-1">
+              <span className="text-[9px] font-bold uppercase tracking-widest text-faint/60">Always generated</span>
+            </div>
+            <div className="divide-y divide-white/[0.04]">
+              {[
+                { file: "handler.js",    icon: "bolt",  color: "text-accent", bg: "bg-accent/10", label: "API Handler",        desc: "Secure serverless endpoint with Shopify auth baked in." },
+                { file: "migration.sql", icon: "table", color: "text-amber",  bg: "bg-amber/10",  label: "Database Migration", desc: "Schema changes applied automatically on deploy." },
+              ].map(({ file, icon, color, bg, label, desc }) => (
+                <div key={file} className="flex items-center gap-4 px-5 py-3.5 group">
+                  <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
+                    <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+                  </div>
+                  <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0`}>{file}</span>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[12px] font-semibold text-ink">{label}</span>
+                    <span className="text-[11px] text-faint ml-2 hidden sm:inline">{desc}</span>
+                  </div>
+                  <span className="material-symbols-outlined text-teal/60 text-[14px] shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Conditional */}
+            <div className="px-5 pt-3 pb-1 border-t border-white/[0.06] mt-1">
+              <span className="text-[9px] font-bold uppercase tracking-widest text-faint/60">Added when your feature calls for it</span>
+            </div>
+            <div className="divide-y divide-white/[0.04]">
+              {[
+                { file: "widget.js",   icon: "widgets",              color: "text-teal",         bg: "bg-teal/10",        label: "Storefront Widget", tag: "Storefront features", desc: "Rendered inside your Shopify theme — no iframe." },
+                { file: "admin_ui.js", icon: "admin_panel_settings", color: "text-[#a78bfa]",    bg: "bg-purple-500/10",  label: "Admin UI",          tag: "Admin features",      desc: "Merchant controls embedded in Shopify Admin." },
+              ].map(({ file, icon, color, bg, label, tag, desc }) => (
+                <div key={file} className="flex items-center gap-4 px-5 py-3.5 group opacity-70 hover:opacity-100 transition-opacity">
+                  <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
+                    <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+                  </div>
+                  <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0`}>{file}</span>
+                  <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                    <span className="text-[12px] font-semibold text-ink">{label}</span>
+                    <span className="text-[10px] font-medium text-faint/80 bg-white/[0.05] border border-white/[0.07] px-1.5 py-0.5 rounded">{tag}</span>
+                    <span className="text-[11px] text-faint hidden sm:inline">{desc}</span>
+                  </div>
+                  <span className="material-symbols-outlined text-faint/20 text-[14px] shrink-0">radio_button_unchecked</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* ── CTA ──────────────────────────────────────────────────────────── */}
         <section className="py-20 text-center">
           <button
@@ -208,7 +341,7 @@ export function LandingPage() {
       {/* ── Footer ────────────────────────────────────────────────────────── */}
       <footer className="border-t border-white/[0.06] py-8 px-8">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-          <span className="text-sm font-bold text-accent">NewOneTwo</span>
+          <span className="text-sm font-bold text-accent">New One Two</span>
           <div className="flex gap-6">
             {["Privacy", "Terms", "Support"].map((item) => (
               <a key={item} href="#" className="text-[11px] uppercase tracking-widest text-faint hover:text-ink transition-colors no-underline">

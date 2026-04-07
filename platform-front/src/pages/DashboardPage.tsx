@@ -106,6 +106,7 @@ export function DashboardPage() {
           <AppGrid
             apps={apps.slice(0, 6)}
             onSelect={(app) => navigate(`/app/apps/${app.id}`)}
+            onRevise={(app) => navigate(`/app/apps/${app.id}/revise`)}
           />
         )}
 

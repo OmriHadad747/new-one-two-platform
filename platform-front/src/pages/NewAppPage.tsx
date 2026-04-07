@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams, useParams } from "react-router";
 import { TopBar } from "@/components/layout/TopBar";
 import { ChatMessages, type ChatMessage, type DeployBundle } from "@/components/features/generation/ChatMessages";
@@ -172,6 +172,21 @@ export function NewAppPage() {
     if (session.jobId) restore(session.jobId);
     setDeployed(alreadyDeployed);
 
+    // Priority 1: DB-persisted chat history (survives page reload, most durable).
+    const dbMessages = session.chatMessages as ChatMessage[] | null | undefined;
+    if (dbMessages?.length) {
+      setMessages(dbMessages);
+      return;
+    }
+
+    // Priority 2: In-memory Zustand store (survives navigation without reload).
+    const cachedForSession = activeGenStore?.jobId === session.jobId ? activeGenStore : null;
+    if (cachedForSession?.messages?.length) {
+      setMessages(cachedForSession.messages);
+      return;
+    }
+
+    // Priority 3: Rebuild a minimal summary card from session metadata.
     const resumeMsgId = "resume-card";
     genMsgIdRef.current = resumeMsgId;
 
@@ -203,6 +218,26 @@ export function NewAppPage() {
     if (gen.jobId) updateMessages(gen.jobId, messages);
   }, [gen.jobId, messages, updateMessages]);
 
+  // Debounced DB save — Layer 2 persistence.
+  // Skips the initial single-message state (just WELCOME) and fire-and-forgets
+  // after 1.5 s of inactivity. Errors are swallowed; the store is the fallback.
+  const saveChatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Memoize serializable messages (actions stripped) to avoid re-serializing on every render.
+  const serializableMessages = useMemo(
+    () => messages.map(({ actions: _actions, ...msg }) => msg as Record<string, unknown>),
+    [messages]
+  );
+  useEffect(() => {
+    if (!gen.jobId || messages.length <= 1) return;
+    if (saveChatTimerRef.current) clearTimeout(saveChatTimerRef.current);
+    saveChatTimerRef.current = setTimeout(() => {
+      api.generation.saveChat(gen.jobId!, serializableMessages).catch(() => null);
+    }, 1500);
+    return () => {
+      if (saveChatTimerRef.current) clearTimeout(saveChatTimerRef.current);
+    };
+  }, [gen.jobId, serializableMessages, messages.length]);
+
   // Sync global generation store
   useEffect(() => {
     if (gen.jobId && selectedAppId) {
@@ -230,11 +265,12 @@ export function NewAppPage() {
                 : m
             ));
           })
-          .catch(() => {
+          .catch((err: unknown) => {
             const genMsgId = genMsgIdRef.current;
+            const errText = err instanceof Error ? err.message : "Failed to load generation result.";
             setMessages((prev) => prev.map((m) =>
               m.id === genMsgId
-                ? { id: m.id, role: "ai" as const, type: "deploy-ready" as const }
+                ? { id: m.id, role: "ai" as const, text: `Generation failed: ${errText}` }
                 : m
             ));
           });
@@ -520,20 +556,6 @@ export function NewAppPage() {
         title={activeApp ? activeApp.name : "New App"}
         subtitle={
           deployed ? "live" : activeApp ? "revision" : "Prompt to widget"
-        }
-        actions={
-          apps.length > 1 && !deployed ? (
-            <select
-              value={selectedAppId ?? ""}
-              onChange={(e) => setSelectedAppId(e.target.value)}
-              className="text-xs bg-raised border border-white/13 text-muted rounded-lg px-2.5 py-1.5 outline-none focus:border-accent"
-            >
-              <option value="">New app</option>
-              {apps.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          ) : undefined
         }
       />
 

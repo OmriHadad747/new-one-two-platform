@@ -246,6 +246,26 @@ Email (Resend), SMS (Twilio), PDF (PDFKit), Files (GCS) replace their stubs. Usa
 
 ---
 
+## Expert Assist — Human in the Loop
+
+When Ton can't get a merchant's app live on its own, a certified Shopify developer steps in.
+
+### How it works
+
+1. **On-demand** — A "Get expert help" button appears when a merchant is stuck (repeated validation failures, too many revisions without a deploy). Clicking it opens a paid session with a platform-certified developer.
+2. **Auto-detected** — The platform watches for struggle signals (N failed generations, M revisions without deploy, age threshold). When they trip, Ton proactively offers expert help.
+3. **Developer role** — The developer receives a read-only session link (prompt history, generated code, validation errors). They either make small surgical code edits directly, or write precise Ton revision prompts that the non-technical merchant couldn't. They guide Ton — they don't replace it.
+
+### Monetization
+
+Charged per session (credit-based). Merchants who never get stuck pay nothing extra. The platform takes a cut; developers are platform-certified, not a freelance marketplace.
+
+### What comes later
+
+Auto-discovery: track which app types, prompts, or merchant segments consistently need human help, then feed that signal back into Ton's prompts and validation rules.
+
+---
+
 ## The Core Bet
 
 A merchant paying $19/mo for "Notify Me," $29/mo for "Sales Pop," and $15/mo for "Announcement Bar" — three separate apps totalling $63/mo — will immediately see the value in paying $35/mo for a platform that generates all three (and 31 more) from a prompt.

@@ -648,6 +648,7 @@ export async function createDraftAppVersion(params: {
 export interface GenerationSessionWithBundle extends GenerationSessionRow {
   jobId: string | null;
   bundle: Record<string, unknown> | null;
+  chatMessages: Record<string, unknown>[] | null;
 }
 
 /**
@@ -674,6 +675,7 @@ export async function getLatestSessionForApp(
       errorMessage: string | null;
       jobId: string | null;
       bundle: Record<string, unknown> | null;
+      chatMessages: Record<string, unknown>[] | null;
       createdAt: Date;
       updatedAt: Date;
     }>
@@ -684,6 +686,7 @@ export async function getLatestSessionForApp(
       explanation, webhook_topics AS "webhookTopics", cron_schedule AS "cronSchedule",
       attempt_count AS "attemptCount", app_version_id AS "appVersionId",
       error_message AS "errorMessage", job_id AS "jobId", bundle,
+      chat_messages AS "chatMessages",
       created_at AS "createdAt", updated_at AS "updatedAt"
     FROM generation_sessions
     WHERE app_id = ${appId}
@@ -717,6 +720,7 @@ export async function getSessionByJobId(
       errorMessage: string | null;
       jobId: string | null;
       bundle: Record<string, unknown> | null;
+      chatMessages: Record<string, unknown>[] | null;
       createdAt: Date;
       updatedAt: Date;
     }>
@@ -727,6 +731,7 @@ export async function getSessionByJobId(
       explanation, webhook_topics AS "webhookTopics", cron_schedule AS "cronSchedule",
       attempt_count AS "attemptCount", app_version_id AS "appVersionId",
       error_message AS "errorMessage", job_id AS "jobId", bundle,
+      chat_messages AS "chatMessages",
       created_at AS "createdAt", updated_at AS "updatedAt"
     FROM generation_sessions
     WHERE job_id = ${jobId}
@@ -763,6 +768,24 @@ export async function storeBundleInSession(
       webhook_topics  = COALESCE(${webhookTopics}, webhook_topics),
       cron_schedule   = COALESCE(${cronSchedule}, cron_schedule),
       updated_at      = NOW()
+    WHERE job_id = ${jobId}
+  `;
+}
+
+/**
+ * Persists the frontend chat message history for a generation session.
+ * Called via PATCH /generation/:jobId/chat (debounced, fire-and-forget).
+ * `messages` is an array of ChatMessage objects with `actions` stripped.
+ */
+export async function saveChatMessages(
+  jobId: string,
+  messages: Record<string, unknown>[]
+): Promise<void> {
+  await sql`
+    UPDATE generation_sessions
+    SET
+      chat_messages = ${sql.json(messages as any)},
+      updated_at    = NOW()
     WHERE job_id = ${jobId}
   `;
 }

@@ -22,6 +22,7 @@ import {
   storeBundleInSession,
   cancelGenerationSession,
   getLatestSessionForApp,
+  saveChatMessages,
 } from "@new-one-two/db";
 import { deployFeatureBundle, deployAppVersion } from "@new-one-two/deployer";
 import type {
@@ -215,7 +216,12 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         return reply.status(404).send({ error: "Job not found" });
       }
 
-      if (session.bundle && session.appId && session.tenantId) {
+      if (session.status === "failed") {
+        return reply.status(422).send({ error: "Cannot deploy a failed generation" });
+      }
+
+      const bundleKeys = session.bundle ? Object.keys(session.bundle as Record<string, unknown>) : [];
+      if (bundleKeys.length > 0 && session.appId && session.tenantId) {
         // New path: Python-generated FeatureBundle
         const bundle = session.bundle as unknown as FeatureBundle;
         const result = await deployFeatureBundle({
@@ -339,6 +345,34 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       const cancel = cancelCallbacks.get(jobId);
       if (cancel) cancel("Generation cancelled by user");
       return reply.status(200).send({ ok: true });
+    }
+  );
+
+  // ─── PATCH /generation/:jobId/chat ─────────────────────────────────────────
+  // Persists the frontend chat message history for a session.
+  // Called debounced from the UI after every message change.
+  // Fire-and-forget: 204 on success, ignored on failure by the client.
+
+  app.patch<{
+    Params: { jobId: string };
+    Body: { messages: Array<Record<string, unknown>> };
+  }>(
+    "/:jobId/chat",
+    async (req: FastifyRequest<{ Params: { jobId: string }; Body: { messages: Array<Record<string, unknown>> } }>, reply: FastifyReply) => {
+      const { jobId } = req.params;
+      const { messages } = req.body;
+
+      if (!Array.isArray(messages)) {
+        return reply.status(400).send({ error: "messages must be an array" });
+      }
+
+      const session = await getSessionByJobId(jobId);
+      if (!session) {
+        return reply.status(404).send({ error: "Job not found" });
+      }
+
+      await saveChatMessages(jobId, messages);
+      return reply.status(204).send();
     }
   );
 

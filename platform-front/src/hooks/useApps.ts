@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
 export function useApps(tenantId: string | null) {
@@ -85,14 +85,3 @@ export function useAdminLogs(tenantId: string | null, appId: string | null, enab
   });
 }
 
-export function useCreateApp(tenantId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { slug: string; name: string }) =>
-      api.apps.create(tenantId, body),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["apps", tenantId] });
-      void qc.invalidateQueries({ queryKey: ["stats", tenantId] });
-    },
-  });
-}
