@@ -93,18 +93,12 @@ let completedSub: Subscription | null = null;
  * in GCP or the emulator before this is called — pubsub-init creates them
  * in docker-compose.
  */
-export async function startSubscriptions(): Promise<void> {
-  const client = getPubSubClient();
-
-  progressSub = client.subscription(SUB_API_PROGRESS);
-  completedSub = client.subscription(SUB_API_COMPLETED);
-
-  progressSub.on("message", (msg: Message) => {
+function attachProgressHandlers(sub: Subscription): void {
+  sub.on("message", (msg: Message) => {
     try {
       const raw: unknown = JSON.parse(msg.data.toString());
       const event = ProgressEventSchema.parse(raw);
       msg.ack();
-
       const listeners = progressListeners.get(event.jobId);
       if (listeners) {
         for (const fn of listeners) fn(event);
@@ -115,20 +109,29 @@ export async function startSubscriptions(): Promise<void> {
     }
   });
 
-  progressSub.on("error", (err: Error) => {
+  sub.on("error", (err: Error & { code?: number }) => {
     logger.error({ err }, "Progress subscription error");
+    // code 5 = NOT_FOUND — pubsub-init race at startup. Retry after 3 s.
+    if (err.code === 5) {
+      setTimeout(() => {
+        progressSub?.removeAllListeners();
+        progressSub = getPubSubClient().subscription(SUB_API_PROGRESS);
+        attachProgressHandlers(progressSub);
+        logger.info("Re-attached progress subscription after NOT_FOUND");
+      }, 3000);
+    }
   });
+}
 
-  completedSub.on("message", (msg: Message) => {
+function attachCompletedHandlers(sub: Subscription): void {
+  sub.on("message", (msg: Message) => {
     try {
       const raw: unknown = JSON.parse(msg.data.toString());
       const bundle = FeatureBundleMessageSchema.parse(raw);
       msg.ack();
-
       const listeners = completedListeners.get(bundle.jobId);
       if (listeners) {
         for (const fn of listeners) fn(bundle);
-        // Clean up — no more completed messages will arrive for this jobId
         completedListeners.delete(bundle.jobId);
       }
     } catch (err) {
@@ -137,9 +140,25 @@ export async function startSubscriptions(): Promise<void> {
     }
   });
 
-  completedSub.on("error", (err: Error) => {
+  sub.on("error", (err: Error & { code?: number }) => {
     logger.error({ err }, "Completed subscription error");
+    if (err.code === 5) {
+      setTimeout(() => {
+        completedSub?.removeAllListeners();
+        completedSub = getPubSubClient().subscription(SUB_API_COMPLETED);
+        attachCompletedHandlers(completedSub);
+        logger.info("Re-attached completed subscription after NOT_FOUND");
+      }, 3000);
+    }
   });
+}
+
+export async function startSubscriptions(): Promise<void> {
+  progressSub = getPubSubClient().subscription(SUB_API_PROGRESS);
+  completedSub = getPubSubClient().subscription(SUB_API_COMPLETED);
+
+  attachProgressHandlers(progressSub);
+  attachCompletedHandlers(completedSub);
 
   logger.info(
     { progressSub: SUB_API_PROGRESS, completedSub: SUB_API_COMPLETED },

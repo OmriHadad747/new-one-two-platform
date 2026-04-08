@@ -35,6 +35,8 @@ const SCOPES = [
   "write_orders",
   "read_customers",
   "read_inventory",
+  "read_themes",
+  "write_themes",
 ].join(",");
 
 // ─── Route Registration ────────────────────────────────────────────────────────

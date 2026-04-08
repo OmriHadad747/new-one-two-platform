@@ -177,6 +177,10 @@ export async function resolveWebhookContext(
       shopifyClientId: row.appShopifyClientId,
       shopifySecretName: row.appShopifySecretName,
       shopDomain: row.appShopDomain,
+      themeInjectionStatus: "none" as const,
+      themeInjectionThemeId: null,
+      currentSemver: null,
+      activeAppVersionId: null,
       createdAt: row.appCreatedAt,
       updatedAt: row.appUpdatedAt,
     },
@@ -403,6 +407,10 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       shopifyClientId: row.appShopifyClientId,
       shopifySecretName: row.appShopifySecretName,
       shopDomain: row.appShopDomain,
+      themeInjectionStatus: "none" as const,
+      themeInjectionThemeId: null,
+      currentSemver: null,
+      activeAppVersionId: null,
       createdAt: row.appCreatedAt,
       updatedAt: row.appUpdatedAt,
     },
@@ -422,12 +430,15 @@ export async function getAppByIdOnly(appId: string): Promise<App | null> {
     id: string; tenantId: string; slug: string; name: string; status: string;
     appArchetype: string; widgetJs: string | null; adminUiJs: string | null;
     shopifyClientId: string; shopifySecretName: string; shopDomain: string;
+    themeInjectionStatus: string; themeInjectionThemeId: string | null;
     createdAt: Date; updatedAt: Date;
   }>>`
     SELECT id, tenant_id AS "tenantId", slug, name, status,
            app_archetype AS "appArchetype", widget_js AS "widgetJs",
            admin_ui_js AS "adminUiJs", shopify_client_id AS "shopifyClientId",
            shopify_secret_name AS "shopifySecretName", shop_domain AS "shopDomain",
+           theme_injection_status AS "themeInjectionStatus",
+           theme_injection_theme_id AS "themeInjectionThemeId",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM apps WHERE id = ${appId} LIMIT 1
   `;
@@ -438,6 +449,10 @@ export async function getAppByIdOnly(appId: string): Promise<App | null> {
     status: row.status as App["status"], appArchetype: row.appArchetype as AppArchetype,
     widgetJs: row.widgetJs, adminUiJs: row.adminUiJs, shopifyClientId: row.shopifyClientId,
     shopifySecretName: row.shopifySecretName, shopDomain: row.shopDomain,
+    themeInjectionStatus: (row.themeInjectionStatus ?? "none") as App["themeInjectionStatus"],
+    themeInjectionThemeId: row.themeInjectionThemeId ?? null,
+    currentSemver: null,
+    activeAppVersionId: null,
     createdAt: row.createdAt, updatedAt: row.updatedAt,
   };
 }
@@ -690,6 +705,97 @@ export async function getLatestSessionForApp(
       created_at AS "createdAt", updated_at AS "updatedAt"
     FROM generation_sessions
     WHERE app_id = ${appId}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
+/**
+ * Returns a summary list of all generation sessions for an app, newest first.
+ * Used by the version history panel in the app detail page.
+ */
+export async function getSessionsForApp(
+  appId: string,
+  limit = 20
+): Promise<
+  Array<{
+    id: string;
+    jobId: string | null;
+    status: string;
+    prompt: string;
+    errorMessage: string | null;
+    appVersionId: string | null;
+    createdAt: Date;
+  }>
+> {
+  return sql<
+    Array<{
+      id: string;
+      jobId: string | null;
+      status: string;
+      prompt: string;
+      errorMessage: string | null;
+      appVersionId: string | null;
+      createdAt: Date;
+    }>
+  >`
+    SELECT
+      id,
+      job_id         AS "jobId",
+      status,
+      prompt,
+      error_message  AS "errorMessage",
+      app_version_id AS "appVersionId",
+      created_at     AS "createdAt"
+    FROM generation_sessions
+    WHERE app_id = ${appId}
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+}
+
+/**
+ * Returns the most recent successfully completed generation session for an app.
+ * Used by the approve endpoint to fall back when the latest session failed.
+ */
+export async function getLatestCompletedSessionForApp(
+  appId: string
+): Promise<GenerationSessionWithBundle | null> {
+  const rows = await sql<
+    Array<{
+      id: string;
+      appId: string | null;
+      tenantId: string | null;
+      prompt: string;
+      status: string;
+      intent: Record<string, unknown> | null;
+      apiPlan: Record<string, unknown> | null;
+      generatedCode: string | null;
+      explanation: string | null;
+      webhookTopics: string[];
+      cronSchedule: string | null;
+      attemptCount: number;
+      appVersionId: string | null;
+      errorMessage: string | null;
+      jobId: string | null;
+      bundle: Record<string, unknown> | null;
+      chatMessages: Record<string, unknown>[] | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>
+  >`
+    SELECT
+      id, app_id AS "appId", tenant_id AS "tenantId", prompt, status,
+      intent, api_plan AS "apiPlan", generated_code AS "generatedCode",
+      explanation, webhook_topics AS "webhookTopics", cron_schedule AS "cronSchedule",
+      attempt_count AS "attemptCount", app_version_id AS "appVersionId",
+      error_message AS "errorMessage", job_id AS "jobId", bundle,
+      chat_messages AS "chatMessages",
+      created_at AS "createdAt", updated_at AS "updatedAt"
+    FROM generation_sessions
+    WHERE app_id = ${appId}
+      AND status = 'completed'
     ORDER BY created_at DESC
     LIMIT 1
   `;
@@ -1094,26 +1200,36 @@ export async function getAppById(
       shopifyClientId: string;
       shopifySecretName: string;
       shopDomain: string;
+      themeInjectionStatus: string;
+      themeInjectionThemeId: string | null;
+      currentSemver: string | null;
+      activeAppVersionId: string | null;
       createdAt: Date;
       updatedAt: Date;
     }>
   >`
     SELECT
-      id,
-      tenant_id                            AS "tenantId",
-      slug,
-      name,
-      status,
-      app_archetype                        AS "appArchetype",
-      widget_js                            AS "widgetJs",
-      admin_ui_js                          AS "adminUiJs",
-      shopify_client_id                    AS "shopifyClientId",
-      shopify_secret_name                  AS "shopifySecretName",
-      shop_domain                          AS "shopDomain",
-      created_at                           AS "createdAt",
-      updated_at                           AS "updatedAt"
-    FROM apps
-    WHERE id = ${appId} AND tenant_id = ${tenantId}
+      a.id,
+      a.tenant_id                            AS "tenantId",
+      a.slug,
+      a.name,
+      a.status,
+      a.app_archetype                        AS "appArchetype",
+      a.widget_js                            AS "widgetJs",
+      a.admin_ui_js                          AS "adminUiJs",
+      a.shopify_client_id                    AS "shopifyClientId",
+      a.shopify_secret_name                  AS "shopifySecretName",
+      a.shop_domain                          AS "shopDomain",
+      a.theme_injection_status               AS "themeInjectionStatus",
+      a.theme_injection_theme_id             AS "themeInjectionThemeId",
+      av.semver                              AS "currentSemver",
+      df.app_version_id                      AS "activeAppVersionId",
+      a.created_at                           AS "createdAt",
+      a.updated_at                           AS "updatedAt"
+    FROM apps a
+    LEFT JOIN deployed_functions df ON df.app_id = a.id AND df.is_active = TRUE
+    LEFT JOIN app_versions av ON av.id = df.app_version_id
+    WHERE a.id = ${appId} AND a.tenant_id = ${tenantId}
     LIMIT 1
   `;
   const row = rows[0];
@@ -1130,6 +1246,10 @@ export async function getAppById(
     shopifyClientId: row.shopifyClientId,
     shopifySecretName: row.shopifySecretName,
     shopDomain: row.shopDomain,
+    themeInjectionStatus: (row.themeInjectionStatus ?? "none") as App["themeInjectionStatus"],
+    themeInjectionThemeId: row.themeInjectionThemeId ?? null,
+    currentSemver: row.currentSemver ?? null,
+    activeAppVersionId: row.activeAppVersionId ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -1215,6 +1335,35 @@ export async function updateAppName(
 }
 
 /**
+ * Records that a test theme has been duplicated+injected for this app.
+ */
+export async function setThemeInjection(
+  appId: string,
+  themeId: string
+): Promise<void> {
+  await sql`
+    UPDATE apps
+    SET theme_injection_status   = 'injected',
+        theme_injection_theme_id = ${themeId},
+        updated_at               = NOW()
+    WHERE id = ${appId}
+  `;
+}
+
+/**
+ * Clears theme injection state (after the test theme is deleted).
+ */
+export async function clearThemeInjection(appId: string): Promise<void> {
+  await sql`
+    UPDATE apps
+    SET theme_injection_status   = 'none',
+        theme_injection_theme_id = NULL,
+        updated_at               = NOW()
+    WHERE id = ${appId}
+  `;
+}
+
+/**
  * Returns all apps for a tenant, newest first.
  */
 export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
@@ -1231,28 +1380,38 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
       shopifyClientId: string;
       shopifySecretName: string;
       shopDomain: string;
+      themeInjectionStatus: string;
+      themeInjectionThemeId: string | null;
+      currentSemver: string | null;
+      activeAppVersionId: string | null;
       createdAt: Date;
       updatedAt: Date;
     }>
   >`
     SELECT
-      id,
-      tenant_id                            AS "tenantId",
-      slug,
-      name,
-      status,
-      app_archetype                        AS "appArchetype",
-      widget_js                            AS "widgetJs",
-      admin_ui_js                          AS "adminUiJs",
-      shopify_client_id                    AS "shopifyClientId",
-      shopify_secret_name                  AS "shopifySecretName",
-      shop_domain                          AS "shopDomain",
-      created_at                           AS "createdAt",
-      updated_at                           AS "updatedAt"
-    FROM apps
-    WHERE tenant_id = ${tenantId}
-      AND status != 'deleted'
-    ORDER BY updated_at DESC
+      a.id,
+      a.tenant_id                            AS "tenantId",
+      a.slug,
+      a.name,
+      a.status,
+      a.app_archetype                        AS "appArchetype",
+      a.widget_js                            AS "widgetJs",
+      a.admin_ui_js                          AS "adminUiJs",
+      a.shopify_client_id                    AS "shopifyClientId",
+      a.shopify_secret_name                  AS "shopifySecretName",
+      a.shop_domain                          AS "shopDomain",
+      a.theme_injection_status               AS "themeInjectionStatus",
+      a.theme_injection_theme_id             AS "themeInjectionThemeId",
+      av.semver                              AS "currentSemver",
+      df.app_version_id                      AS "activeAppVersionId",
+      a.created_at                           AS "createdAt",
+      a.updated_at                           AS "updatedAt"
+    FROM apps a
+    LEFT JOIN deployed_functions df ON df.app_id = a.id AND df.is_active = TRUE
+    LEFT JOIN app_versions av ON av.id = df.app_version_id
+    WHERE a.tenant_id = ${tenantId}
+      AND a.status != 'deleted'
+    ORDER BY a.updated_at DESC
   `;
   return rows.map((row) => ({
     id: row.id,
@@ -1266,6 +1425,10 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
     shopifyClientId: row.shopifyClientId,
     shopifySecretName: row.shopifySecretName,
     shopDomain: row.shopDomain,
+    themeInjectionStatus: (row.themeInjectionStatus ?? "none") as App["themeInjectionStatus"],
+    themeInjectionThemeId: row.themeInjectionThemeId ?? null,
+    currentSemver: row.currentSemver ?? null,
+    activeAppVersionId: row.activeAppVersionId ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }));
@@ -1504,6 +1667,10 @@ export async function getAdminUiAppsByShop(shopDomain: string): Promise<App[]> {
     shopifyClientId: row.shopifyClientId,
     shopifySecretName: row.shopifySecretName,
     shopDomain: row.shopDomain,
+    themeInjectionStatus: "none" as const,
+    themeInjectionThemeId: null,
+    currentSemver: null,
+    activeAppVersionId: null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }));

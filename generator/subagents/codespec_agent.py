@@ -315,6 +315,15 @@ On-demand run path (/run) — when adminApiCatalog contains a POST /run path:
     "if runMode === 'on-demand': UPDATE <feature>_run_requests SET fulfilled_at = NOW() WHERE id = ${pendingRequest[0].id} AND tenant_id = ${ctx.tenantId}"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MANDATORY SELF-CHECK — complete this before outputting
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Before writing the final JSON, mentally enumerate every step you wrote that contains SELECT.
+For EACH one, ask: does this step contain ctx.tenantId?
+If any SELECT step is missing ctx.tenantId, fix it before outputting.
+This check applies to webhookPath, cronPath, and adminPath — every path, every SELECT, no exceptions.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):
 {
   "codeSpec": {
@@ -381,9 +390,19 @@ def run_codespec_agent(
     error_block = ""
     if validation_errors:
         lines = "\n".join(f"  - {e}" for e in validation_errors)
+        has_tenant_errors = any("tenant_id filter" in e for e in validation_errors)
+        tenant_scan_reminder = (
+            "\n\nCRITICAL — tenant_id scan: before outputting, go through EVERY step in "
+            "webhookPath, cronPath, and adminPath and verify that every step containing "
+            "SELECT also contains 'ctx.tenantId'. Do not skip any path or any step."
+            if has_tenant_errors
+            else ""
+        )
         error_block = (
             f"PREVIOUS ATTEMPT FAILED CODESPEC VALIDATION:\n{lines}\n"
-            f"Fix ALL listed errors in this attempt.\n\n"
+            f"Fix ALL listed errors in this attempt. Each error includes the offending step text — "
+            f"find and fix that exact pattern wherever it appears, not just the cited step number "
+            f"(step numbers shift when you rewrite).{tenant_scan_reminder}\n\n"
         )
 
     api_context_section = (

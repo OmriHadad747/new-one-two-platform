@@ -45,6 +45,10 @@ export interface App {
   shopifyClientId: string;
   shopifySecretName: string;     // GCP Secret Manager resource name (HMAC signing secret)
   shopDomain: string;            // mystore.myshopify.com
+  themeInjectionStatus: "none" | "injected";
+  themeInjectionThemeId: string | null; // numeric Shopify theme ID as string
+  currentSemver: string | null;        // semver of the currently deployed version; null if never deployed
+  activeAppVersionId: string | null;   // app_version_id of the currently active deployed_function; null if not active
   createdAt: Date;
   updatedAt: Date;
 }

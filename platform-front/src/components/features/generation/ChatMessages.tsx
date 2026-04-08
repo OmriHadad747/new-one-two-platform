@@ -19,6 +19,8 @@ export interface DeployBundle {
   hasAdminUI: boolean;
   archetype: "backend" | "storefront_backend" | "backend_admin" | "storefront_backend_admin";
   explanation?: string | null;
+  /** App id used to navigate to the App Details page. */
+  appId?: string;
 }
 
 export interface ClarifyingData {
@@ -75,9 +77,18 @@ function buildSteps(byAgent: Record<string, ProgressEvent>) {
     steps.splice(idx + 1, 0, { agent: "validator", label: OPTIONAL_AGENTS["validator"] });
   }
   if ("revision" in byAgent) {
-    const idx = steps.findIndex((s) => s.agent === "validator");
-    const after = idx !== -1 ? idx : steps.findIndex((s) => s.agent === "validation");
-    steps.splice(after + 1, 0, { agent: "revision", label: OPTIONAL_AGENTS["revision"] });
+    const revTs = byAgent["revision"]?.timestampMs ?? 0;
+    const valTs = byAgent["validation"]?.timestampMs ?? Infinity;
+    if (revTs < valTs) {
+      // Codegen-phase revision (holistic revision run) — insert just before handler
+      const handlerIdx = steps.findIndex((s) => s.agent === "handler");
+      steps.splice(handlerIdx, 0, { agent: "revision", label: OPTIONAL_AGENTS["revision"] });
+    } else {
+      // Post-validator semantic revision — insert after validator (or validation)
+      const idx = steps.findIndex((s) => s.agent === "validator");
+      const after = idx !== -1 ? idx : steps.findIndex((s) => s.agent === "validation");
+      steps.splice(after + 1, 0, { agent: "revision", label: OPTIONAL_AGENTS["revision"] });
+    }
   }
   return steps;
 }
@@ -235,15 +246,8 @@ function ExplanationText({ text }: { text: string }) {
   );
 }
 
-function DeployReadyCard({
-  bundle,
-  onDeploy,
-  deploying,
-}: {
-  bundle?: DeployBundle;
-  onDeploy?: () => void;
-  deploying?: boolean;
-}) {
+function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
+  const navigate = useNavigate();
   const triggerLabel =
     bundle?.triggerType === "cron"   ? "Scheduled (cron)"  :
     bundle?.triggerType === "admin"  ? "Admin-triggered"   :
@@ -277,18 +281,20 @@ function DeployReadyCard({
         )}
       </div>
 
-      {/* Deploy button */}
-      <button
-        type="button"
-        onClick={onDeploy}
-        disabled={deploying || !onDeploy}
-        className="w-full py-3 bg-gradient-to-br from-accent to-accent/70 text-white rounded-xl text-sm font-bold border-0 cursor-pointer transition-all hover:opacity-90 disabled:opacity-60 flex items-center justify-center gap-2"
-      >
-        <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-          {deploying ? "hourglass_empty" : "rocket_launch"}
-        </span>
-        {deploying ? "Deploying…" : "Deploy to store"}
-      </button>
+      {/* View App Details button */}
+      {bundle?.appId && (
+        <button
+          type="button"
+          onClick={() => navigate(`/app/apps/${bundle.appId}`)}
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-white/[0.04] border border-white/[0.07] rounded-xl text-[12.5px] font-semibold text-muted hover:bg-white/[0.07] hover:text-ink transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[15px]">dashboard</span>
+            <span>View App Details to deploy</span>
+          </div>
+          <span className="material-symbols-outlined text-[13px] text-faint">arrow_forward</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -401,13 +407,12 @@ interface ChatMessagesProps {
   liveGenEvents?: ProgressEvent[];
   /** True once gen.status === "completed" — clears stale "running" step states */
   generationCompleted?: boolean;
-  onDeploy?: () => void;
-  deploying?: boolean;
   onClarifyAnswer?: (text: string) => void;
 }
 
 export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
-  ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, onDeploy, deploying, onClarifyAnswer }, ref) => (
+  ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, onClarifyAnswer }, ref) => {
+    return (
     <div className="flex-1 overflow-y-auto">
       <div className="px-5 py-6 flex flex-col gap-6 w-full max-w-[760px] mx-auto">
         {messages.map((msg) => {
@@ -441,7 +446,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
                 )}
 
                 {msg.type === "deploy-ready" && (
-                  <DeployReadyCard bundle={msg.deployBundle} onDeploy={onDeploy} deploying={deploying} />
+                  <DeployReadyCard bundle={msg.deployBundle} />
                 )}
 
                 {msg.type === "live" && (
@@ -490,6 +495,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
         <div ref={ref} />
       </div>
     </div>
-  )
+    );
+  }
 );
 ChatMessages.displayName = "ChatMessages";

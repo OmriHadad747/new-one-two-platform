@@ -25,8 +25,55 @@ export interface App {
   appArchetype: AppArchetype;
   widgetJs: string | null;
   shopDomain: string;
+  themeInjectionStatus: "none" | "injected";
+  themeInjectionThemeId: string | null;
+  currentSemver: string | null;
+  activeAppVersionId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ─── Theme Injection ──────────────────────────────────────────────────────────
+
+export interface TemplateSection {
+  sectionId: string;
+  sectionType: string;
+  /** Human-readable name from section Liquid schema */
+  sectionName?: string;
+  blockOrder: string[];
+  /** Display name for each block in blockOrder, keyed by block ID */
+  blockNames: Record<string, string>;
+  hasOurBlock: boolean;
+}
+
+export interface ThemeTemplate {
+  name: string;
+  key: string;
+  sections: TemplateSection[];
+}
+
+export interface ActiveTheme {
+  id: number;
+  name: string;
+}
+
+export interface ThemeTemplatesResponse {
+  activeTheme: ActiveTheme;
+  templates: ThemeTemplate[];
+}
+
+export interface InjectionTarget {
+  templateKey: string;
+  sectionId: string;
+  /** Index in block_order where the widget is inserted. 0 = before first block, length = after last. */
+  position: number;
+}
+
+export interface InjectThemeResponse {
+  themeId: number;
+  themeName: string;
+  previewUrl: string;
+  editorUrl: string;
 }
 
 // ─── Dashboard UI helpers ─────────────────────────────────────────────────────
@@ -170,8 +217,8 @@ export interface GenerationBundle {
 }
 
 export interface GenerationResult {
-  status: "running" | "completed" | "failed";
-  bundle?: GenerationBundle;
+  status: "running" | "completed" | "failed" | "success";
+  bundle?: SessionBundle;
   error?: string;
 }
 
@@ -183,6 +230,17 @@ export interface SessionBundle {
   widgetModule?: string | null;
   adminUiModule?: string | null;
   explanation?: { merchantFacing?: string; technical?: unknown };
+}
+
+/** Summary row returned by GET /generation/app/:appId/sessions */
+export interface SessionSummary {
+  id: string;
+  jobId: string | null;
+  status: "running" | "completed" | "failed";
+  prompt: string;
+  errorMessage: string | null;
+  appVersionId: string | null;
+  createdAt: string;
 }
 
 /** Shape returned by GET /generation/app/:appId/latest */

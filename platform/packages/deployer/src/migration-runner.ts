@@ -3,8 +3,12 @@
  *
  * Safety checks (regex-based, pre-execution):
  *   - No DROP TABLE / DROP COLUMN / TRUNCATE
- *   - No ALTER TABLE on existing tables (only CREATE TABLE is allowed)
+ *   - ALTER TABLE only allowed for ENABLE ROW LEVEL SECURITY or ADD COLUMN IF NOT EXISTS
  *   - All CREATE TABLE statements must include a tenant_id column
+ *
+ * CREATE POLICY statements are automatically made idempotent by wrapping them in a
+ * DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN NULL; END $$ block. This lets
+ * the same migration run safely on re-deploy (revision flow) without error 42710.
  *
  * The migration runs inside withTenantContext so RLS is active.
  * Empty sql is a no-op (some features may not need a DB table).
@@ -28,15 +32,15 @@ function validateMigrationSql(migrationSql: string): void {
     }
   }
 
-  // ALTER TABLE is only allowed for ENABLE ROW LEVEL SECURITY.
-  // Match each ALTER TABLE statement up to its semicolon so we can inspect
-  // the full command regardless of table name format (plain, quoted, schema-qualified).
+  // ALTER TABLE is only allowed for ENABLE ROW LEVEL SECURITY or ADD COLUMN IF NOT EXISTS.
   const alterMatches = migrationSql.match(/\bALTER\s+TABLE\b[^;]+;/gi);
   if (alterMatches) {
     for (const stmt of alterMatches) {
-      if (!/\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b/i.test(stmt)) {
+      const isRls = /\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b/i.test(stmt);
+      const isAddCol = /\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/i.test(stmt);
+      if (!isRls && !isAddCol) {
         throw new Error(
-          `ALTER TABLE is only allowed for ENABLE ROW LEVEL SECURITY. ` +
+          `ALTER TABLE is only allowed for ENABLE ROW LEVEL SECURITY or ADD COLUMN IF NOT EXISTS. ` +
             `Forbidden statement: ${stmt.substring(0, 120)}`
         );
       }
@@ -58,6 +62,38 @@ function validateMigrationSql(migrationSql: string): void {
   }
 }
 
+/**
+ * Makes a migration script idempotent so it can be re-run safely on every deploy:
+ *
+ *   CREATE TABLE foo        → CREATE TABLE IF NOT EXISTS foo
+ *   CREATE INDEX foo        → CREATE INDEX IF NOT EXISTS foo
+ *   CREATE UNIQUE INDEX foo → CREATE UNIQUE INDEX IF NOT EXISTS foo
+ *   CREATE POLICY ...;      → DO $migration$ BEGIN CREATE POLICY ...; EXCEPTION WHEN duplicate_object THEN NULL; END $migration$;
+ *
+ * This eliminates the entire class of 42P07 (relation already exists) and
+ * 42710 (duplicate_object) errors on revision re-deploys without any prompt
+ * engineering — the runner just guarantees idempotency at the infrastructure level.
+ */
+function makeIdempotent(sql: string): string {
+  return sql
+    // CREATE TABLE foo → CREATE TABLE IF NOT EXISTS foo (skip if already has IF NOT EXISTS)
+    .replace(
+      /\bCREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS\s)/gi,
+      "CREATE TABLE IF NOT EXISTS "
+    )
+    // CREATE [UNIQUE] INDEX foo → CREATE [UNIQUE] INDEX IF NOT EXISTS foo
+    .replace(
+      /\bCREATE\s+(UNIQUE\s+)?INDEX\s+(?!IF\s+NOT\s+EXISTS\s)/gi,
+      (_, unique) => `CREATE ${unique ?? ""}INDEX IF NOT EXISTS `
+    )
+    // CREATE POLICY → idempotent DO block (42710 duplicate_object)
+    .replace(
+      /(CREATE\s+POLICY\b[^;]+;)/gi,
+      (match) =>
+        `DO $migration$ BEGIN ${match} EXCEPTION WHEN duplicate_object THEN NULL; END $migration$;`
+    );
+}
+
 export async function runTenantMigration(
   tenantId: string,
   migrationSql: string
@@ -69,11 +105,14 @@ export async function runTenantMigration(
 
   validateMigrationSql(migrationSql);
 
+  // Make the migration idempotent: IF NOT EXISTS on tables/indexes, DO blocks on policies.
+  const idempotentSql = makeIdempotent(migrationSql);
+
   await withTenantContext(tenantId, async (tx) => {
     // Execute the full SQL block as a single statement.
     // postgres.js tagged templates don't support raw SQL injection directly,
     // so we use sql.unsafe for the migration content — it's validated above.
-    await tx.unsafe(migrationSql);
+    await tx.unsafe(idempotentSql);
   });
 
   logger.info({ tenantId }, "Tenant migration applied");

@@ -8,8 +8,12 @@ import type {
   StartGenerationResponse,
   GenerationResult,
   LatestSessionResult,
+  SessionSummary,
   AnalyzeMessage,
   AnalyzeResult,
+  ThemeTemplatesResponse,
+  InjectionTarget,
+  InjectThemeResponse,
 } from "@/types/dashboard";
 
 const BASE = "/api";
@@ -75,6 +79,17 @@ export const api = {
       request<InvocationLogEntry[]>(`/tenants/${tenantId}/apps/${appId}/widget-logs?limit=${limit}`),
     adminLogs: (tenantId: string, appId: string, limit = 50) =>
       request<InvocationLogEntry[]>(`/tenants/${tenantId}/apps/${appId}/admin-logs?limit=${limit}`),
+    getThemeTemplates: (tenantId: string, appId: string) =>
+      request<ThemeTemplatesResponse>(`/tenants/${tenantId}/apps/${appId}/theme-templates`),
+    injectTheme: (tenantId: string, appId: string, targets: InjectionTarget[]) =>
+      request<InjectThemeResponse>(`/tenants/${tenantId}/apps/${appId}/inject-theme`, {
+        method: "POST",
+        body: JSON.stringify({ targets }),
+      }),
+    deleteInjectedTheme: (tenantId: string, appId: string) =>
+      request<{ deleted: boolean }>(`/tenants/${tenantId}/apps/${appId}/inject-theme`, {
+        method: "DELETE",
+      }),
   },
 
   generation: {
@@ -87,6 +102,10 @@ export const api = {
       request<GenerationResult>(`/generation/${jobId}/result`),
     latestSession: (appId: string) =>
       request<LatestSessionResult>(`/generation/app/${appId}/latest`),
+    latestCompletedSession: (appId: string) =>
+      request<LatestSessionResult>(`/generation/app/${appId}/latest-completed`),
+    sessions: (appId: string) =>
+      request<SessionSummary[]>(`/generation/app/${appId}/sessions`),
     approve: (jobId: string) =>
       request<{ deployed: boolean }>(`/generation/${jobId}/approve`, {
         method: "POST",

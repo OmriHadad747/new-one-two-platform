@@ -30,10 +30,10 @@ _DEFAULTS: dict[str, str] = {
     "admin_ui": "claude-sonnet-4-6",
     "revision": "claude-sonnet-4-6",
     # Classification / text agents
-    "product": "claude-haiku-4-5-20251001",
+    "product": "claude-sonnet-4-6",
     "explanation": "claude-haiku-4-5-20251001",
     # LLM validation — focused prompt, Haiku is sufficient
-    "validator": "claude-haiku-4-5-20251001",
+    "validator": "claude-sonnet-4-6",
 }
 
 

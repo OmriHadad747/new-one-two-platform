@@ -182,10 +182,13 @@ export async function deployAppVersion(appVersionId: string): Promise<{
  *   3. Create draft AppVersion from handlerModule.code
  *   4. Build + push Docker image and deploy to Cloud Run
  *   5. Wire webhook subscriptions
- *   6. Update generation_session status to completed
+ *   6. Link the generation session to the deployed AppVersion
+ *
+ * On failure: migration is rolled back and app returns to "ready" so the merchant
+ * can retry. The generation session is NOT marked failed — generation succeeded and
+ * the bundle is valid; only the infrastructure step failed.
  *
  * This function reads the app and tenant context from the DB using appId.
- * The sessionId is used to update the generation_sessions row on success.
  */
 export async function deployFeatureBundle(params: {
   sessionId: string;
@@ -281,15 +284,15 @@ export async function deployFeatureBundle(params: {
   } catch (err) {
     logger.error({ err, sessionId, appId }, "FeatureBundle deployment failed");
 
-    // Roll back DB migration if it ran but subsequent steps failed
+    // Roll back DB migration if it ran but subsequent steps failed.
     if (migrationRan) {
       await rollbackTenantMigration(tenantId, migrationSql);
     }
 
-    await updateGenerationSession(sessionId, {
-      status: "failed",
-      errorMessage: err instanceof Error ? err.message : String(err),
-    });
+    // Do NOT mark the session as "failed" — generation succeeded and the bundle
+    // is valid. The session stays "completed". Only infrastructure failed here.
+    // Return app to "ready" so the merchant can retry the deploy.
+    await updateAppStatus(appId, "ready");
 
     throw err;
   }

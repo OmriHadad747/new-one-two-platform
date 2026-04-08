@@ -139,4 +139,20 @@ def run_product_agent_analyze(history: List[Dict[str, Any]]) -> Dict[str, Any]:
     llm = get_llm(model=get_agent_model("product"), max_tokens=512)
     result = invoke_conversation(llm, PRODUCT_ANALYZE_SYSTEM, history)
     raw = extract_json(result.content)
-    return json.loads(raw)
+    if not raw:
+        # LLM returned prose without a JSON block — ask for clarification
+        return {
+            "status": "needs_clarification",
+            "question": "Could you tell me more about what you'd like to build?",
+        }
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {
+            "status": "needs_clarification",
+            "question": "Could you tell me more about what you'd like to build?",
+        }
+    # Ensure required "status" field is present
+    if "status" not in parsed:
+        parsed["status"] = "needs_clarification"
+    return parsed

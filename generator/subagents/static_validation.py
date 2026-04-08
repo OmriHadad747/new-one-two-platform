@@ -425,7 +425,8 @@ def validate_codespec_plan(
                 errors.append(
                     f"codeSpec.{path_name} step {i + 1}: SELECT is missing tenant_id filter — "
                     f"add 'AND tenant_id = ${{ctx.tenantId}}'. "
-                    f"Every DB query must be scoped to the current tenant."
+                    f"Every DB query must be scoped to the current tenant. "
+                    f"Offending step: {step[:120]!r}"
                 )
 
     # 7. widgetPath field contract self-consistency.
@@ -813,9 +814,15 @@ def validate_handler_artifact(
 # ── Migration ─────────────────────────────────────────────────────────────────
 
 
-def validate_migration_artifact(sql: str) -> List[str]:
-    """Validate the generated PostgreSQL DDL migration."""
+def validate_migration_artifact(sql: str, prior_tables: List[str] | None = None) -> List[str]:
+    """Validate the generated PostgreSQL DDL migration.
+
+    prior_tables: table names already applied in a previous deploy. RLS and
+    CREATE POLICY checks are skipped for these — they already exist in the DB
+    and the runner will make the policy creation idempotent.
+    """
     errors: List[str] = []
+    _prior = {t.lower() for t in (prior_tables or [])}
 
     if not sql.strip():
         return errors  # empty migration is valid
@@ -824,14 +831,20 @@ def validate_migration_artifact(sql: str) -> List[str]:
         (r"\bDROP\s+TABLE\b", "DROP TABLE"),
         (r"\bDROP\s+COLUMN\b", "DROP COLUMN"),
         (r"\bTRUNCATE\b", "TRUNCATE"),
-        (
-            r"\bALTER\s+TABLE\b(?!\s+\w+\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY)",
-            "ALTER TABLE on existing tables",
-        ),
     ]
     for pattern, name in forbidden_ddl:
         if re.search(pattern, sql, re.IGNORECASE):
             errors.append(f"forbidden SQL operation: {name}")
+
+    # ALTER TABLE is allowed only for:
+    #   - ENABLE ROW LEVEL SECURITY
+    #   - ADD COLUMN IF NOT EXISTS  (safe incremental DDL for revision runs)
+    alter_stmts = re.findall(r"\bALTER\s+TABLE\b[^;]+;", sql, re.IGNORECASE)
+    for stmt in alter_stmts:
+        is_rls = bool(re.search(r"\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b", stmt, re.IGNORECASE))
+        is_add_col = bool(re.search(r"\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b", stmt, re.IGNORECASE))
+        if not is_rls and not is_add_col:
+            errors.append("forbidden SQL operation: ALTER TABLE on existing tables")
 
     create_table_stmts = re.findall(
         r"CREATE\s+TABLE\s+\w+\s*\([\s\S]*?\);", sql, re.IGNORECASE
@@ -853,6 +866,10 @@ def validate_migration_artifact(sql: str) -> List[str]:
         r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", sql, re.IGNORECASE
     )
     for table_name in created_tables:
+        # Skip RLS/policy checks for tables that already exist from a prior deploy —
+        # the migration runner wraps CREATE POLICY in an idempotent DO block.
+        if table_name.lower() in _prior:
+            continue
         has_enable_rls = bool(
             re.search(
                 rf"ALTER\s+TABLE\s+{re.escape(table_name)}\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",

@@ -5,10 +5,10 @@ import { cn } from "@/lib/cn";
 import { useSessionStore } from "@/stores/session";
 import { useGenerationStore } from "@/stores/generation";
 import { useApp, useWebhookAppLogs, useWidgetLogs, useAdminLogs } from "@/hooks/useApps";
-import { useLatestSession, useGeneration } from "@/hooks/useGeneration";
-import type { WebhookInvocationLogEntry, InvocationLogEntry, App, SessionBundle } from "@/types/dashboard";
+import { useLatestSession, useLatestCompletedSession, useGeneration, useAppSessions, useSessionBundle } from "@/hooks/useGeneration";
+import type { SessionSummary } from "@/types/dashboard";
+import type { WebhookInvocationLogEntry, InvocationLogEntry, App, SessionBundle, ThemeTemplate, InjectionTarget } from "@/types/dashboard";
 import { ArchetypePills } from "@/components/ui/ArchetypePills";
-import { AppStatusBadge } from "@/components/ui/AppStatusBadge";
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -257,11 +257,21 @@ function AppHeader({
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent border border-accent/20 animate-pulse">Building…</span>
             )}
           </div>
-          <div className="flex items-center gap-3 text-[11px] text-faint">
+          <div className="flex items-center gap-3 text-[11px] text-faint mb-1.5">
             <span>Created {formatDate(app.createdAt)}</span>
             <span className="opacity-40">·</span>
             <span>Updated {timeAgo(app.updatedAt)}</span>
           </div>
+          <button
+            type="button"
+            onClick={() => void navigator.clipboard.writeText(app.id)}
+            title="Copy App ID"
+            className="flex items-center gap-1.5 bg-transparent border-0 p-0 cursor-pointer group"
+          >
+            <span className="text-[10px] text-faint/40 font-medium">App ID</span>
+            <span className="font-mono text-[10px] text-faint/40 group-hover:text-accent transition-colors">{app.id}</span>
+            <span className="material-symbols-outlined text-[11px] text-faint/25 group-hover:text-accent transition-colors">content_copy</span>
+          </button>
         </div>
       </div>
     </div>
@@ -309,8 +319,8 @@ function LogRow({ entry, last, showSource }: { entry: WebhookInvocationLogEntry;
         {entry.errorMessage && <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>}
       </div>
       <div className="text-right shrink-0 space-y-0.5">
-        <div className="text-[11px] font-mono text-faint">{formatDuration(entry.durationMs)}</div>
         <div className="text-[10px] text-faint">{timeAgo(entry.queuedAt)}</div>
+        <div className="text-[11px] font-mono text-faint">{formatDuration(entry.durationMs)}</div>
       </div>
     </div>
   );
@@ -330,8 +340,8 @@ function InvocationLogRow({ entry, last, source }: { entry: InvocationLogEntry; 
         {entry.errorMessage && <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>}
       </div>
       <div className="text-right shrink-0 space-y-0.5">
-        <div className="text-[11px] font-mono text-faint">{formatDuration(entry.durationMs)}</div>
         <div className="text-[10px] text-faint">{timeAgo(entry.invokedAt)}</div>
+        <div className="text-[11px] font-mono text-faint">{formatDuration(entry.durationMs)}</div>
       </div>
     </div>
   );
@@ -429,6 +439,128 @@ function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
       <div className="flex-1 overflow-hidden">
         <CodeBlock code={current.code} lang={current.lang} />
       </div>
+    </div>
+  );
+}
+
+// ─── Versions tab ─────────────────────────────────────────────────────────────
+
+const SESSION_STATUS_CFG = {
+  completed: { dot: "bg-teal",                     label: "Generated",  cls: "text-teal"   },
+  failed:    { dot: "bg-danger",                   label: "Failed",     cls: "text-danger" },
+  running:   { dot: "bg-accent animate-pulse",     label: "Running",    cls: "text-accent" },
+} satisfies Record<string, { dot: string; label: string; cls: string }>;
+
+function VersionsTab({
+  sessions, sessionsLoading, latestSession, app,
+}: {
+  sessions: SessionSummary[];
+  sessionsLoading: boolean;
+  latestSession: { status: string; bundle?: import("@/types/dashboard").SessionBundle | null } | null;
+  app: App;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Default selection: latest session
+  useEffect(() => {
+    if (sessions.length && !selectedId) setSelectedId(sessions[0].id);
+  }, [sessions, selectedId]);
+
+  const selected = sessions.find((s) => s.id === selectedId) ?? sessions[0] ?? null;
+  // Show code from latestSession when selectedId matches the first (latest) session
+  const isLatest = selected?.id === sessions[0]?.id;
+  // For non-latest completed sessions, fetch their bundle on demand
+  const nonLatestJobId = (!isLatest && selected?.status === "completed") ? (selected.jobId ?? null) : null;
+  const { data: selectedBundleData } = useSessionBundle(nonLatestJobId);
+  const bundleToShow = isLatest ? latestSession?.bundle : (selectedBundleData?.bundle ?? null);
+
+  return (
+    <div className="flex-1 overflow-hidden flex gap-0">
+
+      {/* ── Left: session list ── */}
+      <div className="w-[260px] shrink-0 border-r border-white/[0.07] flex flex-col overflow-hidden">
+        <div className="px-4 py-3 border-b border-white/[0.07] bg-white/[0.02] shrink-0">
+          <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Generation history</h3>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {sessionsLoading ? (
+            <div className="p-3 space-y-2">
+              {[1,2,3].map((i) => <div key={i} className="h-14 bg-white/[0.03] rounded-lg animate-pulse-subtle border border-white/[0.06]" />)}
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="flex items-center justify-center h-32 text-[11px] text-faint">No versions yet</div>
+          ) : (
+            <div className="p-2 space-y-1">
+              {sessions.map((s, i) => {
+                const cfg = SESSION_STATUS_CFG[s.status as keyof typeof SESSION_STATUS_CFG]
+                  ?? { dot: "bg-faint/40", label: s.status, cls: "text-faint" };
+                const isSelected = s.id === selected?.id;
+                // "Live" = this session's bundle is what's currently running in production
+                const isLive = app.status === "active" && !!s.appVersionId && s.appVersionId === app.activeAppVersionId;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setSelectedId(s.id)}
+                    className={cn(
+                      "w-full text-left px-3 py-2.5 rounded-lg border transition-colors cursor-pointer bg-transparent",
+                      isSelected
+                        ? "border-accent/30 bg-accent/[0.07]"
+                        : "border-transparent hover:bg-white/[0.04] hover:border-white/[0.08]"
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cfg.dot)} />
+                        <span className={cn("text-[10px] font-semibold", cfg.cls)}>{cfg.label}</span>
+                        {isLive && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-teal/15 border border-teal/25 text-[9px] font-bold text-teal uppercase tracking-wide leading-none">
+                            <span className="w-1 h-1 rounded-full bg-teal animate-pulse inline-block" />
+                            Live
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[9.5px] text-faint/60 shrink-0">
+                        v{sessions.length - i}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-ink/70 truncate leading-tight">{s.prompt}</p>
+                    {s.status === "failed" && s.errorMessage && (
+                      <p className="text-[10px] text-danger/80 truncate mt-0.5">{s.errorMessage}</p>
+                    )}
+                    <p className="text-[10px] text-faint/50 mt-1">{formatDate(s.createdAt)}</p>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Right: code viewer ── */}
+      <div className="flex-1 overflow-hidden flex flex-col">
+        {!selected ? (
+          <div className="flex-1 flex items-center justify-center text-[12px] text-faint">Select a version to view code</div>
+        ) : selected.status === "failed" ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8">
+            <div className="w-12 h-12 rounded-xl bg-danger/[0.08] border border-danger/20 flex items-center justify-center">
+              <span className="material-symbols-outlined text-danger text-[22px]">error</span>
+            </div>
+            <p className="text-[13px] font-semibold text-ink/80">Generation failed</p>
+            {selected.errorMessage && (
+              <p className="text-[12px] text-faint max-w-[420px]">{selected.errorMessage}</p>
+            )}
+          </div>
+        ) : selected.status === "running" ? (
+          <div className="flex-1 flex items-center justify-center gap-2 text-[12px] text-accent">
+            <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+            Generating…
+          </div>
+        ) : (
+          <CodeViewer bundle={bundleToShow} />
+        )}
+      </div>
+
     </div>
   );
 }
@@ -536,8 +668,8 @@ function HowItWorksCard({ text }: { text: string }) {
   const hasMore  = sentences.length > PREVIEW;
 
   return (
-    <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
-      <div className="px-5 py-3 border-b border-white/[0.06] bg-white/[0.02] flex items-center gap-2">
+    <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04] flex items-center gap-2">
         <span className="material-symbols-outlined text-accent text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
         <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How it works</h3>
       </div>
@@ -571,11 +703,195 @@ function HowItWorksCard({ text }: { text: string }) {
   );
 }
 
+// ─── Overview dashboard components ───────────────────────────────────────────
+
+function buildStatusPill(
+  app: App,
+  latestSession: { status: string } | null,
+  deploying: boolean,
+  isBuilding: boolean,
+  hasFallback: boolean,
+  onDeploy: () => void,
+  onRedeploy: () => void,
+  onDeactivate: () => void,
+) {
+  const sessionFailed = latestSession?.status === "failed";
+  const isReady    = app.status === "ready" && !sessionFailed;
+  const isReadyFallback = app.status === "ready" && sessionFailed && hasFallback;
+  const isReadyBlocked  = app.status === "ready" && sessionFailed && !hasFallback;
+  const isActive   = app.status === "active";
+  const isInactive = app.status === "inactive";
+
+  if (isBuilding) return {
+    statusDot: "bg-accent animate-pulse", statusText: "Building…",
+    pillBorder: "border-accent/20", pillBg: "bg-accent/[0.06]",
+    action: null, note: null,
+  };
+  if (isReady) return {
+    statusDot: "bg-amber-400", statusText: "Ready to deploy",
+    pillBorder: "border-amber-400/25", pillBg: "bg-amber-400/[0.06]",
+    action: { icon: "rocket_launch", label: deploying ? "Deploying…" : "Deploy", onClick: onDeploy,
+      cls: "text-accent hover:bg-accent/[0.12]" },
+    note: null,
+  };
+  if (isReadyFallback) return {
+    statusDot: "bg-amber-400", statusText: "Generation failed",
+    pillBorder: "border-amber-400/25", pillBg: "bg-amber-400/[0.06]",
+    action: { icon: "rocket_launch", label: deploying ? "Deploying…" : "Deploy last version", onClick: onDeploy,
+      cls: "text-accent hover:bg-accent/[0.12]" },
+    note: "Last generation failed — deploying previous successful version",
+  };
+  if (isReadyBlocked) return {
+    statusDot: "bg-danger", statusText: "Generation failed",
+    pillBorder: "border-danger/20", pillBg: "bg-danger/[0.04]",
+    action: null,
+    note: "No successful version to deploy — generate a new version first",
+  };
+  if (isActive) return {
+    statusDot: "bg-teal", statusText: "Active",
+    pillBorder: "border-teal/20", pillBg: "bg-teal/[0.05]",
+    action: { icon: "pause_circle", label: deploying ? "Deactivating…" : "Deactivate", onClick: onDeactivate,
+      cls: "text-danger hover:bg-danger/[0.10]" },
+    note: null,
+  };
+  if (isInactive) return {
+    statusDot: "bg-faint/50", statusText: "Inactive",
+    pillBorder: "border-teal/20", pillBg: "bg-teal/[0.05]",
+    action: { icon: "play_circle", label: deploying ? "Activating…" : "Activate", onClick: onRedeploy,
+      cls: "text-green-500 hover:bg-green-500/[0.10]" },
+    note: null,
+  };
+  return {
+    statusDot: "bg-faint/40", statusText: app.status.charAt(0).toUpperCase() + app.status.slice(1),
+    pillBorder: "border-white/[0.08]", pillBg: "bg-white/[0.02]",
+    action: null, note: null,
+  };
+}
+
+function AppInfoBand({
+  app, latestSession, hasFallback, onDeploy, onRedeploy, onDeactivate, deploying, isBuilding,
+}: {
+  app: App;
+  latestSession: { status: string } | null;
+  hasFallback: boolean;
+  onDeploy: () => void; onRedeploy: () => void; onDeactivate: () => void;
+  deploying: boolean; isBuilding: boolean;
+}) {
+  const pill = buildStatusPill(app, latestSession, deploying, isBuilding, hasFallback, onDeploy, onRedeploy, onDeactivate);
+
+  return (
+    <div className="flex flex-col shrink-0 border-b border-white/[0.06]">
+      <div className="flex items-center justify-between">
+
+        {/* ── App type ── */}
+        <div className="flex flex-col gap-1.5 px-5 py-2.5">
+          <span className="text-[10px] text-faint/40 font-medium whitespace-nowrap">App type</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <ArchetypePills archetype={app.appArchetype} />
+            {app.currentSemver && (
+              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.10] text-faint/70">
+                v{app.currentSemver}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="w-px bg-white/[0.06] my-1.5 shrink-0" />
+
+        {/* ── Status + action ── */}
+        <div className="flex flex-col gap-1.5 px-5 py-2.5">
+          <span className="text-[10px] text-faint/40 font-medium whitespace-nowrap">Status</span>
+          <div className={cn("flex items-stretch rounded-full border overflow-hidden text-[12px] font-medium", pill.pillBorder, pill.pillBg)}>
+            <div className="flex items-center justify-center gap-2 px-3.5 py-1.5 min-w-[130px]">
+              <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", pill.statusDot)} />
+              <span className="text-ink/80 whitespace-nowrap">{pill.statusText}</span>
+            </div>
+            {pill.action && (
+              <>
+                <span className={cn("w-px self-stretch", pill.pillBorder)} />
+                <button
+                  type="button"
+                  onClick={pill.action.onClick}
+                  disabled={deploying}
+                  className={cn(
+                    "flex items-center justify-center gap-1.5 px-3.5 py-1.5 min-w-[120px] transition-colors cursor-pointer border-0 bg-transparent disabled:opacity-40 disabled:cursor-not-allowed font-semibold whitespace-nowrap",
+                    pill.action.cls
+                  )}
+                >
+                  <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                    {pill.action.icon}
+                  </span>
+                  {pill.action.label}
+                </button>
+              </>
+            )}
+          </div>
+          {pill.note && (
+            <div className="flex items-center gap-1 text-[10px] text-faint/70">
+              <span className="material-symbols-outlined text-[11px]">info</span>
+              {pill.note}
+            </div>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+function MiniStats({
+  activity, loading,
+}: {
+  activity: Array<{ status: string; durationMs: number | null; ts: string }>;
+  loading: boolean;
+}) {
+  const lastRun = activity[0]?.ts ?? null;
+  const total   = activity.length;
+  const successRate = total > 0
+    ? Math.round((activity.filter((e) => e.status === "success").length / total) * 100)
+    : null;
+  const durations = activity.filter((e) => e.durationMs !== null).map((e) => e.durationMs!);
+  const avgMs = durations.length > 0
+    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+    : null;
+
+  const stats = [
+    { icon: "history",       label: "Last run",     value: lastRun ? timeAgo(lastRun) : "—",
+      color: "text-ink" },
+    { icon: "bolt",          label: "Recent runs",  value: total > 0 ? String(total) : "—",
+      color: "text-ink" },
+    { icon: "avg_pace",      label: "Avg latency",  value: avgMs !== null ? formatDuration(avgMs) : "—",
+      color: "text-ink" },
+    { icon: "check_circle",  label: "Success rate", value: successRate !== null ? `${successRate}%` : "—",
+      color: successRate === null ? "text-ink" : successRate >= 90 ? "text-teal" : successRate >= 70 ? "text-amber-400" : "text-danger" },
+  ];
+
+  if (loading) return (
+    <div className="grid grid-cols-4 gap-2">
+      {[1,2,3,4].map((i) => <div key={i} className="h-16 bg-white/[0.03] rounded-xl animate-pulse-subtle" />)}
+    </div>
+  );
+
+  return (
+    <div className="grid grid-cols-4 gap-2">
+      {stats.map((s) => (
+        <div key={s.label} className="bg-white/[0.06] border border-white/[0.10] rounded-xl px-3.5 py-3">
+          <div className="flex items-center gap-1 text-faint mb-1.5">
+            <span className="material-symbols-outlined text-[12px]">{s.icon}</span>
+            <span className="text-[9.5px] font-bold uppercase tracking-wider">{s.label}</span>
+          </div>
+          <div className={cn("text-[15px] font-bold tracking-tight leading-none", s.color)}>{s.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Overview tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({
   app, latestSession, recentLogs, recentWidgetLogs, recentAdminLogs, recentLogsLoading, shopDomain, onLogsTab,
-  onDeploy, onRedeploy, onDeactivate, deploying, isBuilding,
+  injectingWidget, injectError, onInjectWidget, onDeleteInjectedTheme,
 }: {
   app: App;
   latestSession: {
@@ -588,15 +904,13 @@ function OverviewTab({
   recentLogsLoading: boolean;
   shopDomain: string | null;
   onLogsTab: () => void;
-  onDeploy: () => void;
-  onRedeploy: () => void;
-  onDeactivate: () => void;
-  deploying: boolean;
-  isBuilding: boolean;
+  injectingWidget: boolean;
+  injectError: string | null;
+  onInjectWidget: () => void;
+  onDeleteInjectedTheme: () => void;
 }) {
   const webhookTopics  = latestSession?.webhookTopics ?? [];
   const cronSchedule   = latestSession?.cronSchedule ?? null;
-  const prompt         = latestSession?.prompt ?? null;
   const appExplanation = (() => {
     const exp = latestSession?.bundle?.explanation;
     if (!exp) return null;
@@ -607,53 +921,51 @@ function OverviewTab({
   const hasWidget  = !!(latestSession?.bundle?.widgetModule  ?? (app.appArchetype === "storefront_backend" || app.appArchetype === "storefront_backend_admin"));
   const hasAdminUI = !!(latestSession?.bundle?.adminUiModule ?? (app.appArchetype === "backend_admin"      || app.appArchetype === "storefront_backend_admin"));
 
-  // Prefer app.shopDomain (always authoritative for this app) over the session-store
-  // shopDomain (may be stale or null after store rehydration).
-  const effectiveShop  = app.shopDomain || shopDomain || null;
-  const storeFrontUrl  = effectiveShop ? `https://${effectiveShop}` : null;
-  const themeEditorUrl = effectiveShop ? `https://${effectiveShop}/admin/themes/current/editor` : null;
-  const adminUrl       = effectiveShop ? `https://${effectiveShop}/admin/apps` : null;
+  const effectiveShop = app.shopDomain || shopDomain || null;
+  const storeFrontUrl = effectiveShop ? `https://${effectiveShop}` : null;
+  const adminUrl      = effectiveShop ? `https://${effectiveShop}/admin` : null;
 
+  const theme = useThemeStore((s) => s.theme);
   const navigate = useNavigate();
   const validateSteps = buildValidationSteps({ webhookTopics, cronSchedule, hasWidget, hasAdminUI });
 
+  // Merged activity — used by both MiniStats and the activity feed
+  type AnyEntry =
+    | { kind: "webhook"; data: WebhookInvocationLogEntry; ts: string }
+    | { kind: "widget" | "admin"; data: InvocationLogEntry; ts: string };
+  const allActivity: AnyEntry[] = [
+    ...recentLogs.map((d) => ({ kind: "webhook" as const, data: d, ts: d.queuedAt })),
+    ...recentWidgetLogs.map((d) => ({ kind: "widget" as const, data: d, ts: d.invokedAt })),
+    ...recentAdminLogs.map((d) => ({ kind: "admin" as const, data: d, ts: d.invokedAt })),
+  ].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, 15);
+
+  const statsActivity = allActivity.map((e) => ({
+    status: e.kind === "webhook"
+      ? (e.data as WebhookInvocationLogEntry).status
+      : (e.data as InvocationLogEntry).status,
+    durationMs: e.data.durationMs,
+    ts: e.ts,
+  }));
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="max-w-[960px] mx-auto p-7 grid grid-cols-[1fr_280px] gap-6 items-start">
+    <div className="flex-1 overflow-y-auto flex flex-col">
+
+      <div className="max-w-[960px] mx-auto p-7 grid grid-cols-[1fr_280px] gap-6 items-start w-full">
 
         {/* ── LEFT COLUMN ──────────────────────────────────────────────── */}
         <div className="space-y-5">
 
-          {/* About — pure info */}
-          <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-white/[0.06] bg-white/[0.02]">
-              <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">About</h3>
-            </div>
-            <div className="divide-y divide-white/[0.05]">
-              <Row label="Type" value={<ArchetypePills archetype={app.appArchetype} />} />
-              <Row label="Created" value={formatDate(app.createdAt)} />
-              <Row label="Updated" value={timeAgo(app.updatedAt)} />
-              {app.slug && <Row label="Slug" value={<span className="font-mono text-[11px]">{app.slug}</span>} />}
-              {app.shopDomain && <Row label="Store" value={<span className="font-mono text-[11px]">{app.shopDomain}</span>} />}
-              <Row label="App ID" value={
-                <button
-                  type="button"
-                  onClick={() => void navigator.clipboard.writeText(app.id)}
-                  title="Click to copy"
-                  className="flex items-center gap-1.5 font-mono text-[11px] text-muted hover:text-accent transition-colors cursor-pointer bg-transparent border-0 p-0"
-                >
-                  <span>{app.id}</span>
-                  <span className="material-symbols-outlined text-[12px]">content_copy</span>
-                </button>
-              } />
-            </div>
-          </section>
+          {latestSession !== null && (
+            <MiniStats activity={statsActivity} loading={recentLogsLoading} />
+          )}
+
+          {/* How it works */}
+          {appExplanation && <HowItWorksCard text={appExplanation} />}
 
           {/* Triggers */}
           {(webhookTopics.length > 0 || cronSchedule) && (
-            <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/[0.06] bg-white/[0.02]">
+            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Triggers</h3>
               </div>
               <div className="divide-y divide-white/[0.05]">
@@ -686,35 +998,25 @@ function OverviewTab({
             </section>
           )}
 
-          {/* Recent activity — only for generated apps */}
-          {latestSession !== null && (() => {
-            type AnyEntry =
-              | { kind: "webhook"; data: WebhookInvocationLogEntry; ts: string }
-              | { kind: "widget" | "admin";  data: InvocationLogEntry;        ts: string };
-            const allActivity: AnyEntry[] = [
-              ...recentLogs.map((d) => ({ kind: "webhook" as const, data: d, ts: d.queuedAt })),
-              ...recentWidgetLogs.map((d) => ({ kind: "widget" as const,  data: d, ts: d.invokedAt })),
-              ...recentAdminLogs.map((d)  => ({ kind: "admin"  as const,  data: d, ts: d.invokedAt })),
-            ].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, 15);
-
-            return (
-            <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/[0.06] bg-white/[0.02] flex items-center justify-between">
+          {/* Recent activity */}
+          {latestSession !== null && (
+            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04] flex items-center justify-between">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Recent Activity</h3>
                 <button type="button" onClick={onLogsTab}
-                  className="text-[10px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer"
-                >
+                  className="text-[10px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer">
                   All logs →
                 </button>
               </div>
               {recentLogsLoading ? (
                 <div className="px-5 py-4 space-y-2">
-                  {[1, 2, 3].map((i) => <div key={i} className="h-8 bg-white/[0.03] rounded-lg animate-pulse-subtle" />)}
+                  {[1,2,3].map((i) => <div key={i} className="h-8 bg-white/[0.03] rounded-lg animate-pulse-subtle" />)}
                 </div>
               ) : allActivity.length === 0 ? (
-                <div className="px-5 py-6 text-center">
+                <div className="px-5 py-8 text-center">
+                  <span className="material-symbols-outlined text-faint/40 text-[28px] block mb-2">query_stats</span>
                   <p className="text-[12px] text-faint">No executions yet</p>
-                  <p className="text-[11px] text-faint opacity-60 mt-1">Logs appear once Shopify sends events.</p>
+                  <p className="text-[11px] text-faint/60 mt-0.5">Logs appear once Shopify sends events.</p>
                 </div>
               ) : (
                 <div className="max-h-[420px] overflow-y-auto">
@@ -726,56 +1028,163 @@ function OverviewTab({
                 </div>
               )}
             </section>
-            );
-          })()}
-
-
-          {/* App explanation */}
-          {appExplanation && (
-            <HowItWorksCard text={appExplanation} />
           )}
         </div>
 
         {/* ── RIGHT COLUMN ─────────────────────────────────────────────── */}
         <div className="space-y-4">
 
-          {/* Status & Actions */}
-          <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
-            <div className="px-4 pt-4 pb-3">
-              <p className="text-[9.5px] font-bold uppercase tracking-wider text-faint mb-2.5">Status</p>
-              <AppStatusBadge status={app.status} isBuilding={isBuilding} />
-            </div>
-            {latestSession !== null && (
-              <div className="px-4 pb-4 space-y-2 border-t border-white/[0.06] pt-3">
-                {latestSession?.status === "completed" && app.status === "ready" && (
-                  <button type="button" onClick={onDeploy} disabled={deploying}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent/10 hover:bg-accent/18 border border-accent/25 text-accent text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-50">
-                    <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>rocket_launch</span>
-                    {deploying ? "Deploying…" : "Deploy to store"}
-                  </button>
-                )}
-                {app.status === "inactive" && (
-                  <button type="button" onClick={onRedeploy} disabled={deploying}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-green-500/10 hover:bg-green-500/18 border border-green-500/25 text-green-500 text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-50">
-                    <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>play_circle</span>
-                    {deploying ? "Activating…" : "Activate"}
-                  </button>
-                )}
-                {app.status === "active" && (
-                  <button type="button" onClick={onDeactivate} disabled={deploying}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-danger/10 hover:bg-danger/18 border border-danger/25 text-danger text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-50">
-                    <span className="material-symbols-outlined text-[15px]">pause_circle</span>
-                    {deploying ? "Deactivating…" : "Deactivate"}
-                  </button>
-                )}
-              </div>
-            )}
-          </section>
+          {/* Shopify — only for generated apps (above How to test) */}
+          {latestSession !== null && (storeFrontUrl || adminUrl) && (() => {
+            const isInjected = hasWidget && app.themeInjectionStatus === "injected" && app.themeInjectionThemeId;
+            // Editor URL works reliably (no password wall) — use it as the primary "open" action
+            const editorUrl = isInjected && effectiveShop
+              ? `https://${effectiveShop}/admin/themes/${app.themeInjectionThemeId}/editor`
+              : null;
+            // Injected: use Shopify's preview_theme_id param — opens the storefront with the
+            // test theme active (works because the merchant is authenticated in Shopify admin).
+            // Not injected: just go to the live storefront directly.
+            const storefrontPreviewUrl = isInjected && effectiveShop
+              ? `https://${effectiveShop}/?preview_theme_id=${app.themeInjectionThemeId}`
+              : storeFrontUrl;
+
+            return (
+              <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+                {/* Section header */}
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
+                  <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Open in Shopify</h3>
+                </div>
+
+                <div>
+
+                  {/* ── Admin ── */}
+                  {adminUrl && (
+                    <a href={adminUrl} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
+                    >
+                      <span className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", theme === "light" ? "bg-orange-600/[0.08]" : "bg-orange-400/[0.12]")}>
+                        <span className={cn("material-symbols-outlined text-[15px]", theme === "light" ? "text-orange-700" : "text-orange-300")} style={{ fontVariationSettings: "'FILL' 1" }}>admin_panel_settings</span>
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] font-medium text-ink leading-tight">
+                          {hasAdminUI ? "Admin panel" : "Shopify Admin"}
+                        </div>
+                        <div className="text-[10px] text-faint mt-0.5">
+                          {hasAdminUI ? "Open your app's admin UI" : "Open Shopify store dashboard"}
+                        </div>
+                      </div>
+                      <span className="material-symbols-outlined text-[13px] text-faint/40 group-hover:text-faint transition-colors">arrow_outward</span>
+                    </a>
+                  )}
+
+                  {/* ── Storefront ── */}
+                  {storefrontPreviewUrl && (
+                    <a href={storefrontPreviewUrl} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
+                    >
+                      <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: theme === "light" ? "rgba(88,166,44,0.12)" : "rgba(150,191,72,0.15)" }}>
+                        <span className="material-symbols-outlined text-[15px]"
+                          style={{ color: theme === "light" ? "#3a7d17" : "#96bf48", fontVariationSettings: "'FILL' 1" }}>storefront</span>
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] font-medium text-ink leading-tight">View storefront</div>
+                        <div className="text-[10px] text-faint mt-0.5">
+                          {isInjected ? "Preview your theme copy with the app block injected" : "Live storefront"}
+                        </div>
+                      </div>
+                      <span className="material-symbols-outlined text-[13px] text-faint/40 group-hover:text-faint transition-colors">arrow_outward</span>
+                    </a>
+                  )}
+
+                  {/* ── new-one-two App Block (widget apps only) ── */}
+                  {hasWidget && (
+                    <div className={cn(isInjected && "bg-accent/[0.03]")}>
+                      <div className={cn("mx-4 mt-3 mb-1 border-t", theme === "light" ? "border-black/[0.10]" : "border-white/[0.08]")} />
+                      {/* Block header row */}
+                      <div className="flex items-center gap-3 px-4 py-3">
+                        <span className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", theme === "light" ? "bg-sky-600/[.08]" : "bg-sky-400/[.12]")}>
+                          <span className={cn("material-symbols-outlined text-[15px]", theme === "light" ? "text-sky-700" : "text-sky-300")}
+                            style={{ fontVariationSettings: "'FILL' 1" }}>widgets</span>
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-[12px] font-medium leading-tight text-ink">
+                            new-one-two App Block
+                          </span>
+                          <div className={cn("text-[10px] mt-0.5", isInjected ? "text-faint" : "text-faint")}>
+                            {isInjected
+                              ? "Injected on a private copy · live store unchanged"
+                              : "Installs the block on a private copy of your theme for testing"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Injected actions */}
+                      {isInjected && (
+                        <div className="px-4 pb-4 space-y-2">
+                          {editorUrl && (
+                            <a href={editorUrl} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[11.5px] font-semibold text-accent bg-accent/[0.10] hover:bg-accent/[0.16] border border-accent/[0.20] no-underline transition-colors"
+                            >
+                              <span className="material-symbols-outlined text-[13px]">brush</span>
+                              Open theme editor
+                              <span className="material-symbols-outlined text-[10px] opacity-60">arrow_outward</span>
+                            </a>
+                          )}
+                          <button onClick={onDeleteInjectedTheme}
+                            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[11.5px] font-semibold text-danger bg-danger/[0.08] hover:bg-danger/[0.14] border border-danger/[0.20] transition-colors cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[13px]">delete</span>
+                            Remove test theme copy
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Not injected CTA */}
+                      {!isInjected && (
+                        <div className="px-4 pb-4 space-y-2 flex flex-col items-center">
+                          {injectingWidget ? (
+                            <div className="flex items-center gap-2 py-1 text-[12px] text-accent">
+                              <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+                              Installing… this may take ~30 seconds
+                            </div>
+                          ) : app.status === "active" ? (
+                            <button onClick={onInjectWidget}
+                              className={cn(
+                                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors border",
+                                theme === "light"
+                                  ? "text-sky-700 bg-sky-600/[.08] hover:bg-sky-600/[.14] border-sky-600/[.18]"
+                                  : "text-sky-300 bg-sky-400/[.12] hover:bg-sky-400/[.20] border-sky-400/[.2]"
+                              )}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: '20px', fontVariationSettings: "'FILL' 1" }}>install_desktop</span>
+                              Install on test theme
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-2 py-2 text-[11px] text-faint">
+                              <span className="material-symbols-outlined text-[13px]">lock</span>
+                              Activate the app first to install the block
+                            </div>
+                          )}
+                          {injectError && (
+                            <div className="w-full flex items-start gap-2 px-3 py-2 rounded-lg bg-danger/10 text-danger text-[11px]">
+                              <span className="material-symbols-outlined text-[13px] mt-0.5 shrink-0">error</span>
+                              <span>{injectError}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                </div>
+              </section>
+            );
+          })()}
 
           {/* How to test / Revise CTA */}
           {latestSession === null ? (
-            /* Ungenerated draft — show only Revise */
-            <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
+            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
               <div className="px-4 py-5 space-y-3 text-center">
                 <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
                   <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
@@ -784,31 +1193,25 @@ function OverviewTab({
                   <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
                   <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0"
-                >
+                <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
                   <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
                   Start building with Ton
                 </button>
               </div>
             </section>
           ) : (
-            <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/[0.06] bg-white/[0.02]">
+            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How to test</h3>
               </div>
-              <div className="mx-4 mt-4 mb-3 px-3.5 py-3 bg-accent/5 border border-accent/12 rounded-xl space-y-2.5">
+              <div className="mx-4 mt-4 mb-3 px-3.5 py-3 bg-accent/5 border border-accent/[0.12] rounded-xl space-y-2.5 flex flex-col">
                 <p className="text-[11px] text-accent/90 leading-relaxed">
                   {validateSteps.find((s) => s.isRevise)?.text}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                  className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg bg-accent text-white text-[12px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0"
-                >
-                  <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+                <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-accent/15 text-accent text-[11px] font-semibold hover:bg-accent/25 transition-colors cursor-pointer border border-accent/25 self-center">
+                  <span className="material-symbols-outlined" style={{ fontSize: '20px', fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
                   Revise with Ton
                 </button>
               </div>
@@ -824,66 +1227,12 @@ function OverviewTab({
               </ol>
             </section>
           )}
-
-          {/* Shopify links — only for generated apps */}
-          {latestSession !== null && (storeFrontUrl || adminUrl) && (
-            <section className="bg-white/[0.04] border border-white/[0.07] rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/[0.06] bg-white/[0.02]">
-                <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Open in Shopify</h3>
-              </div>
-              <div className="px-3 py-3 space-y-1.5">
-                {hasWidget && storeFrontUrl && (
-                  <ShopifyLink href={storeFrontUrl} label="View storefront" highlight />
-                )}
-                {hasWidget && themeEditorUrl && (
-                  <ShopifyLink href={themeEditorUrl} label="Theme editor" />
-                )}
-                {hasAdminUI && adminUrl && (
-                  <ShopifyLink href={adminUrl} label="Admin panel" />
-                )}
-                {!hasWidget && !hasAdminUI && adminUrl && (
-                  <ShopifyLink href={adminUrl} label="Shopify Admin" />
-                )}
-              </div>
-              {hasWidget && (
-                <div className="px-4 pb-3 pt-1 border-t border-white/[0.05] mt-1">
-                  <p className="text-[10px] text-faint leading-relaxed">
-                    In the Theme editor: Apps → find the block → paste the <span className="text-muted font-medium">App ID</span> from the About section.
-                  </p>
-                </div>
-              )}
-            </section>
-          )}
         </div>
       </div>
     </div>
   );
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-3 px-5 py-3">
-      <span className="text-[11px] font-semibold text-faint w-[68px] shrink-0">{label}</span>
-      <span className="text-[12.5px] font-medium text-ink flex-1 min-w-0">{value}</span>
-    </div>
-  );
-}
-
-function ShopifyLink({ href, label, highlight }: { href: string; label: string; highlight?: boolean }) {
-  return (
-    <a href={href} target="_blank" rel="noopener noreferrer"
-      className={cn(
-        "flex items-center justify-between px-3.5 py-2.5 rounded-lg text-[12px] font-medium no-underline transition-colors",
-        highlight
-          ? "bg-teal/10 border border-teal/20 text-teal hover:bg-teal/15"
-          : "bg-white/[0.03] border border-white/[0.06] text-muted hover:bg-white/[0.06] hover:text-ink"
-      )}
-    >
-      <span>{label}</span>
-      <span className="material-symbols-outlined text-[13px]">arrow_outward</span>
-    </a>
-  );
-}
 
 // ─── Settings panel ───────────────────────────────────────────────────────────
 
@@ -1048,6 +1397,236 @@ function SettingsPanel({
   );
 }
 
+// ─── Inject Wizard ────────────────────────────────────────────────────────────
+
+/**
+ * Detects which Shopify theme template the widget requires by scanning
+ * the generated widget JS for URL pathname patterns.
+ * Returns e.g. "templates/product.json". Defaults to "templates/product.json".
+ */
+function detectWidgetTemplateKey(widgetJs: string | null): string {
+  if (!widgetJs) return "templates/product.json";
+  if (/\/products\//.test(widgetJs))    return "templates/product.json";
+  if (/\/collections\//.test(widgetJs)) return "templates/collection.json";
+  if (/\/cart/.test(widgetJs))          return "templates/cart.json";
+  if (/\/pages\//.test(widgetJs))       return "templates/page.json";
+  return "templates/product.json";
+}
+
+function InjectWizard({
+  app, tenantId, onClose, onStart, onDone, onError,
+}: {
+  app: App;
+  tenantId: string;
+  onClose: () => void;
+  onStart: () => void;
+  onDone: () => void;
+  onError: (msg: string) => void;
+}) {
+  const requiredTemplateKey = detectWidgetTemplateKey(app.widgetJs);
+
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
+  const [activeThemeName, setActiveThemeName] = useState("");
+  const [lockedTemplate, setLockedTemplate] = useState<ThemeTemplate | null>(null);
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+  const [insertAt, setInsertAt]       = useState<number>(0); // index in block_order
+  useEffect(() => {
+    api.apps.getThemeTemplates(tenantId, app.id)
+      .then(({ activeTheme, templates: tpls }) => {
+        setActiveThemeName(activeTheme.name);
+        const match = tpls.find((t) => t.key === requiredTemplateKey) ?? tpls[0] ?? null;
+        setLockedTemplate(match);
+        setSelectedSectionId(match?.sections[0]?.sectionId ?? null);
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load templates"))
+      .finally(() => setLoading(false));
+  }, [tenantId, app.id, requiredTemplateKey]);
+
+  const handleInject = async () => {
+    if (!lockedTemplate || !selectedSectionId) return;
+    const target: InjectionTarget = {
+      templateKey: lockedTemplate.key,
+      sectionId: selectedSectionId,
+      position: insertAt,
+    };
+    onStart();
+    try {
+      await api.apps.injectTheme(tenantId, app.id, [target]);
+      onDone();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Injection failed");
+      onDone();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-surface border border-white/[0.09] rounded-2xl shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.07]">
+          <div>
+            <h2 className="text-[14px] font-bold text-ink">Inject app block</h2>
+            <p className="text-[11px] text-faint mt-0.5">Duplicates your active theme and adds the app block to a section</p>
+          </div>
+          <button onClick={onClose} className="text-faint hover:text-ink bg-transparent border-0 cursor-pointer p-1">
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4">
+          {loading && (
+            <div className="flex items-center gap-2 text-[12px] text-faint">
+              <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+              Loading templates from {activeThemeName || "active theme"}…
+            </div>
+          )}
+
+          {error && (
+            <div className="text-[12px] text-danger bg-danger/10 border border-danger/20 rounded-lg px-4 py-3">
+              {error}
+            </div>
+          )}
+
+          {!loading && !error && lockedTemplate && (
+            <>
+              {/* Locked template notice */}
+              <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-lg bg-accent/[0.07] border border-accent/[0.15]">
+                <span className="material-symbols-outlined text-[14px] text-accent mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
+                <p className="text-[11.5px] text-accent/90 leading-relaxed">
+                  This widget runs on the <span className="font-semibold">{lockedTemplate.name}</span> page.
+                  Injecting it on another page would break it.
+                </p>
+              </div>
+
+              {activeThemeName && (
+                <p className="text-[11px] text-faint">
+                  Active theme: <span className="text-muted font-medium">{activeThemeName}</span>
+                </p>
+              )}
+
+              {/* Section picker */}
+              {lockedTemplate.sections.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-medium text-faint">Choose a section</label>
+                  <div className="space-y-1">
+                    {lockedTemplate.sections.map((s) => (
+                      <button
+                        key={s.sectionId}
+                        onClick={() => setSelectedSectionId(s.sectionId)}
+                        className={cn(
+                          "w-full flex items-center justify-between px-3 py-2 rounded-lg text-[12px] border transition-colors text-left",
+                          selectedSectionId === s.sectionId
+                            ? "bg-accent/10 border-accent/25 text-accent"
+                            : "bg-white/[0.03] border-white/[0.06] text-muted hover:text-ink hover:bg-white/[0.05]"
+                        )}
+                      >
+                        <span>{s.sectionId}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Block order — slot-based position picker */}
+              {(() => {
+                const section = lockedTemplate.sections.find((s) => s.sectionId === selectedSectionId);
+                const blocks = section?.blockOrder ?? [];
+                const blockNames = section?.blockNames ?? {};
+                // Clamp insertAt when section changes
+                const clampedInsert = Math.min(insertAt, blocks.length);
+
+                const widgetSlot = (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/[0.12] border border-accent/30 border-dashed">
+                    <span className="material-symbols-outlined text-[13px] text-accent" style={{ fontVariationSettings: "'FILL' 1" }}>science</span>
+                    <span className="text-[11.5px] font-semibold text-accent">Your widget</span>
+                  </div>
+                );
+
+                const insertHandle = (idx: number) => (
+                  <button
+                    key={`gap-${idx}`}
+                    type="button"
+                    onClick={() => setInsertAt(idx)}
+                    className={cn(
+                      "w-full flex items-center gap-2 py-1 transition-colors cursor-pointer border-0 bg-transparent group",
+                    )}
+                  >
+                    <span className={cn(
+                      "flex-1 h-px transition-colors",
+                      clampedInsert === idx ? "bg-accent/50" : "bg-white/[0.06] group-hover:bg-accent/25"
+                    )} />
+                    <span className={cn(
+                      "text-[9.5px] font-semibold shrink-0 transition-colors",
+                      clampedInsert === idx ? "text-accent" : "text-faint/40 group-hover:text-accent/60"
+                    )}>
+                      {clampedInsert === idx ? "↓ insert here" : "insert here"}
+                    </span>
+                    <span className={cn(
+                      "flex-1 h-px transition-colors",
+                      clampedInsert === idx ? "bg-accent/50" : "bg-white/[0.06] group-hover:bg-accent/25"
+                    )} />
+                  </button>
+                );
+
+                return (
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-medium text-faint">
+                      Click a slot to choose where the widget is inserted
+                    </label>
+                    <div className="p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl space-y-0.5">
+                      {blocks.length === 0 ? (
+                        <>
+                          {widgetSlot}
+                          <p className="text-[10px] text-faint/50 mt-1.5 text-center">No existing blocks — widget will be the only one</p>
+                        </>
+                      ) : (
+                        <>
+                          {insertHandle(0)}
+                          {blocks.map((id, idx) => (
+                            <div key={id}>
+                              {clampedInsert === idx ? widgetSlot : null}
+                              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+                                <span className="material-symbols-outlined text-[13px] text-faint/40">widgets</span>
+                                <span className="text-[11px] text-faint">{blockNames[id] ?? "Block"}</span>
+                              </div>
+                              {insertHandle(idx + 1)}
+                            </div>
+                          ))}
+                          {clampedInsert === blocks.length ? widgetSlot : null}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        {!loading && (
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.07]">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-[12px] font-medium text-muted hover:text-ink bg-transparent border border-white/[0.08] rounded-lg transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleInject}
+              disabled={!lockedTemplate || !selectedSectionId || !!error}
+              className="flex items-center gap-2 px-4 py-2 text-[12px] font-semibold text-white bg-accent rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer hover:bg-accent/90"
+            >
+              Inject widget
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export function AppDetailPage() {
@@ -1055,12 +1634,14 @@ export function AppDetailPage() {
   const { appId } = useParams<{ appId: string }>();
   const { tenantId, shopDomain } = useSessionStore();
 
-  const appQuery          = useApp(tenantId, appId ?? null);
-  const latestSessionQuery = useLatestSession(appId ?? null);
+  const appQuery                   = useApp(tenantId, appId ?? null);
+  const latestSessionQuery         = useLatestSession(appId ?? null);
+  const latestCompletedSessionQuery = useLatestCompletedSession(appId ?? null);
+  const sessionsQuery              = useAppSessions(appId ?? null);
   const { approve }       = useGeneration();
   const queryClient       = useQueryClient();
 
-  const [mainTab, setMainTab]         = useState<"overview" | "logs" | "code" | "settings">("overview");
+  const [mainTab, setMainTab]         = useState<"overview" | "logs" | "versions" | "settings">("overview");
   const [activeLogTab, setActiveLogTab] = useState<"webhook" | "widget" | "admin">("webhook");
   const [deploying, setDeploying]     = useState(false);
 
@@ -1072,8 +1653,15 @@ export function AppDetailPage() {
   const widgetLogsQuery = useWidgetLogs(tenantId, appId ?? null, widgetLogsEnabled);
   const adminLogsQuery  = useAdminLogs(tenantId, appId ?? null, adminLogsEnabled);
 
-  const app           = appQuery.data ?? null;
-  const latestSession = latestSessionQuery.data ?? null;
+  const app                    = appQuery.data ?? null;
+  const latestSession          = latestSessionQuery.data ?? null;
+  const latestCompletedSession = latestCompletedSessionQuery.data ?? null;
+  const sessions               = sessionsQuery.data ?? [];
+  // True when the latest session failed but a prior completed session exists to fall back to.
+  const hasFallback   = latestSession?.status === "failed"
+    && sessions.some((s) => s.status === "completed");
+  // When the latest failed, use the last completed session for display data (triggers, explanation).
+  const displaySession = (latestSession?.status === "failed" ? latestCompletedSession : latestSession) ?? latestSession;
   const activeGen     = useGenerationStore((s) => s.active);
   const isGenerating  = activeGen?.appId === appId && activeGen?.status === "running";
 
@@ -1102,6 +1690,23 @@ export function AppDetailPage() {
     try { await api.apps.setStatus(tenantId, appId, "inactive"); await appQuery.refetch(); void invalidateAppCache(); }
     catch (err) { alert(err instanceof Error ? err.message : "Deactivation failed"); }
     finally { setDeploying(false); }
+  };
+
+  // ─── Theme injection ─────────────────────────────────────────────────────────
+
+  const [injectWizardOpen, setInjectWizardOpen] = useState(false);
+  const [injectingWidget, setInjectingWidget]   = useState(false);
+  const [injectError, setInjectError]           = useState<string | null>(null);
+
+  const handleDeleteInjectedTheme = async () => {
+    if (!tenantId || !appId) return;
+    try {
+      await api.apps.deleteInjectedTheme(tenantId, appId);
+      await appQuery.refetch();
+      void invalidateAppCache();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete test theme");
+    }
   };
 
   const activeLogsQuery =
@@ -1153,13 +1758,25 @@ export function AppDetailPage() {
             isGenerating={isGenerating}
           />
 
+          {/* App type + status band — always visible above tabs */}
+          <AppInfoBand
+            app={app}
+            latestSession={latestSession}
+            hasFallback={hasFallback}
+            onDeploy={handleDeployDraft}
+            onRedeploy={handleRedeploy}
+            onDeactivate={handleDeactivate}
+            deploying={deploying}
+            isBuilding={isGenerating}
+          />
+
           {/* Tab bar */}
           <div className="border-b border-white/[0.07] px-7 shrink-0">
             <TabBar
               tabs={[
-                { id: "overview" as const, label: "Overview" },
+                { id: "overview" as const, label: "Dashboard" },
                 { id: "logs"     as const, label: "Logs"     },
-                { id: "code"     as const, label: "Generated" },
+                { id: "versions" as const, label: "Versions"  },
                 { id: "settings" as const, label: "Settings" },
               ]}
               active={mainTab}
@@ -1181,18 +1798,17 @@ export function AppDetailPage() {
           {mainTab === "overview" && (
             <OverviewTab
               app={app}
-              latestSession={latestSession}
+              latestSession={displaySession}
               recentLogs={logsQuery.data ?? []}
               recentWidgetLogs={widgetLogsQuery.data ?? []}
               recentAdminLogs={adminLogsQuery.data ?? []}
               recentLogsLoading={logsQuery.isLoading || widgetLogsQuery.isLoading || adminLogsQuery.isLoading}
               shopDomain={shopDomain}
               onLogsTab={() => setMainTab("logs")}
-              onDeploy={handleDeployDraft}
-              onRedeploy={handleRedeploy}
-              onDeactivate={handleDeactivate}
-              deploying={deploying}
-              isBuilding={isGenerating}
+              injectingWidget={injectingWidget}
+              injectError={injectError}
+              onInjectWidget={() => { setInjectError(null); setInjectWizardOpen(true); }}
+              onDeleteInjectedTheme={handleDeleteInjectedTheme}
             />
           )}
 
@@ -1249,19 +1865,14 @@ export function AppDetailPage() {
             </main>
           )}
 
-          {/* CODE */}
-          {mainTab === "code" && (
-            <div className="flex-1 overflow-hidden p-6 flex flex-col">
-              <div className="max-w-[860px] w-full mx-auto flex-1 rounded-xl overflow-hidden border border-white/[0.07] flex flex-col">
-                {latestSessionQuery.isLoading ? (
-                  <div className="p-7 space-y-2">
-                    {[1,2,3,4].map((i) => <div key={i} className="h-8 bg-white/[0.03] rounded-lg animate-pulse-subtle border border-white/[0.06]" />)}
-                  </div>
-                ) : (
-                  <CodeViewer bundle={latestSession?.bundle} />
-                )}
-              </div>
-            </div>
+          {/* VERSIONS */}
+          {mainTab === "versions" && (
+            <VersionsTab
+              sessions={sessions}
+              sessionsLoading={sessionsQuery.isLoading}
+              latestSession={latestSession}
+              app={app}
+            />
           )}
 
           {/* SETTINGS */}
@@ -1279,6 +1890,18 @@ export function AppDetailPage() {
           )}
 
         </div>
+      )}
+
+      {/* Theme injection wizard */}
+      {injectWizardOpen && app && tenantId && (
+        <InjectWizard
+          app={app}
+          tenantId={tenantId}
+          onClose={() => setInjectWizardOpen(false)}
+          onStart={() => { setInjectWizardOpen(false); setInjectingWidget(true); setInjectError(null); }}
+          onDone={() => { setInjectingWidget(false); void appQuery.refetch(); void invalidateAppCache(); }}
+          onError={(msg) => setInjectError(msg)}
+        />
       )}
     </>
   );

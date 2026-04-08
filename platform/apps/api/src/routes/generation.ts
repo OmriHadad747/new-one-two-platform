@@ -22,6 +22,8 @@ import {
   storeBundleInSession,
   cancelGenerationSession,
   getLatestSessionForApp,
+  getLatestCompletedSessionForApp,
+  getSessionsForApp,
   saveChatMessages,
   updateAppStatus,
   updateAppArchetype,
@@ -195,6 +197,31 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
     }
   );
 
+  // ─── GET /generation/app/:appId/latest-completed ───────────────────────────
+
+  app.get<{ Params: { appId: string } }>(
+    "/app/:appId/latest-completed",
+    async (req: FastifyRequest<{ Params: { appId: string } }>, reply: FastifyReply) => {
+      const { appId } = req.params;
+      const session = await getLatestCompletedSessionForApp(appId);
+      if (!session) {
+        return reply.status(404).send({ error: "No completed session found for this app" });
+      }
+      return reply.send(session);
+    }
+  );
+
+  // ─── GET /generation/app/:appId/sessions ────────────────────────────────────
+
+  app.get<{ Params: { appId: string } }>(
+    "/app/:appId/sessions",
+    async (req: FastifyRequest<{ Params: { appId: string } }>, reply: FastifyReply) => {
+      const { appId } = req.params;
+      const sessions = await getSessionsForApp(appId);
+      return reply.send(sessions);
+    }
+  );
+
   // ─── GET /generation/:jobId/result ─────────────────────────────────────────
 
   app.get<{ Params: { jobId: string } }>(
@@ -229,17 +256,35 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
     async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
       const { jobId } = req.params;
 
-      const session = await getSessionByJobId(jobId);
-      if (!session) {
+      const requestedSession = await getSessionByJobId(jobId);
+      if (!requestedSession) {
         return reply.status(404).send({ error: "Job not found" });
       }
 
+      // If the requested session failed, find the latest successful one for this app.
+      // This handles the case where the merchant clicks Deploy after a failed revision —
+      // we deploy the last working version rather than refusing outright.
+      let session = requestedSession;
+      let deployingFallback = false;
       if (session.status === "failed") {
-        return reply.status(422).send({ error: "Cannot deploy a failed generation" });
+        if (!session.appId) {
+          return reply.status(422).send({ error: "Cannot deploy a failed generation" });
+        }
+        const fallback = await getLatestCompletedSessionForApp(session.appId);
+        if (!fallback) {
+          return reply.status(422).send({
+            error: "Generation failed and no prior successful version exists to deploy.",
+          });
+        }
+        session = fallback;
+        deployingFallback = true;
+        logger.info(
+          { requestedJobId: jobId, fallbackJobId: fallback.jobId },
+          "Requested session failed — deploying latest completed session instead"
+        );
       }
 
-      // Verify the app is in "ready" state — i.e. generation succeeded and
-      // the merchant has not yet deployed this build.
+      // Verify the app is in "ready" state.
       if (session.appId) {
         const appRecord = await getAppByIdOnly(session.appId);
         if (!appRecord || appRecord.status !== "ready") {
@@ -259,18 +304,18 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
           tenantId: session.tenantId,
           bundle,
         });
-        logger.info({ jobId, sessionId: session.id }, "FeatureBundle deployed");
-        return reply.send({ deployed: true, ...result });
+        logger.info({ jobId, deployedJobId: session.jobId, deployingFallback }, "FeatureBundle deployed");
+        return reply.send({ deployed: true, deployingFallback, deployedJobId: session.jobId, ...result });
       }
 
       if (session.appVersionId) {
         // Legacy path: TypeScript-generated handler (app_version exists)
         const result = await deployAppVersion(session.appVersionId);
         logger.info(
-          { jobId, appVersionId: session.appVersionId },
+          { jobId, appVersionId: session.appVersionId, deployingFallback },
           "Legacy app version deployed"
         );
-        return reply.send({ deployed: true, ...result });
+        return reply.send({ deployed: true, deployingFallback, deployedJobId: session.jobId, ...result });
       }
 
       return reply.status(409).send({

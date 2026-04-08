@@ -50,7 +50,9 @@ ABSOLUTE RULES:
 2. Every CREATE TABLE must include tenant_id UUID NOT NULL
 3. Every CREATE TABLE must be followed by ALTER TABLE ENABLE ROW LEVEL SECURITY
 4. Every CREATE TABLE must have a CREATE POLICY for tenant isolation
-5. NO DROP TABLE, NO ALTER TABLE on existing tables, NO TRUNCATE
+5. NO DROP TABLE, NO TRUNCATE. NO ALTER TABLE except:
+   - ALTER TABLE {name} ENABLE ROW LEVEL SECURITY  (required after CREATE TABLE)
+   - ALTER TABLE {name} ADD COLUMN IF NOT EXISTS ...  (revision runs only — to add new columns to existing tables)
 6. Use gen_random_uuid() for UUID primary keys
 7. If the feature doesn't need any new tables, output nothing at all — zero characters, no explanation
 8. Add useful indexes (tenant_id is always a candidate)
@@ -91,10 +93,12 @@ class MigrationGenerator(Generator):
         if ctx.prior_migration_sql:
             closing = (
                 "Generate ONLY the incremental DDL needed for this revision.\n"
-                "Do NOT recreate tables that already exist in the schema above.\n"
+                "Do NOT recreate tables that already exist (listed above).\n"
+                "Do NOT emit ALTER TABLE ENABLE ROW LEVEL SECURITY for existing tables.\n"
+                "Do NOT emit CREATE POLICY for existing tables.\n"
                 "Use ALTER TABLE ... ADD COLUMN IF NOT EXISTS for new columns on existing tables.\n"
                 "New tables must still follow the full tenant isolation pattern.\n"
-                "If no schema change is needed, output nothing at all.\n"
+                "If no schema change is needed, output nothing at all — zero characters.\n"
                 "Output ONLY raw SQL (no markdown fences)."
             )
         else:
@@ -126,10 +130,16 @@ class MigrationGenerator(Generator):
         return sql
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
-        return validate_migration_artifact(artifact)
+        prior_tables = _extract_table_names(ctx.prior_migration_sql or "")
+        return validate_migration_artifact(artifact, prior_tables=prior_tables)
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────
+
+
+def _extract_table_names(sql: str) -> List[str]:
+    """Return all table names found in CREATE TABLE statements."""
+    return re.findall(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", sql, re.IGNORECASE)
 
 
 def _format_prior_migration(prior_sql: Any) -> str:
@@ -139,11 +149,15 @@ def _format_prior_migration(prior_sql: Any) -> str:
     """
     if not prior_sql:
         return ""
+    prior_tables = _extract_table_names(prior_sql)
+    table_list = ", ".join(prior_tables) if prior_tables else "(none)"
     return (
         "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "REVISION RUN — schema already applied to the database:\n"
-        "(These tables and columns ALREADY EXIST. Do NOT recreate them.\n"
-        " Only emit DDL for new tables or new columns on existing tables.)\n"
+        f"Tables already deployed (DO NOT recreate): {table_list}\n"
+        "For these tables: do NOT emit CREATE TABLE, ALTER TABLE ENABLE RLS,\n"
+        "or CREATE POLICY — they are already in place. Only ADD COLUMN IF NOT EXISTS\n"
+        "for genuinely new columns, or nothing at all if no schema change is needed.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{prior_sql}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -186,10 +200,13 @@ def _extract_codespec_sql_steps(plan: Dict[str, Any]) -> List[str]:
     code_spec = impl.get("codeSpec") or {}
 
     all_steps: List[str] = []
-    for path_key in ("webhookPath", "cronPath", "widgetPath"):
+    for path_key in ("webhookPath", "cronPath", "widgetPath", "adminPath"):
         all_steps.extend(code_spec.get(path_key) or [])
 
     sql_keywords = ("SELECT", "INSERT", "UPDATE", "UPSERT", "DELETE")
     return [
         step for step in all_steps if any(kw in step.upper() for kw in sql_keywords)
     ]
+
+
+

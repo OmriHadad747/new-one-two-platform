@@ -8,9 +8,11 @@ Pipeline:
            (retry Architect once on validation failure before failing the job)
   Agent 3  CodeSpec     — step-by-step algorithms written against locked architect output
            validate_codespec — rule-based gate (claim ordering, field names, loop safety)
-           (retry CodeSpec once on validation failure before failing the job)
+           (retry CodeSpec up to 2 times on validation failure before failing the job)
   Agent 4  CodeGen      — generators run in parallel (ThreadPoolExecutor)
-  Agent 5  Validation   — static analysis per artifact + cross-artifact check, retry loop (max 3)
+           validate_artifacts — static analysis per artifact + cross-artifact check, retry loop (max 3)
+  Agent 5  Validator    — optional LLM semantic alignment check (LLM_VALIDATION_ENABLED=true)
+           triggers one revision pass via revision_agent if high-confidence issues found
   Agent 6  Explanation  — sequential, writes merchant-facing summary
   Publisher             — FeatureBundleMessage to generation.completed
 
@@ -58,10 +60,9 @@ from subagents.static_validation import (
 
 log = logging.getLogger(__name__)
 
-_MAX_RETRIES = 3  # total codegen attempts (1 initial + 2 retries)
-_MAX_PLAN_ATTEMPTS = (
-    2  # attempts for both Architect and CodeSpec (1 initial + 1 retry each)
-)
+_MAX_RETRIES = 3        # total codegen attempts (1 initial + 2 retries)
+_MAX_ARCH_ATTEMPTS = 2  # architect: 1 initial + 1 retry
+_MAX_CS_ATTEMPTS = 3    # codespec:  1 initial + 2 retries (complex output, more validation rules)
 
 
 # ── Pipeline control ───────────────────────────────────────────────────────────
@@ -248,7 +249,7 @@ def _phase_architect(
     architect_output: Optional[Dict] = None
     arch_errors: List[str] = []
 
-    for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
+    for attempt in range(1, _MAX_ARCH_ATTEMPTS + 1):
         architect_output = run_architect_agent(
             prompt=request.prompt,
             intent=intent,
@@ -268,19 +269,19 @@ def _phase_architect(
             arch_errors,
         )
 
-        if attempt == _MAX_PLAN_ATTEMPTS:
+        if attempt == _MAX_ARCH_ATTEMPTS:
             _fail_and_abort(
                 request,
                 "architect",
                 f"Architect validation failed: {arch_errors[0]}",
-                f"Architect produced invalid plan after {_MAX_PLAN_ATTEMPTS} attempts: {arch_errors}",
+                f"Architect produced invalid plan after {_MAX_ARCH_ATTEMPTS} attempts: {arch_errors}",
             )
 
         _emit(
             request,
             "architect",
             "running",
-            f"Fixing architect plan (attempt {attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
+            f"Fixing architect plan (attempt {attempt + 1}/{_MAX_ARCH_ATTEMPTS})…",
         )
 
     # Feasibility gate — fail immediately when ctx cannot deliver the core value.
@@ -359,7 +360,7 @@ def _phase_codespec(
     codespec_output: Optional[Dict] = None
     cs_errors: List[str] = []
 
-    for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
+    for attempt in range(1, _MAX_CS_ATTEMPTS + 1):
         codespec_output = run_codespec_agent(
             prompt=request.prompt,
             intent=intent,
@@ -379,19 +380,19 @@ def _phase_codespec(
             cs_errors,
         )
 
-        if attempt == _MAX_PLAN_ATTEMPTS:
+        if attempt == _MAX_CS_ATTEMPTS:
             _fail_and_abort(
                 request,
                 "codespec",
                 f"CodeSpec validation failed: {cs_errors[0]}",
-                f"CodeSpec produced invalid spec after {_MAX_PLAN_ATTEMPTS} attempts: {cs_errors}",
+                f"CodeSpec produced invalid spec after {_MAX_CS_ATTEMPTS} attempts: {cs_errors}",
             )
 
         _emit(
             request,
             "codespec",
             "running",
-            f"Fixing code spec (attempt {attempt + 1}/{_MAX_PLAN_ATTEMPTS})…",
+            f"Fixing code spec (attempt {attempt + 1}/{_MAX_CS_ATTEMPTS})…",
         )
 
     plan: Dict = {

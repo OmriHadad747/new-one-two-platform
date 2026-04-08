@@ -6,7 +6,6 @@ import type {
   GenerationSSEEvent,
   ProgressEvent,
   CompletedEvent,
-  GenerationBundle,
 } from "@/types/dashboard";
 
 const INITIAL: GenerationState = {
@@ -184,6 +183,21 @@ export function useGeneration() {
   return { state, start, startRevision, reconnect, restore, reset, approve, cancel };
 }
 
+/**
+ * Fetches the latest *completed* session for an app.
+ * Used as fallback data source when the latest session is failed
+ * (e.g. after a failed revision — keeps triggers / explanation visible).
+ */
+export function useLatestCompletedSession(appId: string | null) {
+  return useQuery({
+    queryKey: ["latest-completed-session", appId],
+    queryFn: () => api.generation.latestCompletedSession(appId!),
+    enabled: !!appId,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
 /** Fetches the latest session for an app — always fresh on mount so reconnect logic sees real status. */
 export function useLatestSession(appId: string | null) {
   return useQuery({
@@ -196,15 +210,24 @@ export function useLatestSession(appId: string | null) {
   });
 }
 
-/** Polls for the final bundle once generation is complete. */
-export function useGenerationResult(tenantId: string | null, jobId: string | null) {
+/** Fetches the full session history for an app (version list). */
+export function useAppSessions(appId: string | null) {
   return useQuery({
-    queryKey: ["generation-result", tenantId, jobId],
-    queryFn: async () => {
-      const res = await api.generation.result(jobId!);
-      return res.bundle as GenerationBundle;
-    },
-    enabled: !!tenantId && !!jobId,
-    refetchInterval: (query) => (query.state.data ? false : 2000),
+    queryKey: ["app-sessions", appId],
+    queryFn: () => api.generation.sessions(appId!),
+    enabled: !!appId,
+    staleTime: 30_000,
   });
 }
+
+/** Fetches the bundle for a specific completed session by jobId. */
+export function useSessionBundle(jobId: string | null) {
+  return useQuery({
+    queryKey: ["session-bundle", jobId],
+    queryFn: () => api.generation.result(jobId!),
+    enabled: !!jobId,
+    staleTime: Infinity, // bundles are immutable once stored
+    retry: false,
+  });
+}
+

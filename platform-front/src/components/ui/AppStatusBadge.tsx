@@ -22,9 +22,6 @@ const CFG_LIGHT: Record<string, StatusCfg> = {
   deleted:  { label: "Deleted",  dot: "bg-danger opacity-50",            badge: "bg-danger/5 text-danger/60 border-danger/15"                        },
 };
 
-// Re-exported so other components (e.g. inline status displays) can reuse colors.
-export const APP_STATUS_CFG = CFG_DARK;
-
 interface AppStatusBadgeProps {
   status: App["status"];
   /** Override with "building" when generation is in progress */
