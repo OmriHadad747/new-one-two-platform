@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router";
 import { useSessionStore } from "@/stores/session";
+import { useThemeStore } from "@/stores/theme";
 
 const FEATURES = [
   {
@@ -39,6 +40,7 @@ const LOG_LINES = [
 export function LandingPage() {
   const navigate = useNavigate();
   const { tenantId, shopDomain } = useSessionStore();
+  const { theme, toggle } = useThemeStore();
   const isConnected = Boolean(tenantId);
 
   return (
@@ -54,7 +56,18 @@ export function LandingPage() {
             </span>
           )}
         </div>
-        {isConnected ? (
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label="Toggle theme"
+            className="w-8 h-8 rounded-lg bg-white/[0.05] border border-white/[0.07] flex items-center justify-center text-faint hover:text-ink hover:bg-white/[0.09] transition-colors cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[16px]">
+              {theme === "dark" ? "light_mode" : "dark_mode"}
+            </span>
+          </button>
+          {isConnected ? (
           <button
             type="button"
             onClick={() => navigate("/app")}
@@ -70,7 +83,8 @@ export function LandingPage() {
           >
             Get Started
           </button>
-        )}
+          )}
+        </div>
       </header>
 
       {/* ── Main ───────────────────────────────────────────────────────────── */}
@@ -235,8 +249,8 @@ export function LandingPage() {
                 },
                 {
                   icon: "do_not_disturb_on",
-                  color: "text-[#a78bfa]",
-                  bg: "bg-purple-500/10",
+                  color: "text-accent",
+                  bg: "bg-accent/10",
                   title: "Honest about limits",
                   desc: "When something is beyond the platform's current scope, Ton says so upfront instead of generating code that won't work.",
                 },
@@ -281,19 +295,19 @@ export function LandingPage() {
             </div>
             <div className="divide-y divide-white/[0.04]">
               {[
-                { file: "handler.js",    icon: "bolt",  color: "text-accent", bg: "bg-accent/10", label: "API Handler",        desc: "Secure serverless endpoint with Shopify auth baked in." },
-                { file: "migration.sql", icon: "table", color: "text-amber",  bg: "bg-amber/10",  label: "Database Migration", desc: "Schema changes applied automatically on deploy." },
+                { file: "handler.js",    icon: "bolt",        color: theme === "light" ? "text-emerald-700" : "text-emerald-300", bg: theme === "light" ? "bg-emerald-600/[.08]" : "bg-emerald-400/[.12]", label: "API Handler",        desc: "Secure serverless endpoint with Shopify auth baked in." },
+                { file: "migration.sql", icon: "table_chart", color: theme === "light" ? "text-emerald-700" : "text-emerald-300", bg: theme === "light" ? "bg-emerald-600/[.08]" : "bg-emerald-400/[.12]", label: "Database Migration", desc: "Schema changes applied automatically on deploy." },
               ].map(({ file, icon, color, bg, label, desc }) => (
-                <div key={file} className="flex items-center gap-4 px-5 py-3.5 group">
+                <div key={file} className="flex items-center gap-4 px-5 py-3.5">
                   <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
                     <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
                   </div>
                   <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0`}>{file}</span>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                     <span className="text-[12px] font-semibold text-ink">{label}</span>
-                    <span className="text-[11px] text-faint ml-2 hidden sm:inline">{desc}</span>
+                    <span className="text-[11px] text-faint">{desc}</span>
                   </div>
-                  <span className="material-symbols-outlined text-teal/60 text-[14px] shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                  <span className={`material-symbols-outlined text-[14px] shrink-0 ${theme === "light" ? "text-emerald-600/60" : "text-emerald-400/60"}`} style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
                 </div>
               ))}
             </div>
@@ -304,18 +318,20 @@ export function LandingPage() {
             </div>
             <div className="divide-y divide-white/[0.04]">
               {[
-                { file: "widget.js",   icon: "widgets",              color: "text-teal",         bg: "bg-teal/10",        label: "Storefront Widget", tag: "Storefront features", desc: "Rendered inside your Shopify theme — no iframe." },
-                { file: "admin_ui.js", icon: "admin_panel_settings", color: "text-[#a78bfa]",    bg: "bg-purple-500/10",  label: "Admin UI",          tag: "Admin features",      desc: "Merchant controls embedded in Shopify Admin." },
-              ].map(({ file, icon, color, bg, label, tag, desc }) => (
-                <div key={file} className="flex items-center gap-4 px-5 py-3.5 group opacity-70 hover:opacity-100 transition-opacity">
+                { file: "widget.js",   icon: "widgets",              color: theme === "light" ? "text-sky-700"    : "text-sky-300",    bg: theme === "light" ? "bg-sky-600/[.08]"    : "bg-sky-400/[.12]",    tagCls: theme === "light" ? "text-sky-700 bg-sky-600/[.08] border-sky-600/[.18]"       : "text-sky-300 bg-sky-400/[.12] border-sky-400/[.2]",    label: "Storefront Widget", tag: "Storefront", desc: "Rendered inside your Shopify theme — no iframe." },
+                { file: "admin_ui.js", icon: "admin_panel_settings", color: theme === "light" ? "text-orange-700" : "text-orange-300", bg: theme === "light" ? "bg-orange-600/[.08]" : "bg-orange-400/[.12]", tagCls: theme === "light" ? "text-orange-700 bg-orange-600/[.08] border-orange-600/[.18]" : "text-orange-300 bg-orange-400/[.12] border-orange-400/[.2]", label: "Admin UI",          tag: "Admin",      desc: "Merchant controls embedded in Shopify Admin." },
+              ].map(({ file, icon, color, bg, tagCls, label, tag, desc }) => (
+                <div key={file} className="flex items-center gap-4 px-5 py-3.5 opacity-70 hover:opacity-100 transition-opacity">
                   <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
                     <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
                   </div>
                   <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0`}>{file}</span>
-                  <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
-                    <span className="text-[12px] font-semibold text-ink">{label}</span>
-                    <span className="text-[10px] font-medium text-faint/80 bg-white/[0.05] border border-white/[0.07] px-1.5 py-0.5 rounded">{tag}</span>
-                    <span className="text-[11px] text-faint hidden sm:inline">{desc}</span>
+                  <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[12px] font-semibold text-ink">{label}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${tagCls}`}>{tag}</span>
+                    </div>
+                    <span className="text-[11px] text-faint">{desc}</span>
                   </div>
                   <span className="material-symbols-outlined text-faint/20 text-[14px] shrink-0">radio_button_unchecked</span>
                 </div>

@@ -64,6 +64,15 @@
 [data-theme="light"] [class~="bg-white/7"]        { background-color: rgba(0,0,0,0.06) !important; }
 [data-theme="light"] [class~="bg-white/[0.12]"]  { background-color: rgba(0,0,0,0.10) !important; }
 
+/* glass-card adapts to theme */
+[data-theme="light"] .glass-card {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+/* divide-white-opacity → divide-black-opacity in light mode */
+[data-theme="light"] [class~="divide-white/[0.04]"] > :not([hidden]) ~ :not([hidden]) { border-color: rgba(0,0,0,0.06) !important; }
+
 /* Scrollbar adapts to theme */
 [data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); }
 

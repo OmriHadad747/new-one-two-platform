@@ -571,7 +571,7 @@ def _publish_success(
             return []
         return re.findall(r"""['"]([^'"]+)['"]""", match.group(1))
 
-    app_contracts = base_ctx.plan.get("appContracts") or {}
+    app_contracts = plan.get("appContracts") or {}
     bundle = Bundle(
         widgetModule=artifacts.get("widget_js") if is_storefront else None,
         adminUiModule=artifacts.get("admin_ui") if is_admin_ui else None,
