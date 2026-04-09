@@ -325,25 +325,20 @@ Merchant cancels manually
 | Shared infra | ~$25-35/mo | PostgreSQL + Redis + Pub/Sub |
 | Revision classification | ~$0.001 | Single Haiku call (128 tokens) |
 
-### Margin by plan (monthly)
-
-| Plan | Revenue | Est. Cost | Gross Margin |
-|------|---------|-----------|--------------|
-| Free | $0 | ~$2.50/mo | -100% (loss leader) |
-| Starter ($19) | $19 | ~$8/mo | ~57% |
-| Growth ($49) | $49 | ~$15/mo | ~70% |
-| Pro ($99) | $99 | ~$18/mo | ~82% |
-
-### Margin by plan (annual)
+### Margin by plan
 
 Annual plans are ~17% cheaper for merchants but cost the same to operate,
-so margins are slightly lower but revenue is pre-committed for 12 months.
+so margins are slightly lower — but revenue is pre-committed for 12 months.
 
-| Plan | Revenue (yearly) | Est. Cost (yearly) | Gross Margin |
-|------|-----------------|-------------------|--------------|
-| Starter ($190/yr) | $190 | ~$96/yr | ~49% |
-| Growth ($490/yr) | $490 | ~$180/yr | ~63% |
-| Pro ($990/yr) | $990 | ~$216/yr | ~78% |
+| Plan | Interval | Revenue | Est. Cost | Gross Margin |
+|------|----------|---------|-----------|--------------|
+| Free | — | $0/mo | ~$2.50/mo | -100% (loss leader) |
+| Starter | Monthly | $19/mo | ~$8/mo | ~57% |
+| Starter | Annual | $15.83/mo ($190/yr) | ~$8/mo | ~47% |
+| Growth | Monthly | $49/mo | ~$15/mo | ~69% |
+| Growth | Annual | $40.83/mo ($490/yr) | ~$15/mo | ~63% |
+| Pro | Monthly | $99/mo | ~$18/mo | ~82% |
+| Pro | Annual | $82.50/mo ($990/yr) | ~$18/mo | ~78% |
 
 ## Testing
 
