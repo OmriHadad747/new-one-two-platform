@@ -320,13 +320,12 @@ ORDER BY created_at DESC;
 | Generation quota | **Wired** | `POST /generation` |
 | Category gating | **Wired** | `POST /generation` (when `preComputedIntent.appCategory` present) |
 | Subscription webhook | **Wired** | `POST /billing/webhook` (APP_SUBSCRIPTIONS_UPDATE) |
-| App execution quota | **Not wired** | Needs call in `webhook-gateway` before dispatch |
-| Email send quota | **Not wired** | Needs call in `harness/build-ctx.ts` |
-| SMS send quota | **Not wired** | Needs call in `harness/build-ctx.ts` |
+| App execution quota | **Wired** | `webhook-gateway/routes/webhook.ts` — checks before enqueue, returns 200 + quota_exceeded |
+| Email send quota | **Wired** | `harness/context-factory.ts` — checks before send, throws on limit |
+| SMS send quota | **Wired** | `harness/context-factory.ts` — checks before send, throws on limit |
 
 ## Future Enhancements
 
-- [ ] **Wire execution/email/SMS quotas** in webhook-gateway and harness services
 - [ ] **Usage charge overages** — Shopify UsageCharge API for Growth/Pro email/SMS overages
 - [ ] **Annual billing** — discounted yearly plans
 - [ ] **Grace period** — 3-day grace on execution limits before hard-blocking

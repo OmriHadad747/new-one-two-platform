@@ -6,10 +6,10 @@
  *   - canStartGeneration()   → wired in POST /generation
  *   - isCategoryAllowed()    → wired in POST /generation (when preComputedIntent has appCategory)
  *
- * NOT YET WIRED (requires changes in other services):
- *   - canExecuteApp()  → must be called in webhook-gateway before dispatching to Cloud Run
- *   - canSendEmail()   → must be called in harness build-ctx.ts before ctx.services.email.send()
- *   - canSendSms()     → must be called in harness build-ctx.ts before ctx.services.sms.send()
+ * Wired in other services (use shared checkUsageQuota from @new-one-two/db):
+ *   - App executions   → webhook-gateway/routes/webhook.ts (before enqueue)
+ *   - Email sends      → harness/context-factory.ts (before ctx.services.email.send())
+ *   - SMS sends        → harness/context-factory.ts (before ctx.services.sms.send())
  *
  * NOT enforced (unlimited):
  *   - Revisions

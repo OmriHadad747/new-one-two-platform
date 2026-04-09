@@ -1994,3 +1994,24 @@ export async function getRevisionAnalytics(tenantId: string): Promise<{
     newCapabilities: counts["new_capability"] ?? 0,
   };
 }
+
+/**
+ * Check whether a specific usage counter is within the plan limit.
+ * Returns { allowed, current, limit } — caller decides what to do on rejection.
+ * Usable from any service that imports @new-one-two/db.
+ */
+export async function checkUsageQuota(
+  tenantId: string,
+  counter: "app_executions" | "emails_sent" | "sms_sent",
+  planLimit: number
+): Promise<{ allowed: boolean; current: number; limit: number }> {
+  const usage = await getOrCreateUsageRecord(tenantId);
+  // Map DB snake_case column names to camelCase UsageRecord keys
+  const keyMap: Record<string, keyof typeof usage> = {
+    app_executions: "appExecutions",
+    emails_sent: "emailsSent",
+    sms_sent: "smsSent",
+  };
+  const current = (usage[keyMap[counter]] as number) ?? 0;
+  return { allowed: current < planLimit, current, limit: planLimit };
+}
