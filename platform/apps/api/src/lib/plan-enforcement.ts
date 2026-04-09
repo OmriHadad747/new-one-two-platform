@@ -1,12 +1,18 @@
 /**
  * Plan enforcement — checks plan limits before allowing billable actions.
  *
- * NOT enforced on revisions (unlimited) — only on:
- *   - New app creation (maxApps)
- *   - New generation (maxGenerationsPerMonth)
- *   - App category (allowedCategories)
- *   - App executions (maxAppExecutionsPerMonth) — checked at webhook gateway level
- *   - Email/SMS sends (maxEmailsPerMonth, maxSmsPerMonth) — checked at harness level
+ * Enforcement points:
+ *   - canCreateApp()         → wired in POST /tenants/:id/apps
+ *   - canStartGeneration()   → wired in POST /generation
+ *   - isCategoryAllowed()    → wired in POST /generation (when preComputedIntent has appCategory)
+ *
+ * NOT YET WIRED (requires changes in other services):
+ *   - canExecuteApp()  → must be called in webhook-gateway before dispatching to Cloud Run
+ *   - canSendEmail()   → must be called in harness build-ctx.ts before ctx.services.email.send()
+ *   - canSendSms()     → must be called in harness build-ctx.ts before ctx.services.sms.send()
+ *
+ * NOT enforced (unlimited):
+ *   - Revisions
  */
 import type { Tenant } from "@new-one-two/types";
 import type { BillingPlan } from "@new-one-two/types";

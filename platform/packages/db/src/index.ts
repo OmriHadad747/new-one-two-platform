@@ -1808,30 +1808,43 @@ import type {
 } from "@new-one-two/types";
 
 /**
+ * Compute the current billing period start date for a tenant.
+ * Uses billing_cycle_anchor (the day the subscription was activated) to align
+ * usage resets with Shopify's billing cycle, not the calendar month.
+ */
+async function getBillingPeriodStart(tenantId: string): Promise<string> {
+  const rows = await sql<{ billingCycleAnchor: Date }[]>`
+    SELECT billing_cycle_anchor FROM tenants WHERE id = ${tenantId}
+  `;
+  const anchor = rows[0]?.billingCycleAnchor ?? new Date();
+  const anchorDay = anchor.getDate();
+
+  const now = new Date();
+  const periodStart = new Date(now.getFullYear(), now.getMonth(), anchorDay);
+  // If we haven't reached the anchor day this month, the period started last month
+  if (now < periodStart) {
+    periodStart.setMonth(periodStart.getMonth() - 1);
+  }
+  return periodStart.toISOString().slice(0, 10);
+}
+
+/**
  * Get or create the usage record for the current billing period.
- * Uses the first day of the current month as the period start.
+ * Period aligns with billing_cycle_anchor (subscription start date).
+ * Uses ON CONFLICT DO UPDATE to avoid the race condition of DO NOTHING + SELECT.
  */
 export async function getOrCreateUsageRecord(tenantId: string): Promise<UsageRecord> {
-  const periodStart = new Date();
-  periodStart.setDate(1);
-  periodStart.setHours(0, 0, 0, 0);
-  const periodStr = periodStart.toISOString().slice(0, 10);
+  const periodStr = await getBillingPeriodStart(tenantId);
 
   const rows = await sql<UsageRecord[]>`
     INSERT INTO usage_records (tenant_id, period_start)
     VALUES (${tenantId}, ${periodStr})
-    ON CONFLICT (tenant_id, period_start) DO NOTHING
+    ON CONFLICT (tenant_id, period_start)
+    DO UPDATE SET updated_at = NOW()
     RETURNING *
   `;
 
-  if (rows.length > 0) return rows[0]!;
-
-  // Row already existed — select it
-  const existing = await sql<UsageRecord[]>`
-    SELECT * FROM usage_records
-    WHERE tenant_id = ${tenantId} AND period_start = ${periodStr}
-  `;
-  return existing[0]!;
+  return rows[0]!;
 }
 
 /**
@@ -1841,10 +1854,7 @@ export async function incrementUsage(
   tenantId: string,
   column: "generations" | "revisions" | "app_executions" | "emails_sent" | "sms_sent" | "files_uploaded"
 ): Promise<void> {
-  const periodStart = new Date();
-  periodStart.setDate(1);
-  periodStart.setHours(0, 0, 0, 0);
-  const periodStr = periodStart.toISOString().slice(0, 10);
+  const periodStr = await getBillingPeriodStart(tenantId);
 
   // Upsert + increment in one statement
   await sql`

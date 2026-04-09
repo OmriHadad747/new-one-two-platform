@@ -20,7 +20,7 @@ CREATE TYPE revision_type AS ENUM ('bug_report', 'feature_modification', 'new_ca
 
 -- ─── Extend tenants table ─────────────────────────────────────────────────────
 ALTER TABLE tenants
-  ADD COLUMN IF NOT EXISTS billing_plan billing_plan NOT NULL DEFAULT 'starter',
+  ADD COLUMN IF NOT EXISTS billing_plan billing_plan NOT NULL DEFAULT 'free',
   ADD COLUMN IF NOT EXISTS subscription_status subscription_status NOT NULL DEFAULT 'none',
   ADD COLUMN IF NOT EXISTS shopify_subscription_id TEXT NULL,
   ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ NULL,

@@ -6,9 +6,11 @@
  * POST   /billing/subscribe            — Create Shopify subscription (returns confirmation URL)
  * GET    /billing/callback             — Shopify redirects here after merchant approves/declines
  * POST   /billing/cancel/:tenantId     — Cancel current subscription (downgrade to free)
+ * POST   /billing/webhook              — Shopify APP_SUBSCRIPTIONS_UPDATE webhook
  * GET    /billing/analytics/:tenantId  — Revision classification analytics
  */
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
+import { createHmac, timingSafeEqual } from "crypto";
 import { logger } from "@new-one-two/logger";
 import {
   getTenantById,
@@ -16,9 +18,11 @@ import {
   updateTenantBilling,
   logBillingEvent,
   getRevisionAnalytics,
+  sql,
 } from "@new-one-two/db";
 import type {
   BillingPlan,
+  SubscriptionStatus,
   SubscribeRequest,
   BillingUsageResponse,
   BillingPlansResponse,
@@ -238,6 +242,117 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
 
       logger.info({ tenantId }, "Subscription cancelled, downgraded to free");
       return reply.send({ plan: "free" });
+    }
+  );
+
+  // ─── POST /billing/webhook ────────────────────────────────────────────────
+  // Handles APP_SUBSCRIPTIONS_UPDATE from Shopify.
+  // This is critical — it's how we learn about payment failures (frozen),
+  // cancellations, and trial expiry. Without it, billing state drifts.
+
+  app.post(
+    "/webhook",
+    {
+      config: { rawBody: true },
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      // Verify HMAC signature
+      const hmacHeader = req.headers["x-shopify-hmac-sha256"] as string | undefined;
+      const shopifySecret = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
+
+      if (!hmacHeader || !shopifySecret) {
+        return reply.status(401).send({ error: "Missing HMAC or secret" });
+      }
+
+      const rawBody = (req as any).rawBody ?? JSON.stringify(req.body);
+      const computed = createHmac("sha256", shopifySecret)
+        .update(rawBody, "utf8")
+        .digest("base64");
+
+      try {
+        if (!timingSafeEqual(Buffer.from(computed), Buffer.from(hmacHeader))) {
+          return reply.status(401).send({ error: "Invalid HMAC" });
+        }
+      } catch {
+        return reply.status(401).send({ error: "Invalid HMAC" });
+      }
+
+      const payload = req.body as Record<string, any>;
+      const subscriptionGid = payload.app_subscription?.admin_graphql_api_id as string | undefined;
+      const shopifyStatus = payload.app_subscription?.status as string | undefined;
+      const shopDomain = req.headers["x-shopify-shop-domain"] as string | undefined;
+
+      if (!subscriptionGid || !shopifyStatus) {
+        logger.warn({ payload }, "billing webhook: missing subscription data");
+        return reply.status(200).send({ ok: true });
+      }
+
+      // Find tenant by subscription ID or shop domain
+      let tenantRows = await sql<{ id: string; billingPlan: string }[]>`
+        SELECT id, billing_plan FROM tenants
+        WHERE shopify_subscription_id = ${subscriptionGid}
+      `;
+      if (tenantRows.length === 0 && shopDomain) {
+        tenantRows = await sql<{ id: string; billingPlan: string }[]>`
+          SELECT id, billing_plan FROM tenants
+          WHERE shop_domain = ${shopDomain}
+        `;
+      }
+      if (tenantRows.length === 0) {
+        logger.warn({ subscriptionGid, shopDomain }, "billing webhook: tenant not found");
+        return reply.status(200).send({ ok: true });
+      }
+
+      const tenant = tenantRows[0]!;
+
+      // Map Shopify status → our subscription status
+      const statusMap: Record<string, SubscriptionStatus> = {
+        ACTIVE: "active",
+        FROZEN: "frozen",
+        CANCELLED: "cancelled",
+        DECLINED: "cancelled",
+        EXPIRED: "cancelled",
+        PENDING: "pending",
+      };
+
+      const newStatus = statusMap[shopifyStatus.toUpperCase()] ?? "active";
+
+      // If frozen or cancelled → downgrade to free
+      if (newStatus === "frozen" || newStatus === "cancelled") {
+        await updateTenantBilling(tenant.id, {
+          billingPlan: "free",
+          subscriptionStatus: newStatus,
+          trialEndsAt: null,
+        });
+        await logBillingEvent({
+          tenantId: tenant.id,
+          eventType: `shopify_${newStatus}`,
+          fromPlan: tenant.billingPlan as BillingPlan,
+          toPlan: "free",
+          shopifySubscriptionId: subscriptionGid,
+          metadata: { shopifyStatus, shopDomain },
+        });
+        logger.info(
+          { tenantId: tenant.id, shopifyStatus, newStatus },
+          "Billing webhook: subscription deactivated, downgraded to free"
+        );
+      } else {
+        await updateTenantBilling(tenant.id, {
+          subscriptionStatus: newStatus,
+        });
+        await logBillingEvent({
+          tenantId: tenant.id,
+          eventType: `shopify_status_${newStatus}`,
+          shopifySubscriptionId: subscriptionGid,
+          metadata: { shopifyStatus, shopDomain },
+        });
+        logger.info(
+          { tenantId: tenant.id, shopifyStatus, newStatus },
+          "Billing webhook: subscription status updated"
+        );
+      }
+
+      return reply.status(200).send({ ok: true });
     }
   );
 

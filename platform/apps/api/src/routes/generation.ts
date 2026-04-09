@@ -37,7 +37,7 @@ import type {
   FeatureBundle,
   AppArchetype,
 } from "@new-one-two/types";
-import { canStartGeneration } from "../lib/plan-enforcement.js";
+import { canStartGeneration, isCategoryAllowed } from "../lib/plan-enforcement.js";
 import { trackGeneration, trackRevision, trackRevisionClassification } from "../lib/usage-tracking.js";
 
 /** Derive AppArchetype from a raw bundle object. */
@@ -89,6 +89,20 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
           upgradeHint: check.upgradeHint,
           code: "generation_limit_reached",
         });
+      }
+
+      // ── Plan enforcement: check category allowed ──
+      // preComputedIntent contains appCategory from the analyze flow
+      const appCategory = (preComputedIntent as Record<string, unknown> | undefined)?.appCategory as string | undefined;
+      if (appCategory) {
+        const catCheck = isCategoryAllowed(tenant.billingPlan, appCategory);
+        if (!catCheck.allowed) {
+          return reply.status(403).send({
+            error: catCheck.reason,
+            upgradeHint: catCheck.upgradeHint,
+            code: "category_not_allowed",
+          });
+        }
       }
 
       const jobId = crypto.randomUUID();

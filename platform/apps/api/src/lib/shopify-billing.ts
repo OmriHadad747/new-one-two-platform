@@ -17,6 +17,7 @@ import type { Tenant } from "@new-one-two/types";
 import { PLANS } from "./plans.js";
 
 const PLATFORM_URL = process.env["PLATFORM_URL"] ?? "http://localhost:3002";
+const BILLING_TEST_MODE = (process.env["SHOPIFY_BILLING_TEST_MODE"] ?? "true") === "true";
 
 // ─── GraphQL Mutations ────────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ const APP_SUBSCRIPTION_CREATE = `
     $name: String!
     $returnUrl: URL!
     $trialDays: Int!
+    $test: Boolean!
     $amount: Decimal!
     $currencyCode: CurrencyCode!
   ) {
@@ -32,7 +34,7 @@ const APP_SUBSCRIPTION_CREATE = `
       name: $name
       returnUrl: $returnUrl
       trialDays: $trialDays
-      test: true
+      test: $test
       lineItems: [
         {
           plan: {
@@ -97,6 +99,7 @@ export async function createSubscription(
     name: `Ton ${planDef.name} Plan`,
     returnUrl,
     trialDays: planDef.limits.trialDays,
+    test: BILLING_TEST_MODE,
     amount: (planDef.priceMonthly / 100).toFixed(2),
     currencyCode: "USD",
   });

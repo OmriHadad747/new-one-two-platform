@@ -190,7 +190,7 @@ High `newCapabilities` ratio → merchants want more from the platform.
 
 ```
 Install (OAuth)
-  └─ Tenant created with plan="starter", subscription_status="none"
+  └─ Tenant created with plan="free", subscription_status="none"
      │
      ▼
 Merchant clicks "Upgrade to Growth"
@@ -303,9 +303,30 @@ WHERE tenant_id = '<tenant-id>'
 ORDER BY created_at DESC;
 ```
 
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SHOPIFY_BILLING_TEST_MODE` | `"true"` | Set to `"false"` for production Shopify charges |
+| `SHOPIFY_CLIENT_SECRET` | — | Used for HMAC verification on billing webhooks |
+| `PLATFORM_URL` | `http://localhost:3002` | Billing callback return URL |
+| `DASHBOARD_URL` | `http://localhost:3000` | Post-approval redirect |
+
+## Wiring Status
+
+| Enforcement | Status | Location |
+|-------------|--------|----------|
+| App creation limit | **Wired** | `POST /tenants/:id/apps` |
+| Generation quota | **Wired** | `POST /generation` |
+| Category gating | **Wired** | `POST /generation` (when `preComputedIntent.appCategory` present) |
+| Subscription webhook | **Wired** | `POST /billing/webhook` (APP_SUBSCRIPTIONS_UPDATE) |
+| App execution quota | **Not wired** | Needs call in `webhook-gateway` before dispatch |
+| Email send quota | **Not wired** | Needs call in `harness/build-ctx.ts` |
+| SMS send quota | **Not wired** | Needs call in `harness/build-ctx.ts` |
+
 ## Future Enhancements
 
-- [ ] **APP_SUBSCRIPTIONS_UPDATE webhook** — handle Shopify-initiated subscription changes (frozen, cancelled)
+- [ ] **Wire execution/email/SMS quotas** in webhook-gateway and harness services
 - [ ] **Usage charge overages** — Shopify UsageCharge API for Growth/Pro email/SMS overages
 - [ ] **Annual billing** — discounted yearly plans
 - [ ] **Grace period** — 3-day grace on execution limits before hard-blocking
