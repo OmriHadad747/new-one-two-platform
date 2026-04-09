@@ -65,6 +65,7 @@ export async function resolveWebhookContext(
       tenantName: string;
       tenantStatus: string;
       tenantPlan: string;
+      tenantBillingPlan: string;
       tenantKmsKeyName: string;
       tenantShopDomain: string | null;
       tenantShopifyAccessTokenSecretName: string | null;
@@ -100,6 +101,7 @@ export async function resolveWebhookContext(
       t.name                                 AS tenant_name,
       t.status                               AS tenant_status,
       t.plan                                 AS tenant_plan,
+      t.billing_plan                         AS tenant_billing_plan,
       t.kms_key_name                         AS tenant_kms_key_name,
       t.shop_domain                          AS tenant_shop_domain,
       t.shopify_access_token_secret_name      AS tenant_shopify_access_token_secret_name,
@@ -158,6 +160,12 @@ export async function resolveWebhookContext(
       name: row.tenantName,
       status: row.tenantStatus as Tenant["status"],
       plan: row.tenantPlan,
+      billingPlan: row.tenantBillingPlan as any,
+      subscriptionStatus: "none" as any,
+      shopifySubscriptionId: null,
+      trialEndsAt: null,
+      billingCycleAnchor: new Date(),
+      planUpdatedAt: new Date(),
       kmsKeyName: row.tenantKmsKeyName,
       shopDomain: row.tenantShopDomain,
       shopifyAccessTokenSecretName: row.tenantShopifyAccessTokenSecretName,

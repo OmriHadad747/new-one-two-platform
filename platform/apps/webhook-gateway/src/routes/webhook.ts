@@ -138,7 +138,7 @@ async function webhookHandler(
   }
 
   // ── 5. Check execution quota ──────────────────────────────────────────────
-  const tenantPlan = ((ctx.tenant as any).billingPlan ?? (ctx.tenant as any).plan ?? "free") as BillingPlan;
+  const tenantPlan = (ctx.tenant.billingPlan ?? "free") as BillingPlan;
   const execLimit = getPlanLimits(tenantPlan).maxAppExecutionsPerMonth;
   const quota = await checkUsageQuota(ctx.tenant.id, "app_executions", execLimit);
   if (!quota.allowed) {
