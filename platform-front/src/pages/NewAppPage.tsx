@@ -400,6 +400,7 @@ export function NewAppPage() {
               if (existing && existing.name !== chosenName) {
                 await api.apps.rename(tenantId!, appId, chosenName).catch(() => null);
                 await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+                await queryClient.invalidateQueries({ queryKey: ["app", tenantId, appId] });
               }
             }
 
@@ -534,7 +535,11 @@ export function NewAppPage() {
       )}
       <TopBar
         title={activeApp ? activeApp.name : "New App"}
-        subtitle={activeApp ? "revision" : "Prompt to widget"}
+        subtitle={
+          activeApp && (gen.status === "completed" || latestSessionQuery.data?.status === "completed")
+            ? "Revision"
+            : "New app"
+        }
       />
 
       <div className="flex-1 overflow-hidden flex flex-col">

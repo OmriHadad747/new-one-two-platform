@@ -145,7 +145,7 @@ async def _run_session_async(calls: list[tuple[str, dict[str, Any]]]) -> list[An
 
     async def _run() -> list[Any]:
         results: list[Any] = []
-        async with stdio_client(server_params) as (read, write):
+        async with stdio_client(server_params, errlog=open(os.devnull, "w")) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
 

@@ -11,10 +11,12 @@ Questions and their unique value over static checks:
   Q4  admin fields    bridge.call() body ↔ ctx.adminBody — same as Q3
   Q5  cron batching   when declared: no per-item Shopify calls inside loop — cannot be reliably static-checked
   Q6  state machine   when declared: handler reads prior DB state before comparing — verifies logic, not just presence
+  Q7  schema completeness — handler INSERT omits NOT NULL/no-DEFAULT columns → Postgres runtime error
 
 Q3/Q4 differ from static cross-artifact checks: static uses regex on catalog shapes,
 this catches semantic mismatches (aliased field names, spread operators, indirect reads).
 Q5/Q6 are only asked when the plan declares cronBatching/stateMachine.
+Q7 always runs: catches the inverse of Q2 — not "wrong column name" but "missing required column".
 
 Only HIGH confidence issues trigger an automatic revision. MEDIUM issues are
 logged but not acted upon (false positive mitigation).
@@ -65,6 +67,7 @@ def _build_prompt(
     contracts = ctx.plan.get("appContracts") or {}
     widget_catalog = contracts.get("widgetApiCatalog") or []
     admin_catalog = contracts.get("adminApiCatalog") or []
+    db_contracts = contracts.get("dbContracts") or []
     cron_batching = contracts.get("cronBatching") or {}
     has_cron_batching = bool(cron_batching.get("required"))
     sm = contracts.get("stateMachine")
@@ -92,6 +95,11 @@ def _build_prompt(
 
     # ── Plan context (only what's needed) ────────────────────────────────────
     plan_parts = []
+    if db_contracts:
+        plan_parts.append(
+            f"dbContracts (architect-specified schema — source of truth for tables and columns):\n"
+            f"{json.dumps(db_contracts, indent=2)}"
+        )
     if is_storefront:
         plan_parts.append(
             f"widgetApiCatalog:\n{json.dumps(widget_catalog, indent=2)}"
@@ -180,6 +188,19 @@ def _build_prompt(
             "Set aligned=false if any of these steps is missing or out of order."
         )
         expected_keys.append("q6_state_machine")
+
+    if db_contracts:
+        questions.append(
+            "Q7 — SCHEMA COMPLETENESS (q7_schema_completeness)\n"
+            "For each INSERT statement in handler.js SQL (inside ctx.db template literals):\n"
+            "  a) Do the inserted columns include ALL columns that are NOT NULL with no DEFAULT\n"
+            "     in migration.sql for that table? A missing required column causes a Postgres\n"
+            "     runtime error.\n"
+            "  b) Do the column names in migration.sql match what the architect specified in\n"
+            "     dbContracts? Flag if the migration added or dropped columns relative to the spec.\n"
+            "Set aligned=false only if you can name the specific table and missing/mismatched column."
+        )
+        expected_keys.append("q7_schema_completeness")
 
     # Build the expected JSON shape hint
     shape = {k: {"aligned": True, "issue": None, "confidence": "high"} for k in expected_keys}

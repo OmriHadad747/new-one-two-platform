@@ -24,12 +24,13 @@ export interface ProgressEventMessage {
   agent:
     | "product"
     | "architect"
-    | "codespec"
     | "handler"
     | "migration"
     | "widget_js"
     | "admin_ui"
     | "validation"
+    | "validator"
+    | "revision"
     | "explanation";
   status: "running" | "completed" | "failed" | "retrying";
   message: string;
