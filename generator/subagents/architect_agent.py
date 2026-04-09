@@ -143,6 +143,34 @@ cronBatching: Required when the cron job iterates over a set of items and each i
       "mitigation": "Pre-fetch all required read data before the loop; per-item write calls inside the loop are unavoidable for this resource type" }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUALITY CONTEXT — edge cases and UX expectations
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+edgeCases: Array of 3–6 specific edge cases the handler MUST handle for this
+  particular app type. These are passed directly to the code generators.
+  Each entry is a short sentence describing a concrete scenario.
+  Focus on scenarios that are:
+  - Common in production Shopify stores (deleted products, duplicate webhooks,
+    guest customers, null fields in payloads, concurrent requests)
+  - Specific to THIS app's domain (not generic "handle errors" advice)
+  - Likely to cause data corruption, duplicate actions, or broken UX if ignored
+  Examples:
+    ✅ "Customer subscribes to a variant that gets deleted before restock — clean up orphaned subscriptions"
+    ✅ "Multiple inventory_levels/update webhooks fire in rapid succession for the same variant — deduplicate notifications"
+    ❌ "Handle errors gracefully" — too generic, not actionable
+
+uxExpectations: Describes what good UX looks like for each surface this app has.
+  Informs widget and admin UI generators about the EXPERIENCE, not just the data contract.
+  {
+    "storefront": "<1-2 sentences: what the customer experience should feel like>" | null,
+    "admin": "<1-2 sentences: what the merchant dashboard should prioritize>" | null
+  }
+  Set a field to null when that surface does not exist for this archetype.
+  Be specific to the app type:
+    ✅ "Widget should feel lightweight — one-click subscribe with email pre-filled for logged-in customers. Show subscriber count as social proof."
+    ❌ "Widget should look nice" — not actionable
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CONTRACTS — binding interfaces between components
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -274,6 +302,11 @@ OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanatio
     "feasibility": "feasible",
     "blockedReason": null,
     "complexity": "low",
+    "edgeCases": ["<specific edge case 1>", "<specific edge case 2>", "...3-6 total"],
+    "uxExpectations": {
+      "storefront": "<what the customer experience should feel like, or null>",
+      "admin": "<what the merchant dashboard should prioritize, or null>"
+    },
     "stateMachine": null,
     "platformGaps": [],
     "cronBatching": null,
@@ -306,7 +339,7 @@ Feature intent:
 {intent_json}
 
 App archetype: {archetype}
-{api_context_section}
+{quality_brief_section}{api_context_section}
 Produce the structural plan and binding contracts."""
 
 
@@ -354,11 +387,19 @@ def run_architect_agent(
         else ""
     )
 
+    quality_brief = intent.get("qualityBrief", "")
+    quality_brief_section = (
+        f"\nQuality brief (use this to inform edgeCases and uxExpectations):\n{quality_brief}\n"
+        if quality_brief
+        else ""
+    )
+
     user = _ARCHITECT_USER_TEMPLATE.format(
         error_block=error_block,
         prompt=prompt,
         intent_json=json.dumps(intent, indent=2),
         archetype=app_archetype,
+        quality_brief_section=quality_brief_section,
         api_context_section=api_context_section,
     )
 

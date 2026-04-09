@@ -93,6 +93,8 @@ class WidgetJsGenerator(Generator):
     def user_prompt(self, ctx: CodegenContext) -> str:
         retry_block = self.format_retry_block(ctx.previous_errors)
         ux_block = _format_ux_guidance(ctx.plan)
+        ux_expectations_block = _format_ux_expectations(ctx.plan)
+        quality_brief_block = _format_quality_brief(ctx.intent)
         catalog_desc = _format_catalog(ctx.platform_api_catalog)
         prior_block = _format_prior_widget(ctx.prior_widget_code)
 
@@ -100,6 +102,8 @@ class WidgetJsGenerator(Generator):
             f"{retry_block}"
             f"Feature to build: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
+            f"{quality_brief_block}"
+            f"{ux_expectations_block}"
             f"Platform API catalog — the ONLY paths the widget may call via host.call().\n"
             f"Use EXACTLY the requestShape shown when building the host.call() body.\n"
             f"Expect EXACTLY the responseShape shown when reading the result.\n"
@@ -127,6 +131,29 @@ class WidgetJsGenerator(Generator):
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────
+
+
+def _format_quality_brief(intent: Dict[str, Any]) -> str:
+    """Inject the product agent's quality brief so the widget knows what good UX looks like."""
+    brief = intent.get("qualityBrief", "")
+    if not brief:
+        return ""
+    return (
+        "Quality brief — what makes a good version of this app:\n"
+        f"{brief}\n\n"
+    )
+
+
+def _format_ux_expectations(plan: Dict[str, Any]) -> str:
+    """Inject the architect's storefront UX expectations for this specific app type."""
+    ux = (plan.get("appContracts") or {}).get("uxExpectations") or {}
+    storefront = ux.get("storefront")
+    if not storefront:
+        return ""
+    return (
+        "UX expectations for this widget:\n"
+        f"{storefront}\n\n"
+    )
 
 
 def _format_prior_widget(prior_code: Any) -> str:
