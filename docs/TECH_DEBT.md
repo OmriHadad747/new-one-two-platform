@@ -148,3 +148,44 @@ Local dev (`DEPLOY_MODE=local`): skip Scheduler creation entirely — trigger `/
 **Scale ceiling:** Cloud Scheduler supports 4,000 jobs/project. Fine for MVP and growth.
 Beyond that, migrate to a single internal cron-dispatcher service that polls the DB and
 enqueues to the existing BullMQ queue — same worker, no new execution infrastructure.
+
+---
+
+## TD-010 — SQL schema validation via Postgres EXPLAIN
+
+**Current state**
+Schema alignment is validated by the LLM validator (Q7) which cross-checks handler INSERTs against
+`dbContracts` and `migration.sql`. LLM validation is probabilistic — it can miss column mismatches
+or produce false positives. Runtime Postgres errors are the only guaranteed catch today.
+
+**The EXPLAIN approach**
+`EXPLAIN` parses and plans a SQL statement without executing it. Postgres rejects unknown column
+names at parse time, making it a deterministic schema validator:
+
+```sql
+-- Extracted from handler template literal and parameterised:
+EXPLAIN INSERT INTO back_in_stock_subscriptions
+  (id, tenant_id, email, product_id, product_title)   -- product_title doesn't exist
+VALUES ($1, $2, $3, $4, $5);
+-- → ERROR: column "product_title" of relation does not exist
+```
+
+**What to do**
+1. After generation, apply `migration.sql` to a short-lived Postgres instance (Docker or
+   `pg_tmp`-style ephemeral).
+2. Extract SQL template literals from `handler.js` using the existing `_GQL_TEMPLATE_RE`-style
+   regex, but targeting `ctx.db\`` blocks.
+3. Replace `${...}` interpolations with positional `$N` placeholders.
+4. Run `EXPLAIN <statement>` for each extracted query and collect Postgres errors.
+5. Return errors in the same format as static validation so they feed into the retry loop.
+
+**When to apply**
+Only after the LLM validator passes — EXPLAIN is the deterministic final gate before the
+artifact is accepted. Skip if no `migration.sql` was generated (apps with no DB tables).
+
+**Complexity:** Medium — SQL extraction from template literals is the hard part; the Postgres
+interaction is straightforward. A `pg_tmp` ephemeral instance adds ~1s overhead per run.
+
+**Affected files**
+- `generator/subagents/static_validation.py` — add `validate_handler_sql_schema(handler_js, migration_sql)`
+- `generator/crews/feature_generator/crew.py` — call after validator phase, before bundle publish
