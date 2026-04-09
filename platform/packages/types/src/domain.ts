@@ -26,6 +26,7 @@ export interface Tenant {
   status: TenantStatus;
   plan: string;                 // legacy TEXT column — use billingPlan for billing logic
   billingPlan: import("./billing.js").BillingPlan;   // "free" | "starter" | "growth" | "pro"
+  billingInterval: import("./billing.js").BillingInterval; // "monthly" | "annual"
   subscriptionStatus: import("./billing.js").SubscriptionStatus;
   shopifySubscriptionId: string | null;
   trialEndsAt: Date | null;

@@ -2,8 +2,11 @@
 
 import type {
   BillingPlan,
+  BillingInterval,
   SubscriptionStatus,
   UsageRecord,
+  UsagePeriodSummary,
+  BillingEvent,
   RevisionClassification,
 } from "@new-one-two/types";
 import { sql } from "./connection.js";
@@ -86,6 +89,7 @@ export async function updateTenantBilling(
   tenantId: string,
   params: {
     billingPlan?: BillingPlan;
+    billingInterval?: BillingInterval;
     subscriptionStatus?: SubscriptionStatus;
     shopifySubscriptionId?: string | null;
     trialEndsAt?: Date | null;
@@ -94,6 +98,7 @@ export async function updateTenantBilling(
   await sql`
     UPDATE tenants SET
       ${params.billingPlan !== undefined ? sql`billing_plan = ${params.billingPlan},` : sql``}
+      ${params.billingInterval !== undefined ? sql`billing_interval = ${params.billingInterval},` : sql``}
       ${params.subscriptionStatus !== undefined ? sql`subscription_status = ${params.subscriptionStatus},` : sql``}
       ${params.shopifySubscriptionId !== undefined ? sql`shopify_subscription_id = ${params.shopifySubscriptionId},` : sql``}
       ${params.trialEndsAt !== undefined ? sql`trial_ends_at = ${params.trialEndsAt},` : sql``}
@@ -198,4 +203,56 @@ export async function checkUsageQuota(
   };
   const current = (usage[keyMap[counter]!] as number) ?? 0;
   return { allowed: current < planLimit, current, limit: planLimit };
+}
+
+// ─── Dashboard Queries ───────────────────────────────────────────────────────
+
+/**
+ * Get usage history for the last N billing periods.
+ * Returns one summary per period, ordered newest-first.
+ */
+export async function getUsageHistory(
+  tenantId: string,
+  periodCount: number = 6
+): Promise<UsagePeriodSummary[]> {
+  const rows = await sql<UsagePeriodSummary[]>`
+    SELECT
+      period_start   AS "periodStart",
+      generations,
+      revisions,
+      app_executions AS "appExecutions",
+      emails_sent    AS "emailsSent",
+      sms_sent       AS "smsSent"
+    FROM usage_records
+    WHERE tenant_id = ${tenantId}
+    ORDER BY period_start DESC
+    LIMIT ${periodCount}
+  `;
+  return rows;
+}
+
+/**
+ * Get billing event audit trail for a tenant.
+ * Returns the most recent N events, ordered newest-first.
+ */
+export async function getBillingEvents(
+  tenantId: string,
+  limit: number = 50
+): Promise<BillingEvent[]> {
+  const rows = await sql<BillingEvent[]>`
+    SELECT
+      id,
+      tenant_id       AS "tenantId",
+      event_type      AS "eventType",
+      from_plan       AS "fromPlan",
+      to_plan         AS "toPlan",
+      shopify_subscription_id AS "shopifySubscriptionId",
+      metadata,
+      created_at      AS "createdAt"
+    FROM billing_events
+    WHERE tenant_id = ${tenantId}
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return rows;
 }

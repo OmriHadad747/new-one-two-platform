@@ -6,6 +6,8 @@
 
 export type BillingPlan = "free" | "starter" | "growth" | "pro";
 
+export type BillingInterval = "monthly" | "annual";
+
 export type SubscriptionStatus =
   | "none"        // no active subscription (free plan)
   | "pending"     // Shopify confirmation page shown, awaiting merchant approval
@@ -31,6 +33,7 @@ export interface PlanDefinition {
   id: BillingPlan;
   name: string;                      // display name
   priceMonthly: number;              // USD cents (0 for free)
+  priceYearly: number;               // USD cents for full year (0 for free) — ~17% discount vs monthly
   limits: PlanLimits;
 }
 
@@ -92,6 +95,7 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
     id: "free",
     name: "Free",
     priceMonthly: 0,
+    priceYearly: 0,
     limits: {
       maxApps: 1,
       maxGenerationsPerMonth: 1,
@@ -106,6 +110,7 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
     id: "starter",
     name: "Starter",
     priceMonthly: 1900,
+    priceYearly: 19000,    // $190/yr ($15.83/mo effective — save ~17%)
     limits: {
       maxApps: 3,
       maxGenerationsPerMonth: 3,
@@ -120,6 +125,7 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
     id: "growth",
     name: "Growth",
     priceMonthly: 4900,
+    priceYearly: 49000,    // $490/yr ($40.83/mo effective — save ~17%)
     limits: {
       maxApps: 10,
       maxGenerationsPerMonth: 10,
@@ -139,6 +145,7 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
     id: "pro",
     name: "Pro",
     priceMonthly: 9900,
+    priceYearly: 99000,    // $990/yr ($82.50/mo effective — save ~17%)
     limits: {
       maxApps: 999,
       maxGenerationsPerMonth: 999,
@@ -170,6 +177,7 @@ export function getAllPlans(): PlanDefinition[] {
 export interface SubscribeRequest {
   tenantId: string;
   plan: BillingPlan;
+  interval?: BillingInterval;  // defaults to "monthly"
 }
 
 /** Response from POST /billing/subscribe — redirect merchant to Shopify confirmation. */
@@ -180,6 +188,7 @@ export interface SubscribeResponse {
 /** GET /billing/usage response. */
 export interface BillingUsageResponse {
   plan: BillingPlan;
+  interval: BillingInterval;
   subscriptionStatus: SubscriptionStatus;
   trialEndsAt: string | null;
   usage: UsageRecord;
@@ -190,4 +199,56 @@ export interface BillingUsageResponse {
 export interface BillingPlansResponse {
   plans: PlanDefinition[];
   currentPlan: BillingPlan;
+  currentInterval: BillingInterval;
+}
+
+// ─── Dashboard Types ─────────────────────────────────────────────────────────
+
+/** A single period's usage snapshot for historical charts. */
+export interface UsagePeriodSummary {
+  periodStart: string;          // YYYY-MM-DD
+  generations: number;
+  revisions: number;
+  appExecutions: number;
+  emailsSent: number;
+  smsSent: number;
+}
+
+/** GET /billing/dashboard/:tenantId response. */
+export interface BillingDashboardResponse {
+  /** Current plan + subscription info */
+  subscription: {
+    plan: BillingPlan;
+    interval: BillingInterval;
+    status: SubscriptionStatus;
+    trialEndsAt: string | null;
+    billingCycleAnchor: string;
+    planUpdatedAt: string;
+  };
+
+  /** Current period usage vs limits */
+  currentUsage: {
+    usage: UsageRecord;
+    limits: PlanLimits;
+  };
+
+  /** Usage history — last 6 billing periods */
+  usageHistory: UsagePeriodSummary[];
+
+  /** Billing event audit trail (most recent 50) */
+  billingEvents: BillingEvent[];
+
+  /** Revision analytics breakdown */
+  revisionAnalytics: {
+    total: number;
+    bugReports: number;
+    featureModifications: number;
+    newCapabilities: number;
+  };
+
+  /** Active app count vs limit */
+  appCount: {
+    active: number;
+    limit: number;
+  };
 }

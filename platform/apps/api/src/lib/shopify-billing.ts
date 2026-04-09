@@ -12,7 +12,7 @@
  */
 import { logger } from "@new-one-two/logger";
 import { getSecret } from "@new-one-two/crypto";
-import type { BillingPlan } from "@new-one-two/types";
+import type { BillingPlan, BillingInterval } from "@new-one-two/types";
 import type { Tenant } from "@new-one-two/types";
 import { PLANS } from "./plans.js";
 
@@ -29,6 +29,7 @@ const APP_SUBSCRIPTION_CREATE = `
     $test: Boolean!
     $amount: Decimal!
     $currencyCode: CurrencyCode!
+    $interval: AppPricingInterval!
   ) {
     appSubscriptionCreate(
       name: $name
@@ -40,6 +41,7 @@ const APP_SUBSCRIPTION_CREATE = `
           plan: {
             appRecurringPricingDetails: {
               price: { amount: $amount, currencyCode: $currencyCode }
+              interval: $interval
             }
           }
         }
@@ -78,10 +80,12 @@ const APP_SUBSCRIPTION_CANCEL = `
 /**
  * Create a Shopify recurring subscription for a tenant.
  * Returns the confirmation URL where the merchant approves the charge.
+ * Supports both monthly and annual billing intervals.
  */
 export async function createSubscription(
   tenant: Tenant,
-  plan: BillingPlan
+  plan: BillingPlan,
+  interval: BillingInterval = "monthly"
 ): Promise<{ confirmationUrl: string; subscriptionId: string }> {
   const planDef = PLANS[plan];
   if (!planDef || planDef.priceMonthly === 0) {
@@ -93,15 +97,24 @@ export async function createSubscription(
   }
 
   const accessToken = await getSecret(tenant.shopifyAccessTokenSecretName);
-  const returnUrl = `${PLATFORM_URL}/billing/callback?tenant_id=${tenant.id}&plan=${plan}`;
+  const returnUrl = `${PLATFORM_URL}/billing/callback?tenant_id=${tenant.id}&plan=${plan}&interval=${interval}`;
+
+  // For annual: use yearly price, Shopify interval ANNUAL
+  // For monthly: use monthly price, Shopify interval EVERY_30_DAYS
+  const isAnnual = interval === "annual";
+  const amount = isAnnual
+    ? (planDef.priceYearly / 100).toFixed(2)
+    : (planDef.priceMonthly / 100).toFixed(2);
+  const shopifyInterval = isAnnual ? "ANNUAL" : "EVERY_30_DAYS";
 
   const result = await shopifyGraphql(tenant.shopDomain, accessToken, APP_SUBSCRIPTION_CREATE, {
-    name: `Ton ${planDef.name} Plan`,
+    name: `Ton ${planDef.name} Plan (${isAnnual ? "Annual" : "Monthly"})`,
     returnUrl,
     trialDays: planDef.limits.trialDays,
     test: BILLING_TEST_MODE,
-    amount: (planDef.priceMonthly / 100).toFixed(2),
+    amount,
     currencyCode: "USD",
+    interval: shopifyInterval,
   });
 
   const data = result.appSubscriptionCreate;

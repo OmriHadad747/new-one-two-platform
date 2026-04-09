@@ -1,12 +1,13 @@
 /**
  * Billing routes — plan management, subscription lifecycle, usage tracking.
  *
- * GET    /billing/plans                — List available plans + current plan
+ * GET    /billing/plans                — List available plans + current plan + interval
  * GET    /billing/usage/:tenantId      — Current usage vs limits
- * POST   /billing/subscribe            — Create Shopify subscription (returns confirmation URL)
+ * POST   /billing/subscribe            — Create Shopify subscription (monthly or annual)
  * GET    /billing/callback             — Shopify redirects here after merchant approves/declines
  * POST   /billing/cancel/:tenantId     — Cancel current subscription (downgrade to free)
  * POST   /billing/webhook              — Shopify APP_SUBSCRIPTIONS_UPDATE webhook
+ * GET    /billing/dashboard/:tenantId  — Comprehensive billing dashboard (usage, events, analytics)
  * GET    /billing/analytics/:tenantId  — Revision classification analytics
  */
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
@@ -15,17 +16,22 @@ import { logger } from "@new-one-two/logger";
 import {
   getTenantById,
   getOrCreateUsageRecord,
+  getActiveAppCount,
   updateTenantBilling,
   logBillingEvent,
   getRevisionAnalytics,
+  getUsageHistory,
+  getBillingEvents,
   sql,
 } from "@new-one-two/db";
 import type {
   BillingPlan,
+  BillingInterval,
   SubscriptionStatus,
   SubscribeRequest,
   BillingUsageResponse,
   BillingPlansResponse,
+  BillingDashboardResponse,
 } from "@new-one-two/types";
 import { getAllPlans, getPlanLimits, PLANS } from "../lib/plans.js";
 import { createSubscription, cancelSubscription } from "../lib/shopify-billing.js";
@@ -43,17 +49,20 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
     ) => {
       const { tenantId } = req.query;
       let currentPlan: BillingPlan = "free";
+      let currentInterval: BillingInterval = "monthly";
 
       if (tenantId) {
         const tenant = await getTenantById(tenantId);
         if (tenant) {
           currentPlan = tenant.billingPlan;
+          currentInterval = tenant.billingInterval ?? "monthly";
         }
       }
 
       const response: BillingPlansResponse = {
         plans: getAllPlans(),
         currentPlan,
+        currentInterval,
       };
       return reply.send(response);
     }
@@ -78,6 +87,7 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
 
       const response: BillingUsageResponse = {
         plan: tenant.billingPlan,
+        interval: tenant.billingInterval ?? "monthly",
         subscriptionStatus: tenant.subscriptionStatus,
         trialEndsAt: tenant.trialEndsAt?.toISOString() ?? null,
         usage,
@@ -95,7 +105,8 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Body: SubscribeRequest }>,
       reply: FastifyReply
     ) => {
-      const { tenantId, plan } = req.body;
+      const { tenantId, plan, interval: rawInterval } = req.body;
+      const interval: BillingInterval = rawInterval === "annual" ? "annual" : "monthly";
 
       if (!tenantId || !plan) {
         return reply.status(400).send({ error: "tenantId and plan are required" });
@@ -103,6 +114,11 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
 
       if (!(plan in PLANS)) {
         return reply.status(400).send({ error: `Invalid plan: ${plan}` });
+      }
+
+      // Annual billing not available for free plan
+      if (plan === "free" && interval === "annual") {
+        return reply.status(400).send({ error: "Annual billing is not available for the free plan" });
       }
 
       const tenant = await getTenantById(tenantId);
@@ -117,6 +133,7 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
         }
         await updateTenantBilling(tenantId, {
           billingPlan: "free",
+          billingInterval: "monthly",
           subscriptionStatus: "none",
           shopifySubscriptionId: null,
           trialEndsAt: null,
@@ -130,8 +147,8 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
         return reply.send({ confirmationUrl: null, plan: "free" });
       }
 
-      // Paid plan — create Shopify subscription
-      const { confirmationUrl, subscriptionId } = await createSubscription(tenant, plan);
+      // Paid plan — create Shopify subscription with chosen interval
+      const { confirmationUrl, subscriptionId } = await createSubscription(tenant, plan, interval);
 
       // Mark as pending until Shopify confirms
       await updateTenantBilling(tenantId, {
@@ -145,9 +162,10 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
         fromPlan: tenant.billingPlan,
         toPlan: plan,
         shopifySubscriptionId: subscriptionId,
+        metadata: { interval },
       });
 
-      logger.info({ tenantId, plan, subscriptionId }, "Subscription created, awaiting confirmation");
+      logger.info({ tenantId, plan, interval, subscriptionId }, "Subscription created, awaiting confirmation");
       return reply.send({ confirmationUrl });
     }
   );
@@ -156,16 +174,17 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
   // Shopify redirects here after the merchant approves or declines the charge.
 
   app.get<{
-    Querystring: { tenant_id?: string; plan?: string; charge_id?: string };
+    Querystring: { tenant_id?: string; plan?: string; charge_id?: string; interval?: string };
   }>(
     "/callback",
     async (
       req: FastifyRequest<{
-        Querystring: { tenant_id?: string; plan?: string; charge_id?: string };
+        Querystring: { tenant_id?: string; plan?: string; charge_id?: string; interval?: string };
       }>,
       reply: FastifyReply
     ) => {
-      const { tenant_id: tenantId, plan } = req.query;
+      const { tenant_id: tenantId, plan, interval: rawInterval } = req.query;
+      const interval: BillingInterval = rawInterval === "annual" ? "annual" : "monthly";
 
       if (!tenantId || !plan) {
         return reply.redirect(`${DASHBOARD_URL}/settings?billing=error`);
@@ -188,9 +207,10 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
           ? new Date(Date.now() + planDef.limits.trialDays * 86400000)
           : null;
 
-      // Merchant approved — activate the plan
+      // Merchant approved — activate the plan with chosen interval
       await updateTenantBilling(tenantId, {
         billingPlan,
+        billingInterval: interval,
         subscriptionStatus: "active",
         trialEndsAt,
       });
@@ -201,10 +221,11 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
         fromPlan: tenant.billingPlan,
         toPlan: billingPlan,
         shopifySubscriptionId: tenant.shopifySubscriptionId,
+        metadata: { interval },
       });
 
-      logger.info({ tenantId, plan: billingPlan }, "Subscription activated");
-      return reply.redirect(`${DASHBOARD_URL}/merchants/${tenantId}?billing=success&plan=${plan}`);
+      logger.info({ tenantId, plan: billingPlan, interval }, "Subscription activated");
+      return reply.redirect(`${DASHBOARD_URL}/merchants/${tenantId}?billing=success&plan=${plan}&interval=${interval}`);
     }
   );
 
@@ -228,6 +249,7 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
 
       await updateTenantBilling(tenantId, {
         billingPlan: "free",
+        billingInterval: "monthly",
         subscriptionStatus: "cancelled",
         trialEndsAt: null,
       });
@@ -321,6 +343,7 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       if (newStatus === "frozen" || newStatus === "cancelled") {
         await updateTenantBilling(tenant.id, {
           billingPlan: "free",
+          billingInterval: "monthly",
           subscriptionStatus: newStatus,
           trialEndsAt: null,
         });
@@ -353,6 +376,59 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       }
 
       return reply.status(200).send({ ok: true });
+    }
+  );
+
+  // ─── GET /billing/dashboard/:tenantId ─────────────────────────────────────
+  // Comprehensive billing dashboard — usage charts, events, plan info.
+
+  app.get<{ Params: { tenantId: string } }>(
+    "/dashboard/:tenantId",
+    async (
+      req: FastifyRequest<{ Params: { tenantId: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { tenantId } = req.params;
+      const tenant = await getTenantById(tenantId);
+      if (!tenant) {
+        return reply.status(404).send({ error: "Tenant not found" });
+      }
+
+      // Fetch all dashboard data in parallel
+      const [usage, usageHistory, billingEvents, revisionAnalytics, activeApps] =
+        await Promise.all([
+          getOrCreateUsageRecord(tenantId),
+          getUsageHistory(tenantId, 6),
+          getBillingEvents(tenantId, 50),
+          getRevisionAnalytics(tenantId),
+          getActiveAppCount(tenantId),
+        ]);
+
+      const limits = getPlanLimits(tenant.billingPlan);
+
+      const response: BillingDashboardResponse = {
+        subscription: {
+          plan: tenant.billingPlan,
+          interval: tenant.billingInterval ?? "monthly",
+          status: tenant.subscriptionStatus,
+          trialEndsAt: tenant.trialEndsAt?.toISOString() ?? null,
+          billingCycleAnchor: tenant.billingCycleAnchor.toISOString(),
+          planUpdatedAt: tenant.planUpdatedAt.toISOString(),
+        },
+        currentUsage: {
+          usage,
+          limits,
+        },
+        usageHistory,
+        billingEvents,
+        revisionAnalytics,
+        appCount: {
+          active: activeApps,
+          limit: limits.maxApps,
+        },
+      };
+
+      return reply.send(response);
     }
   );
 

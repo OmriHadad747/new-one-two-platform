@@ -38,6 +38,7 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       status: string;
       plan: string;
       billingPlan: string;
+      billingInterval: string;
       subscriptionStatus: string;
       shopifySubscriptionId: string | null;
       trialEndsAt: Date | null;
@@ -58,6 +59,7 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       status,
       plan,
       billing_plan                            AS "billingPlan",
+      billing_interval                        AS "billingInterval",
       subscription_status                     AS "subscriptionStatus",
       shopify_subscription_id                 AS "shopifySubscriptionId",
       trial_ends_at                           AS "trialEndsAt",
@@ -82,6 +84,7 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
     status: row.status as Tenant["status"],
     plan: row.plan,
     billingPlan: row.billingPlan as Tenant["billingPlan"],
+    billingInterval: (row.billingInterval ?? "monthly") as Tenant["billingInterval"],
     subscriptionStatus: row.subscriptionStatus as Tenant["subscriptionStatus"],
     shopifySubscriptionId: row.shopifySubscriptionId,
     trialEndsAt: row.trialEndsAt,
@@ -108,6 +111,7 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
       status: string;
       plan: string;
       billingPlan: string;
+      billingInterval: string;
       subscriptionStatus: string;
       shopifySubscriptionId: string | null;
       trialEndsAt: Date | null;
@@ -128,6 +132,7 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
       status,
       plan,
       billing_plan                            AS "billingPlan",
+      billing_interval                        AS "billingInterval",
       subscription_status                     AS "subscriptionStatus",
       shopify_subscription_id                 AS "shopifySubscriptionId",
       trial_ends_at                           AS "trialEndsAt",
@@ -152,6 +157,7 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
     status: row.status as Tenant["status"],
     plan: row.plan,
     billingPlan: row.billingPlan as Tenant["billingPlan"],
+    billingInterval: (row.billingInterval ?? "monthly") as Tenant["billingInterval"],
     subscriptionStatus: row.subscriptionStatus as Tenant["subscriptionStatus"],
     shopifySubscriptionId: row.shopifySubscriptionId,
     trialEndsAt: row.trialEndsAt,

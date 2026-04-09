@@ -80,4 +80,6 @@ export {
   logBillingEvent,
   getRevisionAnalytics,
   checkUsageQuota,
+  getUsageHistory,
+  getBillingEvents,
 } from "./billing.js";
