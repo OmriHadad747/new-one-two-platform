@@ -391,8 +391,8 @@ FORBIDDEN_HANDLER_PATTERNS = [
         "raw fetch() calls are not allowed — use ctx.shopify or ctx.http.call()",
     ),
     (
-        r"(?<!ctx\.http\.call\(['\"])https?://",
-        "raw HTTP URLs are not allowed outside ctx.http.call() — use ctx.shopify for Shopify API, ctx.http.call(url) for external APIs",
+        r"\brequire\s*\(\s*['\"]https?['\"]",
+        "Node.js native http/https modules are not allowed — use ctx.shopify for Shopify API, ctx.http.call(url) for external HTTP calls",
     ),
     (r"\beval\s*\(", "eval() is not allowed"),
     (r"\bprocess\.exit\b", "process.exit is not allowed"),
