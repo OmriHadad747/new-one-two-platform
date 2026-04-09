@@ -210,6 +210,8 @@ class AdminUiGenerator(Generator):
         retry_block = self.format_retry_block(ctx.previous_errors)
         catalog_desc = _format_admin_catalog(ctx.plan)
         gaps_block = _format_gaps(ctx.plan)
+        ux_expectations_block = _format_ux_expectations(ctx.plan)
+        quality_brief_block = _format_quality_brief(ctx.intent)
         prior_block = _format_prior_admin_ui(ctx.prior_admin_ui_code)
 
         return (
@@ -217,6 +219,8 @@ class AdminUiGenerator(Generator):
             f"App purpose: {ctx.intent.get('desiredOutcome', '')}\n"
             f"App category: {ctx.intent.get('appCategory', '')}\n"
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
+            f"{quality_brief_block}"
+            f"{ux_expectations_block}"
             f"Admin API catalog — the ONLY paths the panel may call via bridge.call().\n"
             f"Use EXACTLY the requestShape shown when building the bridge.call() body.\n"
             f"Expect EXACTLY the responseShape shown when reading the result.\n"
@@ -244,6 +248,29 @@ class AdminUiGenerator(Generator):
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────
+
+
+def _format_quality_brief(intent: Dict[str, Any]) -> str:
+    """Inject the product agent's quality brief so the admin UI knows what good UX looks like."""
+    brief = intent.get("qualityBrief", "")
+    if not brief:
+        return ""
+    return (
+        "Quality brief — what makes a good version of this app:\n"
+        f"{brief}\n\n"
+    )
+
+
+def _format_ux_expectations(plan: Dict[str, Any]) -> str:
+    """Inject the architect's admin UX expectations for this specific app type."""
+    ux = (plan.get("appContracts") or {}).get("uxExpectations") or {}
+    admin = ux.get("admin")
+    if not admin:
+        return ""
+    return (
+        "UX expectations for this admin panel:\n"
+        f"{admin}\n\n"
+    )
 
 
 def _extract_admin_catalog(plan: Dict[str, Any]) -> List[Dict[str, Any]]:

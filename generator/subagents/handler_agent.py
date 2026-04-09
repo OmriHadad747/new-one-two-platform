@@ -63,6 +63,9 @@ class HandlerGenerator(Generator):
             ctx.platform_api_catalog, ctx.plan
         )
 
+        edge_cases_block = _format_edge_cases(ctx.plan)
+        quality_checklist = _format_quality_checklist(ctx.plan)
+
         return (
             f"{retry_block}"
             f"{jit_sections}"
@@ -77,6 +80,8 @@ class HandlerGenerator(Generator):
             f"{api_context_block}"
             f"{prior_block}"
             f"{routing_checklist}"
+            f"{edge_cases_block}"
+            f"{quality_checklist}"
             "Generate the handler.js module. Output ONLY the JavaScript code."
         )
 
@@ -285,6 +290,62 @@ def _format_prior_handler(prior_code: Any) -> str:
         " Preserve all logic that is NOT related to the reported issue.)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{prior_code}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+
+def _format_edge_cases(plan: Dict[str, Any]) -> str:
+    """Render architect-declared edge cases so the handler addresses each one."""
+    cases = (plan.get("appContracts") or {}).get("edgeCases") or []
+    if not cases:
+        return ""
+    lines = "\n".join(f"  - {c}" for c in cases)
+    return (
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "EDGE CASES — your handler MUST handle each of these scenarios:\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{lines}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+
+def _format_quality_checklist(plan: Dict[str, Any]) -> str:
+    """Emit a quality self-check as the last section before the generation instruction."""
+    shopify = plan.get("shopifyPlan") or {}
+    impl = plan.get("appContracts") or {}
+
+    checks = [
+        "Every DB write handles the case where the record already exists (UPSERT or check-then-insert where appropriate)",
+        "Every customer-facing response includes meaningful data or error messages, not empty objects",
+        "Shopify API calls are wrapped in try/catch with graceful degradation (log + continue, not crash)",
+    ]
+
+    if shopify.get("webhookTopics"):
+        checks.append(
+            "Webhook handler is idempotent — duplicate deliveries of the same event do not create duplicate records or actions"
+        )
+
+    if shopify.get("cronSchedule"):
+        checks.append(
+            "Cron job has a reasonable LIMIT on DB queries and Shopify API calls to prevent processing unbounded rows"
+        )
+
+    if impl.get("widgetApiCatalog"):
+        checks.append(
+            "Widget routes return useful error responses (not just empty {}) when data is missing or the request is invalid"
+        )
+
+    if impl.get("adminApiCatalog"):
+        checks.append(
+            "Admin routes validate input and return clear error messages the UI can display"
+        )
+
+    lines = "\n".join(f"  ✓ {c}" for c in checks)
+    return (
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "QUALITY CHECKLIST — verify your handler satisfies ALL of these:\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{lines}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
 

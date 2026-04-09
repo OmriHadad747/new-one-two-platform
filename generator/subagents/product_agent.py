@@ -35,8 +35,17 @@ OUTPUT — valid JSON only, no markdown fences:
   "resources": ["<resource>", ...],
   "desiredOutcome": "<one sentence, merchant or customer perspective>",
   "cronSchedule": null | "<5-field cron expression, only when triggerTypes includes cron>",
-  "appCategory": "<category>"
+  "appCategory": "<category>",
+  "qualityBrief": "<3-5 sentences describing what makes a GOOD version of this app>"
 }
+
+QUALITY BRIEF — use your knowledge of Shopify apps and ecommerce best practices.
+Describe what a polished, production-quality version of this specific app type does well:
+- What edge cases must the app handle? (e.g. duplicate submissions, deleted products, race conditions)
+- What UX details matter for the merchant or customer? (e.g. instant feedback, social proof, clear empty states)
+- What common mistakes do cheap/bad versions of this app make?
+- What separates a 5-star app from a 3-star app of this type?
+Be specific to THIS app type — generic advice like "handle errors" is not useful.
 
 TRIGGER TYPES — include every type that applies. Use ONLY these four values:
 - "webhook" — reacts to a Shopify event (orders/create, products/update, inventory_levels/update, etc.)
@@ -119,7 +128,8 @@ When you have enough to proceed:
     "resources": ["<resource>", ...],
     "desiredOutcome": "<one sentence>",
     "cronSchedule": null | "<5-field cron expression, only when triggerTypes includes cron>",
-    "appCategory": "<category>"
+    "appCategory": "<category>",
+    "qualityBrief": "<3-5 sentences: what makes a good version of this app — edge cases, UX details, common pitfalls>"
   }
 }
 
