@@ -48,8 +48,7 @@ export interface ChatMessage {
 
 const STATIC_STEPS: { agent: string; label: string }[] = [
   { agent: "product",     label: "Understanding your request"   },
-  { agent: "architect",   label: "Planning API surface"         },
-  { agent: "codespec",    label: "Writing implementation plan"  },
+  { agent: "architect",   label: "Planning app architecture"    },
   { agent: "handler",     label: "Generating backend handler"   },
   { agent: "migration",   label: "Writing DB migration"         },
   { agent: "validation",  label: "Validating output"            },

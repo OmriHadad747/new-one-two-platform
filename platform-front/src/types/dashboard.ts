@@ -226,6 +226,7 @@ export interface GenerationResult {
 /** Full FeatureBundle shape as returned by the generation API. */
 export interface SessionBundle {
   handlerModule?: { code?: string; webhookTopics?: string[]; cronSchedule?: string | null };
+  dbMigration?: { sql?: string };
   widgetModule?: string | null;
   adminUiModule?: string | null;
   /** Theme template pages the widget targets, e.g. ["product", "cart"]. null for backend apps. */

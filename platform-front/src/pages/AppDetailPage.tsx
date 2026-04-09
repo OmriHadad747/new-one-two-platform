@@ -383,9 +383,10 @@ function TabBar<T extends string>({
 
 function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
   const files = [
-    ...(bundle?.handlerModule?.code ? [{ id: "handler" as const, label: "handler.js",   lang: "js"  as const, code: bundle.handlerModule.code }] : []),
-    ...(bundle?.widgetModule        ? [{ id: "widget"  as const, label: "widget.js",    lang: "js"  as const, code: bundle.widgetModule        }] : []),
-    ...(bundle?.adminUiModule       ? [{ id: "admin"   as const, label: "admin-ui.js",  lang: "js"  as const, code: bundle.adminUiModule       }] : []),
+    ...(bundle?.handlerModule?.code  ? [{ id: "handler"   as const, label: "handler.js",    lang: "js"  as const, code: bundle.handlerModule.code   }] : []),
+    ...(bundle?.dbMigration?.sql     ? [{ id: "migration" as const, label: "migration.sql",  lang: "sql" as const, code: bundle.dbMigration.sql      }] : []),
+    ...(bundle?.widgetModule         ? [{ id: "widget"    as const, label: "widget.js",      lang: "js"  as const, code: bundle.widgetModule          }] : []),
+    ...(bundle?.adminUiModule        ? [{ id: "admin"     as const, label: "admin-ui.js",    lang: "js"  as const, code: bundle.adminUiModule         }] : []),
   ];
 
   const [activeFile, setActiveFile] = useState<string>(files[0]?.id ?? "handler");

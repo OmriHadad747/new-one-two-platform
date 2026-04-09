@@ -29,7 +29,6 @@ export const ProgressEventSchema = z.object({
   agent: z.enum([
     "product",
     "architect",
-    "codespec",
     "handler",
     "migration",
     "widget_js",

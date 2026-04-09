@@ -30,9 +30,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-_HERE = Path(__file__).parent
-os.chdir(_HERE)
-sys.path.insert(0, str(_HERE))
+_HERE = Path(__file__).resolve().parent
+_GENERATOR_ROOT = _HERE.parent
+os.chdir(_GENERATOR_ROOT)
+sys.path.insert(0, str(_GENERATOR_ROOT))
 
 from shopify_mcp.client import prefetch_for_run
 from subagents.architect_agent import run_architect_agent, _ARCHITECT_USER_TEMPLATE
@@ -159,7 +160,9 @@ def _phase_architect(intent: Dict[str, Any], prompt: str) -> tuple[Dict[str, Any
     t0 = time.monotonic()
     api_context = prefetch_for_run(intent.get("resources", []), intent.get("desiredOutcome", ""))
     ms = int((time.monotonic() - t0) * 1000)
-    _agent_line("Prefetch", ok=True, ms=ms, notes="webhook topics loaded")
+    docs_chars = len(api_context) if api_context else 0
+    prefetch_notes = f"docs: {docs_chars} chars" if docs_chars else "docs: empty (MCP miss)"
+    _agent_line("Prefetch", ok=True, ms=ms, notes=prefetch_notes)
 
     # Assemble the product→architect user prompt once (same logic as run_architect_agent)
     api_context_section = (
@@ -218,10 +221,15 @@ def _phase_codegen(
     base_ctx: CodegenContext,
     is_storefront: bool,
     is_admin_ui: bool,
-) -> Dict[str, str]:
-    """Run parallel codegen with static validation retries. Returns artifacts dict."""
+) -> tuple[Dict[str, str], List[Dict]]:
+    """
+    Run parallel codegen with static validation retries.
+    Returns (artifacts, retry_log) where retry_log is a list of
+    {attempt, errors} dicts for every round that failed.
+    """
     artifacts: Dict[str, str] = {}
     error_map: Dict[str, List[str]] = {}
+    retry_log: List[Dict] = []
 
     _CODEGEN_LABELS = {
         "handler": "Handler",
@@ -233,7 +241,6 @@ def _phase_codegen(
     for attempt in range(1, _MAX_CODEGEN_RETRIES + 1):
         retry_note = f"attempt {attempt}/{_MAX_CODEGEN_RETRIES}" if attempt > 1 else ""
 
-        # On first attempt show all; on retry show only failing generators (matches crew.py)
         generators_this_round = (
             list(error_map.keys()) if attempt > 1 else
             ["handler", "migration"]
@@ -255,11 +262,9 @@ def _phase_codegen(
         )
         ms = int((time.monotonic() - t0) * 1000)
 
-        # Print completion lines only for generators that ran this round
         for name in generators_this_round:
             _agent_line(_CODEGEN_LABELS.get(name, name), ok=True, ms=ms if name == generators_this_round[0] else None, notes="")
 
-        # Static validation
         _spinner("Validation")
         t0 = time.monotonic()
         error_map = validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
@@ -267,9 +272,18 @@ def _phase_codegen(
 
         if not error_map:
             _agent_line("Validation", ok=True, ms=ms, notes="all artifacts pass")
-            return artifacts
+            return artifacts, retry_log
+
+        # Record this failed attempt
+        retry_log.append({
+            "attempt": attempt,
+            "errors": {gen: list(errs) for gen, errs in error_map.items()},
+        })
 
         _agent_line("Validation", ok=False, ms=ms, notes=f"{len(error_map)} artifact(s) failed")
+        for gen_name, errs in error_map.items():
+            for e in errs:
+                print(f"    {_DIM}• {gen_name}: {e}{_RESET}")
         if attempt < _MAX_CODEGEN_RETRIES:
             _retry_line("Validation", notes=", ".join(error_map.keys()))
 
@@ -278,7 +292,7 @@ def _phase_codegen(
     print(f"\n  {_RED}Codegen validation failed after {_MAX_CODEGEN_RETRIES} attempts:{_RESET}")
     for e in all_errors[:5]:
         print(f"    • {e}")
-    sys.exit(1)
+    return artifacts, retry_log
 
 
 def _phase_validator(
@@ -351,6 +365,9 @@ def _save_artifacts_md(
     stop_label: str,
     is_storefront: bool,
     is_admin_ui: bool,
+    retry_log: Optional[List[Dict]] = None,
+    intent: Optional[Dict] = None,
+    plan: Optional[Dict] = None,
 ) -> Path:
     TEST_RESULTS_DIR.mkdir(exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
@@ -362,9 +379,28 @@ def _save_artifacts_md(
         f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
         f"**Prompt:** {prompt}",
         "",
-        "## Artifacts",
-        "",
     ]
+
+    if intent:
+        lines += ["## Intent (Product Agent)", "", "```json", json.dumps(intent, indent=2), "```", ""]
+
+    if plan:
+        lines += ["## Architect Plan", "", "```json", json.dumps(plan, indent=2), "```", ""]
+
+    if retry_log:
+        resolved = stop_label != "codegen" or not retry_log or all(
+            attempt["attempt"] < _MAX_CODEGEN_RETRIES for attempt in retry_log
+        )
+        heading = "## Validation Retries" + (" (all resolved)" if resolved else " (UNRESOLVED — max retries hit)")
+        lines += [heading, ""]
+        for entry in retry_log:
+            lines.append(f"### Attempt {entry['attempt']}")
+            for gen_name, errs in entry["errors"].items():
+                for e in errs:
+                    lines.append(f"- **{gen_name}**: {e}")
+            lines.append("")
+
+    lines += ["## Artifacts", ""]
     if artifacts.get("handler"):
         lines += ["### handler.js", "", "```javascript", artifacts["handler"], "```", ""]
     if artifacts.get("migration"):
@@ -386,18 +422,13 @@ def _print_arch(intent: Dict, plan: Dict) -> None:
 
 
 def _print_artifacts(artifacts: Dict[str, str]) -> None:
-    """Print a short summary of generated artifacts to console."""
+    """Print artifact line counts to console (no code preview)."""
     print()
     _hr()
     for key, code in artifacts.items():
         if code:
-            lines = code.strip().splitlines()
-            print(f"\n  {_BOLD}{key}{_RESET}  ({len(lines)} lines)")
-            # Show first 5 lines as a preview
-            for line in lines[:5]:
-                print(f"    {_DIM}{line}{_RESET}")
-            if len(lines) > 5:
-                print(f"    {_DIM}… ({len(lines) - 5} more lines){_RESET}")
+            lines = len(code.strip().splitlines())
+            print(f"  {_BOLD}{key}{_RESET}  ({lines} lines)")
     _hr()
 
 
@@ -485,12 +516,12 @@ def main() -> None:
         platform_api_catalog=(plan.get("appContracts") or {}).get("widgetApiCatalog") or [],
         api_context=api_context,
     )
-    artifacts = _phase_codegen(base_ctx, is_storefront, is_admin_ui)
+    artifacts, retry_log = _phase_codegen(base_ctx, is_storefront, is_admin_ui)
 
     if stop_after == "codegen":
         total_ms = int((time.monotonic() - total_start) * 1000)
         _print_artifacts(artifacts)
-        report = _save_artifacts_md(prompt, artifacts, "codegen", is_storefront, is_admin_ui)
+        report = _save_artifacts_md(prompt, artifacts, "codegen", is_storefront, is_admin_ui, retry_log or None, intent=intent, plan=plan)
         print(f"  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
         _hr("━")
         return
@@ -501,7 +532,7 @@ def main() -> None:
     if stop_after == "validator":
         total_ms = int((time.monotonic() - total_start) * 1000)
         _print_artifacts(artifacts)
-        report = _save_artifacts_md(prompt, artifacts, "validator", is_storefront, is_admin_ui)
+        report = _save_artifacts_md(prompt, artifacts, "validator", is_storefront, is_admin_ui, retry_log or None, intent=intent, plan=plan)
         print(f"  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
         _hr("━")
         return
@@ -533,9 +564,28 @@ def main() -> None:
         f"**Total:** {total_ms}ms  ",
         f"**Prompt:** {prompt}",
         "",
-        "## Artifacts",
+        "## Intent (Product Agent)",
+        "",
+        "```json",
+        json.dumps(intent, indent=2),
+        "```",
+        "",
+        "## Architect Plan",
+        "",
+        "```json",
+        json.dumps(plan, indent=2),
+        "```",
         "",
     ]
+    if retry_log:
+        lines += ["## Validation Retries (resolved)", ""]
+        for entry in retry_log:
+            lines.append(f"### Attempt {entry['attempt']}")
+            for gen_name, errs in entry["errors"].items():
+                for e in errs:
+                    lines.append(f"- **{gen_name}**: {e}")
+            lines.append("")
+    lines += ["## Artifacts", ""]
     if artifacts.get("handler"):
         lines += ["### handler.js", "", "```javascript", artifacts["handler"], "```", ""]
     if artifacts.get("migration"):

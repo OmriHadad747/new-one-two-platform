@@ -37,9 +37,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-_HERE = Path(__file__).parent
-os.chdir(_HERE)
-sys.path.insert(0, str(_HERE))
+_HERE = Path(__file__).resolve().parent
+_GENERATOR_ROOT = _HERE.parent
+os.chdir(_GENERATOR_ROOT)
+sys.path.insert(0, str(_GENERATOR_ROOT))
 
 import contract.publisher as _publisher
 from contract.validators import FeatureBundleMessage, GenerationRequest, ProgressEvent
