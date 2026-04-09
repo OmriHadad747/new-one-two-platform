@@ -1,18 +1,20 @@
 """
-Validator Agent — post-static-check semantic alignment verification.
+Validator Agent — post-static-check semantic verification.
 
-Runs 7 targeted questions against the generated artifacts to catch cross-artifact
-misalignments that static analysis cannot detect.
+Runs targeted questions against the generated artifacts to catch issues that
+static analysis cannot detect reliably.
 
-Both widget.js and admin_ui.js communicate with the same handler.js.
-The 7 questions cover the full alignment surface:
-  Q1  table names        migration DDL ↔ handler SQL
-  Q2  column names       migration DDL ↔ handler SQL
-  Q3  widget→handler     host.call() body fields ↔ ctx.widgetBody destructuring
-  Q4  handler→widget     handler return value ↔ widgetApiCatalog responseShape
-  Q5  admin→handler      bridge.call() body fields ↔ ctx.adminBody destructuring
-  Q6  handler→admin      handler return value per admin route ↔ what admin_ui reads
-  Q7  codespec coverage  codeSpec steps ↔ handler implementation
+Questions and their unique value over static checks:
+  Q1  table names     migration DDL ↔ handler SQL      — static can't parse SQL inside template literals
+  Q2  column names    migration DDL ↔ handler SQL      — same reason as Q1
+  Q3  widget fields   host.call() body ↔ ctx.widgetBody — static misses aliasing, spreads, indirect reads
+  Q4  admin fields    bridge.call() body ↔ ctx.adminBody — same as Q3
+  Q5  cron batching   when declared: no per-item Shopify calls inside loop — cannot be reliably static-checked
+  Q6  state machine   when declared: handler reads prior DB state before comparing — verifies logic, not just presence
+
+Q3/Q4 differ from static cross-artifact checks: static uses regex on catalog shapes,
+this catches semantic mismatches (aliased field names, spread operators, indirect reads).
+Q5/Q6 are only asked when the plan declares cronBatching/stateMachine.
 
 Only HIGH confidence issues trigger an automatic revision. MEDIUM issues are
 logged but not acted upon (false positive mitigation).
@@ -34,69 +36,22 @@ log = logging.getLogger(__name__)
 # ── System prompt ──────────────────────────────────────────────────────────────
 
 VALIDATOR_SYSTEM = """\
-You are a code review specialist performing cross-artifact alignment checks.
+You are a code review specialist. You receive generated artifacts alongside the architect
+plan contracts. You answer targeted questions to catch semantic issues that static analysis
+cannot detect. Only questions relevant to this specific app are included.
 
-You receive generated artifacts (handler.js, migration.sql, optional widget.js,
-optional admin_ui.js) alongside the architect plan and codeSpec.
+For each question:
+- "aligned": true if correct, false ONLY if you can name the EXACT identifier that is wrong.
+- "issue": null when aligned=true. When false, name the precise mismatch
+  (e.g. "widget sends customerId but handler reads userId for /subscribe").
+  NEVER write an issue that says the code is correct — that contradicts aligned=false.
+- "confidence": "high" = certain of the specific mismatch. "medium" = suspicious but context
+  might explain it. Set "high" when aligned=true.
 
-Both widget.js and admin_ui.js communicate with the SAME handler.js:
-  widget  → host.call(path, body)    → handler reads ctx.widgetBody
-  admin   → bridge.call(path, body)  → handler reads ctx.adminBody
-Alignment must hold in both directions (caller→handler body, handler→caller response)
-for both callers.
+CRITICAL: aligned=false + issue text saying code is correct or things align is FORBIDDEN.
+If code is correct: set aligned=true and issue=null.
 
-Answer exactly 7 targeted alignment questions. For each question:
-- Set "aligned": true if the artifacts agree on this dimension. Set "aligned": false ONLY if
-  you can name the exact identifier that is wrong (a specific field, column, or table name).
-- "issue": must be null when aligned is true. When aligned is false, name the EXACT mismatch
-  (e.g. "widget sends customerId but handler reads userId for route /subscribe").
-  NEVER write an issue that says the code is correct or that things align — that contradicts
-  aligned=false and is a logic error.
-- "confidence": "high" means you are certain of the specific mismatch you named.
-  "medium" means something looks suspicious but context might explain it.
-  When aligned is true, set confidence to "high".
-
-CRITICAL RULE: aligned=false + issue saying "both align correctly" or similar is FORBIDDEN.
-If you believe the code is correct, set aligned=true and issue=null.
-
-Respond with ONLY this JSON (no markdown fences, no explanation):
-{
-  "q1_table_names": {
-    "aligned": true,
-    "issue": null,
-    "confidence": "high"
-  },
-  "q2_column_names": {
-    "aligned": true,
-    "issue": null,
-    "confidence": "high"
-  },
-  "q3_widget_body_to_handler": {
-    "aligned": true,
-    "issue": null,
-    "confidence": "high"
-  },
-  "q4_handler_response_to_widget": {
-    "aligned": true,
-    "issue": null,
-    "confidence": "high"
-  },
-  "q5_admin_body_to_handler": {
-    "aligned": true,
-    "issue": null,
-    "confidence": "high"
-  },
-  "q6_handler_response_to_admin": {
-    "aligned": true,
-    "issue": null,
-    "confidence": "high"
-  },
-  "q7_codespec_coverage": {
-    "aligned": true,
-    "issue": null,
-    "confidence": "high"
-  }
-}"""
+Respond ONLY with the JSON object for the questions you were asked. No markdown, no explanation."""
 
 
 # ── User prompt builder ────────────────────────────────────────────────────────
@@ -107,90 +62,135 @@ def _build_prompt(
     is_storefront: bool,
     is_admin_ui: bool,
 ) -> str:
-    impl_spec = (ctx.plan.get("implementationSpec") or {})
-    code_spec = impl_spec.get("codeSpec") or {}
-    catalog = impl_spec.get("widgetApiCatalog") or []
-    admin_catalog = impl_spec.get("adminApiCatalog") or []
+    contracts = ctx.plan.get("appContracts") or {}
+    widget_catalog = contracts.get("widgetApiCatalog") or []
+    admin_catalog = contracts.get("adminApiCatalog") or []
+    cron_batching = contracts.get("cronBatching") or {}
+    has_cron_batching = bool(cron_batching.get("required"))
+    sm = contracts.get("stateMachine")
+    has_state_machine = bool(sm and isinstance(sm, dict))
 
     handler = artifacts.get("handler", "(missing)")
     migration = artifacts.get("migration", "(missing)")
     widget = artifacts.get("widget_js", "(not applicable)") if is_storefront else "(not applicable)"
     admin = artifacts.get("admin_ui", "(not applicable)") if is_admin_ui else "(not applicable)"
 
-    return f"""ARTIFACTS
+    # ── Artifacts block ───────────────────────────────────────────────────────
+    artifacts_block = f"""ARTIFACTS
 ═════════
 
 ── handler.js ──
 {handler}
 
 ── migration.sql ──
-{migration}
+{migration}"""
 
-── widget.js ──
-{widget}
+    if is_storefront:
+        artifacts_block += f"\n\n── widget.js ──\n{widget}"
+    if is_admin_ui:
+        artifacts_block += f"\n\n── admin_ui.js ──\n{admin}"
 
-── admin_ui.js ──
-{admin}
+    # ── Plan context (only what's needed) ────────────────────────────────────
+    plan_parts = []
+    if is_storefront:
+        plan_parts.append(
+            f"widgetApiCatalog:\n{json.dumps(widget_catalog, indent=2)}"
+        )
+    if is_admin_ui:
+        plan_parts.append(
+            f"adminApiCatalog:\n{json.dumps(admin_catalog, indent=2)}"
+        )
+    if has_cron_batching:
+        plan_parts.append(
+            f"cronBatching:\n{json.dumps(cron_batching, indent=2)}"
+        )
+    if has_state_machine:
+        plan_parts.append(
+            f"stateMachine:\n{json.dumps(sm, indent=2)}"
+        )
+    plan_block = "PLAN CONTEXT\n════════════\n\n" + "\n\n".join(plan_parts) if plan_parts else ""
 
-PLAN CONTEXT
-════════════
+    # ── Questions (only relevant ones) ───────────────────────────────────────
+    questions: List[str] = []
+    expected_keys: List[str] = []
 
-codeSpec:
-{json.dumps(code_spec, indent=2)}
+    questions.append(
+        "Q1 — TABLE NAMES (q1_table_names)\n"
+        "Do all table names referenced in handler.js SQL (INSERT/SELECT/UPDATE/DELETE inside\n"
+        "ctx.db template literals) exactly match the CREATE TABLE names in migration.sql?\n"
+        "Flag only if you can name the specific table name that differs."
+    )
+    expected_keys.append("q1_table_names")
 
-widgetApiCatalog (widget↔handler routes and expected response shapes):
-{json.dumps(catalog, indent=2)}
+    questions.append(
+        "Q2 — COLUMN NAMES (q2_column_names)\n"
+        "Do all column names used in handler.js SQL queries exactly match the column\n"
+        "definitions in migration.sql for those tables?\n"
+        "Flag only if you can name the specific column name that differs."
+    )
+    expected_keys.append("q2_column_names")
 
-adminApiCatalog (admin↔handler routes and expected response shapes):
-{json.dumps(admin_catalog, indent=2)}
+    if is_storefront:
+        questions.append(
+            "Q3 — WIDGET FIELDS (q3_widget_fields)\n"
+            "For each route widget.js calls via host.call(path, body):\n"
+            "  Do the exact field names the widget sends match what the handler reads from\n"
+            "  ctx.widgetBody? Look for aliased keys, spread operators, or indirect reads\n"
+            "  that static regex can miss. Cross-check against widgetApiCatalog requestShape.\n"
+            "  Also verify host.context fields (e.g. customerId) the handler expects are\n"
+            "  actually read from host.context in the widget."
+        )
+        expected_keys.append("q3_widget_fields")
 
-QUESTIONS
-═════════
+    if is_admin_ui:
+        questions.append(
+            "Q4 — ADMIN FIELDS (q4_admin_fields)\n"
+            "For each route admin_ui.js calls via bridge.call(path, body):\n"
+            "  Do the exact field names the admin UI sends match what the handler reads from\n"
+            "  ctx.adminBody? Check for aliasing, spreads, or indirect reads.\n"
+            "  Cross-check against adminApiCatalog requestShape."
+        )
+        expected_keys.append("q4_admin_fields")
 
-Q1 — TABLE NAMES
-Do all table names referenced in handler.js (INSERT/SELECT/UPDATE/DELETE) exactly
-match the table names defined in migration.sql (CREATE TABLE)?
-Answer "aligned": true if names match everywhere.
+    if has_cron_batching:
+        questions.append(
+            "Q5 — CRON BULK-FETCH PATTERN (q5_cron_bulk_fetch)\n"
+            "The plan declares cronBatching.required=true, meaning the cron handler MUST\n"
+            "bulk-fetch all needed Shopify data BEFORE iterating over items.\n"
+            "Does the cron branch in handler.js:\n"
+            "  a) Fetch all required Shopify data in one or a few batched API calls BEFORE\n"
+            "     the main iteration loop begins?\n"
+            "  b) Avoid making per-item Shopify API calls (ctx.shopify.get/post/graphql)\n"
+            "     inside the main loop body?\n"
+            "Set aligned=false if the handler makes Shopify API calls per-item inside the loop\n"
+            "instead of bulk-fetching first. Name the specific loop and API call pattern."
+        )
+        expected_keys.append("q5_cron_bulk_fetch")
 
-Q2 — COLUMN NAMES
-Do all column names referenced in handler.js SQL queries exactly match the column
-definitions in migration.sql for the same tables?
-Answer "aligned": true if column names match everywhere.
+    if has_state_machine:
+        questions.append(
+            "Q6 — STATE MACHINE LOGIC (q6_state_machine)\n"
+            f"The plan declares a stateMachine tracking '{sm.get('trackedField', '?')}' on\n"
+            f"'{sm.get('entity', '?')}'. The handler must:\n"
+            "  a) Load the last-observed value from the DB snapshot table before comparing.\n"
+            "  b) Compare the incoming value against the prior value to detect a transition.\n"
+            "  c) Only act (send notifications, update records) when a genuine transition\n"
+            "     matches a declared transition pattern.\n"
+            "  d) Update the snapshot table with the new value after acting.\n"
+            "Set aligned=false if any of these steps is missing or out of order."
+        )
+        expected_keys.append("q6_state_machine")
 
-Q3 — WIDGET BODY → HANDLER
-For each route that widget.js calls via host.call(path, body):
-  Does the body the widget sends contain exactly the fields the handler reads
-  from ctx.widgetBody for that route?
-Check both directions: no field the handler reads should be absent from the widget call;
-no field the widget sends should be silently ignored by the handler.
-Pay special attention to fields available in the widget context (e.g. customerId from
-host.context) that the handler expects but the widget may have forgotten to include.
-Answer "aligned": true if there is no widget (backend-only app).
+    # Build the expected JSON shape hint
+    shape = {k: {"aligned": True, "issue": None, "confidence": "high"} for k in expected_keys}
+    questions_block = (
+        "QUESTIONS\n═════════\n\n"
+        + "\n\n".join(questions)
+        + f"\n\nRespond ONLY with this JSON shape (keys exactly as shown in parentheses):\n"
+        + json.dumps(shape, indent=2)
+    )
 
-Q4 — HANDLER RESPONSE → WIDGET
-For each route the widget calls, does the handler's return value contain exactly the
-fields the widget reads from the result?
-Cross-check against widgetApiCatalog responseShape if present.
-Answer "aligned": true if there is no widget (backend-only app).
-
-Q5 — ADMIN BODY → HANDLER
-For each route that admin_ui.js calls via bridge.call(path, body):
-  Does the body the admin panel sends contain exactly the fields the handler reads
-  from ctx.adminBody for that route?
-Check both directions: no field the handler reads should be absent from the admin call.
-Answer "aligned": true if there is no admin_ui (not applicable).
-
-Q6 — HANDLER RESPONSE → ADMIN
-For each admin route, does the handler's return value contain exactly the fields
-that admin_ui.js reads from the response?
-Cross-check against adminApiCatalog responseShape if present.
-Answer "aligned": true if there is no admin_ui (not applicable).
-
-Q7 — CODESPEC COVERAGE
-Does handler.js implement all steps listed in codeSpec (webhookPath + cronPath)?
-Check that every named step has corresponding logic in the handler module.
-
-Respond with the JSON format specified in your system prompt."""
+    return "\n\n".join(filter(None, [artifacts_block, plan_block, questions_block]))
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -202,16 +202,17 @@ def run_validator_agent(
     is_admin_ui: bool,
 ) -> List[Dict]:
     """
-    Run 7 targeted semantic alignment questions against the generated artifacts.
+    Run targeted semantic questions against the generated artifacts.
 
-    Returns a list of HIGH-confidence issue dicts:
-        [{"question": "q3_widget_body_to_handler", "issue": "...", "confidence": "high"}, ...]
+    Only questions relevant to this app (storefront, admin, cronBatching, stateMachine)
+    are included. Returns a list of HIGH-confidence issue dicts:
+        [{"question": "q5_cron_bulk_fetch", "issue": "...", "confidence": "high"}, ...]
 
     MEDIUM-confidence issues are logged but not returned (false positive mitigation).
     Returns [] on parse failure or when all checks pass (fail-open).
     """
     model = get_agent_model("validator")
-    llm = get_llm(model=model, max_tokens=1800)
+    llm = get_llm(model=model, max_tokens=1200)
     user = _build_prompt(artifacts, ctx, is_storefront, is_admin_ui)
 
     try:

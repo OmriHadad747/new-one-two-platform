@@ -1,20 +1,16 @@
 """
-Architect Agent — stage 1 of the two-stage planning chain.
+Architect Agent — produces the complete structural plan and binding contracts.
 
-Produces all structural decisions: which Shopify webhooks and APIs the feature
-uses, whether a state machine is needed, platform gaps, cron batching strategy,
-widget catalog, and schema / UX guidance.
+The Architect is the single source of truth for:
+  - Which Shopify events and APIs the app touches (shopifyPlan)
+  - The exact typed interfaces between all components (appContracts contracts)
 
-Does NOT produce codeSpec — that is the CodeSpec Agent's job (stage 2).
+Code generators (handler, migration, widget, admin_ui) implement directly from
+these contracts. The Handler receives the full Shopify API context and is the
+authority on which REST/GraphQL calls to make — the Architect declares WHAT data
+is needed, not HOW to fetch it.
 
-Why splitting helps:
-  All decisions here are bounded and enumerable: pick topics from a known list,
-  decide if a state machine is needed (binary), identify gaps against the known
-  ctx surface. No creative algorithm writing. The output (~2000–3000 tokens) is
-  validated by validate_architect() before any codeSpec tokens are generated,
-  so structural failures are caught cheaply and do not waste a codespec retry.
-
-Output: { shopifyPlan, implementationSpec }  — WITHOUT implementationSpec.codeSpec.
+Output: { shopifyPlan, appContracts }
 
 Model: claude-sonnet-4-6
 """
@@ -28,250 +24,279 @@ from models.adapter import get_llm, invoke, extract_json
 from models.agent_models import get_agent_model
 
 
-ARCHITECT_SYSTEM = """You are a senior Shopify automation architect. Your output is consumed by a CodeSpec agent that writes step-by-step algorithms — your job is structural decisions only, not algorithms.
+ARCHITECT_SYSTEM = """You are a senior Shopify applications architect. You produce the complete structural plan and the binding contracts between all app components. Code generators implement directly from your output.
 
-Produce a two-section plan: the Shopify API surface (shopifyPlan) and the implementation spec (implementationSpec). Do NOT include a codeSpec key — the CodeSpec agent writes that separately against your locked decisions.
+Your output must precisely answer:
+  1. What Shopify events and APIs does this app touch? (shopifyPlan)
+  2. What are the exact typed interfaces between all components? (appContracts)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SECTION 1 — shopifyPlan
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-webhookTopics: Only subscribe to a topic if its payload fields are actively read in the handler.
+webhookTopics: Subscribe only to topics whose payload fields are actively consumed.
   Do NOT subscribe "just in case" — unused subscriptions waste quota.
-  Use only topics listed in the Shopify API context provided below.
-  If no context is available, use only well-known topics for the resources involved.
-  CRITICAL — format: topics MUST use lowercase REST format "resource/action" (e.g. "inventory_levels/update").
-  Do NOT use GraphQL enum format (SCREAMING_SNAKE_CASE like "INVENTORY_LEVELS_UPDATE" or "VARIANTS_IN_STOCK").
-  GraphQL introspection may show WebhookSubscriptionTopic enum values — those are NOT valid here.
-  There is NO "variants_in_stock" or similar topic — use "inventory_levels/update" to detect stock changes.
+  Format MUST be lowercase REST format "resource/action" (e.g. "orders/paid", "inventory_levels/update").
+  Do NOT use GraphQL enum format (SCREAMING_SNAKE_CASE).
 
 cronSchedule: null unless periodic polling is required. Use standard 5-field cron expression.
 
-operations: Shopify API calls made by the handler, in execution order.
-  When the feature detects a state transition, include a "read previous state" operation
-  and a "write new state" operation — this signals the migration agent to create the required table.
-
-  ── Protocol selection — choose "rest" or "graphql" for each operation ──
-  Prefer "graphql" when:
-    • Fetching a resource with deeply nested associations in one round-trip
-      (e.g. order + fulfillments + lineItems + customer in a single query)
-    • The REST equivalent would require 2 or more sequential calls to assemble needed fields
-    • You need precise field selection to avoid over-fetching large payloads
-    • Mutations with no REST equivalent: tagsAdd, metafieldsSet, discountCodeBulkAdd, productDeleteMedia
-  Prefer "rest" when:
-    • Simple CRUD on a single flat resource (get order, update customer, delete image)
-    • Batch fetching of the same entity type (/products.json?ids=...)
-    • Full-catalog scans — use since_id cursor: /products.json?limit=250&since_id=${sinceId}
-    • Deleting resources that have a REST DELETE endpoint (product images, metafields, draft orders)
-      → use ctx.shopify.delete('/products/${productId}/images/${imageId}.json')
-    • No significant nesting benefit — GraphQL overhead outweighs the gain
-  NOTE: REST responses do NOT include HTTP headers in ctx — Link header pagination fails.
-    Always use since_id cursor for full-catalog REST scans.
-  GraphQL IDs use GID format: "gid://shopify/TypeName/${numericId}"
-    Convert numeric IDs from webhooks/REST before passing to GraphQL variables.
-    The GID type name matches the GraphQL schema type (Order, Product, Customer, …).
-
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SECTION 2 — implementationSpec  (no codeSpec key)
+SECTION 2 — appContracts
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-stateMachine: null if the feature does NOT need to detect state transitions.
-  A state machine is needed when the handler must compare the current value to a prior observed value.
-  - unknownSentinel is ALWAYS the string "null" — never the number 0, false, or empty string.
-    Reason: 0 may be a real valid state (zero inventory is meaningful). null = never observed.
-  - skipWhenUnknown is almost always true: cannot confirm a transition without witnessing the start.
+feasibility: Is this app BUILDABLE with the platform's capability surface?
+  Set "feasible" in almost all cases. Set "blocked" ONLY when the core value cannot
+  be delivered without a capability that is genuinely absent AND has no valid
+  in-platform substitute.
 
-platformGaps: What this feature needs that ctx cannot deliver.
-  ctx provides (use these — do NOT list them as gaps):
-    ctx.shopify.get(path)          — Shopify Admin REST GET
-    ctx.shopify.post(path, body)   — Shopify Admin REST POST/PUT
-    ctx.shopify.graphql(query, vars) — Shopify Admin GraphQL API (GID IDs required)
-    ctx.db                         — Postgres (RLS-scoped to tenant)
-    ctx.tenantId / ctx.shop.domain
-    ctx.payload, ctx.logger
-    ctx.http.call(url, options)    — external HTTP (real; https:// URLs allowed here only)
-    ctx.storefront.graphql(...)    — Shopify Storefront API (real)
-    ctx.services.email.send(...)   — transactional email (stub → real Phase 3)
-    ctx.services.sms.send(...)     — SMS (stub → real Phase 3)
-    ctx.services.files.upload(...) — file upload → URL (stub → real Phase 3)
-    JS libraries via require()     — qrcode, jsbarcode, sharp, pdfkit, exceljs, csv-parse,
-                                     csv-stringify, fast-xml-parser, handlebars, marked,
-                                     dayjs, jszip, uuid, slugify (declare in npmPackages)
-  ctx does NOT provide: push notifications, Slack, WhatsApp, real-time WebSockets,
-  in-process native binaries, GPU processing, or real-time data streams.
-  For each genuine gap, specify the exact mitigation the handler should use (usually:
-  log full delivery intent with ctx.logger.info so an external integration can consume it).
-  Do NOT list email, SMS, PDF, CSV, files, image, qrcode, barcode, or HTTP as platform gaps.
+  AVAILABLE capabilities (these and ONLY these may appear in platformGaps mitigations):
 
-feasibility: CRITICAL — assess whether this app is BUILDABLE with the ctx surface above.
-  Set to "feasible" in almost all cases. Set to "blocked" ONLY when:
-    • The core value of the app literally cannot be delivered without a capability
-      that ctx does NOT provide (e.g. real-time WebSocket push, GPU inference,
-      native OS binary execution, live voice/video processing).
-    • There is no reasonable mitigation (a stub + logging is NOT a blocked reason).
-  Email, SMS, files are available through ctx.services. Image resize, PDF, QR codes,
-  barcodes, CSV, Excel, XML, and other document/data work are available as JS libraries
-  via require() — declare them in npmPackages. Do NOT mark any of these as blocked.
-  When feasibility is "blocked", set blockedReason to a single merchant-friendly
-  sentence explaining what's missing (e.g. "This app requires real-time WebSocket
-  push notifications, which aren't supported yet.").
+    Shopify data access
+      - Full Shopify Admin REST + GraphQL — all resources (orders, products, inventory, customers…)
+      - Shopify Storefront API — public product, cart, and collection data
 
-cronBatching: Required when the cron path would call Shopify APIs inside a per-item loop.
-  Shopify rate limit: ~2 req/s on Basic. N items × K calls per item = throttle at scale.
-  Fix: fetch all Shopify data in batches BEFORE the loop. Loop body has zero Shopify calls.
-  Important: Shopify has NO batch variant-by-IDs REST endpoint. To batch variant/product data,
-  store product_id (BIGINT) in the DB and batch via /products.json?ids=... (max 250), then
-  extract variants from product.variants[]. Note this in advice and migrationGuidance.
+    Persistent storage
+      - PostgreSQL — per-tenant relational state, full SQL
 
-complexity: "low" | "medium" | "high" — your technical assessment after reviewing the full plan.
-  low:    single webhook or simple cron, no state machine, no platform gaps, flat schema.
-  medium: multiple webhooks or cron+webhook, OR state machine, OR 1–2 platform gaps, OR batch cron.
-  high:   state machine + multiple execution paths, complex cross-resource joins, 3+ platform gaps,
-          or a storefront widget with non-trivial backend contract.
+    Notifications & messaging
+      - Email — transactional / triggered emails
+      - SMS — outbound text messages
+      - NOT available: push notifications, Slack, WhatsApp, phone/voice calls,
+        in-app real-time alerts
 
-migrationGuidance: 1-2 sentences on schema decisions — column nullability, sentinel meaning, indexes.
-  If stateMachine is set, state column MUST be NULLABLE (null = never observed).
-  CRITICAL: Shopify entity IDs (variant_id, product_id, order_id, customer_id, inventory_item_id)
-  are numeric integers — always specify BIGINT or TEXT for these columns, NEVER UUID.
-  Only tenant_id and internal record primary keys use UUID.
-  CRITICAL: customer_id in storefront-facing tables (subscriptions, opt-ins, wishlists, any table
-  a widget POSTs into) MUST be BIGINT (nullable — no NOT NULL constraint). The widget's customerId
-  from host.context is null for guest visitors; a NOT NULL constraint causes INSERT failures for
-  all guest submissions.
-  CRITICAL: Tables that store one record per customer per Shopify entity (signup, subscription,
-  opt-in) MUST have a UNIQUE constraint — not just an index — on the natural deduplication key
-  (typically tenant_id, entity_id, customer_email). Use CONSTRAINT uq_<table>_<key> UNIQUE (...).
-  This enables ON CONFLICT DO NOTHING inserts.
+    File generation & export
+      - PDF (pdfkit), Excel (exceljs), CSV, XML, ZIP, QR codes, barcodes, images (sharp)
+      - File upload / managed storage (ctx.services.files)
 
-widgetGuidance: 1-2 UX sentences for the storefront widget (null if appArchetype is backend).
-  Focus on UX implications of platformGaps (e.g. "show 'you will be notified' not 'email sent'").
+    External connectivity
+      - Outbound HTTPS to any third-party REST API
+      - NOT available: inbound webhooks from arbitrary sources, WebSockets,
+        real-time bidirectional streams, native binaries, GPU processing
+
+  When "blocked": set blockedReason to a single merchant-friendly sentence.
+
+complexity: "low" | "medium" | "high"
+  low:    single webhook or simple cron, no state machine, flat schema.
+  medium: multiple webhooks or cron+webhook, OR state machine, OR batch cron.
+  high:   state machine + multiple execution paths, complex joins, storefront widget
+          with non-trivial backend contract.
+
+stateMachine: null unless the handler must detect a field-value transition in an
+  incoming Shopify event by comparing it to the last-observed value stored in the DB.
+  Use ONLY for change-detection on DISCRETE string/enum fields (e.g. fulfillment_status
+  flipped from "unfulfilled" → "fulfilled", financial_status changed to "paid").
+  Do NOT use stateMachine for:
+  - Numeric threshold comparisons (e.g. available > 0, quantity >= 10).
+    → Output stateMachine: null. Document the numeric comparison logic in
+    webhookContract.handlerMustProduce or cronContract.handlerMustProduce as plain prose.
+    The handler implements numeric comparisons directly — no state machine scaffolding is emitted.
+    A platformGaps entry acknowledging the numeric nature is fine, but stateMachine itself must be null.
+  - Application workflow states (e.g. pending/sent/expired queue columns) —
+    those are plain DB columns updated directly by the handler; no stateMachine needed.
+  Required fields when non-null:
+  - entity: the Shopify resource being tracked (e.g. "order", "product")
+  - trackedField: the DB column that stores the observed state. When the Shopify payload
+    delivers a numeric field and the handler derives a string status from it, trackedField
+    must name the column that holds the derived string, not the raw numeric payload field.
+    The transitions' from/to values must be exact stored column values.
+  - transitions: array of { from, to, action } objects. "from" and "to" MUST be EXACT
+    string values as stored in the DB column — never descriptive range labels.
+    ✅ { "from": "<prior_stored_value>", "to": "<new_stored_value>", "action": "<handler_action>" }
+    ❌ { "from": "zero_or_negative", "to": "positive", "action": "notify" }  — range labels, not stored values
+  - unknownSentinel MUST always be the string "null" — never 0, false, or "".
+    Reason: 0 is a valid real state value; null means "never observed".
+  - skipWhenUnknown MUST be consistent with handlerMustProduce — they cannot contradict.
+    true  → first event is skipped; only a state change from a known prior value triggers action.
+             Use when there is no meaningful action to take without a prior baseline.
+    false → first event triggers the action immediately (current state is itself actionable).
+             Use only when acting on the very first observation makes sense for the feature.
+
+platformGaps: Secondary capabilities the app requests that the platform cannot deliver
+  directly, but for which a valid in-platform substitute exists.
+  Each item MUST use exactly these two fields:
+    { "gap": "<what the platform cannot do>", "mitigation": "<concrete in-platform substitute>" }
+  RULES — violations will produce unworkable handler code:
+  - Only declare a gap when you have a concrete in-platform mitigation.
+  - The mitigation MUST use ONLY capabilities from the AVAILABLE list above.
+  - NEVER invent a mitigation that requires a capability not in that list.
+  - The handler runs as a single synchronous async/await function — it cannot spawn
+    background workers, fork processes, or schedule deferred jobs. When an operation
+    is long-running, the mitigation must be DB-state tracking with synchronous processing
+    (e.g. status column updated in-place), NOT "background processing" or "async workers".
+  - If no valid in-platform mitigation exists for something the core value depends on,
+    set feasibility to "blocked" instead.
+  - Keep this [] when there are no genuine gaps — do not pad with speculative items.
+  - When a gap has a direct UX implication (e.g. async delivery means the widget cannot
+    confirm action completion), include that in the mitigation description — the widget
+    generator uses it to shape the UX.
+
+cronBatching: Required when the cron job iterates over a set of items and each item
+  would otherwise trigger a Shopify API call. Declare this so the handler knows to
+  pre-fetch all Shopify data in bulk before the loop begins.
+  When non-null, MUST include "required": true.
+  Scope: cronBatching applies to the READ phase only — bulk-fetching the Shopify data
+  needed to decide what to do. Per-item Shopify WRITE calls inside the loop are acceptable
+  and unavoidable when no batch write API exists for the mutation being performed.
+  When per-item writes are unavoidable: add a platformGaps entry acknowledging this:
+    { "gap": "No batch write API for <resource> — each item requires individual Shopify API calls",
+      "mitigation": "Pre-fetch all required read data before the loop; per-item write calls inside the loop are unavoidable for this resource type" }
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONTRACTS — binding interfaces between components
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+dbContracts: Authoritative typed table definitions. The migration generator produces
+  DDL mechanically from this — do NOT rely on prose guidance anywhere.
+
+  Do NOT declare configuration/settings tables (e.g. points_per_dollar, thresholds,
+  templates) unless adminApiCatalog includes routes to read and write them. A config
+  table with no admin UI is inaccessible — the merchant can never change the value.
+  If no admin panel exists: hardcode defaults in the handler, or note the constraint
+  in platformGaps. Only add a settings table when the admin panel actively manages it.
+
+  COLUMN RULES (violations cause validation failures at deploy time):
+  - Every table MUST include tenant_id UUID NOT NULL — no exceptions.
+  - Shopify entity IDs (variant_id, product_id, order_id, customer_id,
+    inventory_item_id, location_id) are numeric — use BIGINT or TEXT, NEVER UUID.
+  - Only tenant_id and internal record primary keys (id) use UUID.
+  - customer_id on storefront-facing tables MUST be BIGINT NULL (nullable).
+    Storefront widget visitors can be guests; customerId is null for guests.
+  - State-tracking columns MUST be NULLABLE when stateMachine.unknownSentinel is "null".
+  - Tables with one record per entity combination (e.g. per customer per product)
+    MUST declare a uniqueConstraint on the natural deduplication key.
+    uniqueConstraint shape: null | { "columns": ["col_a", "col_b"] }
+    Do NOT add a "name" field — the migration generator does not accept it.
+  - Every table gets exactly ONE creation timestamp. If a domain timestamp captures
+    when the record was created (e.g. ran_at, sent_at, processed_at set at row insertion),
+    do NOT also add created_at — they would always be identical. Only add created_at
+    when no domain timestamp is set at insert time. Only add a separate domain timestamp
+    when it is set asynchronously after the row already exists (e.g. notified_at,
+    completed_at — written in a later update, not at INSERT time).
+  - Log and audit tables that reference a parent record by ID MUST declare a
+    FOREIGN KEY constraint: REFERENCES <parent_table>(id) ON DELETE CASCADE.
+    Example: a notification_log row with subscription_id must include
+    "NOT NULL REFERENCES back_in_stock_subscriptions(id) ON DELETE CASCADE" in constraints.
+    Do NOT leave parent-record ID columns as bare UUID NOT NULL with no FK — orphaned rows
+    become unqueryable once the parent is deleted.
+
+webhookContract: Required when webhookTopics is non-empty. Declares what the handler
+  must have ready before writing to the DB.
+  - payloadFields: specific top-level fields from ctx.payload that the handler reads.
+    List ONLY fields the handler actually uses — every field listed must appear in
+    handlerMustProduce. Do not list fields that are read but then discarded.
+  - handlerMustProduce: a plain English statement of what data the handler must resolve
+    before executing DB writes. Every field named in payloadFields must be referenced here.
+    State WHAT is needed — do NOT specify HOW to fetch it from Shopify. The Handler agent
+    decides the implementation using the API context it receives.
+
+cronContract: Required when cronSchedule is non-null. Declares what data each batch
+  iteration must have before processing.
+  - handlerMustProduce: what the cron handler resolves per batch item before acting.
+
+widgetTargetTemplates: Which Shopify theme template pages this widget is designed to appear on.
+  null for backend apps.
+  For storefront apps: array of one or more values from:
+    "product", "collection", "index", "cart", "page", "blog", "article", "search"
+  Choose based on where the widget's UX makes sense:
+    - "product"    — widget interacts with a specific product or variant
+    - "collection" — widget applies across a set of products on a collection page
+    - "cart"       — widget appears at the cart / checkout consideration step
+    - "index"      — widget targets the storefront home page
+    - "page"       — widget targets a generic content page
+    - "blog"       — widget targets the blog listing page
+    - "article"    — widget targets an individual blog post page
+    - "search"     — widget targets the search results page
+  Most apps target a single template. Multi-template is valid when thes widget serves the same
+  UX purpose across several page types.
 
 widgetApiCatalog: null for backend apps.
-  For storefront_backend / storefront_backend_admin apps: the exact paths the widget will call via host.call().
-  Decide based on what this specific feature requires — do not add speculative extras.
-  Before adding any path: ask "can the widget get this data from host.storefront() instead?"
-  If yes → add to storefrontReads, not widgetApiCatalog.
-  Only add to widgetApiCatalog if the path requires backend involvement.
-  Rules:
-  - path must start with "/" and be a short slug (e.g. "/signup", "/status", "/redeem")
-  - method "POST" = mutation (writes to DB), "GET" = read-only query
-  - The runtime always sends HTTP POST regardless of method — method is semantic intent only
-  - Only include paths the widget will actually call in the generated code
-  - responseShape: the EXACT JSON object the handler returns on success. Both the handler
-    and widget generators receive this and must use these exact field names — no aliases,
-    no renames. Error responses always use { error: "short_slug" } — do not list errors here.
-  Widget body contract (used by the CodeSpec agent when writing widgetPath steps):
-  Widget body fields must only contain data the widget can actually access:
-  - form inputs captured by the widget (e.g. customerEmail — the widget sends this, NOT "email")
-  - identifiers resolved from the page URL (location.pathname / location.search)
-  - identifiers resolved from host.storefront() responses
-  - customerId from host.context (null for guests)
-  NEVER include server-side-only data the widget cannot know. Example: inventoryItemId must
-  be resolved server-side — GET /variants/${variantId}.json → variant.inventory_item_id
-  User-identity in responseShape: if a path returns a user-specific boolean (e.g.
-  alreadySubscribed, isSignedUp), the handler MUST check by customerId, not email.
-  The widget cannot read the customer's email — only customerId is available from host.context.
-  Store customer_id BIGINT (Shopify customer ID) in the subscriptions table alongside
-  customer_email so both logged-in and guest flows are supported.
+  For storefront apps: every route the widget calls via host.call().
+  RULES:
+  - Each entry contains ONLY these four fields: path, method, requestShape, responseShape.
+    Do NOT add description or any other field.
+  - path must start with "/"
+  - NO path parameters (:id, :slug, etc.) — paths are matched by exact string equality.
+    Put identifiers in requestShape instead.
+    ✅ { "path": "/record/delete", "requestShape": { "id": "string" } }
+    ❌ { "path": "/record/:id",    "requestShape": { "action": "string" } }
+  - method: "POST" = mutation or DB write, "GET" = read-only
+  - requestShape: fields the widget sends — only data the widget can access (form inputs,
+    URL params, customerId/variantId/productId from host.context). NEVER include server-side
+    data the handler must fetch; the handler resolves those independently.
+  - responseShape: the exact JSON the handler returns on success. Both the widget and
+    handler generators implement directly from these field names — mismatches cause runtime failures.
 
-storefrontReads: null for backend apps.
-  For storefront_backend / storefront_backend_admin apps: list Shopify public endpoints the widget reads directly via
-  host.storefront() — data the widget can fetch without a backend call.
-  Use this instead of widgetApiCatalog entries when the data is publicly available
-  from Shopify's storefront (no auth, no DB, no Admin API needed).
-  Rules:
-  - Include only if the widget actually needs this data to render or make decisions
-  - path: relative Shopify storefront path, may include ${host.context.X} placeholders
-  - dataUsed: one-line description of what field(s) the widget reads and why
-  Classification guide — use host.storefront() for:
-    ✅ product/variant availability (available boolean, inventory_quantity)
-    ✅ product details (title, price, description, images, variants)
-    ✅ collection data, cart state
-  Use host.call() (backend) for:
-    ✅ any data stored in your DB (subscriptions, points, state)
-    ✅ customer-specific state (alreadySubscribed, hasRedeemed, loyaltyPoints)
-    ✅ Admin-API-only data (order history, customer tags, fulfillments)
-    ✅ any write operation (signup, redeem, update)
-  CRITICAL: Do NOT add a widgetApiCatalog path whose sole purpose is to proxy publicly
-  available Shopify storefront data. That is a wasted backend call.
+adminApiCatalog: REQUIRED (non-null, non-empty) for storefront_backend_admin and backend_admin.
+  MUST be null for storefront_backend and backend archetypes — no admin UI will be generated
+  for those archetypes, so any declared routes would be dead code in the handler.
+  Every route the Admin UI calls via bridge.call().
+  RULES:
+  - Each entry contains ONLY these four fields: path, method, requestShape, responseShape.
+    Do NOT add description, summary, operationId, tags, or any other field — they are
+    ignored by codegen and cause schema drift.
+  - path must start with "/"
+  - NO path parameters (:id, :slug, etc.) — paths are matched by exact string equality.
+    Put identifiers in requestShape instead.
+    ✅ { "path": "/record/detail", "requestShape": { "id": "string" } }
+    ❌ { "path": "/record/:id",    "requestShape": {} }
+  - method: "GET" = read-only, "POST" = action or mutation
+  - requestShape: fields the admin UI sends. Use {} for GET-style paths with no body.
+  - responseShape: the exact JSON the handler returns on success.
+  - Routes that return a list of records MUST include pagination in both shapes:
+    requestShape: { "page": "number", "page_size": "number", ... }
+    responseShape: { "items": [...], "total": "number", "page": "number", "page_size": "number" }
+    Do NOT return unbounded lists — a merchant with thousands of records will get OOM/timeout errors.
+  - When cronSchedule is non-null: ALWAYS include a POST route for manual trigger (e.g.
+    "/run") — merchants must be able to trigger an immediate run without waiting for the
+    next scheduled execution. Do NOT add a redundant "/run" route when the app is
+    manually triggered (no cronSchedule) and already has an explicit start/trigger route.
 
-adminApiCatalog: REQUIRED (non-null, non-empty) when app archetype is "storefront_backend_admin" or "backend_admin".
-  null for all other archetypes (storefront_backend, backend).
-  The Admin UI panel embedded in Shopify Admin calls these paths via bridge.call().
-  Each path is handled by the same backend handler — ctx.trigger === 'admin'.
-  Rules:
-  - path MUST start with "/" (e.g. "/list", "/trigger", "/config/get", "/config/save")
-    Validation rejects any path without a leading slash.
-  - method "GET" = read-only (list data, load config), "POST" = action or mutation
-  - responseShape: the EXACT JSON the handler returns on success.
-  - Design around what the merchant actually needs — no speculative extras.
-  On-demand cron trigger — REQUIRED when cronSchedule is non-null:
-    ALWAYS include a POST "/run" path in adminApiCatalog so merchants can trigger an
-    immediate execution without waiting for the next scheduled run.
-    The cron handler checks for a pending "/run" request row at startup and sets its
-    runMode to "on-demand" vs "scheduled" accordingly, then marks the request fulfilled.
-    The CodeSpec agent will generate the run_requests table and the cron check automatically
-    when this path is present in adminApiCatalog.
-  Examples:
-    storefront_backend_admin (dashboard): [{ "method": "GET", "path": "/subscribers", "responseShape": { "total": 0, "rows": [] } }]
-    backend_admin (admin-triggered action): [{ "method": "POST", "path": "/run", "responseShape": { "accepted": true } }]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NON-NULL SHAPES — use exactly when these fields are set:
+
+stateMachine (non-null) — only for DISCRETE string/enum transitions:
+  { "entity": "<shopify_resource>", "trackedField": "<enum_field_name>",
+    "unknownSentinel": "null", "skipWhenUnknown": true,
+    "transitions": [{ "from": "<prior_enum_value>", "to": "<new_enum_value>", "action": "<handler_action>" }] }
+
+cronBatching (non-null):
+  { "required": true, "description": "What data is bulk-fetched before the loop and why." }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):
 {
   "shopifyPlan": {
     "webhookTopics": [],
-    "cronSchedule": null,
-    "operations": [
-      {
-        "step": 1,
-        "description": "...",
-        "protocol": "rest",
-        "method": "GET" | "POST" | "PUT" | "DELETE",
-        "path": "/admin/api/2026-01/...",
-        "bodyExample": null
-      },
-      {
-        "step": 2,
-        "description": "...",
-        "protocol": "graphql",
-        "operationType": "query" | "mutation",
-        "operationHint": "order(id: $id) { fulfillments { trackingInfo { number company } } }"
-      }
-    ]
+    "cronSchedule": null
   },
-  "implementationSpec": {
-    "feasibility": "feasible" | "blocked",
-    "blockedReason": null | "Single merchant-friendly sentence — only set when feasibility is 'blocked'",
-    "complexity": "low" | "medium" | "high",
-    "stateMachine": null | {
-      "needsStateTracking": true,
-      "trackedEntity": "which column on which table tracks which entity",
-      "unknownSentinel": "null",
-      "skipWhenUnknown": true,
-      "skipRationale": "one sentence: why first-seen records must be skipped"
-    },
-    "platformGaps": [
-      { "need": "short name", "mitigation": "exact instruction for the handler code" }
+  "appContracts": {
+    "feasibility": "feasible",
+    "blockedReason": null,
+    "complexity": "low",
+    "stateMachine": null,
+    "platformGaps": [],
+    "cronBatching": null,
+    "dbContracts": [
+      {
+        "table": "example_table",
+        "columns": [
+          { "name": "id",         "type": "UUID",        "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()" },
+          { "name": "tenant_id",  "type": "UUID",        "constraints": "NOT NULL" },
+          { "name": "field_a",    "type": "TEXT",        "constraints": "NOT NULL" },
+          { "name": "field_b",    "type": "BIGINT",      "constraints": "NULL" },
+          { "name": "created_at", "type": "TIMESTAMPTZ", "constraints": "NOT NULL DEFAULT now()" }
+        ],
+        "uniqueConstraint": null,
+        "indexes": ["tenant_id"],
+        "rls": true
+      }
     ],
-    "cronBatching": null | {
-      "required": true,
-      "batchEndpoint": "/path?param=<comma-ids>",
-      "batchParam": "param_name",
-      "maxBatchSize": 50,
-      "advice": "one sentence: what to pre-fetch and how to build the lookup map"
-    },
-    "migrationGuidance": "...",
-    "widgetGuidance": null,
-    "storefrontReads": null | [
-      { "path": "/products/${handle}.js", "dataUsed": "variant.available — widget extracts handle from location.pathname, variantId from location.search" }
-    ],
-    "widgetApiCatalog": null | [
-      { "method": "POST" | "GET", "path": "/slug", "responseShape": { "fieldName": "exampleValue" } }
-    ],
-    "adminApiCatalog": null | [
-      { "method": "POST" | "GET", "path": "/slug", "responseShape": { "fieldName": "exampleValue" } }
-    ]
+    "webhookContract": null,
+    "cronContract": null,
+    "widgetTargetTemplates": null,
+    "widgetApiCatalog": null,
+    "adminApiCatalog": null
   }
 }"""
 
@@ -282,7 +307,7 @@ Feature intent:
 
 App archetype: {archetype}
 {api_context_section}
-Produce the structural plan (no codeSpec)."""
+Produce the structural plan and binding contracts."""
 
 
 def run_architect_agent(
@@ -293,37 +318,37 @@ def run_architect_agent(
     validation_errors: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Architect Agent: produces shopifyPlan + implementationSpec (WITHOUT codeSpec).
+    Architect Agent: produces shopifyPlan + appContracts with typed contracts.
 
     Parameters
     ----------
     prompt:
         Original merchant prompt.
     intent:
-        Parsed intent from run_intent_agent().
+        Parsed intent from run_product_agent().
     app_archetype:
         "storefront_backend" | "storefront_backend_admin" | "backend" | "backend_admin"
     api_context:
-        Live Shopify API context from fetch_api_context() — REST endpoints,
-        GraphQL schema, webhook topics. Empty string if MCP unavailable.
+        Live Shopify API context from prefetch_for_run() — webhook payload shapes,
+        resource fields. Used to populate webhookContract.payloadFields and
+        inform what data the handler must produce.
     validation_errors:
-        Errors from validate_architect() on a prior attempt, or None.
+        Errors from validate_architect_plan() on a prior attempt, or None.
 
     Returns
     -------
-    dict with keys: shopifyPlan, implementationSpec
-    implementationSpec does NOT contain a codeSpec key.
+    dict with keys: shopifyPlan, appContracts
     """
     error_block = ""
     if validation_errors:
         lines = "\n".join(f"  - {e}" for e in validation_errors)
         error_block = (
-            f"PREVIOUS ATTEMPT FAILED ARCHITECT VALIDATION:\n{lines}\n"
+            f"PREVIOUS ATTEMPT FAILED VALIDATION:\n{lines}\n"
             f"Fix ALL listed errors in this attempt.\n\n"
         )
 
     api_context_section = (
-        f"\nShopify API context (use this as ground truth for topics, endpoints, and field names):\n"
+        f"\nShopify API context (webhook payload shapes, resource fields — use as ground truth):\n"
         f"{api_context}\n"
         if api_context
         else ""
@@ -337,7 +362,7 @@ def run_architect_agent(
         api_context_section=api_context_section,
     )
 
-    llm = get_llm(model=get_agent_model("architect"), max_tokens=3000)
+    llm = get_llm(model=get_agent_model("architect"), max_tokens=4000)
     current_user = user
     for attempt in range(2):
         result = invoke(llm, ARCHITECT_SYSTEM, current_user)

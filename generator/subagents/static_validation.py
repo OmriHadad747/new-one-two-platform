@@ -3,23 +3,22 @@ Static analysis utilities shared across all generators.
 
 Naming convention
 -----------------
-  _plan      — validates LLM plan output (Architect / CodeSpec) before codegen starts
+  _plan      — validates LLM plan output (Architect) before codegen starts
   _artifact  — validates a single generated artifact in isolation
   _contract  — cross-artifact check (two artifacts must agree on a shared interface)
 
 Execution order in the pipeline
 --------------------------------
-  1. validate_architect_plan()   — after Architect agent
-  2. validate_codespec_plan()    — after CodeSpec agent
-  3. validate_handler_artifact() )
+  1. validate_architect_plan()     — after Architect agent
+  2. validate_handler_artifact()   )
      validate_migration_artifact() ) — after parallel CodeGen (per artifact)
      validate_widget_artifact()    )
      validate_admin_ui_artifact()  )
-  4. validate_widget_handler_contract()  ) — after all per-artifact checks pass
+  3. validate_widget_handler_contract()  ) — after all per-artifact checks pass
      validate_admin_handler_contract()   )
 
-Cross-artifact validators (step 4) only check *field alignment* — route existence
-is already verified statically by validate_handler_artifact() in step 3.
+Cross-artifact validators (step 3) only check *field alignment* — route existence
+is already verified statically by validate_handler_artifact() in step 2.
 """
 
 from __future__ import annotations
@@ -120,25 +119,38 @@ def validate_architect_plan(
     architect_output: Dict[str, Any], app_archetype: str
 ) -> List[str]:
     """
-    Gate on the Architect Agent output (structural decisions only).
+    Gate on the Architect Agent output.
     Returns error strings; empty = valid.
 
     Checks:
-      1. All webhookTopics are in the known-valid set.
-      2. cronSchedule, if present, is a valid 5-field cron expression.
-      3. storefront apps must have a non-empty widgetApiCatalog OR storefrontReads.
-      4. All widgetApiCatalog paths start with '/'.
-      5. Admin archetypes (storefront_backend_admin, backend_admin) must have a non-empty adminApiCatalog.
-      6. All adminApiCatalog paths start with '/'.
-      7. stateMachine.unknownSentinel must be the string "null".
+      1.  All webhookTopics are in the known-valid set.
+      2.  cronSchedule, if present, is a valid 5-field cron expression.
+      3.  Non-empty webhookTopics must be accompanied by a webhookContract.
+      4.  Non-null cronSchedule must be accompanied by a cronContract.
+      5.  storefront apps must declare widgetApiCatalog (non-null; [] is valid for pure storefront-read widgets).
+      6.  All widgetApiCatalog paths start with '/'.
+      7.  All widgetApiCatalog entries declare requestShape.
+      8.  All widgetApiCatalog entries declare responseShape.
+      9.  Admin archetypes must have a non-empty adminApiCatalog; non-admin archetypes must not.
+      9b. No path parameters (:id, :run_id) in widgetApiCatalog or adminApiCatalog paths.
+      10. All adminApiCatalog paths start with '/'.
+      11. All adminApiCatalog entries declare requestShape.
+      12. All adminApiCatalog entries declare responseShape.
+      13. stateMachine.unknownSentinel must be the string "null" when stateMachine is set.
+      13b.stateMachine must have entity, trackedField, and transitions when non-null.
+      13c.stateMachine transitions must not use numeric range labels (positive/negative/zero/high/low etc.).
+      14. dbContracts entries must include a tenant_id column.
+      15. storefront apps must declare widgetTargetTemplates (at least one valid template).
+      16. cronBatching, when non-null, must include required=true.
     """
     errors: List[str] = []
     shopify = architect_output.get("shopifyPlan") or {}
-    impl = architect_output.get("implementationSpec") or {}
+    impl = architect_output.get("appContracts") or {}
 
     # 1. Webhook topics must be known
+    webhook_topics = shopify.get("webhookTopics") or []
     valid_topics = _get_valid_webhook_topics()
-    for topic in shopify.get("webhookTopics") or []:
+    for topic in webhook_topics:
         if topic not in valid_topics:
             errors.append(
                 f"unknown webhook topic {topic!r} — "
@@ -153,60 +165,190 @@ def validate_architect_plan(
             f"(e.g. '*/15 * * * *')"
         )
 
-    # 3. storefront apps must declare widget catalog or storefront reads
-    widget_catalog = impl.get("widgetApiCatalog") or []
-    storefront_reads = impl.get("storefrontReads") or []
-    if (
-        app_archetype in ("storefront_backend", "storefront_backend_admin")
-        and not widget_catalog
-        and not storefront_reads
-    ):
-        guidance = (impl.get("widgetGuidance") or "").lower()
-        if "host.storefront" not in guidance and "storefront" not in guidance:
-            errors.append(
-                "widgetApiCatalog is null/empty for a storefront_backend app — "
-                "list every path the widget calls via host.call() with its responseShape, "
-                "or if all widget data comes from Shopify's public storefront, "
-                "describe host.storefront() usage in widgetGuidance"
-            )
+    # 3. webhookTopics non-empty → webhookContract required
+    if webhook_topics and not impl.get("webhookContract"):
+        errors.append(
+            "webhookContract is missing — required when webhookTopics is non-empty. "
+            "Declare payloadFields (top-level payload fields the handler reads) and "
+            "handlerMustProduce (what data must be resolved before DB writes)"
+        )
 
-    # 4. Every widgetApiCatalog path must start with '/'
+    # 4. cronSchedule non-null → cronContract required
+    if cron is not None and not impl.get("cronContract"):
+        errors.append(
+            "cronContract is missing — required when cronSchedule is non-null. "
+            "Declare handlerMustProduce (what data each batch item must resolve before acting)"
+        )
+
+    # 5. storefront apps must declare widgetApiCatalog (non-null; [] valid for pure storefront-read widgets)
+    widget_catalog = impl.get("widgetApiCatalog")
+    if app_archetype in ("storefront_backend", "storefront_backend_admin") and widget_catalog is None:
+        errors.append(
+            "widgetApiCatalog is null for a storefront app — "
+            "set to the list of paths the widget calls via host.call(), "
+            "or [] if the widget reads exclusively from Shopify's public storefront API"
+        )
+    widget_catalog = widget_catalog or []
+
+    # 6. Every widgetApiCatalog path must start with '/'
     for entry in widget_catalog:
         path = entry.get("path", "")
         if path and not path.startswith("/"):
+            errors.append(f"widgetApiCatalog path {path!r} must start with '/'")
+
+    # 7. Every widgetApiCatalog entry must declare requestShape
+    for entry in widget_catalog:
+        path = entry.get("path", "")
+        if path and "requestShape" not in entry:
             errors.append(
-                f"widgetApiCatalog path {path!r} must start with '/' "
-                f"(e.g. '/signup', '/status')"
+                f"widgetApiCatalog path {path!r} is missing requestShape — "
+                "declare the exact fields the widget sends in the host.call() body"
             )
 
-    # 5. Admin archetypes must declare a non-empty adminApiCatalog
+    # 8. Every widgetApiCatalog entry must declare responseShape
+    for entry in widget_catalog:
+        path = entry.get("path", "")
+        if path and "responseShape" not in entry:
+            errors.append(
+                f"widgetApiCatalog path {path!r} is missing responseShape — "
+                "declare the exact JSON fields the handler returns on success"
+            )
+
+    # 9. Admin archetypes must declare a non-empty adminApiCatalog;
+    #    non-admin archetypes must NOT (no admin UI generator will run for them).
     admin_catalog = impl.get("adminApiCatalog") or []
     if app_archetype in ("storefront_backend_admin", "backend_admin"):
         if not admin_catalog:
             errors.append(
                 f"adminApiCatalog is null/empty for a {app_archetype!r} app — "
-                "list every path the admin panel calls via bridge.call() with its responseShape "
-                "(e.g. '/list', '/trigger', '/config/save')"
+                "list every path the admin panel calls via bridge.call() "
+                "with requestShape and responseShape"
             )
+    elif admin_catalog:
+        errors.append(
+            f"adminApiCatalog is non-empty for a {app_archetype!r} app — "
+            "no admin UI generator will run for this archetype, so these routes are dead code. "
+            "Either change appCategory to backend_admin / storefront_backend_admin, "
+            "or remove adminApiCatalog."
+        )
 
-    # 6. Every adminApiCatalog path must start with '/'
+    # 9b. No path parameters in widgetApiCatalog or adminApiCatalog paths.
+    #     The harness routes on exact string equality — :param segments never match.
+    _PATH_PARAM = re.compile(r"/:[\w]+")
+    for catalog_name, catalog in [("widgetApiCatalog", widget_catalog), ("adminApiCatalog", admin_catalog)]:
+        for entry in catalog:
+            path = entry.get("path", "")
+            if _PATH_PARAM.search(path):
+                errors.append(
+                    f"{catalog_name} path {path!r} contains a path parameter — "
+                    "the harness routes on exact string equality, so ':param' segments will never match. "
+                    "Use a flat path and put the identifier in requestShape instead: "
+                    f"e.g. '{_PATH_PARAM.sub('', path)}/action' with requestShape: {{\"id\": \"string\"}}"
+                )
+
+    # 10. Every adminApiCatalog path must start with '/'
     for entry in admin_catalog:
         path = entry.get("path", "")
         if path and not path.startswith("/"):
+            errors.append(f"adminApiCatalog path {path!r} must start with '/'")
+
+    # 11. Every adminApiCatalog entry must declare requestShape
+    for entry in admin_catalog:
+        path = entry.get("path", "")
+        if path and "requestShape" not in entry:
             errors.append(
-                f"adminApiCatalog path {path!r} must start with '/' "
-                f"(e.g. '/list', '/trigger', '/config/save')"
+                f"adminApiCatalog path {path!r} is missing requestShape — "
+                "declare the exact fields the admin UI sends (use {{}} for paths with no body)"
             )
 
-    # 7. stateMachine.unknownSentinel must be the string "null"
-    sm = impl.get("stateMachine") or {}
-    if sm.get("needsStateTracking"):
+    # 12. Every adminApiCatalog entry must declare responseShape
+    for entry in admin_catalog:
+        path = entry.get("path", "")
+        if path and "responseShape" not in entry:
+            errors.append(
+                f"adminApiCatalog path {path!r} is missing responseShape — "
+                "declare the exact JSON fields the handler returns on success"
+            )
+
+    # 13. stateMachine.unknownSentinel must be the string "null" when stateMachine is set
+    sm = impl.get("stateMachine")
+    if sm and isinstance(sm, dict):
         sentinel = sm.get("unknownSentinel")
         if sentinel != "null":
             errors.append(
                 f"stateMachine.unknownSentinel is {sentinel!r} — must be the string "
                 f'"null" (not the number 0, not false, not empty string). '
-                f"Reason: 0 is a valid real state (zero inventory); null = never observed."
+                f"Reason: 0 is a valid real state value; null means never observed."
+            )
+
+    # 13b. stateMachine must have entity, trackedField, and transitions when non-null
+    if sm and isinstance(sm, dict):
+        for required_field in ("entity", "trackedField", "transitions"):
+            if not sm.get(required_field):
+                errors.append(
+                    f"stateMachine is missing required field '{required_field}' — "
+                    "stateMachine must declare: entity (the Shopify resource being tracked), "
+                    "trackedField (the specific field compared across events), and "
+                    "transitions (array of {from, to, action} objects). "
+                    "Do not use stateMachine for application workflow states — "
+                    "those are plain DB columns updated directly by the handler."
+                )
+
+    # 13c. stateMachine transitions must use exact stored enum values, not descriptive range labels
+    _RANGE_LABEL_WORDS = re.compile(
+        r"\b(positive|negative|zero|nonzero|non_zero|high|low|above|below|"
+        r"greater|less|threshold|exceeded|or_negative|or_positive|and_above|and_below)\b",
+        re.IGNORECASE,
+    )
+    if sm and isinstance(sm, dict):
+        for t in sm.get("transitions") or []:
+            for field in ("from", "to"):
+                val = str(t.get(field, ""))
+                if _RANGE_LABEL_WORDS.search(val):
+                    errors.append(
+                        f"stateMachine transition {field}={val!r} looks like a numeric range label, "
+                        "not a stored enum value. stateMachine must not be used for numeric "
+                        "threshold comparisons — set stateMachine: null and document the numeric "
+                        "logic in webhookContract.handlerMustProduce instead."
+                    )
+
+    # 14. Each dbContracts entry must include a tenant_id column
+    for contract in impl.get("dbContracts") or []:
+        table = contract.get("table", "?")
+        columns = contract.get("columns") or []
+        col_names = {c.get("name", "").lower() for c in columns}
+        if "tenant_id" not in col_names:
+            errors.append(
+                f"dbContracts table '{table}' is missing tenant_id column — "
+                "every table must include tenant_id UUID NOT NULL for RLS tenant isolation"
+            )
+
+    # 15. storefront apps must declare widgetTargetTemplates
+    _VALID_TEMPLATES = {"product", "collection", "index", "cart", "page", "blog", "article", "search"}
+    if app_archetype in ("storefront_backend", "storefront_backend_admin"):
+        targets = impl.get("widgetTargetTemplates") or []
+        if not targets:
+            errors.append(
+                "widgetTargetTemplates is null/empty for a storefront app — "
+                "declare which theme template pages the widget targets: "
+                "one or more of: product, collection, index, cart, page, blog, article, search"
+            )
+        else:
+            invalid = [t for t in targets if t not in _VALID_TEMPLATES]
+            if invalid:
+                errors.append(
+                    f"widgetTargetTemplates contains invalid values {invalid!r} — "
+                    f"valid values are: {sorted(_VALID_TEMPLATES)}"
+                )
+
+    # 16. cronBatching, when non-null, must include required=true
+    batching = impl.get("cronBatching")
+    if batching is not None and isinstance(batching, dict):
+        if batching.get("required") is not True:
+            errors.append(
+                "cronBatching is missing required field 'required: true' — "
+                "when cronBatching is declared, set required=true so the handler "
+                "knows to inject the bulk-fetch pattern"
             )
 
     return errors
@@ -221,316 +363,20 @@ def _extract_js_fields(obj_literal: str) -> List[str]:
 
     Returns sorted list of key identifiers only (not values).
     Uses a split-based approach so the last field is always captured even when
-    the closing `}` is not present in the captured substring (common when the
-    field list is extracted via a regex group that stops before `}`).
+    the closing `}` is not present in the captured substring.
     """
     keys: List[str] = []
     seen: set = set()
-    # strip surrounding braces/whitespace in case the caller left them in
     s = obj_literal.strip().strip("{}").strip()
     for part in s.split(","):
         part = part.strip()
         if not part:
             continue
-        # explicit "key: value" — take the key only; shorthand "key" — take as-is
         key = part.split(":")[0].strip()
         if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key) and key not in _NON_FIELD and key not in seen:
             keys.append(key)
             seen.add(key)
     return sorted(keys)
-
-
-def extract_widget_field_contracts(widget_path: List[str]) -> Dict[str, List[str]]:
-    """
-    Parse codeSpec.widgetPath steps and extract the field contract for each path.
-
-    Returns {'/path': ['field1', 'field2']} based on host.call() body objects.
-    Both the handler and widget generators call this to get the authoritative field
-    list for each route — so both sides implement the exact same names.
-
-    Only paths with an explicit JS object literal in host.call() are returned.
-    Paths called with no body (GET-style) are omitted.
-    """
-    contracts: Dict[str, List[str]] = {}
-    call_re = re.compile(
-        r"host\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{([^}]*)\}",
-    )
-    for step in widget_path:
-        m = call_re.search(step)
-        if m:
-            path = m.group(1)
-            fields = _extract_js_fields(m.group(2))
-            if fields:
-                contracts[path] = fields
-    return contracts
-
-
-def extract_admin_field_contracts(admin_path: List[str]) -> Dict[str, List[str]]:
-    """
-    Same as extract_widget_field_contracts but for bridge.call() in adminPath steps.
-    Only paths that send a body are returned — GET-style paths with no body are skipped.
-    """
-    contracts: Dict[str, List[str]] = {}
-    call_re = re.compile(
-        r"bridge\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{([^}]*)\}",
-    )
-    for step in admin_path:
-        m = call_re.search(step)
-        if m:
-            path = m.group(1)
-            fields = _extract_js_fields(m.group(2))
-            if fields:
-                contracts[path] = fields
-    return contracts
-
-
-def validate_codespec_plan(
-    codespec_output: Dict[str, Any],
-    architect_output: Dict[str, Any],
-) -> List[str]:
-    """
-    Gate on the CodeSpec Agent output (algorithm correctness).
-    Returns error strings; empty = valid.
-
-    Args:
-        codespec_output:  { "codeSpec": { webhookPath, cronPath, widgetPath, adminPath, functions } }
-        architect_output: Full architect plan (shopifyPlan + implementationSpec without codeSpec).
-
-    Checks:
-      1. Each widgetApiCatalog path has at least one widgetPath entry.
-      2. Each adminApiCatalog path has at least one adminPath entry.
-      3. storefrontReads declared by architect must appear as host.storefront() in widgetPath.
-      4. Atomic claim: every RETURNING step is immediately followed by a skip guard (all paths).
-      5. No Shopify API calls inside per-item loop bodies.
-      6. DB SELECT steps in webhook, cron, and admin paths must reference ctx.tenantId.
-      7. Each widgetApiCatalog path must have an explicit host.call() body with JS field names
-         AND a matching ctx.widgetBody destructuring step with identical fields.
-      8. Each adminApiCatalog path that sends a body must have a matching ctx.adminBody
-         destructuring step with identical fields.
-    """
-    errors: List[str] = []
-    impl = architect_output.get("implementationSpec") or {}
-    widget_catalog = impl.get("widgetApiCatalog") or []
-    admin_catalog = impl.get("adminApiCatalog") or []
-    storefront_reads = impl.get("storefrontReads") or []
-
-    code_spec = codespec_output.get("codeSpec") or {}
-    webhook_path: List[str] = code_spec.get("webhookPath") or []
-    cron_path: List[str] = code_spec.get("cronPath") or []
-    widget_path: List[str] = code_spec.get("widgetPath") or []
-    admin_path: List[str] = code_spec.get("adminPath") or []
-
-    # 1. Each widgetApiCatalog path must be covered by at least one widgetPath step
-    for entry in widget_catalog:
-        catalog_path = entry.get("path", "")
-        if catalog_path:
-            covered = any(
-                f"path {catalog_path}" in step or catalog_path in step
-                for step in widget_path
-            )
-            if not covered:
-                errors.append(
-                    f"widgetApiCatalog path '{catalog_path}' has no corresponding "
-                    f"entry in codeSpec.widgetPath — each catalog path needs at least "
-                    f"one widgetPath step starting with 'path {catalog_path}:'"
-                )
-
-    # 2. Each adminApiCatalog path must be covered by at least one adminPath step
-    for entry in admin_catalog:
-        catalog_path = entry.get("path", "")
-        if catalog_path:
-            covered = any(
-                f"path {catalog_path}" in step or catalog_path in step
-                for step in admin_path
-            )
-            if not covered:
-                errors.append(
-                    f"adminApiCatalog path '{catalog_path}' has no corresponding "
-                    f"entry in codeSpec.adminPath — each admin catalog path needs at least "
-                    f"one adminPath step"
-                )
-
-    # 3. storefrontReads declared by architect must appear as host.storefront() in widgetPath
-    if storefront_reads:
-        has_storefront_call = any("host.storefront" in step for step in widget_path)
-        if not has_storefront_call:
-            errors.append(
-                f"implementationSpec.storefrontReads declares {len(storefront_reads)} storefront "
-                f"read(s) but codeSpec.widgetPath has no host.storefront() call — "
-                f"add widget steps that call host.storefront() for: "
-                f"{', '.join(r.get('path', '?') for r in storefront_reads)}"
-            )
-
-    # 4. Atomic claim ordering: RETURNING step must be immediately followed by a skip guard.
-    #    Applies to all paths — any path may perform UPDATE...RETURNING for idempotency.
-    for path_name, path_steps in [
-        ("webhookPath", webhook_path),
-        ("cronPath", cron_path),
-        ("widgetPath", widget_path),
-        ("adminPath", admin_path),
-    ]:
-        for i, step in enumerate(path_steps):
-            if "RETURNING" in step or "returning" in step.lower():
-                next_step = path_steps[i + 1] if i + 1 < len(path_steps) else ""
-                has_length_check = bool(
-                    re.search(r"\.length\s*[=!]=\s*0|=== 0|== 0", next_step)
-                )
-                has_skip_word = any(
-                    w in next_step.lower()
-                    for w in ("skip", "return", "continue", "stop", "break")
-                )
-                if not (has_length_check or has_skip_word):
-                    errors.append(
-                        f"codeSpec.{path_name} step {i + 1}: RETURNING-based atomic claim "
-                        f"must be immediately followed by a skip-if-zero-rows guard "
-                        f"(e.g. 'if claimed.length === 0: return'). "
-                        f"Next step is: {next_step[:80]!r}"
-                    )
-
-    # 5. No Shopify API calls inside per-item loop bodies
-    loop_indicators = re.compile(
-        r"\bfor\s+each\b|\bfor\s+\(|\bfor\s+const\b|loop\s+body|\binside\s+loop\b",
-        re.IGNORECASE,
-    )
-    shopify_call = re.compile(r"/admin/api/|ctx\.shopify\.", re.IGNORECASE)
-    for path_name, path_steps in [
-        ("webhookPath", webhook_path),
-        ("cronPath", cron_path),
-    ]:
-        for i, step in enumerate(path_steps):
-            if loop_indicators.search(step) and shopify_call.search(step):
-                if not re.search(
-                    r"\bbatch\b|\bchunk\b|\bpre.?fetch\b", step, re.IGNORECASE
-                ):
-                    errors.append(
-                        f"codeSpec.{path_name} step {i + 1}: Shopify API call inside a "
-                        f"per-item loop — move all ctx.shopify calls to a pre-fetch phase "
-                        f"before the loop (batch pattern). "
-                        f"Step: {step[:100]!r}"
-                    )
-
-    # 6. DB SELECT steps must always be scoped to ctx.tenantId.
-    #    Applies to webhook, cron, and admin paths — any path that queries tenant tables.
-    #    (widgetPath is excluded: widget queries are single-entity lookups scoped by the
-    #    entity ID from the widget body, tenant scoping enforced at artifact level.)
-    select_re = re.compile(r"\bSELECT\b", re.IGNORECASE)
-    tenant_re = re.compile(r"ctx\.tenantId", re.IGNORECASE)
-    for path_name, path_steps in [
-        ("webhookPath", webhook_path),
-        ("cronPath", cron_path),
-        ("adminPath", admin_path),
-    ]:
-        for i, step in enumerate(path_steps):
-            if select_re.search(step) and not tenant_re.search(step):
-                errors.append(
-                    f"codeSpec.{path_name} step {i + 1}: SELECT is missing tenant_id filter — "
-                    f"add 'AND tenant_id = ${{ctx.tenantId}}'. "
-                    f"Every DB query must be scoped to the current tenant. "
-                    f"Offending step: {step[:120]!r}"
-                )
-
-    # 7. widgetPath field contract self-consistency.
-    #    Each widgetApiCatalog path that sends a body must have:
-    #      (a) a step with host.call('/path', { field1, field2 }) — explicit JS identifiers
-    #      (b) a step with const { field1, field2 } = ctx.widgetBody — exact same names
-    #    Catching this in the codeSpec prevents codegen agents from independently
-    #    inventing field names and producing a mismatch that only surfaces after codegen.
-    for entry in widget_catalog:
-        catalog_path = entry.get("path", "")
-        if not catalog_path:
-            continue
-        path_steps = [s for s in widget_path if catalog_path in s]
-
-        call_m = None
-        for step in path_steps:
-            m = re.search(
-                rf"host\.call\s*\(\s*['\"](?:{re.escape(catalog_path)})['\"].*?\{{([^}}]+)\}}",
-                step,
-            )
-            if m:
-                call_m = m
-                break
-
-        destr_m = None
-        for step in path_steps:
-            m = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.widgetBody", step)
-            if m:
-                destr_m = m
-                break
-
-        if not call_m:
-            errors.append(
-                f"codeSpec.widgetPath for '{catalog_path}': missing explicit host.call() body — "
-                f"write the exact JS object: "
-                f"\"path {catalog_path}: widget calls host.call('{catalog_path}', {{ field1, field2 }})\" "
-                f"using camelCase identifiers only, no prose"
-            )
-
-        if not destr_m:
-            errors.append(
-                f"codeSpec.widgetPath for '{catalog_path}': missing ctx.widgetBody destructuring — "
-                f"write: \"path {catalog_path}: handler: const {{ field1, field2 }} = ctx.widgetBody\" "
-                f"with the same field names as the host.call() body"
-            )
-
-        if call_m and destr_m:
-            widget_fields = set(_extract_js_fields(call_m.group(1)))
-            handler_fields = set(_extract_js_fields(destr_m.group(1)))
-            if widget_fields != handler_fields:
-                errors.append(
-                    f"codeSpec.widgetPath '{catalog_path}' internal field mismatch: "
-                    f"host.call() sends {sorted(widget_fields)}, "
-                    f"ctx.widgetBody destructures {sorted(handler_fields)} — "
-                    f"both steps must use identical field names. Fix the codeSpec before codegen runs."
-                )
-
-    # 8. adminPath field contract self-consistency.
-    #    Same check for bridge.call() bodies vs ctx.adminBody destructuring.
-    #    GET-style paths (no body) are skipped — only paths with a body need the check.
-    for entry in admin_catalog:
-        catalog_path = entry.get("path", "")
-        if not catalog_path:
-            continue
-        path_steps_admin = [s for s in admin_path if catalog_path in s]
-
-        call_m = None
-        for step in path_steps_admin:
-            m = re.search(
-                rf"bridge\.call\s*\(\s*['\"](?:{re.escape(catalog_path)})['\"].*?\{{([^}}]+)\}}",
-                step,
-            )
-            if m:
-                call_m = m
-                break
-
-        if not call_m:
-            continue  # GET-style admin path with no body — no contract to validate
-
-        destr_m = None
-        for step in path_steps_admin:
-            m = re.search(r"const\s*\{([^}]+)\}\s*=\s*ctx\.adminBody", step)
-            if m:
-                destr_m = m
-                break
-
-        if not destr_m:
-            errors.append(
-                f"codeSpec.adminPath for '{catalog_path}': has bridge.call() body but no "
-                f"ctx.adminBody destructuring — write: "
-                f"\"path {catalog_path}: handler: const {{ field1, field2 }} = ctx.adminBody\""
-            )
-        elif call_m and destr_m:
-            admin_fields = set(_extract_js_fields(call_m.group(1)))
-            handler_fields = set(_extract_js_fields(destr_m.group(1)))
-            if admin_fields != handler_fields:
-                errors.append(
-                    f"codeSpec.adminPath '{catalog_path}' internal field mismatch: "
-                    f"bridge.call() sends {sorted(admin_fields)}, "
-                    f"ctx.adminBody destructures {sorted(handler_fields)} — "
-                    f"both steps must use identical field names."
-                )
-
-    return errors
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -553,6 +399,8 @@ FORBIDDEN_HANDLER_PATTERNS = [
     (r"\bprocess\.kill\b", "process.kill is not allowed"),
     (r"\bprocess\.env\b", "process.env access is not allowed"),
     (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
+    (r"\bsetInterval\s*\(", "setInterval is not allowed — handlers are short-lived invocations, not long-running processes"),
+    (r"\bsetImmediate\s*\(", "setImmediate is not allowed"),
 ]
 
 
@@ -622,6 +470,8 @@ def validate_handler_artifact(
     api_plan_topics: List[str],
     widget_catalog: Optional[List[Dict[str, Any]]] = None,
     admin_catalog: Optional[List[Dict[str, Any]]] = None,
+    cron_batching_required: bool = False,
+    has_state_machine: bool = False,
 ) -> List[str]:
     """
     Validate the generated CommonJS handler.js.
@@ -629,12 +479,14 @@ def validate_handler_artifact(
     Checks:
       1. Syntax completeness (balanced braces/parens/strings).
       2. module.exports, webhookTopics, handler present.
-      3. Forbidden patterns (require, fetch, eval, process.env, etc.).
+      3. Forbidden patterns (fetch, eval, setInterval, setImmediate, process.env, etc.).
       4. Declared webhookTopics match the architect plan.
       5. Every widgetApiCatalog path has a ctx.widgetPath === '/path' branch
          outside any admin block (widget trigger routing).
       6. Every adminApiCatalog path has a ctx.adminPath === '/path' branch
          inside the ctx.trigger === 'admin' block.
+      7. When cronBatching.required: handler has a cron trigger branch.
+      8. When stateMachine is set: handler loads prior state from DB before writing.
     """
     errors: List[str] = []
 
@@ -806,6 +658,31 @@ def validate_handler_artifact(
                 f"add: if (ctx.adminPath === '{path}') {{ ... }} "
                 f"inside the ctx.trigger === 'admin' block. "
                 f"Every adminApiCatalog path MUST be handled."
+            )
+
+    # 7. When cronBatching.required: handler must have a cron trigger branch.
+    #    This is a structural gate — whether the bulk-fetch is correctly implemented
+    #    inside that branch is verified by the agentic validator (Q7).
+    if cron_batching_required:
+        has_cron_branch = bool(
+            re.search(r"ctx\.trigger\s*===\s*['\"]cron['\"]", code)
+        )
+        if not has_cron_branch:
+            errors.append(
+                "cronBatching.required is true but handler has no ctx.trigger === 'cron' branch — "
+                "add a cron branch that bulk-fetches all Shopify data before iterating"
+            )
+
+    # 8. When stateMachine is set: handler must read prior state from DB before writing.
+    #    Ensures the snapshot read (ctx.db`SELECT...`) precedes any INSERT/UPDATE that
+    #    would record the new state — the agentic validator checks correctness of the logic.
+    if has_state_machine:
+        has_db_read = bool(re.search(r"ctx\.db`\s*SELECT", code, re.IGNORECASE))
+        if not has_db_read:
+            errors.append(
+                "stateMachine is declared but handler never reads prior state from DB "
+                "(no ctx.db`SELECT` found) — load the last-observed value before comparing "
+                "to the incoming event and writing the new state"
             )
 
     return errors
@@ -1223,7 +1100,7 @@ def validate_widget_handler_contract(
             msg = (
                 f"widget sends field(s) {sorted(missing)} to '{path}' but handler "
                 f"destructures {sorted(handler_fields)} from ctx.widgetBody — "
-                f"field name mismatch. Align both sides to the codeSpec.widgetPath."
+                f"field name mismatch. Align both sides to the widgetApiCatalog requestShape."
             )
             errors.setdefault("handler", []).append(msg)
             errors.setdefault("widget_js", []).append(msg)
@@ -1299,7 +1176,7 @@ def validate_admin_handler_contract(
             msg = (
                 f"admin UI sends field(s) {sorted(missing)} to '{path}' but handler "
                 f"destructures {sorted(handler_fields)} from ctx.adminBody in the admin block — "
-                f"field name mismatch. Align both sides to the codeSpec.adminPath."
+                f"field name mismatch. Align both sides to the adminApiCatalog requestShape."
             )
             errors.setdefault("handler", []).append(msg)
             errors.setdefault("admin_ui", []).append(msg)

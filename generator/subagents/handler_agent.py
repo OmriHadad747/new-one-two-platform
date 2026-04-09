@@ -1,17 +1,20 @@
 """
 Handler Generator — produces the CommonJS handler.js for the harness.
 
+The Handler is the Shopify API authority: it receives the full MCP api_context
+and decides independently which REST/GraphQL calls to make. The Architect's
+contracts tell it WHAT data is needed; the api_context tells it WHAT is available
+in the Shopify schema.
+
 System prompt: HARNESS_BASE (always) — ctx API surface, output format, core rules.
 
-JIT harness sections (Change 3): injected into the user prompt only when the plan
-requires them, keeping the context window focused on what actually applies:
+JIT harness sections — injected into the user prompt only when the plan requires them:
   HARNESS_SECTION_WEBHOOK       — when webhookTopics is non-empty
-  HARNESS_SECTION_STATE_MACHINE — when implementationSpec.stateMachine.needsStateTracking
-  HARNESS_SECTION_CRON_BATCHING — when implementationSpec.cronBatching.required
-  HARNESS_SECTION_WIDGET        — when platform_api_catalog is non-empty (storefront_backend / storefront_backend_admin apps)
-
-The codeSpec from the Planner is rendered as a numbered algorithm the generator
-implements literally — no interpretation, no gap-filling.
+  HARNESS_SECTION_STATE_MACHINE — when appContracts.stateMachine is non-null
+  HARNESS_SECTION_CRON_BATCHING — when appContracts.cronBatching.required is true
+  HARNESS_SECTION_WIDGET        — when platform_api_catalog is non-empty
+  HARNESS_SECTION_WIDGET_STOREFRONT — when widgetApiCatalog is [] (storefront app, no backend widget routes)
+  HARNESS_SECTION_ADMIN         — when adminApiCatalog is non-empty
 
 Model: claude-sonnet-4-6 (via agent_models.py)
 """
@@ -22,6 +25,7 @@ import json
 import re
 from typing import Any, Dict, List
 
+from shopify_mcp.client import validate_handler_graphql
 from subagents.base import CodegenContext, Generator
 from subagents.static_validation import validate_handler_artifact
 from templates.harness_contract import (
@@ -47,12 +51,14 @@ class HandlerGenerator(Generator):
     def user_prompt(self, ctx: CodegenContext) -> str:
         retry_block = self.format_retry_block(ctx.previous_errors)
         jit_sections = _build_jit_sections(ctx.plan, ctx.platform_api_catalog)
-        spec_block = _format_code_spec(ctx.plan)
+        webhook_contract_block = _format_webhook_contract(ctx.plan)
+        cron_contract_block = _format_cron_contract(ctx.plan)
         gaps_block = _format_platform_gaps(ctx.plan)
-        catalog_block = _format_widget_catalog(ctx.platform_api_catalog)
+        db_contracts_block = _format_db_contracts(ctx.plan)
+        widget_catalog_block = _format_widget_catalog(ctx.platform_api_catalog)
         admin_catalog_block = _format_admin_catalog(ctx.plan)
+        api_context_block = _format_api_context(ctx.api_context)
         prior_block = _format_prior_handler(ctx.prior_handler_code)
-        field_contracts_block = _format_field_contracts(ctx.plan)
         routing_checklist = _format_routing_checklist(
             ctx.platform_api_catalog, ctx.plan
         )
@@ -62,11 +68,13 @@ class HandlerGenerator(Generator):
             f"{jit_sections}"
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n\n"
             f"Shopify API plan:\n{json.dumps(ctx.plan.get('shopifyPlan', {}), indent=2)}\n"
+            f"{webhook_contract_block}"
+            f"{cron_contract_block}"
             f"{gaps_block}"
-            f"{catalog_block}"
+            f"{db_contracts_block}"
+            f"{widget_catalog_block}"
             f"{admin_catalog_block}"
-            f"{spec_block}"
-            f"{field_contracts_block}"
+            f"{api_context_block}"
             f"{prior_block}"
             f"{routing_checklist}"
             "Generate the handler.js module. Output ONLY the JavaScript code."
@@ -79,15 +87,24 @@ class HandlerGenerator(Generator):
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         topics = ctx.plan.get("shopifyPlan", {}).get("webhookTopics", [])
-        impl = ctx.plan.get("implementationSpec") or {}
+        impl = ctx.plan.get("appContracts") or {}
         widget_catalog = impl.get("widgetApiCatalog") or []
         admin_catalog = impl.get("adminApiCatalog") or []
-        return validate_handler_artifact(
-            artifact, topics, widget_catalog, admin_catalog
+        batching = impl.get("cronBatching") or {}
+        sm = impl.get("stateMachine")
+        errors = validate_handler_artifact(
+            artifact,
+            topics,
+            widget_catalog,
+            admin_catalog,
+            cron_batching_required=bool(batching.get("required")),
+            has_state_machine=bool(sm and isinstance(sm, dict)),
         )
+        errors += validate_handler_graphql(artifact)
+        return errors
 
 
-# ── JIT harness section builder (Change 3) ────────────────────────────────────
+# ── JIT harness section builder ────────────────────────────────────────────────
 
 
 def _build_jit_sections(
@@ -98,7 +115,7 @@ def _build_jit_sections(
     Irrelevant sections are omitted so the model focuses on what applies.
     """
     shopify = plan.get("shopifyPlan") or {}
-    impl = plan.get("implementationSpec") or {}
+    impl = plan.get("appContracts") or {}
     sm = impl.get("stateMachine") or {}
     batching = impl.get("cronBatching") or {}
 
@@ -107,23 +124,21 @@ def _build_jit_sections(
     if shopify.get("webhookTopics"):
         sections.append(HARNESS_SECTION_WEBHOOK)
 
-    if sm.get("needsStateTracking"):
+    if sm and isinstance(sm, dict):
         sections.append(HARNESS_SECTION_STATE_MACHINE)
 
-    if batching.get("required") or shopify.get("webhookTopics"):
+    if batching.get("required"):
         sections.append(HARNESS_SECTION_CRON_BATCHING)
 
     if platform_api_catalog:
         sections.append(HARNESS_SECTION_WIDGET)
 
-    storefront_reads = (plan.get("implementationSpec") or {}).get(
-        "storefrontReads"
-    ) or []
-    widget_guidance = (plan.get("implementationSpec") or {}).get("widgetGuidance") or ""
-    if storefront_reads or "host.storefront" in widget_guidance:
+    # widgetApiCatalog == [] means storefront app with no backend widget routes →
+    # widget reads exclusively from Shopify's public storefront API
+    if impl.get("widgetApiCatalog") is not None and not platform_api_catalog:
         sections.append(HARNESS_SECTION_WIDGET_STOREFRONT)
 
-    admin_catalog = (plan.get("implementationSpec") or {}).get("adminApiCatalog") or []
+    admin_catalog = impl.get("adminApiCatalog") or []
     if admin_catalog:
         sections.append(HARNESS_SECTION_ADMIN)
 
@@ -133,105 +148,134 @@ def _build_jit_sections(
 # ── Prompt-building helpers ────────────────────────────────────────────────────
 
 
-def _format_code_spec(plan: Dict[str, Any]) -> str:
+def _format_webhook_contract(plan: Dict[str, Any]) -> str:
     """
-    Render the codeSpec from implementationSpec as a numbered algorithm.
-    The generator implements this literally — no interpretation required.
+    Show the webhookContract so the handler knows exactly what payload fields to
+    read and what data it must resolve before writing to the DB.
     """
-    impl = plan.get("implementationSpec") or {}
-    code_spec = impl.get("codeSpec") or {}
-
-    webhook_path: List[str] = code_spec.get("webhookPath") or []
-    cron_path: List[str] = code_spec.get("cronPath") or []
-    widget_path: List[str] = code_spec.get("widgetPath") or []
-    admin_path: List[str] = code_spec.get("adminPath") or []
-    functions: List[Dict[str, Any]] = code_spec.get("functions") or []
-
-    if (
-        not webhook_path
-        and not cron_path
-        and not widget_path
-        and not admin_path
-        and not functions
-    ):
+    contract = (plan.get("appContracts") or {}).get("webhookContract")
+    if not contract:
         return ""
-
-    parts: List[str] = [
+    payload_fields = contract.get("payloadFields") or []
+    must_produce = contract.get("handlerMustProduce") or ""
+    lines = [
         "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "IMPLEMENTATION SPEC — implement exactly as described, step by step:",
+        "WEBHOOK CONTRACT:",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
+    if payload_fields:
+        lines.append(f"Payload fields to read from ctx.payload: {', '.join(payload_fields)}")
+    if must_produce:
+        lines.append(f"Handler must resolve before DB writes: {must_produce}")
+    lines.append(
+        "Use the Shopify API context below to decide which REST/GraphQL calls\n"
+        "to make in order to produce the required data.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+    return "\n".join(lines)
 
-    if webhook_path:
-        steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(webhook_path))
-        parts.append(f"\nWebhook handler path:\n{steps}")
 
-    if cron_path:
-        steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(cron_path))
-        parts.append(f"\nCron handler path:\n{steps}")
+def _format_cron_contract(plan: Dict[str, Any]) -> str:
+    """Show the cronContract so the cron handler knows what to resolve per batch item."""
+    contract = (plan.get("appContracts") or {}).get("cronContract")
+    if not contract:
+        return ""
+    must_produce = contract.get("handlerMustProduce") or ""
+    if not must_produce:
+        return ""
+    return (
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "CRON CONTRACT:\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Handler must resolve per batch item: {must_produce}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
 
-    if widget_path:
-        steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(widget_path))
-        parts.append(f"\nWidget handler path (ctx.trigger === 'widget'):\n{steps}")
 
-    if admin_path:
-        steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(admin_path))
-        parts.append(f"\nAdmin UI handler path (ctx.trigger === 'admin'):\n{steps}")
-
-    if functions:
-        parts.append("\nHelper functions:")
-        for fn in functions:
-            fn_steps = "\n".join(
-                f"    {i + 1}. {s}" for i, s in enumerate(fn.get("steps") or [])
-            )
-            parts.append(f"  {fn['name']}:\n{fn_steps}")
-
-    parts.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-    return "\n".join(parts)
+def _format_db_contracts(plan: Dict[str, Any]) -> str:
+    """
+    Show the DB schema so the handler uses exact table and column names in SQL.
+    """
+    contracts = (plan.get("appContracts") or {}).get("dbContracts") or []
+    if not contracts:
+        return ""
+    lines = [
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "DB SCHEMA — use these exact table and column names in all SQL:",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+    for contract in contracts:
+        table = contract.get("table", "?")
+        columns = [c["name"] for c in (contract.get("columns") or [])]
+        lines.append(f"  {table}: {', '.join(columns)}")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    return "\n".join(lines)
 
 
 def _format_widget_catalog(catalog: List[Dict[str, Any]]) -> str:
     """
-    Show the widget API catalog with response shapes so the handler returns exact field names.
-    Mirrors what the widget generator sees — both sides must agree on these shapes.
+    Show the widget API catalog with requestShape and responseShape so the handler
+    destructures ctx.widgetBody with the exact field names and returns the exact shape.
     """
     if not catalog:
         return ""
-    lines = []
+    lines = ["\nWidget API catalog (implement each route exactly as specified):"]
     for e in catalog:
-        shape = e.get("responseShape")
-        shape_str = f" → return {shape}" if shape else ""
-        lines.append(f"  {e['method']} {e['path']}{shape_str}")
-    return (
-        "\nWidget API catalog (handler MUST return the exact responseShape for each path):\n"
-        + "\n".join(lines)
-        + "\n"
-    )
+        req = e.get("requestShape", "{}")
+        resp = e.get("responseShape", "{}")
+        lines.append(f"  {e['method']} {e['path']}")
+        lines.append(f"    receive:  const {{ ... }} = ctx.widgetBody  →  {req}")
+        lines.append(f"    return:   {resp}")
+    return "\n".join(lines) + "\n"
 
 
 def _format_admin_catalog(plan: Dict[str, Any]) -> str:
-    """Show the admin API catalog so the handler returns exact responseShapes for admin paths."""
-    catalog = (plan.get("implementationSpec") or {}).get("adminApiCatalog") or []
+    """
+    Show the admin API catalog with requestShape and responseShape so the handler
+    destructures ctx.adminBody with the exact field names and returns the exact shape.
+    """
+    catalog = (plan.get("appContracts") or {}).get("adminApiCatalog") or []
     if not catalog:
         return ""
-    lines = []
+    lines = ["\nAdmin UI catalog (implement each route exactly as specified):"]
     for e in catalog:
-        shape = e.get("responseShape")
-        shape_str = f" → return {shape}" if shape else ""
-        lines.append(f"  {e.get('method', 'POST')} {e['path']}{shape_str}")
+        req = e.get("requestShape", "{}")
+        resp = e.get("responseShape", "{}")
+        lines.append(f"  {e.get('method', 'POST')} {e['path']}")
+        lines.append(f"    receive:  const {{ ... }} = ctx.adminBody  →  {req}")
+        lines.append(f"    return:   {resp}")
+    return "\n".join(lines) + "\n"
+
+
+def _format_api_context(api_context: Any) -> str:
+    """
+    Inject the live Shopify API context so the handler can decide which
+    REST/GraphQL calls to make to produce the data required by the contracts.
+    """
+    if not api_context:
+        return ""
     return (
-        "\nAdmin UI catalog (handler MUST return the exact responseShape for each admin path):\n"
-        + "\n".join(lines)
-        + "\n"
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "SHOPIFY API CONTEXT — webhook payload shapes and resource schemas.\n"
+        "Use this to decide which REST/GraphQL calls to make and how to\n"
+        "traverse the response to produce the data declared in the contracts above.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{api_context}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
 
 
+def _format_platform_gaps(plan: Dict[str, Any]) -> str:
+    """Render platformGaps so the handler knows what to do instead of missing ctx capabilities."""
+    gaps = (plan.get("appContracts") or {}).get("platformGaps") or []
+    if not gaps:
+        return ""
+    lines = "\n".join(f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps)
+    return f"\nPlatform limitations (implement exactly as stated):\n{lines}\n"
+
+
 def _format_prior_handler(prior_code: Any) -> str:
-    """
-    Inject the currently deployed handler as context for revision runs.
-    The model should treat the feedback-augmented prompt as a diff spec and
-    apply targeted changes — not regenerate from scratch.
-    """
+    """Inject the currently deployed handler.js for revision runs."""
     if not prior_code:
         return ""
     return (
@@ -245,73 +289,16 @@ def _format_prior_handler(prior_code: Any) -> str:
     )
 
 
-def _format_platform_gaps(plan: Dict[str, Any]) -> str:
-    """Render platformGaps so the handler knows what to do instead of missing ctx capabilities."""
-    gaps = (plan.get("implementationSpec") or {}).get("platformGaps") or []
-    if not gaps:
-        return ""
-    lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
-    return f"\nPlatform limitations (ctx cannot provide these — handle exactly as stated):\n{lines}\n"
-
-
-def _format_field_contracts(plan: Dict[str, Any]) -> str:
-    """
-    Extract field contracts from the validated codeSpec and surface them as a
-    dedicated, immutable section the handler must follow exactly.
-
-    For each widgetApiCatalog path that sends a body:
-      const { field1, field2 } = ctx.widgetBody   ← exact names, no synonyms
-
-    For each adminApiCatalog path that sends a body:
-      const { field1, field2 } = ctx.adminBody    ← exact names, no synonyms
-
-    These are extracted from the same codeSpec steps both generators read —
-    using exactly these names is the only way validation passes.
-    """
-    from subagents.static_validation import (
-        extract_widget_field_contracts,
-        extract_admin_field_contracts,
-    )
-
-    impl = plan.get("implementationSpec") or {}
-    widget_path: List[str] = (impl.get("codeSpec") or {}).get("widgetPath") or []
-    admin_path: List[str] = (impl.get("codeSpec") or {}).get("adminPath") or []
-
-    widget_contracts = extract_widget_field_contracts(widget_path)
-    admin_contracts = extract_admin_field_contracts(admin_path)
-
-    if not widget_contracts and not admin_contracts:
-        return ""
-
-    lines = [
-        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "FIELD CONTRACTS — destructure ctx.widgetBody / ctx.adminBody with EXACTLY these names.",
-        "Using any synonym, abbreviation, or different name will fail validation.",
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    ]
-    for path, fields in sorted(widget_contracts.items()):
-        lines.append(f"  {path}:  const {{ {', '.join(fields)} }} = ctx.widgetBody")
-    for path, fields in sorted(admin_contracts.items()):
-        lines.append(f"  {path}:  const {{ {', '.join(fields)} }} = ctx.adminBody")
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-    return "\n".join(lines)
-
-
 def _format_routing_checklist(
     widget_catalog: List[Dict[str, Any]],
     plan: Dict[str, Any],
 ) -> str:
     """
     Emit a pre-generation routing checklist as the last thing the model sees.
-
-    Lists every ctx.widgetPath route that MUST appear in the generated handler.
-    This prevents the common failure where the model writes all business logic
-    but omits the trigger dispatch scaffold entirely.
-
-    Only emitted when at least one catalog is non-empty — backend-only apps
-    (no widget, no admin) have no routes to check and get no checklist.
+    Lists every route that MUST appear in the generated handler.
+    Only emitted when at least one catalog is non-empty.
     """
-    admin_catalog: List[Dict[str, Any]] = (plan.get("implementationSpec") or {}).get(
+    admin_catalog: List[Dict[str, Any]] = (plan.get("appContracts") or {}).get(
         "adminApiCatalog"
     ) or []
     if not widget_catalog and not admin_catalog:
@@ -327,15 +314,15 @@ def _format_routing_checklist(
         lines.append("Inside  if (ctx.trigger === 'widget') { ... }:")
         for entry in widget_catalog:
             path = entry.get("path", "")
-            shape = entry.get("responseShape", "")
-            lines.append(f"  ✓ if (ctx.widgetPath === '{path}')  →  return {shape}")
+            resp = entry.get("responseShape", "")
+            lines.append(f"  ✓ if (ctx.widgetPath === '{path}')  →  return {resp}")
 
     if admin_catalog:
         lines.append("Inside  if (ctx.trigger === 'admin') { ... }:")
         for entry in admin_catalog:
             path = entry.get("path", "")
-            shape = entry.get("responseShape", "")
-            lines.append(f"  ✓ if (ctx.widgetPath === '{path}')  →  return {shape}")
+            resp = entry.get("responseShape", "")
+            lines.append(f"  ✓ if (ctx.adminPath === '{path}')  →  return {resp}")
 
     lines.append(
         "Validation rejects the handler if ANY of these branches is missing.\n"

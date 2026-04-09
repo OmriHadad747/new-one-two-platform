@@ -17,20 +17,23 @@ registering it in registry.py. No changes to orchestration code (crew.py).
 CodegenContext carries all inputs shared across generators for a single generation
 run. Sub-agents read only the fields they need.
 
-plan shape:
+plan shape (Architect output — passed directly as the plan):
   {
     "shopifyPlan": {
       "webhookTopics": [...],
-      "cronSchedule": null | "...",
-      "operations": [...]
+      "cronSchedule": null | "..."
     },
-    "implementationSpec": {
-      "stateMachine": null | { needsStateTracking, trackedEntity, unknownSentinel, ... },
+    "appContracts": {
+      "feasibility": "feasible" | "blocked",
+      "complexity": "low" | "medium" | "high",
+      "stateMachine": null | { entity, trackedField, unknownSentinel, skipWhenUnknown, transitions: [{from, to, action}] },
       "platformGaps": [...],
-      "cronBatching": null | { required, batchEndpoint, maxBatchSize, advice },
-      "codeSpec": { "webhookPath": [...], "cronPath": [...], "functions": [...] },
-      "migrationGuidance": "...",
-      "widgetGuidance": null | "..."
+      "cronBatching": null | { required, ... },
+      "dbContracts": [{ table, columns: [{name, type, constraints}], uniqueConstraint, indexes, rls }],
+      "webhookContract": null | { payloadFields, handlerMustProduce },
+      "cronContract": null | { handlerMustProduce },
+      "widgetApiCatalog": null | [{ path, method, requestShape, responseShape }],
+      "adminApiCatalog": null | [{ path, method, requestShape, responseShape }]
     }
   }
 """
@@ -49,29 +52,32 @@ class CodegenContext:
 
     Fields
     ------
-    intent              Parsed intent from Agent 1 (run_intent_agent).
-    plan                Unified plan from the Planner Agent — contains both
-                        shopifyPlan (Shopify API surface) and implementationSpec
-                        (codeSpec, stateMachine, platformGaps, cronBatching, guidance).
-                        Replaces the former separate api_plan + strategy fields.
-    platform_api_catalog Allowed backend paths for widget host.call(). Empty for
-                        backend apps but always present so generators don't
-                        need to guard against None.
+    intent              Parsed intent from the product agent.
+    plan                Architect output — contains shopifyPlan and appContracts
+                        with all typed contracts (dbContracts, webhookContract,
+                        widgetApiCatalog, adminApiCatalog, etc.).
+    platform_api_catalog widgetApiCatalog entries for widget host.call() paths.
+                        Empty for backend apps but always present so generators
+                        don't need to guard against None.
+    api_context         Live Shopify API context from MCP prefetch — webhook payload
+                        shapes, resource field schemas. The handler uses this to decide
+                        which REST/GraphQL calls to make. None for non-handler agents.
     previous_errors     Validation errors from the prior attempt on THIS generator.
                         None on the first attempt. Used to build a retry prompt.
-    prior_handler_code  The currently deployed handler.js code, present only on
-                        revision runs. Agents should treat this as the starting point
-                        and apply the merchant's feedback as a diff, not a rewrite.
+    prior_handler_code  The currently deployed handler.js, present only on revision runs.
     prior_widget_code   The currently deployed widget ES module, present only on
-                        revision runs for storefront_backend / storefront_backend_admin apps.
-    prior_migration_sql The DDL that was already applied to the DB, present only on
-                        revision runs. The migration agent must only emit incremental
-                        DDL (new tables or ADD COLUMN) — never recreate existing tables.
+                        revision runs for storefront apps.
+    prior_migration_sql DDL already applied to the DB, present only on revision runs.
+                        The migration agent emits only incremental DDL — never recreates
+                        existing tables.
+    prior_admin_ui_code The currently deployed admin UI module, present only on
+                        revision runs for apps with an admin panel.
     """
 
     intent: Dict[str, Any]
     plan: Dict[str, Any]
     platform_api_catalog: List[Dict[str, str]] = field(default_factory=list)
+    api_context: Optional[str] = None
     previous_errors: Optional[List[str]] = None
     prior_handler_code: Optional[str] = None
     prior_widget_code: Optional[str] = None

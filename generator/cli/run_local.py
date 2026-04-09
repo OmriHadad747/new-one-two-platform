@@ -11,12 +11,18 @@ USAGE
   python run_local.py "notify me when a product is back in stock"
   python run_local.py --file prompt.txt
   python run_local.py --dir test_prompts/
+  python run_local.py --arch-only "notify me when a product is back in stock"
+  python run_local.py --arch-only --file prompt.txt
+  python run_local.py --arch-only --dir test_prompts/
 
 OUTPUT
 ------
   Console: one clean line per agent with status + timing
   File:    test_results/<timestamp>_<slug>.md  (markdown with full artifacts)
   JSON:    results.json  (appended, machine-readable)
+
+  --arch-only mode:
+  File:    test_results/<timestamp>_<slug>_arch.json  (pretty-printed architect plan)
 """
 from __future__ import annotations
 
@@ -38,6 +44,10 @@ sys.path.insert(0, str(_HERE))
 import contract.publisher as _publisher
 from contract.validators import FeatureBundleMessage, GenerationRequest, ProgressEvent
 from crews.feature_generator.crew import run_feature_generation
+from subagents.architect_agent import run_architect_agent
+from subagents.product_agent import run_product_agent
+from shopify_mcp.client import prefetch_for_run
+from subagents.static_validation import validate_architect_plan
 
 RESULTS_FILE = _HERE / "results.json"
 TEST_RESULTS_DIR = _HERE / "test_results"
@@ -48,7 +58,6 @@ _W = 100
 _LABELS: Dict[str, str] = {
     "product": "Product",
     "architect": "Architect",
-    "codespec": "CodeSpec",
     "handler": "Handler",
     "migration": "Migration",
     "widget_js": "Widget JS",
@@ -60,7 +69,7 @@ _LABELS: Dict[str, str] = {
 }
 
 # Report row order — agents that may or may not appear are added conditionally.
-_PLAN_AGENTS = ["product", "architect", "codespec"]
+_PLAN_AGENTS = ["product", "architect"]
 _CODEGEN_AGENTS = ["handler", "migration", "widget_js", "admin_ui"]
 # Tail agents always present; validator+revision inserted only when they actually ran.
 _TAIL_AGENTS = ["validation", "explanation"]
@@ -229,6 +238,134 @@ def _save_report(result: Dict[str, Any]) -> Path:
     return path
 
 
+# ── Arch-only runner ──────────────────────────────────────────────────────────
+
+
+def _save_arch_report(
+    prompt: str, intent: Dict[str, Any], plan: Dict[str, Any], errors: List[str]
+) -> Path:
+    TEST_RESULTS_DIR.mkdir(exist_ok=True)
+    ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    slug = _slug(prompt)
+    path = TEST_RESULTS_DIR / f"{ts}_{slug}_arch.json"
+    path.write_text(
+        json.dumps(
+            {
+                "prompt": prompt,
+                "intent": intent,
+                "plan": plan,
+                "validation_errors": errors,
+            },
+            indent=2,
+        )
+    )
+    return path
+
+
+def run_arch_only(prompt: str) -> None:
+    _hr()
+    print("  Architect — plan review mode")
+    print(f"  Prompt: {prompt}")
+    _hr()
+    print()
+
+    total_start = time.monotonic()
+
+    # Product agent
+    _spinner(_LABELS["product"])
+    t0 = time.monotonic()
+    intent = run_product_agent(prompt)
+    ms = int((time.monotonic() - t0) * 1000)
+    _agent_line(_LABELS["product"], ok=True, ms=ms, notes=intent.get("appCategory", ""))
+
+    # Prefetch API context
+    api_context = prefetch_for_run(
+        intent.get("resources", []), intent.get("desiredOutcome", "")
+    )
+
+    # Architect agent (with validation retry)
+    archetype = intent.get("appCategory", "")
+    plan: Dict[str, Any] = {}
+    errors: List[str] = []
+    _MAX_ARCH_ATTEMPTS = 3
+    for attempt in range(1, _MAX_ARCH_ATTEMPTS + 1):
+        _spinner(_LABELS["architect"])
+        t0 = time.monotonic()
+        plan = run_architect_agent(
+            prompt=prompt,
+            intent=intent,
+            app_archetype=archetype,
+            api_context=api_context,
+            validation_errors=errors if attempt > 1 else None,
+        )
+        ms = int((time.monotonic() - t0) * 1000)
+        errors = validate_architect_plan(plan, app_archetype=archetype)
+        if not errors:
+            _agent_line(
+                _LABELS["architect"], ok=True, ms=ms, notes=f"attempt {attempt}"
+            )
+            break
+        _agent_line(
+            _LABELS["architect"],
+            ok=False,
+            ms=ms,
+            notes=f"attempt {attempt} — {len(errors)} error(s)",
+        )
+        if attempt < _MAX_ARCH_ATTEMPTS:
+            _retry_line(_LABELS["architect"], notes="; ".join(errors[:2]))
+
+    total_ms = int((time.monotonic() - total_start) * 1000)
+
+    # Pretty-print the plan to console
+    print()
+    _hr()
+    print()
+    print(json.dumps({"intent": intent, "plan": plan}, indent=2))
+    print()
+    _hr()
+
+    # Save report
+    report_path = _save_arch_report(prompt, intent, plan, errors)
+    ok = not errors
+    status = "SUCCESS" if ok else f"FAILED — {len(errors)} validation error(s)"
+    print(f"  {status} — {total_ms / 1000:.1f}s — {report_path.relative_to(_HERE)}")
+    _hr()
+    print()
+
+    if not ok:
+        sys.exit(1)
+
+
+def run_arch_only_dir(dir_path: Path) -> None:
+    """Run arch-only on every *.txt file in dir_path."""
+    files = sorted(dir_path.glob("*.txt"))
+    if not files:
+        print(f"No .txt files found in {dir_path}")
+        sys.exit(1)
+
+    print(f"Found {len(files)} prompt file(s) in {dir_path.name}/")
+    print()
+
+    failed: List[str] = []
+    for i, f in enumerate(files, 1):
+        prompt = f.read_text().strip()
+        if not prompt:
+            print(f"[{i}/{len(files)}] Skipping {f.name} — empty")
+            continue
+        print(f"[{i}/{len(files)}] {f.name}")
+        try:
+            run_arch_only(prompt=prompt)
+        except SystemExit:
+            failed.append(f.name)
+
+    print()
+    if failed:
+        print(f"FAILED ({len(failed)}/{len(files)}): {', '.join(failed)}")
+        sys.exit(1)
+    else:
+        print(f"All {len(files)} prompts completed successfully.")
+
+
 # ── Main runner ───────────────────────────────────────────────────────────────
 
 
@@ -389,10 +526,30 @@ def main() -> None:
         metavar="DIR",
         help="Run all *.txt files in DIR as prompts, one by one.",
     )
+    parser.add_argument(
+        "--arch-only",
+        action="store_true",
+        help="Run only product + architect agents and print the plan. Skips code generation.",
+    )
 
     args = parser.parse_args()
 
-    if args.dir:
+    if args.arch_only:
+        if args.dir:
+            run_arch_only_dir(Path(args.dir))
+        elif args.file:
+            prompt = Path(args.file).read_text().strip()
+            if not prompt:
+                parser.error("Prompt file is empty.")
+            run_arch_only(prompt=prompt)
+        elif args.prompt:
+            prompt = args.prompt.strip()
+            if not prompt:
+                parser.error("Prompt is empty.")
+            run_arch_only(prompt=prompt)
+        else:
+            parser.error("Provide a prompt, --file PATH, or --dir DIR.")
+    elif args.dir:
         run_dir(Path(args.dir))
     elif args.file:
         prompt = Path(args.file).read_text().strip()

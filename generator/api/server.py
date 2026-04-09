@@ -13,9 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
-
-from typing import List, Literal
+from typing import AsyncIterator, List, Literal
 
 from fastapi import BackgroundTasks, FastAPI
 from pydantic import BaseModel

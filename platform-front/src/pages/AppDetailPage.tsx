@@ -592,22 +592,39 @@ const WEBHOOK_TRIGGER_HINTS: Record<string, string> = {
   "app/uninstalled":            "Uninstall the app from admin (careful — reinstall to restore).",
 };
 
+const TEMPLATE_LABEL: Record<string, string> = {
+  product:    "product",
+  collection: "collection",
+  index:      "home",
+  cart:       "cart",
+  page:       "content",
+  blog:       "blog",
+  article:    "article",
+  search:     "search results",
+};
+
 function buildValidationSteps({
   webhookTopics,
   cronSchedule,
   hasWidget,
   hasAdminUI,
+  widgetTargetTemplates,
 }: {
   webhookTopics: string[];
   cronSchedule: string | null;
   hasWidget: boolean;
   hasAdminUI: boolean;
+  widgetTargetTemplates?: string[] | null;
 }): { text: string; isRevise?: boolean }[] {
   const steps: { text: string; isRevise?: boolean }[] = [];
 
   if (hasWidget) {
+    const targets = (widgetTargetTemplates ?? []).filter(Boolean);
+    const pageLabel = targets.length > 0
+      ? targets.map((t) => TEMPLATE_LABEL[t] ?? t).join(" or ") + " page"
+      : "product page";
     steps.push({ text: "Open your live storefront in a browser (not the Shopify Admin preview)." });
-    steps.push({ text: "Navigate to the page where the widget is placed — usually a product page." });
+    steps.push({ text: `Navigate to the ${pageLabel} where the widget is placed.` });
     steps.push({ text: "Confirm the widget is visible and interactive. Test its behavior end-to-end." });
     if (webhookTopics.length === 0 && !cronSchedule) {
       steps.push({ text: "Open the Logs tab → Widget to see invocation logs and catch any errors." });
@@ -920,6 +937,7 @@ function OverviewTab({
 
   const hasWidget  = !!(latestSession?.bundle?.widgetModule  ?? (app.appArchetype === "storefront_backend" || app.appArchetype === "storefront_backend_admin"));
   const hasAdminUI = !!(latestSession?.bundle?.adminUiModule ?? (app.appArchetype === "backend_admin"      || app.appArchetype === "storefront_backend_admin"));
+  const widgetTargetTemplates = latestSession?.bundle?.widgetTargetTemplates ?? null;
 
   const effectiveShop = app.shopDomain || shopDomain || null;
   const storeFrontUrl = effectiveShop ? `https://${effectiveShop}` : null;
@@ -927,7 +945,7 @@ function OverviewTab({
 
   const theme = useThemeStore((s) => s.theme);
   const navigate = useNavigate();
-  const validateSteps = buildValidationSteps({ webhookTopics, cronSchedule, hasWidget, hasAdminUI });
+  const validateSteps = buildValidationSteps({ webhookTopics, cronSchedule, hasWidget, hasAdminUI, widgetTargetTemplates });
 
   // Merged activity — used by both MiniStats and the activity feed
   type AnyEntry =
@@ -1399,49 +1417,48 @@ function SettingsPanel({
 
 // ─── Inject Wizard ────────────────────────────────────────────────────────────
 
-/**
- * Detects which Shopify theme template the widget requires by scanning
- * the generated widget JS for URL pathname patterns.
- * Returns e.g. "templates/product.json". Defaults to "templates/product.json".
- */
-function detectWidgetTemplateKey(widgetJs: string | null): string {
-  if (!widgetJs) return "templates/product.json";
-  if (/\/products\//.test(widgetJs))    return "templates/product.json";
-  if (/\/collections\//.test(widgetJs)) return "templates/collection.json";
-  if (/\/cart/.test(widgetJs))          return "templates/cart.json";
-  if (/\/pages\//.test(widgetJs))       return "templates/page.json";
-  return "templates/product.json";
-}
-
 function InjectWizard({
-  app, tenantId, onClose, onStart, onDone, onError,
+  app, tenantId, widgetTargetTemplates, onClose, onStart, onDone, onError,
 }: {
   app: App;
   tenantId: string;
+  /** Template names from the architect plan, e.g. ["product", "cart"]. null = default to product. */
+  widgetTargetTemplates: string[] | null;
   onClose: () => void;
   onStart: () => void;
   onDone: () => void;
   onError: (msg: string) => void;
 }) {
-  const requiredTemplateKey = detectWidgetTemplateKey(app.widgetJs);
+  // Map template names to theme JSON keys
+  const targetKeys = (widgetTargetTemplates ?? ["product"]).map((t) => `templates/${t}.json`);
 
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
   const [activeThemeName, setActiveThemeName] = useState("");
-  const [lockedTemplate, setLockedTemplate] = useState<ThemeTemplate | null>(null);
+  // candidateTemplates: the subset of theme templates that match the widget's target pages
+  const [candidateTemplates, setCandidateTemplates] = useState<ThemeTemplate[]>([]);
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [insertAt, setInsertAt]       = useState<number>(0); // index in block_order
+
   useEffect(() => {
     api.apps.getThemeTemplates(tenantId, app.id)
       .then(({ activeTheme, templates: tpls }) => {
         setActiveThemeName(activeTheme.name);
-        const match = tpls.find((t) => t.key === requiredTemplateKey) ?? tpls[0] ?? null;
-        setLockedTemplate(match);
-        setSelectedSectionId(match?.sections[0]?.sectionId ?? null);
+        // Filter to only the templates the architect declared; fall back to all if none match
+        const matches = tpls.filter((t) => targetKeys.includes(t.key));
+        const candidates = matches.length > 0 ? matches : (tpls[0] ? [tpls[0]] : []);
+        setCandidateTemplates(candidates);
+        const first = candidates[0] ?? null;
+        setSelectedTemplateKey(first?.key ?? null);
+        setSelectedSectionId(first?.sections[0]?.sectionId ?? null);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load templates"))
       .finally(() => setLoading(false));
-  }, [tenantId, app.id, requiredTemplateKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, app.id]);
+
+  const lockedTemplate = candidateTemplates.find((t) => t.key === selectedTemplateKey) ?? candidateTemplates[0] ?? null;
 
   const handleInject = async () => {
     if (!lockedTemplate || !selectedSectionId) return;
@@ -1490,14 +1507,41 @@ function InjectWizard({
 
           {!loading && !error && lockedTemplate && (
             <>
-              {/* Locked template notice */}
-              <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-lg bg-accent/[0.07] border border-accent/[0.15]">
-                <span className="material-symbols-outlined text-[14px] text-accent mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
-                <p className="text-[11.5px] text-accent/90 leading-relaxed">
-                  This widget runs on the <span className="font-semibold">{lockedTemplate.name}</span> page.
-                  Injecting it on another page would break it.
-                </p>
-              </div>
+              {/* Template notice / picker */}
+              {candidateTemplates.length === 1 ? (
+                <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-lg bg-accent/[0.07] border border-accent/[0.15]">
+                  <span className="material-symbols-outlined text-[14px] text-accent mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
+                  <p className="text-[11.5px] text-accent/90 leading-relaxed">
+                    This widget runs on the <span className="font-semibold">{lockedTemplate.name}</span> page.
+                    Injecting it on another page would break it.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-medium text-faint">Choose a page template</label>
+                  <div className="space-y-1">
+                    {candidateTemplates.map((t) => (
+                      <button
+                        key={t.key}
+                        type="button"
+                        onClick={() => {
+                          setSelectedTemplateKey(t.key);
+                          setSelectedSectionId(t.sections[0]?.sectionId ?? null);
+                          setInsertAt(0);
+                        }}
+                        className={cn(
+                          "w-full flex items-center justify-between px-3 py-2 rounded-lg text-[12px] border transition-colors text-left cursor-pointer bg-transparent",
+                          selectedTemplateKey === t.key
+                            ? "bg-accent/10 border-accent/25 text-accent"
+                            : "bg-white/[0.03] border-white/[0.06] text-muted hover:text-ink hover:bg-white/[0.05]"
+                        )}
+                      >
+                        {t.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {activeThemeName && (
                 <p className="text-[11px] text-faint">
@@ -1897,6 +1941,7 @@ export function AppDetailPage() {
         <InjectWizard
           app={app}
           tenantId={tenantId}
+          widgetTargetTemplates={displaySession?.bundle?.widgetTargetTemplates ?? null}
           onClose={() => setInjectWizardOpen(false)}
           onStart={() => { setInjectWizardOpen(false); setInjectingWidget(true); setInjectError(null); }}
           onDone={() => { setInjectingWidget(false); void appQuery.refetch(); void invalidateAppCache(); }}

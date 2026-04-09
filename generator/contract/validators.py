@@ -33,7 +33,6 @@ class ProgressEvent(BaseModel):
     agent: Literal[
         "product",
         "architect",
-        "codespec",
         "handler",
         "migration",
         "widget_js",
@@ -82,6 +81,9 @@ class Bundle(BaseModel):
     adminUiModule: Optional[str] = (
         None  # admin panel ES module (storefront_backend_admin apps)
     )
+    widgetTargetTemplates: Optional[List[str]] = (
+        None  # theme template pages the widget targets, e.g. ["product", "cart"]
+    )
     handlerModule: HandlerModule
     dbMigration: DbMigration
     explanation: FeatureExplanation
@@ -90,6 +92,7 @@ class Bundle(BaseModel):
         return {
             "widgetModule": self.widgetModule,
             "adminUiModule": self.adminUiModule,
+            "widgetTargetTemplates": self.widgetTargetTemplates,
             "handlerModule": self.handlerModule.model_dump(),
             "dbMigration": self.dbMigration.model_dump(),
             "explanation": self.explanation.model_dump(),

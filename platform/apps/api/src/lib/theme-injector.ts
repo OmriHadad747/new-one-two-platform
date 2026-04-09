@@ -40,13 +40,17 @@ function isOurBlock(type: string): boolean {
   return type === WIDGET_BLOCK_TYPE;
 }
 
-// Template files that make sense for widget injection
+// Template files that support widget injection.
+// Covers all standard Shopify OS 2.0 templates where an app block makes sense.
 const INJECTABLE_TEMPLATES = [
   "templates/product.json",
   "templates/collection.json",
   "templates/index.json",
   "templates/cart.json",
   "templates/page.json",
+  "templates/blog.json",
+  "templates/article.json",
+  "templates/search.json",
 ];
 
 type ShopifyApiHeaders = {

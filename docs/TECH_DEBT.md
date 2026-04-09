@@ -28,7 +28,7 @@ Items that are known gaps but deliberately deferred. Each entry has the affected
 - `generator/crews/feature_generator/crew.py` — `AgentTraceEntry` objects are hardcoded `inputTokens=0, outputTokens=0`; `GenerationMeta` is hardcoded `totalInputTokens=0, totalOutputTokens=0`
 
 **What's broken**
-The adapter correctly reads `usage_metadata` from the Anthropic response, but each agent (`run_intent_agent`, `run_schema_agent`, etc.) discards the `LLMResponse` wrapper and only returns the parsed result. The crew therefore has no token data to put in the trace.
+The adapter correctly reads `usage_metadata` from the Anthropic response, but each agent discards the `LLMResponse` wrapper and only returns the parsed result. The crew therefore has no token data to put in the trace.
 
 **What to do**
 1. Change each agent's return type to include token counts (e.g. return a `(result, input_tokens, output_tokens)` tuple, or a typed dataclass).
@@ -67,6 +67,27 @@ Once TD-002 is resolved (agents return token counts), call `insertGenerationEven
 
 ---
 
+## TD-006 — Widget JS is served from Postgres; needs GCS in production
+
+**Affected files**
+- `platform/apps/api/src/routes/widget-js.ts` — reads `widget_js` from DB and streams it directly
+- `platform/packages/db/src/index.ts` — `resolveWidgetJs` queries `apps.widget_js`
+- `platform/packages/deployer/src/index.ts` — `updateAppWidgetJs` writes the raw JS string to Postgres
+
+**What's wrong**
+`GET /widgets/:shop/:appId.js` reads the raw JS out of `apps.widget_js` (Postgres TEXT column) on every request. Cache-Control is `max-age=5`, so at any real storefront traffic volume this becomes a Postgres read per page load. It also means widget JS is capped at Postgres row limits and bypasses the existing GCS bundle infrastructure.
+
+**What to do**
+1. In the deployer, upload widget JS to GCS as a public object at a deterministic path: `gs://<bucket>/widgets/<appId>.js`. Set `Cache-Control: public, max-age=3600` on the object.
+2. In `widget-js.ts`, replace the Postgres read with a `302` redirect to `https://storage.googleapis.com/<bucket>/widgets/<appId>.js`. GCS serves the file directly to the browser — no separate CDN product needed, Google's infrastructure handles global distribution.
+3. On re-deploy, overwrite the same GCS path. The 1-hour browser cache means stale widgets are served for at most an hour after a deploy — acceptable for most use cases.
+
+**Interim** (already in place): the 5-second `max-age` keeps Postgres load manageable for low traffic. Switch to GCS before going to production scale.
+
+**Complexity:** Low — follows the existing `gcsBundlePath` pattern already used for handler bundles.
+
+---
+
 ## TD-007 — Wire real email provider behind `ctx.email.send()`
 
 **Current state**
@@ -89,76 +110,41 @@ Replace the stub with a real provider adapter (Resend, SendGrid, Postmark, etc.)
 
 ---
 
-## TD-009 — Clarification Agent (pre-flight Q&A before planning)
+## TD-008 — MCP umbrella session: one NPX spawn per pipeline run
 
-**What's missing**
-The current flow is fire-and-forget: the merchant submits a prompt and the Planner reasons
-about ambiguities on its own. For questions that can't be resolved from the prompt alone
-(e.g. "do you have multiple locations?", "which email provider are you using?"), the Planner
-either picks a default or adds a platformGap. A Clarification Agent would ask 1–3 targeted
-questions before planning, then feed the answers directly into the Planner as resolved context.
+**Current state**
+The MCP pipeline makes two separate `_call_mcp` calls that each spawn their own NPX process:
+1. `prefetch_for_run` — `search_docs_chunks` for api_context (+ `introspect_graphql_schema` when topics cache is cold)
+2. `validate_handler_graphql` in `HandlerGenerator.validate()` — `validate_graphql_codeblocks` per retry round
 
-**Why deferred**
-Requires breaking the fire-and-forget generation flow into a two-phase interactive flow:
-1. Job starts → Clarification Agent returns questions → job enters `waiting_for_clarification` state
-2. Merchant answers → job resumes → Planner runs with answers in context
+Each NPX spawn takes ~3-5s. On a run with a cold topics cache + one validation retry, that is 3 separate processes.
 
-This touches the full stack: new job states in the DB, new API endpoints
-(`GET /generation/:jobId/questions`, `POST /generation/:jobId/answers`), pubsub contract
-changes, and frontend support for the Q&A step.
-
-**Affected files (when implemented)**
-- `platform/apps/api/src/routes/generation.ts` — new endpoints for questions/answers
-- `platform/packages/db/` — new job state + answers storage
-- `platform/packages/pubsub-client/src/schemas.ts` — new message types
-- `generator/crews/feature_generator/crew.py` — new pre-planning phase
-- `generator/crews/feature_generator/agents.py` — new clarification agent
-- Frontend (not yet built)
-
-**Complexity:** Medium-High — full-stack flow change, new job lifecycle state.
-
----
-
-## TD-006 — Widget JS is served from Postgres; needs GCS in production
+**What to do**
+Open one MCP session at the start of `_phase_architect` (or at the crew entry point), keep the conversationId in a run-scoped context object, and reuse it for both the prefetch search and the post-handler validation. All three MCP calls go through the same process.
 
 **Affected files**
-- `platform/apps/api/src/routes/widget-js.ts` — reads `widget_js` from DB and streams it directly
-- `platform/packages/db/src/index.ts` — `resolveWidgetJs` queries `apps.widget_js`
-- `platform/packages/deployer/src/index.ts` — `updateAppWidgetJs` writes the raw JS string to Postgres
+- `generator/shopify_mcp/client.py` — expose a session context object or async session manager
+- `generator/crews/feature_generator/crew.py` — open session once, pass context through to codegen phase
+- `generator/subagents/base.py` — add optional `mcp_session` to `CodegenContext`
+- `generator/subagents/handler_agent.py` — use session context in `validate()`
 
-**What's wrong**
-`GET /widgets/:shop/:appId.js` reads the raw JS out of `apps.widget_js` (Postgres TEXT column) on every request. Cache-Control is `max-age=5`, so at any real storefront traffic volume this becomes a Postgres read per page load. It also means widget JS is capped at Postgres row limits and bypasses the existing GCS bundle infrastructure.
-
-**What to do**
-1. In the deployer, upload widget JS to GCS as a public object at a deterministic path: `gs://<bucket>/widgets/<appId>.js`. Set `Cache-Control: public, max-age=3600` on the object.
-2. In `widget-js.ts`, replace the Postgres read with a `302` redirect to `https://storage.googleapis.com/<bucket>/widgets/<appId>.js`. GCS serves the file directly to the browser — no separate CDN product needed, Google's infrastructure handles global distribution.
-3. On re-deploy, overwrite the same GCS path. The 1-hour browser cache means stale widgets are served for at most an hour after a deploy — acceptable for most use cases.
-
-**Interim** (already in place): the 5-second `max-age` keeps Postgres load manageable for low traffic. Switch to GCS before going to production scale.
-
-**Complexity:** Low — follows the existing `gcsBundlePath` pattern already used for handler bundles.
+**Complexity:** Medium — requires threading a session handle through the pipeline without breaking the sync/async boundary that `_run_async` already manages.
 
 ---
 
-## TD-010 — Generator has no access to live Shopify API / docs
+## TD-009 — Cron scheduling: Cloud Scheduler integration not yet implemented
 
-**What's missing**
-The generator reasons about Shopify APIs entirely from training data. When it needs to verify a field name, check whether a feature exists in a specific API version, or resolve an ambiguity in the GraphQL schema, it has no way to look it up. This causes hallucinated field names, wrong API versions, and incorrect assumptions about scope requirements (e.g. `themeDuplicate` argument names, `ThemeDuplicatePayload` shape).
+**Current state**
+`cronSchedule` is generated, stored in the DB, and passed through the deployer metadata — but
+nothing ever fires it. Cron apps deploy successfully but never execute.
 
 **What to do**
-Add a `web_search` tool to the generator's Claude API call chain:
+In `platform/packages/deployer/src/index.ts`, after writing the deployed function, call
+`@google-cloud/scheduler` to create/update a Cloud Scheduler job pointing at
+`${functionUrl}/invoke` with a synthetic payload `{ topic: 'cron', tenantId, appId }`.
+On redeploy: update the existing job. On app delete: delete the job.
+Local dev (`DEPLOY_MODE=local`): skip Scheduler creation entirely — trigger `/invoke` manually.
 
-1. **Pick a search provider** — Tavily or Brave Search (both have free tiers; Tavily returns pre-summarized results suited for LLM agents).
-2. **Define a `web_search` tool** in the Claude API request — simple schema: `{ query: string }`.
-3. **Implement the tool execution loop** — if the model returns `tool_use`, execute the search, feed results back as `tool_result`, loop until `end_turn`.
-4. **Scope it via system prompt** — instruct the model to use it when verifying Shopify API field names, argument names, scope requirements, or version availability.
-5. **Cache results** — store fetched doc pages in Redis with a TTL to avoid redundant lookups across generation runs.
-
-**Architecture choice:** implement as a pre-step (fetch relevant docs before planning, inject as context) or inline (model calls tool mid-generation). Pre-step is simpler and more predictable; inline tool use is more flexible.
-
-**Affected files (when implemented)**
-- `generator/crews/feature_generator/crew.py` — add tool loop or pre-fetch step
-- `generator/models/adapter.py` — extend to support tool use round-trips
-- `generator/subagents/` — optional: new `docs_agent.py` for the pre-step approach
-
-**Complexity:** Medium — tool loop plumbing + search provider integration + caching.
+**Scale ceiling:** Cloud Scheduler supports 4,000 jobs/project. Fine for MVP and growth.
+Beyond that, migrate to a single internal cron-dispatcher service that polls the DB and
+enqueues to the existing BullMQ queue — same worker, no new execution infrastructure.

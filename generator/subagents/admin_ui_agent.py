@@ -2,11 +2,7 @@
 Admin UI Generator — produces a self-contained JavaScript ES module for the
 Shopify Admin iframe panel.
 
-Used for:
-  - Category B apps (storefront_backend_admin): merchant dashboard alongside the
-    storefront widget (e.g. subscriber lists, conversion metrics, email template config).
-  - Category C admin-triggered apps (backend with trigger="admin"): a Polaris-style
-    panel with a button or form that calls the backend handler.
+Used for archetypes: storefront_backend_admin, backend_admin.
 
 The generated JS exports:
   export function mount(container, bridge)
@@ -15,12 +11,8 @@ WHERE:
   container — the DOM element the panel owns. Render all HTML inside it.
   bridge    — the ONLY interface to the outside world:
     bridge.context = { shop: string, tenantId: string }
-    bridge.call(path, body?)  — POST to the platform backend. Returns Promise<any>.
-                                 Uses the same backend handler paths as widget host.call().
-    bridge.notify(message, variant?)  — show a toast notification.
-                                        variant: "success" | "error" | "info" (default "info")
-
-Only runs for storefront_backend_admin apps and backend apps with trigger="admin".
+    bridge.call(path, body?)          — POST to the platform backend. Returns Promise<any>.
+    bridge.notify(message, variant?)  — show a toast. variant: "success"|"error"|"info"
 
 Model: claude-sonnet-4-6 (via agent_models.py)
 """
@@ -217,7 +209,6 @@ class AdminUiGenerator(Generator):
     def user_prompt(self, ctx: CodegenContext) -> str:
         retry_block = self.format_retry_block(ctx.previous_errors)
         catalog_desc = _format_admin_catalog(ctx.plan)
-        admin_spec_block = _format_admin_spec(ctx.plan)
         gaps_block = _format_gaps(ctx.plan)
         prior_block = _format_prior_admin_ui(ctx.prior_admin_ui_code)
 
@@ -226,9 +217,10 @@ class AdminUiGenerator(Generator):
             f"App purpose: {ctx.intent.get('desiredOutcome', '')}\n"
             f"App category: {ctx.intent.get('appCategory', '')}\n"
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
-            f"Admin API catalog (the ONLY paths the panel may call via bridge.call()):\n"
+            f"Admin API catalog — the ONLY paths the panel may call via bridge.call().\n"
+            f"Use EXACTLY the requestShape shown when building the bridge.call() body.\n"
+            f"Expect EXACTLY the responseShape shown when reading the result.\n"
             f"{catalog_desc}\n"
-            f"{admin_spec_block}"
             f"{gaps_block}"
             f"{prior_block}"
             "Generate the Admin UI panel ES module. Output ONLY the raw JavaScript."
@@ -255,7 +247,7 @@ class AdminUiGenerator(Generator):
 
 
 def _extract_admin_catalog(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
-    impl = plan.get("implementationSpec") or {}
+    impl = plan.get("appContracts") or {}
     return impl.get("adminApiCatalog") or []
 
 
@@ -265,30 +257,19 @@ def _format_admin_catalog(plan: Dict[str, Any]) -> str:
         return "  (none — render a 'Backend not configured' message)"
     lines = []
     for e in catalog:
-        shape = e.get("responseShape")
-        shape_str = f" → {shape}" if shape else ""
-        lines.append(f"  {e.get('method', 'POST')} {e['path']}{shape_str}")
+        req = e.get("requestShape", "{}")
+        resp = e.get("responseShape", "{}")
+        lines.append(f"  {e.get('method', 'POST')} {e['path']}")
+        lines.append(f"    send:    bridge.call('{e['path']}', {req})")
+        lines.append(f"    receive: {resp}")
     return "\n".join(lines)
 
 
-def _format_admin_spec(plan: Dict[str, Any]) -> str:
-    """Render codeSpec.adminPath steps as the authoritative bridge.call() contract."""
-    impl = plan.get("implementationSpec") or {}
-    steps: List[str] = (impl.get("codeSpec") or {}).get("adminPath") or []
-    if not steps:
-        return ""
-    numbered = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(steps))
-    return (
-        f"\nAdmin UI contract (implement bridge.call() bodies and result checks exactly as specified):\n"
-        f"{numbered}\n"
-    )
-
-
 def _format_gaps(plan: Dict[str, Any]) -> str:
-    gaps = (plan.get("implementationSpec") or {}).get("platformGaps") or []
+    gaps = (plan.get("appContracts") or {}).get("platformGaps") or []
     if not gaps:
         return ""
-    lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
+    lines = "\n".join(f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps)
     return f"\nBackend limitations the admin UI should surface:\n{lines}\n"
 
 

@@ -1,15 +1,14 @@
 """
-Migration Generator — produces tenant-scoped PostgreSQL DDL.
+Migration Generator — produces tenant-scoped PostgreSQL DDL from dbContracts.
+
+The Architect's dbContracts are the authoritative column definitions — the migration
+generator produces DDL mechanically from those typed table definitions.
 
 Rules enforced by both the system prompt and validate():
   - Every CREATE TABLE must include tenant_id UUID NOT NULL
   - Every table must have ALTER TABLE ENABLE ROW LEVEL SECURITY
   - Every table must have a CREATE POLICY for tenant isolation
-  - No DROP TABLE, no ALTER TABLE on existing tables, no TRUNCATE
-
-The implementationSpec contributes schema decisions: the state column must be
-NULLABLE when the state machine uses null as the unknown sentinel, and any
-migration-specific guidance from migrationGuidance.
+  - No DROP TABLE, no DROP COLUMN, no TRUNCATE
 
 Model: claude-sonnet-4-6 (via agent_models.py)
 """
@@ -34,8 +33,7 @@ CREATE TABLE {table_name} (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id  UUID NOT NULL,   -- REQUIRED on every table
   -- ... other columns ...
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
@@ -52,24 +50,20 @@ ABSOLUTE RULES:
 4. Every CREATE TABLE must have a CREATE POLICY for tenant isolation
 5. NO DROP TABLE, NO TRUNCATE. NO ALTER TABLE except:
    - ALTER TABLE {name} ENABLE ROW LEVEL SECURITY  (required after CREATE TABLE)
-   - ALTER TABLE {name} ADD COLUMN IF NOT EXISTS ...  (revision runs only — to add new columns to existing tables)
+   - ALTER TABLE {name} ADD COLUMN IF NOT EXISTS ...  (revision runs only)
 6. Use gen_random_uuid() for UUID primary keys
 7. If the feature doesn't need any new tables, output nothing at all — zero characters, no explanation
-8. Add useful indexes (tenant_id is always a candidate)
+8. Add useful indexes (tenant_id is always a candidate; avoid redundant standalone indexes
+   when a composite index already starts with tenant_id)
 9. Shopify entity IDs (variant_id, product_id, order_id, customer_id, inventory_item_id) are
    numeric integers — store them as BIGINT or TEXT, NEVER as UUID.
    Only tenant_id and internal record primary keys use the UUID type.
-10. Do NOT create a standalone (tenant_id) index when a composite index already starts with
-    tenant_id — the composite index satisfies tenant-only range scans too. Redundant indexes
-    waste write overhead and storage.
-11. Do NOT add domain-alias timestamp columns (e.g. signed_up_at, enrolled_at) that duplicate
-    created_at — use created_at for record creation time. Only add a separate domain timestamp
-    when it can differ from created_at (e.g. notified_at, fulfilled_at, cancelled_at).
-12. Derive ALL table columns from the "DB operations from codeSpec" section in the user prompt.
-    Every column that appears in SELECT …, INSERT INTO (…), UPDATE … SET col =, or UPSERT …
-    clauses MUST be present in the corresponding CREATE TABLE. The codeSpec operations are the
-    authoritative column list — do not rely solely on the schema guidance text, which may be
-    incomplete. If a step says SET notified_at = NOW(), the table needs notified_at TIMESTAMPTZ."""
+10. Do NOT add domain-alias timestamp columns that duplicate created_at — use created_at for
+    record creation time. Only add a separate domain timestamp when it can differ from created_at
+    (e.g. notified_at, fulfilled_at, cancelled_at).
+11. Derive ALL table columns EXACTLY from the DB contracts in the user prompt.
+    Generate every column listed there with the exact name, type, and constraints specified.
+    Do not add or remove columns beyond what the contracts declare."""
 
 _SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMENT")
 
@@ -85,9 +79,7 @@ class MigrationGenerator(Generator):
 
     def user_prompt(self, ctx: CodegenContext) -> str:
         retry_block = self.format_retry_block(ctx.previous_errors)
-        schema_block = _format_schema_guidance(ctx.plan)
-        sql_steps = _extract_codespec_sql_steps(ctx.plan)
-        sql_block = "\n".join(f"  {s}" for s in sql_steps) if sql_steps else "  (none)"
+        contracts_block = _format_db_contracts(ctx.plan)
         prior_block = _format_prior_migration(ctx.prior_migration_sql)
 
         if ctx.prior_migration_sql:
@@ -112,9 +104,7 @@ class MigrationGenerator(Generator):
             f"{retry_block}"
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Triggers: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
-            f"DB operations from codeSpec (ground truth for required tables and columns):\n"
-            f"{sql_block}\n"
-            f"{schema_block}"
+            f"{contracts_block}"
             f"{prior_block}"
             f"{closing}"
         )
@@ -142,6 +132,39 @@ def _extract_table_names(sql: str) -> List[str]:
     return re.findall(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", sql, re.IGNORECASE)
 
 
+def _format_db_contracts(plan: Dict[str, Any]) -> str:
+    """
+    Render dbContracts as the authoritative column specification for DDL generation.
+    Each table entry lists exact column names, types, and constraints.
+    """
+    contracts = (plan.get("appContracts") or {}).get("dbContracts") or []
+    if not contracts:
+        return "DB contracts: none — this feature requires no new tables.\n\n"
+
+    parts = [
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "DB CONTRACTS — authoritative column definitions (implement exactly):",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+    for contract in contracts:
+        table = contract.get("table", "?")
+        columns = contract.get("columns") or []
+        unique = contract.get("uniqueConstraint")
+        indexes = contract.get("indexes") or []
+
+        parts.append(f"\nTable: {table}")
+        for col in columns:
+            parts.append(f"  {col['name']}  {col['type']}  {col.get('constraints', '')}")
+        if unique:
+            parts.append(f"  UNIQUE ({', '.join(unique)})")
+        if indexes:
+            parts.append(f"  Indexes: {', '.join(indexes)}")
+
+    parts.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    return "\n".join(parts) + "\n"
+
+
+
 def _format_prior_migration(prior_sql: Any) -> str:
     """
     Show the already-applied schema for revision runs so the agent only emits
@@ -162,51 +185,3 @@ def _format_prior_migration(prior_sql: Any) -> str:
         f"{prior_sql}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
-
-
-def _format_schema_guidance(plan: Dict[str, Any]) -> str:
-    """Render schema decisions from implementationSpec relevant to DDL generation."""
-    impl = plan.get("implementationSpec") or {}
-    parts: List[str] = []
-
-    sm = impl.get("stateMachine") or {}
-    if sm.get("needsStateTracking"):
-        sentinel = sm.get("unknownSentinel", "null")
-        parts.append(
-            f"\nSchema guidance:\n"
-            f"  - The state column must be NULLABLE "
-            f"({sentinel!r} = no prior observation, distinct from any real value).\n"
-            f"  - Tracked entity: {sm.get('trackedEntity', '')}"
-        )
-
-    guidance = (impl.get("migrationGuidance") or "").strip()
-    if guidance:
-        header = "\nSchema guidance:" if not parts else ""
-        parts.append(f"{header}\n  - {guidance}")
-
-    return "\n".join(parts) + "\n" if parts else ""
-
-
-def _extract_codespec_sql_steps(plan: Dict[str, Any]) -> List[str]:
-    """
-    Extract DB operation steps from the codeSpec — ground truth for required columns.
-
-    Scans all path arrays in codeSpec for steps that contain SQL keywords.
-    These steps carry the exact table names and column lists the handler will use,
-    so the migration agent can derive the full schema from them rather than relying
-    on the architect's free-text migrationGuidance (which can omit columns).
-    """
-    impl = plan.get("implementationSpec") or {}
-    code_spec = impl.get("codeSpec") or {}
-
-    all_steps: List[str] = []
-    for path_key in ("webhookPath", "cronPath", "widgetPath", "adminPath"):
-        all_steps.extend(code_spec.get(path_key) or [])
-
-    sql_keywords = ("SELECT", "INSERT", "UPDATE", "UPSERT", "DELETE")
-    return [
-        step for step in all_steps if any(kw in step.upper() for kw in sql_keywords)
-    ]
-
-
-

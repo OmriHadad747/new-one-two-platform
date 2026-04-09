@@ -9,7 +9,7 @@ targeted changes needed to implement the merchant's revision request.
 Advantages over per-generator revision:
   - Holistic: knows all prior artifacts simultaneously — cross-artifact changes
     stay consistent (e.g. renaming a field in the handler also renames it in the widget)
-  - Targeted: compares prior code against the new architect+codespec plan, patches
+  - Targeted: compares prior code against the new architect plan (shopifyPlan + appContracts), patches
     only what changed, preserves working logic
   - Atomic: one LLM call rather than 3–4 parallel ones that can diverge
 
@@ -33,10 +33,10 @@ log = logging.getLogger(__name__)
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 
-REVISION_SYSTEM = f"""You are an expert Shopify automation code revision specialist.
+REVISION_SYSTEM = f"""You are an expert Shopify applications code revision specialist.
 
 You receive existing working handler code (and optionally widget + admin UI code)
-along with a revised architect + codespec plan. Apply MINIMUM targeted changes.
+along with a revised architect plan. Apply MINIMUM targeted changes.
 
 {HARNESS_BASE}
 
@@ -46,31 +46,34 @@ REVISION RULES — read before editing
 
 APPROACH:
 1. Read existing code — understand what it does and what contracts it maintains.
-2. Identify exactly what is different in the new plan vs. the existing code.
-3. Apply only the changes required by the new plan — preserve everything else.
+2. Compare the existing code against the new appContracts (dbContracts, webhookContract,
+   widgetApiCatalog, adminApiCatalog requestShape/responseShape).
+3. Apply only the changes required — preserve everything else.
 4. If a field name changes in the handler, also change it in the widget and admin UI.
 
 HANDLER:
 - Output MUST be a full CommonJS module: module.exports = {{ webhookTopics, cronSchedule, handler }}
-- Follow the new codeSpec steps in order — do not interpolate old steps with new ones
+- Implement all routes declared in widgetApiCatalog and adminApiCatalog
+- Use exact column names from dbContracts in all SQL queries
 - Update webhookTopics and cronSchedule only if the new plan changes them
-- Preserve existing DB queries that the new plan does not touch
 
 MIGRATION:
 - Output ONLY incremental DDL
 - NEVER drop, recreate, or modify existing columns/tables (the prior migration was already applied)
-- New table → full CREATE TABLE IF NOT EXISTS ... statement
+- New table → full CREATE TABLE IF NOT EXISTS ... with tenant isolation pattern
 - New column → ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...
 - If nothing changed in the schema → output exactly: -- no schema changes
 
 WIDGET (widget_js, if applicable):
+- Use EXACTLY the requestShape fields shown in widgetApiCatalog for each host.call() body
+- Use EXACTLY the responseShape field names when reading results
 - Keep the same host.call() / host.storefront() / host.context structural pattern
-- Update path names, field names, and UI logic only where the new plan requires it
 - Set to null (JSON null) if this is a backend-only app
 
 ADMIN UI (admin_ui, if applicable):
+- Use EXACTLY the requestShape fields shown in adminApiCatalog for each bridge.call() body
+- Use EXACTLY the responseShape field names when reading results
 - Keep the same bridge.call() / bridge.subscribe() pattern
-- Update path names and response field names where the new plan requires it
 - Set to null (JSON null) if this app has no admin panel
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -130,11 +133,11 @@ Fix ALL of them in your revised output:
 Feature intent:
 {json.dumps(intent, indent=2)}
 
-Shopify plan (architect):
+Shopify plan:
 {json.dumps(plan.get("shopifyPlan", {}), indent=2)}
 
-Implementation spec (includes new codeSpec steps):
-{json.dumps(plan.get("implementationSpec", {}), indent=2)}
+App contracts (dbContracts, webhookContract, widgetApiCatalog, adminApiCatalog):
+{json.dumps(plan.get("appContracts", {}), indent=2)}
 {issues_block}
 ═══════════════════════════════════════════════════════════════
 EXISTING CODE — apply targeted changes only
@@ -173,7 +176,7 @@ def run_revision_agent(
     ----------
     ctx:
         CodegenContext with prior_* fields populated from the existing bundle.
-        plan must already contain the merged architect + codeSpec output.
+        plan must already contain the architect output (shopifyPlan + appContracts).
     is_storefront:
         True if the app has a storefront widget (widget_js artifact expected).
     is_admin_ui:

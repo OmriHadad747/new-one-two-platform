@@ -79,7 +79,7 @@ def run_explanation_agent(
 ) -> Dict[str, Any]:
     """Agent 6: Generate merchant explanation + technical summary."""
     shopify_plan = plan.get("shopifyPlan", {})
-    impl_spec = plan.get("implementationSpec", {})
+    impl_spec = plan.get("appContracts", {})
 
     db_tables = re.findall(r"CREATE\s+TABLE\s+(\w+)", migration_sql, re.IGNORECASE)
     webhook_topics = shopify_plan.get("webhookTopics", [])
@@ -103,7 +103,7 @@ def run_explanation_agent(
     platform_gaps_section = ""
     gaps = impl_spec.get("platformGaps") or []
     if gaps:
-        lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
+        lines = "\n".join(f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps)
         platform_gaps_section = f"\n\nKnown platform limitations:\n{lines}"
 
     user = EXPLANATION_USER_TEMPLATE.format(

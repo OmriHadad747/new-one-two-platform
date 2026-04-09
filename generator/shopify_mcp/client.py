@@ -9,35 +9,27 @@ Public API
 ----------
   prefetch_for_run(resources, intent_description) -> str
       Main entry point. Call once per pipeline run before the Architect agent.
-      Warms the webhook-topics cache and the per-resource REST/doc cache in a
-      single MCP session. Returns the combined API context string.
-
-  refetch_for_operations(operations) -> str
-      Called after the Architect locks its specific API operations and before
-      the CodeSpec agent starts. Fetches precise GraphQL schemas and REST docs
-      for each operation. Results are written to cache (keyed by operation set)
-      but the cache is never read — ensures fresh data per run while avoiding
-      duplicate MCP traffic on retries within the same pipeline run.
+      Searches Shopify docs for the feature intent; returns api_context string.
+      Side-effect: warms the webhook-topics cache. Both calls are batched into
+      one NPX session when topics cache is cold; one call when hot.
 
   get_webhook_topics() -> list[str]
       Returns the cached webhook topic list (REST format, e.g. "orders/create").
       Populated by prefetch_for_run. Falls back to [] on cache miss so callers
       can apply their own hardcoded fallback.
 
+  validate_handler_graphql(handler_js) -> list[str]
+      Extract GraphQL operations from handler.js and validate them against the
+      live Shopify schema via validate_graphql_codeblocks. Returns a list of
+      error strings (empty = all valid or MCP unavailable).
+
   search_docs(query) -> str
-      Free-text doc search for edge cases not covered by prefetch. Not cached.
+      Free-text doc search for specific edge cases. Not cached.
 
 Caching
 -------
   Results are stored under generator/shopify_mcp/cache/ as JSON files:
     webhook_topics.json              — full topic list, 24 h TTL
-    resources_<sha256>.json          — per resource-set context, 24 h TTL
-    operations_<sha256>.json         — per operation-set precise schemas, 24 h TTL
-
-  Cache reads: prefetch_for_run and get_webhook_topics read from cache.
-  Cache writes: all three fetch functions write results to cache.
-  refetch_for_operations always executes MCP calls (never reads cache) but
-  writes its result so repeated identical operation sets in future runs are free.
 
   Thread-safe: each disk write is an atomic rename-replace (write temp → rename).
 
@@ -69,6 +61,7 @@ log = logging.getLogger(__name__)
 try:
     from mcp import ClientSession
     from mcp.client.stdio import stdio_client, StdioServerParameters
+
     _MCP_AVAILABLE = True
 except ImportError:
     _MCP_AVAILABLE = False
@@ -105,8 +98,11 @@ def _write_cache(key: str, data: Any, ttl: int = _CACHE_TTL_SECONDS) -> None:
     """Atomic write: write to a temp file then rename to prevent partial reads."""
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     target = _cache_key_path(key)
-    payload = json.dumps({"fetched_at": time.time(), "ttl_seconds": ttl, "data": data},
-                         indent=2, ensure_ascii=False)
+    payload = json.dumps(
+        {"fetched_at": time.time(), "ttl_seconds": ttl, "data": data},
+        indent=2,
+        ensure_ascii=False,
+    )
     fd, tmp = tempfile.mkstemp(dir=_CACHE_DIR, suffix=".json.tmp")
     try:
         os.write(fd, payload.encode("utf-8"))
@@ -123,7 +119,7 @@ def _write_cache(key: str, data: Any, ttl: int = _CACHE_TTL_SECONDS) -> None:
 # ── Async MCP session ─────────────────────────────────────────────────────────
 
 
-_TOOL_TIMEOUT_SECONDS = 30   # per-tool call timeout
+_TOOL_TIMEOUT_SECONDS = 30  # per-tool call timeout
 _SESSION_TIMEOUT_SECONDS = 120  # total MCP session timeout (all calls combined)
 
 
@@ -157,21 +153,30 @@ async def _run_session_async(calls: list[tuple[str, dict[str, Any]]]) -> list[An
                 conversation_id: str | None = None
                 try:
                     learn_result = await asyncio.wait_for(
-                        session.call_tool("learn_shopify_api", {"api": "admin", "model": "claude-sonnet-4-6"}),
+                        session.call_tool(
+                            "learn_shopify_api",
+                            {"api": "admin", "model": "claude-sonnet-4-6"},
+                        ),
                         timeout=_TOOL_TIMEOUT_SECONDS,
                     )
                     learn_text = _extract_text(learn_result)
                     cid_match = re.search(
                         r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-                        learn_text, re.IGNORECASE,
+                        learn_text,
+                        re.IGNORECASE,
                     )
                     if cid_match:
                         conversation_id = cid_match.group(0)
                         log.debug("MCP conversationId: %s", conversation_id)
                     else:
-                        log.warning("MCP: could not extract conversationId from learn_shopify_api response")
+                        log.warning(
+                            "MCP: could not extract conversationId from learn_shopify_api response"
+                        )
                 except asyncio.TimeoutError:
-                    log.warning("MCP learn_shopify_api timed out after %ds", _TOOL_TIMEOUT_SECONDS)
+                    log.warning(
+                        "MCP learn_shopify_api timed out after %ds",
+                        _TOOL_TIMEOUT_SECONDS,
+                    )
                 except Exception as exc:
                     log.warning("MCP learn_shopify_api failed: %s", exc)
 
@@ -187,7 +192,11 @@ async def _run_session_async(calls: list[tuple[str, dict[str, Any]]]) -> list[An
                         )
                         results.append(result)
                     except asyncio.TimeoutError:
-                        log.warning("MCP tool %r timed out after %ds — skipping", tool_name, _TOOL_TIMEOUT_SECONDS)
+                        log.warning(
+                            "MCP tool %r timed out after %ds — skipping",
+                            tool_name,
+                            _TOOL_TIMEOUT_SECONDS,
+                        )
                         results.append(None)
                     except Exception as exc:
                         log.warning("MCP tool %r failed: %s", tool_name, exc)
@@ -274,28 +283,39 @@ def _enum_to_rest_topic(value: str) -> str:
 def _parse_topics_from_text(text: str) -> list[str]:
     """
     Extract REST-format webhook topics from MCP introspection output.
-    Handles both SCREAMING_SNAKE_CASE enum values and already-converted REST strings.
+
+    Only scans for SCREAMING_SNAKE_CASE tokens (WebhookSubscriptionTopic enum values).
+    REST-format word/word patterns are intentionally NOT extracted — they appear
+    in documentation prose and URL paths and produce false positives.
+    Returns [] when the response contains no enum values (callers will not cache).
     """
+    log.debug(
+        "MCP _parse_topics_from_text: received %d chars, preview: %.300s",
+        len(text),
+        text,
+    )
+
     topics: list[str] = []
     seen: set[str] = set()
 
-    for raw_line in text.splitlines():
-        line = raw_line.strip().strip(",").strip('"').strip("'")
-        if not line or line.startswith("#") or line.startswith("//"):
-            continue
-
-        # GraphQL enum value: all caps, underscores, no spaces, reasonable length
-        if re.fullmatch(r"[A-Z][A-Z0-9_]{3,60}", line):
-            topic = _enum_to_rest_topic(line)
-        # REST-format topic: lowercase, one slash, underscores allowed
-        elif re.fullmatch(r"[a-z][a-z0-9_]*/[a-z][a-z0-9_]*", line):
-            topic = line
-        else:
-            continue
-
+    for value in re.findall(r"\b([A-Z][A-Z0-9_]{3,60})\b", text):
+        if "_" not in value:
+            continue  # skip single-word caps tokens (NULL, TRUE, NOT, etc.)
+        topic = _enum_to_rest_topic(value)
         if topic not in seen:
             seen.add(topic)
             topics.append(topic)
+
+    if not topics:
+        log.warning(
+            "MCP _parse_topics_from_text: 0 enum values found in %d-char response — "
+            "introspect_graphql_schema may have returned documentation prose instead of schema. "
+            "Cache will NOT be written. Raw preview: %.500s",
+            len(text),
+            text,
+        )
+    else:
+        log.info("MCP _parse_topics_from_text: extracted %d topics", len(topics))
 
     return topics
 
@@ -305,95 +325,73 @@ def _parse_topics_from_text(text: str) -> list[str]:
 
 def prefetch_for_run(resources: list[str], intent_description: str = "") -> str:
     """
-    Warm all caches relevant to this pipeline run in a single MCP session.
+    Fetch Shopify docs for this pipeline run and return them as api_context.
 
-    Fetches (if not already cached):
-      1. The complete WebhookSubscriptionTopic enum → writes webhook_topics cache
-      2. REST docs + GraphQL schema for each resource → writes resource-context cache
+    Batches two calls into one NPX session:
+      1. introspect_graphql_schema — warms the webhook topics cache (skipped when hot).
+      2. search_docs_chunks — searches docs using the feature intent as the query.
+         Uses intent_description (desiredOutcome) not resource names: intent language
+         matches how Shopify docs are written and yields high-precision results.
 
-    Returns the combined API context string for injection into agent prompts.
-    Never raises — all failures produce warnings and empty fallback values.
+    Returns the docs text as api_context for injection into the handler prompt.
+    Returns "" when intent_description is empty or MCP is unavailable.
+    Never raises — all failures produce warnings and return "".
 
     Parameters
     ----------
     resources:
-        Resource names from Intent output (e.g. ["orders", "inventory"]).
+        Resource names from Intent output. Not used in the search query — kept for
+        call-site compatibility.
     intent_description:
-        Optional one-liner describing the feature (improves doc-search relevance).
+        The desiredOutcome from the product agent, used directly as the search query.
+        e.g. "add tags to high-value orders when they are created"
     """
-    resource_key = "resources_" + "_".join(sorted(r.lower() for r in resources))
-
-    topics_cached = _read_cache("webhook_topics")
-    context_cached = _read_cache(resource_key)
-
-    if topics_cached is not None and context_cached is not None:
-        log.debug("MCP cache hit for topics + resources=%s", resources)
-        return context_cached
-
     if not _MCP_AVAILABLE:
         return ""
 
-    # Build the minimal set of MCP calls needed
     calls: list[tuple[str, dict[str, Any]]] = []
-    need_topics = topics_cached is None
-    need_context = context_cached is None
+    topics_cached = _read_cache("webhook_topics")
+    needs_topics = topics_cached is None
 
-    if need_topics:
-        calls.append(("introspect_graphql_schema", {
-            "api": "admin",
-            "query": "WebhookSubscriptionTopic",
-        }))
+    if needs_topics:
+        calls.append(
+            ("introspect_graphql_schema", {"api": "admin", "query": "WebhookSubscriptionTopic"})
+        )
 
-    if need_context and resources:
-        # One search-docs call per resource (REST docs + webhook payloads)
-        for resource in resources:
-            prompt = (
-                f"Shopify {resource} REST API endpoints fields webhook payload"
-                + (f" for: {intent_description}" if intent_description else "")
-            )
-            calls.append(("search_docs_chunks", {"prompt": prompt, "api_name": "admin"}))
-
+    if intent_description:
+        calls.append(
+            ("search_docs_chunks", {"prompt": intent_description, "api_name": "admin"})
+        )
 
     if not calls:
-        return context_cached or ""
+        log.debug("MCP prefetch: nothing to fetch (topics cached, no intent)")
+        return ""
 
     results = _call_mcp(calls)
 
-    # ── Parse topics ──────────────────────────────────────────────────────────
+    # Consume results positionally — order matches the calls list above
     idx = 0
-    if need_topics:
-        topics_text = _extract_text(results[idx]) if idx < len(results) else ""
-        if topics_text:
-            topics = _parse_topics_from_text(topics_text)
-            if topics:
-                try:
-                    _write_cache("webhook_topics", topics)
-                    log.info("MCP: cached %d webhook topics", len(topics))
-                except Exception as exc:
-                    log.warning("Failed to write webhook_topics cache: %s", exc)
+    if needs_topics:
+        topics_text = _extract_text(results[idx]) if results and len(results) > idx else ""
+        # Always cache — even when MCP returns empty or parsing yields 0 topics.
+        # Not caching would cause a repeated MCP call on every run.
+        # get_webhook_topics() returning [] causes static validation to skip topic checking.
+        topics = _parse_topics_from_text(topics_text) if topics_text else []
+        try:
+            _write_cache("webhook_topics", topics)
+            log.info("MCP: cached %d webhook topics", len(topics))
+        except Exception as exc:
+            log.warning("Failed to write webhook_topics cache: %s", exc)
         idx += 1
 
-    # ── Parse resource context ─────────────────────────────────────────────────
-    api_context = context_cached or ""
-    if need_context and resources:
-        sections: list[str] = []
+    if intent_description:
+        docs_result = results[idx] if results and len(results) > idx else None
+        docs_text = _extract_text(docs_result) if docs_result else ""
+        if docs_text:
+            log.info("MCP api_context: %d chars for intent %.80s", len(docs_text), intent_description)
+        return docs_text
 
-        # REST doc chunks (one per resource)
-        for resource in resources:
-            text = _extract_text(results[idx]) if idx < len(results) else ""
-            if text.strip():
-                sections.append(f"── {resource.upper()} — REST / docs ──\n{text.strip()}")
-            idx += 1
-
-        if sections:
-            api_context = "\n\n".join(sections)
-            try:
-                _write_cache(resource_key, api_context)
-                log.info("MCP: cached API context for resources=%s", resources)
-            except Exception as exc:
-                log.warning("Failed to write resource context cache: %s", exc)
-
-    return api_context
+    return ""
 
 
 def get_webhook_topics() -> list[str]:
@@ -411,97 +409,73 @@ def search_docs(query: str) -> str:
     prefetch_for_run (e.g. obscure resources, Shopify Functions, B2B APIs).
     Results are NOT cached since queries are dynamic.
     """
-    results = _call_mcp([("search_docs_chunks", {"prompt": query, "api_name": "admin"})])
+    results = _call_mcp(
+        [("search_docs_chunks", {"prompt": query, "api_name": "admin"})]
+    )
     return _extract_text(results[0]) if results else ""
 
 
-def refetch_for_operations(operations: list[dict]) -> str:
+# Match template literals whose trimmed content starts with a GraphQL keyword.
+# Uses a non-greedy match; stops at the next backtick not preceded by a backslash.
+_GQL_TEMPLATE_RE = re.compile(
+    r"`\s*((?:mutation|query|fragment|subscription)[\s({][\s\S]*?)`",
+    re.IGNORECASE,
+)
+
+
+def validate_handler_graphql(handler_js: str) -> list[str]:
     """
-    Fetch precise MCP documentation for the specific operations the Architect locked.
+    Extract GraphQL operations from handler.js and validate them against the
+    live Shopify Admin schema via validate_graphql_codeblocks.
 
-    Called after the Architect agent completes and before the CodeSpec agent starts.
-    Queries MCP for:
-      - GraphQL: introspect_graphql_schema for each unique root operation name
-        extracted from operationHint (e.g. "stagedUploadsCreate(input: ...)" → "stagedUploadsCreate")
-      - REST: search_docs_chunks for each unique resource derived from the path
-        (e.g. /admin/api/.../products/images.json → "products images")
+    Used by HandlerGenerator.validate() to catch hallucinated mutation/query names
+    before the retry loop runs. Errors are returned in the same format as static
+    validation errors so they slot into previous_errors cleanly.
 
-    Always executes MCP calls (never reads cache) to ensure the CodeSpec agent
-    always gets the latest schemas for this run. Results are written to cache
-    so identical operation sets in future pipeline runs avoid redundant MCP traffic.
+    Returns [] when:
+    - No GraphQL operations found in the handler
+    - MCP is unavailable (graceful degradation — never blocks generation)
+    - validate_graphql_codeblocks reports all operations valid
 
-    Returns context string to append to the upfront api_context.
-    Returns "" on any failure or when MCP is unavailable.
+    Returns a list of error strings when Shopify's schema rejects any operation.
     """
-    if not operations or not _MCP_AVAILABLE:
-        return ""
+    if not _MCP_AVAILABLE:
+        return []
 
-    calls: list[tuple[str, dict[str, Any]]] = []
-    labels: list[str] = []
-    seen_graphql: set[str] = set()
-    seen_rest: set[str] = set()
+    operations = _GQL_TEMPLATE_RE.findall(handler_js)
+    if not operations:
+        return []
 
-    for op in operations:
-        protocol = op.get("protocol", "")
+    codeblocks = [{"content": op.strip()} for op in operations if op.strip()]
+    if not codeblocks:
+        return []
 
-        if protocol == "graphql":
-            hint = (op.get("operationHint") or "").strip()
-            # Extract root name: "stagedUploadsCreate(input: ...)" → "stagedUploadsCreate"
-            m = re.match(r"(\w+)", hint)
-            if m:
-                name = m.group(1)
-                if name and name not in seen_graphql:
-                    seen_graphql.add(name)
-                    calls.append(("introspect_graphql_schema", {"api": "admin", "query": name}))
-                    labels.append(f"GraphQL:{name}")
+    results = _call_mcp(
+        [("validate_graphql_codeblocks", {"codeblocks": codeblocks})]
+    )
+    if not results:
+        return []
 
-        elif protocol == "rest":
-            path = (op.get("path") or "").strip()
-            if path and path not in seen_rest:
-                seen_rest.add(path)
-                # Derive a human-readable resource label from the REST path.
-                # Skip: version segments (2026-01), numeric IDs, template vars (${...}),
-                # .json suffix parts, and generic path components (admin, api).
-                parts = [
-                    p for p in path.split("/")
-                    if p
-                    and not p.startswith("${")
-                    and p not in ("admin", "api")
-                    and not re.fullmatch(r"\d{4}-\d{2}", p)  # version segment
-                    and "." not in p  # skip segments containing ".json"
-                    and not p[0].isdigit()  # skip numeric IDs
-                ]
-                resource_hint = " ".join(parts[-2:]) if len(parts) >= 2 else " ".join(parts)
-                if resource_hint:
-                    calls.append(("search_docs_chunks", {
-                        "prompt": f"Shopify {resource_hint} REST API endpoint fields parameters responses",
-                        "api_name": "admin",
-                    }))
-                    labels.append(f"REST:{resource_hint}")
+    validation_text = _extract_text(results[0])
+    if not validation_text or "error" not in validation_text.lower():
+        return []
 
-    if not calls:
-        return ""
+    # Parse error details out of the validation response.
+    # The MCP tool returns a markdown summary — extract the Details lines.
+    errors: list[str] = []
+    for line in validation_text.splitlines():
+        line = line.strip()
+        if line.startswith("**Details:**"):
+            detail = line.removeprefix("**Details:**").strip()
+            if detail:
+                errors.append(f"GraphQL validation: {detail}")
+        elif "GraphQL validation error" in line or "Cannot query field" in line:
+            errors.append(f"GraphQL validation: {line.lstrip('*- ')}")
 
-    results = _call_mcp(calls)
+    # Fallback: if we know there are errors but couldn't parse specifics,
+    # return the raw summary so the handler has something to act on.
+    if not errors:
+        errors = ["GraphQL validation: one or more operations failed Shopify schema validation — see details and fix mutation/query names and argument shapes"]
 
-    sections: list[str] = []
-    for label, result in zip(labels, results):
-        text = _extract_text(result)
-        if text.strip():
-            sections.append(f"── {label} — precise schema ──\n{text.strip()}")
-
-    context = "\n\n".join(sections)
-
-    if context:
-        # Build a stable cache key from the sorted set of operation identifiers
-        op_key = "operations_" + "_".join(sorted(
-            f"{op.get('protocol','')}-{op.get('operationHint') or op.get('path','')}"
-            for op in operations
-        ))
-        try:
-            _write_cache(op_key, context)
-            log.debug("MCP: cached operation schemas for %d operations", len(operations))
-        except Exception as exc:
-            log.warning("Failed to write operations cache: %s", exc)
-
-    return context
+    log.info("MCP GraphQL validation: %d error(s) in handler", len(errors))
+    return errors

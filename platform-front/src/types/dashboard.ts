@@ -155,7 +155,6 @@ export type GenerationProgressStatus = "running" | "completed" | "failed" | "ret
 export type GenerationAgent =
   | "product"
   | "architect"
-  | "codespec"
   | "handler"
   | "migration"
   | "widget_js"
@@ -229,6 +228,8 @@ export interface SessionBundle {
   handlerModule?: { code?: string; webhookTopics?: string[]; cronSchedule?: string | null };
   widgetModule?: string | null;
   adminUiModule?: string | null;
+  /** Theme template pages the widget targets, e.g. ["product", "cart"]. null for backend apps. */
+  widgetTargetTemplates?: string[] | null;
   explanation?: { merchantFacing?: string; technical?: unknown };
 }
 

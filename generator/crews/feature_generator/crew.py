@@ -3,17 +3,15 @@ FeatureGenerator crew — orchestrates all agents for a single generation reques
 
 Pipeline:
   Agent 1  Product      — translate merchant prompt into product feature spec
-  Agent 2  Architect    — structural decisions: webhooks, state machine, catalog, gaps
-           validate_architect — rule-based gate (topics, cron syntax, catalog paths, sentinel)
+  Agent 2  Architect    — structural decisions + binding contracts
+           validate_architect — rule-based gate (topics, cron syntax, catalog paths, sentinel,
+                                dbContracts tenant_id, requestShape presence)
            (retry Architect once on validation failure before failing the job)
-  Agent 3  CodeSpec     — step-by-step algorithms written against locked architect output
-           validate_codespec — rule-based gate (claim ordering, field names, loop safety)
-           (retry CodeSpec up to 2 times on validation failure before failing the job)
-  Agent 4  CodeGen      — generators run in parallel (ThreadPoolExecutor)
+  Agent 3  CodeGen      — generators run in parallel (ThreadPoolExecutor)
            validate_artifacts — static analysis per artifact + cross-artifact check, retry loop (max 3)
-  Agent 5  Validator    — optional LLM semantic alignment check (LLM_VALIDATION_ENABLED=true)
+  Agent 4  Validator    — optional LLM semantic alignment check (LLM_VALIDATION_ENABLED=true)
            triggers one revision pass via revision_agent if high-confidence issues found
-  Agent 6  Explanation  — sequential, writes merchant-facing summary
+  Agent 5  Explanation  — sequential, writes merchant-facing summary
   Publisher             — FeatureBundleMessage to generation.completed
 
 Adding a new generator requires only creating a new Generator subclass and
@@ -42,18 +40,16 @@ from contract.validators import (
     TechnicalExplanation,
     AgentTraceEntry,
 )
-from shopify_mcp.client import prefetch_for_run, refetch_for_operations
+from shopify_mcp.client import prefetch_for_run
 from subagents.product_agent import run_product_agent
 from subagents.explanation_agent import run_explanation_agent
 from subagents.base import CodegenContext, Generator
 from subagents.architect_agent import run_architect_agent
-from subagents.codespec_agent import run_codespec_agent
 from subagents.revision_agent import run_revision_agent
 from subagents.validator_agent import run_validator_agent
 from subagents.registry import GENERATORS
 from subagents.static_validation import (
     validate_architect_plan,
-    validate_codespec_plan,
     validate_widget_handler_contract,
     validate_admin_handler_contract,
 )
@@ -62,7 +58,6 @@ log = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3        # total codegen attempts (1 initial + 2 retries)
 _MAX_ARCH_ATTEMPTS = 2  # architect: 1 initial + 1 retry
-_MAX_CS_ATTEMPTS = 3    # codespec:  1 initial + 2 retries (complex output, more validation rules)
 
 
 # ── Pipeline control ───────────────────────────────────────────────────────────
@@ -135,19 +130,17 @@ def run_feature_generation(request: GenerationRequest) -> None:
             is_admin_ui,
         )
 
-        architect_output, api_context = _phase_architect(request, intent, agent_trace)
-        plan = _phase_codespec(
-            request, intent, architect_output, api_context, agent_trace
-        )
+        plan, api_context = _phase_architect(request, intent, agent_trace)
 
         prior_bundle = request.priorBundle or {}
         base_ctx = CodegenContext(
             intent=intent,
             plan=plan,
-            platform_api_catalog=(plan.get("implementationSpec") or {}).get(
+            platform_api_catalog=(plan.get("appContracts") or {}).get(
                 "widgetApiCatalog"
             )
             or [],
+            api_context=api_context,
             prior_handler_code=(
                 (prior_bundle.get("handlerModule") or {}).get("code") or None
             ),
@@ -231,12 +224,10 @@ def _phase_architect(
     agent_trace: List[AgentTraceEntry],
 ) -> Tuple[Dict, str]:
     """
-    Agent 2: produce shopifyPlan + implementationSpec.
+    Agent 2: produce shopifyPlan + appContracts (typed contracts for all components).
 
-    Returns (architect_output, api_context) where api_context is the enriched
-    MCP context for the CodeSpec agent — broad resource docs from the upfront
-    prefetch, supplemented by precise operation-level schemas fetched after the
-    architect locks its specific API calls.
+    Returns (plan, api_context) where plan IS the architect output and api_context
+    is the live MCP context passed directly to the Handler agent.
     """
     _emit(request, "architect", "running", "Planning Shopify API surface…")
     t0 = _now_ms()
@@ -246,18 +237,18 @@ def _phase_architect(
         intent.get("resources", []), intent.get("desiredOutcome", "")
     )
 
-    architect_output: Optional[Dict] = None
+    plan: Optional[Dict] = None
     arch_errors: List[str] = []
 
     for attempt in range(1, _MAX_ARCH_ATTEMPTS + 1):
-        architect_output = run_architect_agent(
+        plan = run_architect_agent(
             prompt=request.prompt,
             intent=intent,
             app_archetype=archetype,
             api_context=api_context,
             validation_errors=arch_errors if attempt > 1 else None,
         )
-        arch_errors = validate_architect_plan(architect_output, app_archetype=archetype)
+        arch_errors = validate_architect_plan(plan, app_archetype=archetype)
 
         if not arch_errors:
             break
@@ -285,9 +276,9 @@ def _phase_architect(
         )
 
     # Feasibility gate — fail immediately when ctx cannot deliver the core value.
-    impl_spec = architect_output.get("implementationSpec") or {}
-    if impl_spec.get("feasibility") == "blocked":
-        blocked_reason: str = impl_spec.get(
+    contracts = plan.get("appContracts") or {}
+    if contracts.get("feasibility") == "blocked":
+        blocked_reason: str = contracts.get(
             "blockedReason",
             "This app requires capabilities that aren't available on the platform yet.",
         )
@@ -309,119 +300,15 @@ def _phase_architect(
     )
     _emit(request, "architect", "completed", "Structural plan ready")
     log.info(
-        "job=%s architect topics=%s cron=%s has_catalog=%s",
+        "job=%s architect topics=%s cron=%s has_widget_catalog=%s has_admin_catalog=%s",
         request.jobId,
-        (architect_output.get("shopifyPlan") or {}).get("webhookTopics"),
-        (architect_output.get("shopifyPlan") or {}).get("cronSchedule"),
-        bool(impl_spec.get("widgetApiCatalog")),
+        (plan.get("shopifyPlan") or {}).get("webhookTopics"),
+        (plan.get("shopifyPlan") or {}).get("cronSchedule"),
+        bool(contracts.get("widgetApiCatalog")),
+        bool(contracts.get("adminApiCatalog")),
     )
 
-    # Post-architect re-fetch: precise schemas for the specific operations the
-    # architect locked. Supplements the broad resource-level docs from prefetch_for_run.
-    architect_operations = (architect_output.get("shopifyPlan") or {}).get(
-        "operations"
-    ) or []
-    if architect_operations:
-        refined = refetch_for_operations(architect_operations)
-        if refined:
-            api_context = "\n\n".join(
-                filter(
-                    None,
-                    [
-                        api_context,
-                        "── Post-architect precise schemas ──\n\n" + refined,
-                    ],
-                )
-            )
-            log.info(
-                "job=%s post-architect context enriched (+%d chars)",
-                request.jobId,
-                len(refined),
-            )
-
-    return architect_output, api_context
-
-
-def _phase_codespec(
-    request: GenerationRequest,
-    intent: Dict,
-    architect_output: Dict,
-    api_context: str,
-    agent_trace: List[AgentTraceEntry],
-) -> Dict:
-    """
-    Agent 3: write step-by-step algorithms against the locked architect output.
-
-    Returns the merged plan dict consumed by all codegen generators.
-    """
-    _emit(request, "codespec", "running", "Writing implementation algorithms…")
-    t0 = _now_ms()
-
-    codespec_output: Optional[Dict] = None
-    cs_errors: List[str] = []
-
-    for attempt in range(1, _MAX_CS_ATTEMPTS + 1):
-        codespec_output = run_codespec_agent(
-            prompt=request.prompt,
-            intent=intent,
-            architect_output=architect_output,
-            api_context=api_context,
-            validation_errors=cs_errors if attempt > 1 else None,
-        )
-        cs_errors = validate_codespec_plan(codespec_output, architect_output)
-
-        if not cs_errors:
-            break
-
-        log.warning(
-            "job=%s codespec validation attempt=%d errors=%s",
-            request.jobId,
-            attempt,
-            cs_errors,
-        )
-
-        if attempt == _MAX_CS_ATTEMPTS:
-            _fail_and_abort(
-                request,
-                "codespec",
-                f"CodeSpec validation failed: {cs_errors[0]}",
-                f"CodeSpec produced invalid spec after {_MAX_CS_ATTEMPTS} attempts: {cs_errors}",
-            )
-
-        _emit(
-            request,
-            "codespec",
-            "running",
-            f"Fixing code spec (attempt {attempt + 1}/{_MAX_CS_ATTEMPTS})…",
-        )
-
-    plan: Dict = {
-        **architect_output,
-        "implementationSpec": {
-            **(architect_output.get("implementationSpec") or {}),
-            "codeSpec": codespec_output.get("codeSpec") or {},
-        },
-    }
-
-    agent_trace.append(
-        AgentTraceEntry(
-            agent="codespec",
-            latencyMs=_now_ms() - t0,
-            inputTokens=0,
-            outputTokens=0,
-        )
-    )
-    _emit(request, "codespec", "completed", "Implementation spec ready")
-    impl = plan.get("implementationSpec") or {}
-    log.info(
-        "job=%s codespec webhook_steps=%d cron_steps=%d widget_steps=%d",
-        request.jobId,
-        len((impl.get("codeSpec") or {}).get("webhookPath") or []),
-        len((impl.get("codeSpec") or {}).get("cronPath") or []),
-        len((impl.get("codeSpec") or {}).get("widgetPath") or []),
-    )
-
-    return plan
+    return plan, api_context
 
 
 def _phase_codegen(
@@ -432,7 +319,7 @@ def _phase_codegen(
     agent_trace: List[AgentTraceEntry],
 ) -> Dict[str, str]:
     """
-    Agents 4 + 5: parallel code generation with a validation-and-retry loop.
+    Agents 3 + 4: parallel code generation with a validation-and-retry loop.
 
     On revision runs (priorBundle present) the first attempt uses the holistic
     revision agent. Subsequent retry attempts always use individual generators.
@@ -571,9 +458,9 @@ def _phase_validator(
     agent_trace: List[AgentTraceEntry],
 ) -> Dict[str, str]:
     """
-    Optional Agent 5b: LLM semantic alignment check (LLM_VALIDATION_ENABLED=true).
+    Optional Agent 4b: LLM semantic alignment check (LLM_VALIDATION_ENABLED=true).
 
-    Runs 5 targeted questions against the generated artifacts. Only HIGH-confidence
+    Runs 6 targeted questions against the generated artifacts. Only HIGH-confidence
     issues trigger one revision pass. Returns the (possibly revised) artifacts.
     Fail-open: any error returns the original artifacts unchanged.
     """
@@ -639,7 +526,7 @@ def _phase_explanation(
     is_storefront: bool,
     agent_trace: List[AgentTraceEntry],
 ) -> Dict:
-    """Agent 6: write the merchant-facing feature summary."""
+    """Agent 5: write the merchant-facing feature summary."""
     _emit(request, "explanation", "running", "Writing feature summary…")
     t0 = _now_ms()
     explanation = run_explanation_agent(
@@ -684,9 +571,13 @@ def _publish_success(
             return []
         return re.findall(r"""['"]([^'"]+)['"]""", match.group(1))
 
+    app_contracts = base_ctx.plan.get("appContracts") or {}
     bundle = Bundle(
         widgetModule=artifacts.get("widget_js") if is_storefront else None,
         adminUiModule=artifacts.get("admin_ui") if is_admin_ui else None,
+        widgetTargetTemplates=(
+            app_contracts.get("widgetTargetTemplates") or None
+        ) if is_storefront else None,
         handlerModule=HandlerModule(
             code=handler_code,
             webhookTopics=shopify_plan.get("webhookTopics", []),
@@ -771,7 +662,7 @@ def run_codegen_parallel(
                     "handler",
                     "widget_js",
                     "Re-generating to stay in sync with the handler. "
-                    "Ensure every host.call() field name exactly matches the codeSpec widgetPath steps.",
+                    "Ensure every host.call() field name exactly matches the widgetApiCatalog requestShape.",
                 )
             )
         if is_admin_ui:
@@ -780,7 +671,7 @@ def run_codegen_parallel(
                     "handler",
                     "admin_ui",
                     "Re-generating to stay in sync with the handler. "
-                    "Ensure every bridge.call() field name exactly matches the codeSpec adminPath steps.",
+                    "Ensure every bridge.call() field name exactly matches the adminApiCatalog requestShape.",
                 )
             )
         for a, b, hint in coupled_pairs:
@@ -803,6 +694,7 @@ def run_codegen_parallel(
                     intent=base_ctx.intent,
                     plan=base_ctx.plan,
                     platform_api_catalog=base_ctx.platform_api_catalog,
+                    api_context=base_ctx.api_context,
                     previous_errors=error_map.get(gen.name),
                     prior_handler_code=base_ctx.prior_handler_code,
                     prior_widget_code=base_ctx.prior_widget_code,
@@ -844,9 +736,6 @@ def validate_artifacts(
             error_map[name] = errs
 
     # Cross-artifact field-name check: always run for storefront apps.
-    # Skipping this when handler has individual errors (e.g. missing npmPackages)
-    # causes the mismatch to go undetected — the next retry only re-runs the handler,
-    # which may silently change field names again and re-introduce the mismatch.
     if is_storefront:
         for gen_name, errs in validate_widget_handler_contract(
             artifacts.get("widget_js", ""),

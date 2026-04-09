@@ -62,10 +62,23 @@ export interface FeatureExplanation {
   technical: TechnicalExplanation;
 }
 
+/** Theme template pages a storefront widget is designed to appear on. */
+export type WidgetTargetTemplate =
+  | "product"
+  | "collection"
+  | "index"
+  | "cart"
+  | "page"
+  | "blog"
+  | "article"
+  | "search";
+
 /** The complete validated feature bundle produced by the Python generator. */
 export interface FeatureBundle {
   widgetModule: string | null;   // storefront widget ES module; null for backend apps
   adminUiModule: string | null;  // admin UI ES module; null unless storefront_backend_admin
+  /** Theme template pages the widget targets. null for backend apps. */
+  widgetTargetTemplates: WidgetTargetTemplate[] | null;
   handlerModule: HandlerModule;
   dbMigration: DbMigration;
   explanation: FeatureExplanation;

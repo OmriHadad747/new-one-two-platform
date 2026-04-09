@@ -5,8 +5,8 @@ HARNESS_BASE is always injected: ctx API surface, Shopify patterns, output forma
 
 The three conditional sections are injected by handler_agent.py only when the plan requires them:
   HARNESS_SECTION_WEBHOOK       — when webhookTopics is non-empty
-  HARNESS_SECTION_STATE_MACHINE — when implementationSpec.stateMachine.needsStateTracking is true
-  HARNESS_SECTION_CRON_BATCHING — when implementationSpec.cronBatching.required is true
+  HARNESS_SECTION_STATE_MACHINE — when appContracts.stateMachine is non-null
+  HARNESS_SECTION_CRON_BATCHING — when appContracts.cronBatching.required is true
 
 Keeping the system prompt focused prevents irrelevant rules from competing for attention
 with the patterns that actually apply to the feature being generated.
@@ -536,8 +536,8 @@ Rule: Route on ctx.widgetPath inside the widget branch. Always return a value.
   ❌ if (!ctx.payload || Object.keys(ctx.payload).length === 0) { ... }
      // NEVER use payload emptiness to detect cron or widget — use ctx.trigger
 
-Rule: Use the exact field names from the widgetPath codeSpec — the planner defines the
-  contract and both the widget and handler are generated from it. Do not rename fields.
+Rule: Use the exact field names from widgetApiCatalog requestShape — the Architect defines
+  the contract and both the widget and handler are generated from it. Do not rename fields.
 
 Rule: The widget can only send what host.context provides (variantId, productId, customerId)
   plus user input. IDs not in host.context must be resolved server-side:

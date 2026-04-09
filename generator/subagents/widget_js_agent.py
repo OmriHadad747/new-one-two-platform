@@ -5,10 +5,8 @@ The generated JS is loaded by the App Block runtime at storefront page load.
 It must export a `mount(container, host)` function and interact with the outside
 world exclusively through the `host` object.
 
-The implementationSpec contributes two things:
-  - platformGaps: UX should reflect backend limitations (e.g. show "you'll be
-    notified" rather than "email sent" when the backend can only log intent).
-  - widgetGuidance: feature-specific UX decisions from the Planner.
+platformGaps from appContracts carry UX implications when a backend limitation
+affects the widget (e.g. async delivery → show intent, not action completion).
 
 Only runs for storefront_backend / storefront_backend_admin apps — the registry entry is always present but
 crew.py skips this generator for backend apps.
@@ -96,16 +94,16 @@ class WidgetJsGenerator(Generator):
         retry_block = self.format_retry_block(ctx.previous_errors)
         ux_block = _format_ux_guidance(ctx.plan)
         catalog_desc = _format_catalog(ctx.platform_api_catalog)
-        widget_spec_block = _format_widget_spec(ctx.plan)
         prior_block = _format_prior_widget(ctx.prior_widget_code)
 
         return (
             f"{retry_block}"
             f"Feature to build: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
-            f"Platform API catalog (the ONLY paths the widget may call via host.call()):\n"
+            f"Platform API catalog — the ONLY paths the widget may call via host.call().\n"
+            f"Use EXACTLY the requestShape shown when building the host.call() body.\n"
+            f"Expect EXACTLY the responseShape shown when reading the result.\n"
             f"{catalog_desc}\n"
-            f"{widget_spec_block}"
             f"{ux_block}"
             f"{prior_block}"
             "Generate the widget ES module. Output ONLY the raw JavaScript."
@@ -150,67 +148,27 @@ def _format_prior_widget(prior_code: Any) -> str:
 
 
 def _format_catalog(catalog: List[Dict[str, Any]]) -> str:
-    """Format the API catalog with response shapes so the widget uses exact field names."""
+    """
+    Format the widget API catalog with requestShape and responseShape.
+    The requestShape is the exact body the widget must send to host.call().
+    The responseShape is the exact object the handler returns.
+    """
     if not catalog:
         return "  (none)"
     lines = []
     for e in catalog:
-        shape = e.get("responseShape")
-        shape_str = f" → {shape}" if shape else ""
-        lines.append(f"  {e['method']} {e['path']}{shape_str}")
+        req = e.get("requestShape", "{}")
+        resp = e.get("responseShape", "{}")
+        lines.append(f"  {e['method']} {e['path']}")
+        lines.append(f"    send:    host.call('{e['path']}', {req})")
+        lines.append(f"    receive: {resp}")
     return "\n".join(lines)
 
 
-def _format_widget_spec(plan: Dict[str, Any]) -> str:
-    """
-    Render codeSpec.widgetPath steps as the authoritative host.call() contract.
-
-    Field contracts are extracted and surfaced as a dedicated block BEFORE the
-    numbered steps — so the model sees the exact field names it must use
-    before reading the narrative steps that might imply different names.
-    """
-    from subagents.static_validation import extract_widget_field_contracts
-
-    impl = plan.get("implementationSpec") or {}
-    steps: List[str] = (impl.get("codeSpec") or {}).get("widgetPath") or []
-    if not steps:
-        return ""
-
-    contracts = extract_widget_field_contracts(steps)
-
-    parts: List[str] = []
-
-    if contracts:
-        parts.append(
-            "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "FIELD CONTRACTS — call host.call() with EXACTLY these fields.\n"
-            "Using any synonym, abbreviation, or different name will fail validation.\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        )
-        for path, fields in sorted(contracts.items()):
-            parts.append(f"  host.call('{path}', {{ {', '.join(fields)} }})")
-        parts.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-
-    numbered = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(steps))
-    parts.append(
-        f"\nWidget API contract (implement host.call() bodies and result checks exactly as specified):\n"
-        f"{numbered}\n"
-    )
-    return "\n".join(parts)
-
-
 def _format_ux_guidance(plan: Dict[str, Any]) -> str:
-    """Render UX-relevant fields from implementationSpec for the widget developer."""
-    impl = plan.get("implementationSpec") or {}
-    parts: List[str] = []
-
-    gaps = impl.get("platformGaps") or []
-    if gaps:
-        lines = "\n".join(f"  - {g['need']}: {g['mitigation']}" for g in gaps)
-        parts.append(f"\nBackend limitations the widget UX should reflect:\n{lines}")
-
-    guidance = (impl.get("widgetGuidance") or "").strip()
-    if guidance:
-        parts.append(f"\nWidget guidance:\n  {guidance}")
-
-    return "\n".join(parts) + "\n" if parts else ""
+    """Render platformGaps UX implications for the widget generator."""
+    gaps = (plan.get("appContracts") or {}).get("platformGaps") or []
+    if not gaps:
+        return ""
+    lines = "\n".join(f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps)
+    return f"\nBackend limitations the widget UX must reflect:\n{lines}\n"

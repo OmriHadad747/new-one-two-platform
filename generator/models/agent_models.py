@@ -22,18 +22,17 @@ import os
 _DEFAULTS: dict[str, str] = {
     # Planning agents
     "architect": "claude-sonnet-4-6",
-    "codespec": "claude-sonnet-4-6",
     # Code generation agents
     "handler": "claude-sonnet-4-6",
     "migration": "claude-sonnet-4-6",
     "widget_js": "claude-sonnet-4-6",
     "admin_ui": "claude-sonnet-4-6",
     "revision": "claude-sonnet-4-6",
-    # Classification / text agents
-    "product": "claude-sonnet-4-6",
+    # Classification / text agents — Haiku is sufficient (fast, cheap)
+    "product": "claude-haiku-4-5-20251001",
     "explanation": "claude-haiku-4-5-20251001",
     # LLM validation — focused prompt, Haiku is sufficient
-    "validator": "claude-sonnet-4-6",
+    "validator": "claude-haiku-4-5-20251001",
 }
 
 
