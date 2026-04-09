@@ -18,8 +18,8 @@ invoice — no credit card collection or external payment provider needed.
 
 | Feature | Free | Starter ($19/mo) | Growth ($49/mo) | Pro ($99/mo) |
 |---------|------|-------------------|------------------|--------------|
-| **Active Apps** | 1 | 3 | 10 | Unlimited |
-| **New Generations/mo** | 1 | 3 | 10 | Unlimited |
+| **Active Apps** | 1 | 3 | 10 | 999 |
+| **New Generations/mo** | 1 | 3 | 10 | 999 |
 | **Revisions/mo** | Unlimited | Unlimited | Unlimited | Unlimited |
 | **App Categories** | A only | A + C | All (A-D) | All (A-D) |
 | **App Executions/mo** | 1,000 | 10,000 | 50,000 | 200,000 |
@@ -82,12 +82,15 @@ analytics and product improvement — but never for billing enforcement.
 | File | Purpose |
 |------|---------|
 | `platform/packages/db/migrations/0023_billing.sql` | DB schema: usage_records, revision_classifications, billing_events, tenant billing columns |
-| `platform/packages/types/src/billing.ts` | TypeScript types for plans, usage, subscriptions |
-| `platform/apps/api/src/lib/plans.ts` | Centralized plan definitions (limits, prices) |
+| `platform/packages/types/src/billing.ts` | TypeScript types + plan definitions (PLANS, getPlanLimits) — shared by all services |
+| `platform/apps/api/src/lib/plans.ts` | Re-exports plan config from types; adds isPlanAllowedCategory helper |
 | `platform/apps/api/src/lib/shopify-billing.ts` | Shopify Billing API client (GraphQL mutations) |
 | `platform/apps/api/src/lib/plan-enforcement.ts` | Quota checks: canCreateApp, canStartGeneration, etc. |
 | `platform/apps/api/src/lib/usage-tracking.ts` | Atomic usage counter increments |
 | `platform/apps/api/src/routes/billing.ts` | Billing API endpoints |
+| `platform/apps/webhook-gateway/src/routes/webhook.ts` | Execution quota enforcement (before enqueue) |
+| `platform/packages/harness/src/context-factory.ts` | Email/SMS quota enforcement (before send) |
+| `platform/packages/db/src/index.ts` | Billing DB queries: usage records, checkUsageQuota, billing events |
 | `generator/subagents/revision_classifier.py` | LLM classifier for revision type (analytics) |
 
 ### Database Tables
@@ -116,6 +119,7 @@ billing_events            -- audit trail of all billing state transitions
 | POST | `/billing/subscribe` | Create Shopify subscription → returns confirmation URL |
 | GET | `/billing/callback` | Shopify redirects here after approval |
 | POST | `/billing/cancel/:tenantId` | Cancel subscription → downgrade to free |
+| POST | `/billing/webhook` | Shopify APP_SUBSCRIPTIONS_UPDATE handler (HMAC-verified) |
 | GET | `/billing/analytics/:tenantId` | Revision classification breakdown |
 
 ## Plan Enforcement
@@ -127,7 +131,8 @@ the specific limit it needs:
 |--------|------------------|----------------|
 | Create app | `POST /tenants/:id/apps` | `canCreateApp()` — active app count vs maxApps |
 | Start generation | `POST /generation` | `canStartGeneration()` — monthly generations vs maxGenerationsPerMonth |
-| Start revision | `POST /generation/:id/revise` | **None** — revisions are unlimited |
+| App category | `POST /generation` | `isCategoryAllowed()` — checks `preComputedIntent.appCategory` vs plan |
+| Start revision | `POST /generation/:id/revise` | **None** — revisions are unlimited (tracked for analytics) |
 | App execution | Webhook gateway | `canExecuteApp()` — monthly executions vs maxAppExecutionsPerMonth |
 | Send email | Harness service | `canSendEmail()` — monthly emails vs maxEmailsPerMonth |
 | Send SMS | Harness service | `canSendSms()` — monthly SMS vs maxSmsPerMonth |
@@ -148,8 +153,10 @@ When a limit is reached, the API returns:
 Counters are stored in `usage_records` (one row per tenant per billing period).
 All increments are **atomic** — `SET col = col + 1` to prevent race conditions.
 
-The billing period starts on the first day of each calendar month. A new row
-is created (via UPSERT) on the first billable action of each period.
+The billing period aligns with the tenant's `billing_cycle_anchor` (set when
+the subscription is activated). Usage resets on the anchor day each month,
+matching Shopify's billing cycle. A new row is created (via UPSERT) on the
+first billable action of each period.
 
 ## Revision Classification
 
@@ -190,7 +197,7 @@ High `newCapabilities` ratio → merchants want more from the platform.
 
 ```
 Install (OAuth)
-  └─ Tenant created with plan="free", subscription_status="none"
+  └─ Tenant created with billing_plan="free", subscription_status="none"
      │
      ▼
 Merchant clicks "Upgrade to Growth"
@@ -203,12 +210,17 @@ Merchant approves on Shopify
      └─ billing_plan = "growth", subscription_status = "active"
         │
         ▼
-(Monthly billing handled by Shopify automatically)
+Monthly billing handled by Shopify → state changes via webhook:
+  └─ POST /billing/webhook (APP_SUBSCRIPTIONS_UPDATE)
+     ├─ Payment OK     → subscription_status stays "active"
+     ├─ Payment failed → subscription_status = "frozen", billing_plan = "free"
+     ├─ Trial expired  → Shopify sends EXPIRED status → billing_plan = "free"
+     └─ Uninstalled    → subscription_status = "cancelled", billing_plan = "free"
         │
         ▼
-Merchant cancels / uninstalls
-  └─ POST /billing/cancel (or APP_UNINSTALLED webhook)
-     └─ billing_plan = "free", subscription_status = "cancelled"
+Merchant cancels manually
+  └─ POST /billing/cancel/:tenantId
+     └─ Cancels Shopify subscription + billing_plan = "free"
 ```
 
 ## Cost Analysis
