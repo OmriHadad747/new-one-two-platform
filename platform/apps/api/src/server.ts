@@ -11,6 +11,7 @@ import { tenantsRoute } from "./routes/tenants.js";
 import { widgetJsRoutes } from "./routes/widget-js.js";
 import { adminUiRoutes } from "./routes/admin-ui.js";
 import { oauthRoute } from "./routes/oauth.js";
+import { billingRoute } from "./routes/billing.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3002", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -35,6 +36,7 @@ export async function buildServer() {
   await app.register(widgetJsRoutes, { prefix: "/widgets" });
   await app.register(adminUiRoutes, { prefix: "/admin-ui" });
   await app.register(oauthRoute, { prefix: "/oauth" });
+  await app.register(billingRoute, { prefix: "/billing" });
 
   app.setErrorHandler((err, _req, reply) => {
     logger.error({ err }, "Unhandled error");

@@ -30,12 +30,15 @@ import {
   getAppByIdOnly,
 } from "@new-one-two/db";
 import { deployFeatureBundle, deployAppVersion } from "@new-one-two/deployer";
+import { getTenantById } from "@new-one-two/db";
 import type {
   StartGenerationRequest,
   ReviseGenerationRequest,
   FeatureBundle,
   AppArchetype,
 } from "@new-one-two/types";
+import { canStartGeneration } from "../lib/plan-enforcement.js";
+import { trackGeneration, trackRevision, trackRevisionClassification } from "../lib/usage-tracking.js";
 
 /** Derive AppArchetype from a raw bundle object. */
 function archetypeFromBundle(bundle: Record<string, unknown>): AppArchetype {
@@ -72,6 +75,20 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         return reply
           .status(400)
           .send({ error: "appId, tenantId, and prompt are required" });
+      }
+
+      // ── Plan enforcement: check generation quota ──
+      const tenant = await getTenantById(tenantId);
+      if (!tenant) {
+        return reply.status(404).send({ error: "Tenant not found" });
+      }
+      const check = await canStartGeneration(tenant);
+      if (!check.allowed) {
+        return reply.status(403).send({
+          error: check.reason,
+          upgradeHint: check.upgradeHint,
+          code: "generation_limit_reached",
+        });
       }
 
       const jobId = crypto.randomUUID();
@@ -114,6 +131,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       );
 
       await publishGenerationRequest({ jobId, tenantId, appId, prompt, preComputedIntent });
+
+      // Track generation usage (counts toward monthly quota)
+      await trackGeneration(tenantId);
 
       logger.info({ jobId, sessionId, appId }, "GenerationRequest published");
       return reply.status(202).send({ jobId, sessionId });
@@ -358,6 +378,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       const newJobId = crypto.randomUUID();
       const revisedPrompt = `${session.prompt}\n\nMerchant feedback: ${feedback}`;
 
+      // Track revision usage (unlimited — no enforcement, just counting)
+      await trackRevision(session.tenantId);
+
+      // Classify revision for analytics (fire-and-forget — don't block the revision)
+      classifyRevisionAsync(session.tenantId, session.appId!, feedback, newJobId).catch(
+        (err) => logger.warn({ err }, "Revision classification failed (non-fatal)")
+      );
+
       const { id: newSessionId } = await createGenerationSession({
         appId: session.appId,
         tenantId: session.tenantId,
@@ -472,3 +500,38 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
     }
   );
 };
+
+// ─── Revision Classification (fire-and-forget) ──────────────────────────────
+
+async function classifyRevisionAsync(
+  tenantId: string,
+  appId: string,
+  feedback: string,
+  jobId: string
+): Promise<void> {
+  const generatorUrl = process.env.GENERATOR_URL ?? "http://localhost:8001";
+  const response = await fetch(`${generatorUrl}/classify-revision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ feedback }),
+  });
+
+  if (!response.ok) {
+    logger.warn({ status: response.status }, "Revision classification endpoint failed");
+    return;
+  }
+
+  const { classification, confidence } = (await response.json()) as {
+    classification: string;
+    confidence: string;
+  };
+
+  await trackRevisionClassification({
+    tenantId,
+    appId,
+    jobId,
+    classification: classification as import("@new-one-two/types").RevisionClassification,
+    confidence,
+    merchantPrompt: feedback,
+  });
+}

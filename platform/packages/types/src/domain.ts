@@ -24,7 +24,13 @@ export interface Tenant {
   slug: string;                 // unique, URL-safe
   name: string;
   status: TenantStatus;
-  plan: string;                 // "starter" | "pro" | "enterprise"
+  plan: string;                 // legacy TEXT column — use billingPlan for billing logic
+  billingPlan: import("./billing.js").BillingPlan;   // "free" | "starter" | "growth" | "pro"
+  subscriptionStatus: import("./billing.js").SubscriptionStatus;
+  shopifySubscriptionId: string | null;
+  trialEndsAt: Date | null;
+  billingCycleAnchor: Date;
+  planUpdatedAt: Date;
   kmsKeyName: string;           // GCP KMS key resource name for this tenant
   shopDomain: string | null;    // mystore.myshopify.com — set on OAuth install
   shopifyAccessTokenSecretName: string | null;    // GCP Secret Manager path for Admin API OAuth token

@@ -1,0 +1,262 @@
+/**
+ * Billing routes — plan management, subscription lifecycle, usage tracking.
+ *
+ * GET    /billing/plans                — List available plans + current plan
+ * GET    /billing/usage/:tenantId      — Current usage vs limits
+ * POST   /billing/subscribe            — Create Shopify subscription (returns confirmation URL)
+ * GET    /billing/callback             — Shopify redirects here after merchant approves/declines
+ * POST   /billing/cancel/:tenantId     — Cancel current subscription (downgrade to free)
+ * GET    /billing/analytics/:tenantId  — Revision classification analytics
+ */
+import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
+import { logger } from "@new-one-two/logger";
+import {
+  getTenantById,
+  getOrCreateUsageRecord,
+  updateTenantBilling,
+  logBillingEvent,
+  getRevisionAnalytics,
+} from "@new-one-two/db";
+import type {
+  BillingPlan,
+  SubscribeRequest,
+  BillingUsageResponse,
+  BillingPlansResponse,
+} from "@new-one-two/types";
+import { getAllPlans, getPlanLimits, PLANS } from "../lib/plans.js";
+import { createSubscription, cancelSubscription } from "../lib/shopify-billing.js";
+
+const DASHBOARD_URL = process.env["DASHBOARD_URL"] ?? "http://localhost:3000";
+
+export const billingRoute: FastifyPluginAsync = async (app) => {
+  // ─── GET /billing/plans ─────────────────────────────────────────────────────
+
+  app.get<{ Querystring: { tenantId?: string } }>(
+    "/plans",
+    async (
+      req: FastifyRequest<{ Querystring: { tenantId?: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { tenantId } = req.query;
+      let currentPlan: BillingPlan = "free";
+
+      if (tenantId) {
+        const tenant = await getTenantById(tenantId);
+        if (tenant) {
+          currentPlan = tenant.billingPlan;
+        }
+      }
+
+      const response: BillingPlansResponse = {
+        plans: getAllPlans(),
+        currentPlan,
+      };
+      return reply.send(response);
+    }
+  );
+
+  // ─── GET /billing/usage/:tenantId ───────────────────────────────────────────
+
+  app.get<{ Params: { tenantId: string } }>(
+    "/usage/:tenantId",
+    async (
+      req: FastifyRequest<{ Params: { tenantId: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { tenantId } = req.params;
+      const tenant = await getTenantById(tenantId);
+      if (!tenant) {
+        return reply.status(404).send({ error: "Tenant not found" });
+      }
+
+      const usage = await getOrCreateUsageRecord(tenantId);
+      const limits = getPlanLimits(tenant.billingPlan);
+
+      const response: BillingUsageResponse = {
+        plan: tenant.billingPlan,
+        subscriptionStatus: tenant.subscriptionStatus,
+        trialEndsAt: tenant.trialEndsAt?.toISOString() ?? null,
+        usage,
+        limits,
+      };
+      return reply.send(response);
+    }
+  );
+
+  // ─── POST /billing/subscribe ────────────────────────────────────────────────
+
+  app.post<{ Body: SubscribeRequest }>(
+    "/subscribe",
+    async (
+      req: FastifyRequest<{ Body: SubscribeRequest }>,
+      reply: FastifyReply
+    ) => {
+      const { tenantId, plan } = req.body;
+
+      if (!tenantId || !plan) {
+        return reply.status(400).send({ error: "tenantId and plan are required" });
+      }
+
+      if (!(plan in PLANS)) {
+        return reply.status(400).send({ error: `Invalid plan: ${plan}` });
+      }
+
+      const tenant = await getTenantById(tenantId);
+      if (!tenant) {
+        return reply.status(404).send({ error: "Tenant not found" });
+      }
+
+      // Free plan — just update directly, no Shopify subscription needed
+      if (plan === "free") {
+        if (tenant.shopifySubscriptionId) {
+          await cancelSubscription(tenant);
+        }
+        await updateTenantBilling(tenantId, {
+          billingPlan: "free",
+          subscriptionStatus: "none",
+          shopifySubscriptionId: null,
+          trialEndsAt: null,
+        });
+        await logBillingEvent({
+          tenantId,
+          eventType: "downgrade_to_free",
+          fromPlan: tenant.billingPlan,
+          toPlan: "free",
+        });
+        return reply.send({ confirmationUrl: null, plan: "free" });
+      }
+
+      // Paid plan — create Shopify subscription
+      const { confirmationUrl, subscriptionId } = await createSubscription(tenant, plan);
+
+      // Mark as pending until Shopify confirms
+      await updateTenantBilling(tenantId, {
+        subscriptionStatus: "pending",
+        shopifySubscriptionId: subscriptionId,
+      });
+
+      await logBillingEvent({
+        tenantId,
+        eventType: "subscription_created",
+        fromPlan: tenant.billingPlan,
+        toPlan: plan,
+        shopifySubscriptionId: subscriptionId,
+      });
+
+      logger.info({ tenantId, plan, subscriptionId }, "Subscription created, awaiting confirmation");
+      return reply.send({ confirmationUrl });
+    }
+  );
+
+  // ─── GET /billing/callback ──────────────────────────────────────────────────
+  // Shopify redirects here after the merchant approves or declines the charge.
+
+  app.get<{
+    Querystring: { tenant_id?: string; plan?: string; charge_id?: string };
+  }>(
+    "/callback",
+    async (
+      req: FastifyRequest<{
+        Querystring: { tenant_id?: string; plan?: string; charge_id?: string };
+      }>,
+      reply: FastifyReply
+    ) => {
+      const { tenant_id: tenantId, plan } = req.query;
+
+      if (!tenantId || !plan) {
+        return reply.redirect(`${DASHBOARD_URL}/settings?billing=error`);
+      }
+
+      const tenant = await getTenantById(tenantId);
+      if (!tenant) {
+        return reply.redirect(`${DASHBOARD_URL}/settings?billing=error`);
+      }
+
+      const billingPlan = plan as BillingPlan;
+      const planDef = PLANS[billingPlan];
+      if (!planDef) {
+        return reply.redirect(`${DASHBOARD_URL}/settings?billing=error`);
+      }
+
+      // Calculate trial end date
+      const trialEndsAt =
+        planDef.limits.trialDays > 0
+          ? new Date(Date.now() + planDef.limits.trialDays * 86400000)
+          : null;
+
+      // Merchant approved — activate the plan
+      await updateTenantBilling(tenantId, {
+        billingPlan,
+        subscriptionStatus: "active",
+        trialEndsAt,
+      });
+
+      await logBillingEvent({
+        tenantId,
+        eventType: "subscription_activated",
+        fromPlan: tenant.billingPlan,
+        toPlan: billingPlan,
+        shopifySubscriptionId: tenant.shopifySubscriptionId,
+      });
+
+      logger.info({ tenantId, plan: billingPlan }, "Subscription activated");
+      return reply.redirect(`${DASHBOARD_URL}/merchants/${tenantId}?billing=success&plan=${plan}`);
+    }
+  );
+
+  // ─── POST /billing/cancel/:tenantId ─────────────────────────────────────────
+
+  app.post<{ Params: { tenantId: string } }>(
+    "/cancel/:tenantId",
+    async (
+      req: FastifyRequest<{ Params: { tenantId: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { tenantId } = req.params;
+      const tenant = await getTenantById(tenantId);
+      if (!tenant) {
+        return reply.status(404).send({ error: "Tenant not found" });
+      }
+
+      if (tenant.shopifySubscriptionId) {
+        await cancelSubscription(tenant);
+      }
+
+      await updateTenantBilling(tenantId, {
+        billingPlan: "free",
+        subscriptionStatus: "cancelled",
+        trialEndsAt: null,
+      });
+
+      await logBillingEvent({
+        tenantId,
+        eventType: "subscription_cancelled",
+        fromPlan: tenant.billingPlan,
+        toPlan: "free",
+        shopifySubscriptionId: tenant.shopifySubscriptionId,
+      });
+
+      logger.info({ tenantId }, "Subscription cancelled, downgraded to free");
+      return reply.send({ plan: "free" });
+    }
+  );
+
+  // ─── GET /billing/analytics/:tenantId ───────────────────────────────────────
+
+  app.get<{ Params: { tenantId: string } }>(
+    "/analytics/:tenantId",
+    async (
+      req: FastifyRequest<{ Params: { tenantId: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { tenantId } = req.params;
+      const tenant = await getTenantById(tenantId);
+      if (!tenant) {
+        return reply.status(404).send({ error: "Tenant not found" });
+      }
+
+      const analytics = await getRevisionAnalytics(tenantId);
+      return reply.send(analytics);
+    }
+  );
+};

@@ -22,6 +22,7 @@ from config import get_settings
 from contract.subscriber import subscribe_and_process
 from contract.validators import GenerationRequest
 from subagents.product_agent import run_product_agent_analyze
+from subagents.revision_classifier import classify_revision
 from crews.feature_generator.crew import run_feature_generation
 
 log = logging.getLogger(__name__)
@@ -75,6 +76,17 @@ def create_app() -> FastAPI:
         """
         history_dicts = [msg.model_dump() for msg in request.history]
         return run_product_agent_analyze(history_dicts)
+
+    class ClassifyRevisionRequest(BaseModel):
+        feedback: str
+
+    @app.post("/classify-revision")
+    def classify_revision_endpoint(request: ClassifyRevisionRequest) -> dict:
+        """
+        Classify a merchant revision request as bug_report, feature_modification,
+        or new_capability. Used for analytics — not billing enforcement.
+        """
+        return classify_revision(request.feedback)
 
     @app.post("/trigger", status_code=202)
     def trigger(request: GenerationRequest, background_tasks: BackgroundTasks) -> dict:

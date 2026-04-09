@@ -40,6 +40,7 @@ import {
 } from "../lib/theme-injector.js";
 import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
 import type { InjectionTarget } from "../lib/theme-injector.js";
+import { canCreateApp } from "../lib/plan-enforcement.js";
 
 export const tenantsRoute: FastifyPluginAsync = async (app) => {
   // ─── POST /tenants ──────────────────────────────────────────────────────────
@@ -131,6 +132,16 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
         return reply
           .status(409)
           .send({ error: "Tenant has no shop domain — complete OAuth installation first" });
+      }
+
+      // ── Plan enforcement: check app limit ──
+      const appCheck = await canCreateApp(tenant);
+      if (!appCheck.allowed) {
+        return reply.status(403).send({
+          error: appCheck.reason,
+          upgradeHint: appCheck.upgradeHint,
+          code: "app_limit_reached",
+        });
       }
 
       const shopifyClientId = process.env["SHOPIFY_CLIENT_ID"];

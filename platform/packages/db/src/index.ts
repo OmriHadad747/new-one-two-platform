@@ -1796,3 +1796,191 @@ export async function upsertWebhookSubscription(params: {
   `;
   return { id: rows[0]!.id };
 }
+
+
+// ─── Billing & Usage Queries ─────────────────────────────────────────────────
+
+import type {
+  BillingPlan,
+  SubscriptionStatus,
+  UsageRecord,
+  RevisionClassification,
+} from "@new-one-two/types";
+
+/**
+ * Get or create the usage record for the current billing period.
+ * Uses the first day of the current month as the period start.
+ */
+export async function getOrCreateUsageRecord(tenantId: string): Promise<UsageRecord> {
+  const periodStart = new Date();
+  periodStart.setDate(1);
+  periodStart.setHours(0, 0, 0, 0);
+  const periodStr = periodStart.toISOString().slice(0, 10);
+
+  const rows = await sql<UsageRecord[]>`
+    INSERT INTO usage_records (tenant_id, period_start)
+    VALUES (${tenantId}, ${periodStr})
+    ON CONFLICT (tenant_id, period_start) DO NOTHING
+    RETURNING *
+  `;
+
+  if (rows.length > 0) return rows[0]!;
+
+  // Row already existed — select it
+  const existing = await sql<UsageRecord[]>`
+    SELECT * FROM usage_records
+    WHERE tenant_id = ${tenantId} AND period_start = ${periodStr}
+  `;
+  return existing[0]!;
+}
+
+/**
+ * Atomically increment a usage counter for the current billing period.
+ */
+export async function incrementUsage(
+  tenantId: string,
+  column: "generations" | "revisions" | "app_executions" | "emails_sent" | "sms_sent" | "files_uploaded"
+): Promise<void> {
+  const periodStart = new Date();
+  periodStart.setDate(1);
+  periodStart.setHours(0, 0, 0, 0);
+  const periodStr = periodStart.toISOString().slice(0, 10);
+
+  // Upsert + increment in one statement
+  await sql`
+    INSERT INTO usage_records (tenant_id, period_start, ${sql(column)})
+    VALUES (${tenantId}, ${periodStr}, 1)
+    ON CONFLICT (tenant_id, period_start)
+    DO UPDATE SET ${sql(column)} = usage_records.${sql(column)} + 1,
+                  updated_at = NOW()
+  `;
+}
+
+/**
+ * Count active (non-deleted) apps for a tenant.
+ */
+export async function getActiveAppCount(tenantId: string): Promise<number> {
+  const rows = await sql<{ count: string }[]>`
+    SELECT COUNT(*)::TEXT AS count FROM apps
+    WHERE tenant_id = ${tenantId}
+      AND status NOT IN ('deleted')
+  `;
+  return parseInt(rows[0]!.count, 10);
+}
+
+/**
+ * Update tenant billing plan and subscription state.
+ */
+export async function updateTenantBilling(
+  tenantId: string,
+  params: {
+    billingPlan?: BillingPlan;
+    subscriptionStatus?: SubscriptionStatus;
+    shopifySubscriptionId?: string | null;
+    trialEndsAt?: Date | null;
+  }
+): Promise<void> {
+  const sets: string[] = [];
+  const values: Record<string, unknown> = {};
+
+  if (params.billingPlan !== undefined) {
+    values.billingPlan = params.billingPlan;
+  }
+  if (params.subscriptionStatus !== undefined) {
+    values.subscriptionStatus = params.subscriptionStatus;
+  }
+  if (params.shopifySubscriptionId !== undefined) {
+    values.shopifySubscriptionId = params.shopifySubscriptionId;
+  }
+  if (params.trialEndsAt !== undefined) {
+    values.trialEndsAt = params.trialEndsAt;
+  }
+
+  // Use dynamic update — postgres.js handles this with the set helper
+  await sql`
+    UPDATE tenants SET
+      ${params.billingPlan !== undefined ? sql`billing_plan = ${params.billingPlan},` : sql``}
+      ${params.subscriptionStatus !== undefined ? sql`subscription_status = ${params.subscriptionStatus},` : sql``}
+      ${params.shopifySubscriptionId !== undefined ? sql`shopify_subscription_id = ${params.shopifySubscriptionId},` : sql``}
+      ${params.trialEndsAt !== undefined ? sql`trial_ends_at = ${params.trialEndsAt},` : sql``}
+      plan_updated_at = NOW(),
+      updated_at = NOW()
+    WHERE id = ${tenantId}
+  `;
+}
+
+/**
+ * Store a revision classification record for analytics.
+ */
+export async function storeRevisionClassification(params: {
+  tenantId: string;
+  appId: string;
+  sessionId?: string;
+  jobId?: string;
+  classification: RevisionClassification;
+  confidence: string;
+  merchantPrompt: string;
+}): Promise<void> {
+  await sql`
+    INSERT INTO revision_classifications (
+      tenant_id, app_id, session_id, job_id,
+      classification, confidence, merchant_prompt
+    ) VALUES (
+      ${params.tenantId}, ${params.appId}, ${params.sessionId ?? null}, ${params.jobId ?? null},
+      ${params.classification}, ${params.confidence}, ${params.merchantPrompt}
+    )
+  `;
+}
+
+/**
+ * Log a billing event for audit trail.
+ */
+export async function logBillingEvent(params: {
+  tenantId: string;
+  eventType: string;
+  fromPlan?: BillingPlan | null;
+  toPlan?: BillingPlan | null;
+  shopifySubscriptionId?: string | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<void> {
+  await sql`
+    INSERT INTO billing_events (
+      tenant_id, event_type, from_plan, to_plan,
+      shopify_subscription_id, metadata
+    ) VALUES (
+      ${params.tenantId}, ${params.eventType},
+      ${params.fromPlan ?? null}, ${params.toPlan ?? null},
+      ${params.shopifySubscriptionId ?? null},
+      ${params.metadata ? JSON.stringify(params.metadata) : null}
+    )
+  `;
+}
+
+/**
+ * Get revision classification analytics for a tenant.
+ */
+export async function getRevisionAnalytics(tenantId: string): Promise<{
+  total: number;
+  bugReports: number;
+  featureModifications: number;
+  newCapabilities: number;
+}> {
+  const rows = await sql<{ classification: string; count: string }[]>`
+    SELECT classification, COUNT(*)::TEXT AS count
+    FROM revision_classifications
+    WHERE tenant_id = ${tenantId}
+    GROUP BY classification
+  `;
+
+  const counts: Record<string, number> = {};
+  for (const row of rows) {
+    counts[row.classification] = parseInt(row.count, 10);
+  }
+
+  return {
+    total: Object.values(counts).reduce((a, b) => a + b, 0),
+    bugReports: counts["bug_report"] ?? 0,
+    featureModifications: counts["feature_modification"] ?? 0,
+    newCapabilities: counts["new_capability"] ?? 0,
+  };
+}
