@@ -23,6 +23,16 @@
   --color-faint: #958ea0;      /* placeholder / tertiary text  */
 }
 
+/* ── Component tokens (theme-adaptive) ───────────────────────────────────── */
+
+:root {
+  --color-ring-track: rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="light"] {
+  --color-ring-track: rgba(0, 0, 0, 0.1);
+}
+
 /* ── Light theme overrides ────────────────────────────────────────────────── */
 
 [data-theme="light"] {
@@ -44,25 +54,49 @@
 
 /* Invert white-opacity borders → black-opacity borders in light mode */
 [data-theme="light"] .border-white\/7,
-[data-theme="light"] [class*="border-white/7"] { border-color: rgba(0,0,0,0.09) !important; }
-
-[data-theme="light"] [class~="border-white/[0.09]"] { border-color: rgba(0,0,0,0.14) !important; }
-[data-theme="light"] [class~="border-white/[0.07]"] { border-color: rgba(0,0,0,0.09) !important; }
-[data-theme="light"] [class~="border-white/[0.06]"] { border-color: rgba(0,0,0,0.08) !important; }
+[data-theme="light"] [class*="border-white/7"]      { border-color: rgba(0,0,0,0.09) !important; }
 [data-theme="light"] [class~="border-white/[0.05]"] { border-color: rgba(0,0,0,0.07) !important; }
-[data-theme="light"] [class~="border-white/13"]      { border-color: rgba(0,0,0,0.10) !important; }
-[data-theme="light"] [class~="border-white/15"]      { border-color: rgba(0,0,0,0.12) !important; }
-[data-theme="light"] [class~="border-white/20"]      { border-color: rgba(0,0,0,0.15) !important; }
+[data-theme="light"] [class~="border-white/[0.06]"] { border-color: rgba(0,0,0,0.08) !important; }
+[data-theme="light"] [class~="border-white/[0.07]"] { border-color: rgba(0,0,0,0.09) !important; }
+[data-theme="light"] [class~="border-white/[0.08]"] { border-color: rgba(0,0,0,0.10) !important; }
+[data-theme="light"] [class~="border-white/[0.09]"] { border-color: rgba(0,0,0,0.11) !important; }
+[data-theme="light"] [class~="border-white/[0.10]"] { border-color: rgba(0,0,0,0.12) !important; }
+[data-theme="light"] [class~="border-white/[0.1]"]  { border-color: rgba(0,0,0,0.12) !important; }
+[data-theme="light"] [class~="border-white/10"]     { border-color: rgba(0,0,0,0.12) !important; }
+[data-theme="light"] [class~="border-white/[0.12]"] { border-color: rgba(0,0,0,0.13) !important; }
+[data-theme="light"] [class~="border-white/[0.13]"] { border-color: rgba(0,0,0,0.14) !important; }
+[data-theme="light"] [class~="border-white/13"]     { border-color: rgba(0,0,0,0.10) !important; }
+[data-theme="light"] [class~="border-white/15"]     { border-color: rgba(0,0,0,0.12) !important; }
+[data-theme="light"] [class~="border-white/20"]     { border-color: rgba(0,0,0,0.15) !important; }
+[data-theme="light"] [class~="border-white/25"]     { border-color: rgba(0,0,0,0.18) !important; }
+[data-theme="light"] [class~="border-white/30"]     { border-color: rgba(0,0,0,0.20) !important; }
 
 /* Invert white-opacity backgrounds → black-opacity backgrounds in light mode */
-[data-theme="light"] [class~="bg-white/[0.02]"]  { background-color: rgba(0,0,0,0.02) !important; }
-[data-theme="light"] [class~="bg-white/[0.03]"]  { background-color: rgba(0,0,0,0.03) !important; }
-[data-theme="light"] [class~="bg-white/[0.04]"]  { background-color: rgba(0,0,0,0.04) !important; }
-[data-theme="light"] [class~="bg-white/[0.05]"]  { background-color: rgba(0,0,0,0.05) !important; }
-[data-theme="light"] [class~="bg-white/[0.06]"]  { background-color: rgba(0,0,0,0.05) !important; }
-[data-theme="light"] [class~="bg-white/[0.07]"]  { background-color: rgba(0,0,0,0.06) !important; }
-[data-theme="light"] [class~="bg-white/7"]        { background-color: rgba(0,0,0,0.06) !important; }
-[data-theme="light"] [class~="bg-white/[0.12]"]  { background-color: rgba(0,0,0,0.10) !important; }
+[data-theme="light"] [class~="bg-white/[0.02]"]   { background-color: rgba(0,0,0,0.02) !important; }
+[data-theme="light"] [class~="bg-white/[0.03]"]   { background-color: rgba(0,0,0,0.03) !important; }
+[data-theme="light"] [class~="bg-white/[0.04]"]   { background-color: rgba(0,0,0,0.04) !important; }
+[data-theme="light"] [class~="bg-white/5"]         { background-color: rgba(0,0,0,0.04) !important; }
+[data-theme="light"] [class~="bg-white/[0.05]"]   { background-color: rgba(0,0,0,0.04) !important; }
+[data-theme="light"] [class~="bg-white/[0.055]"]  { background-color: rgba(0,0,0,0.05) !important; }
+[data-theme="light"] [class~="bg-white/[0.06]"]   { background-color: rgba(0,0,0,0.05) !important; }
+[data-theme="light"] [class~="bg-white/[0.07]"]   { background-color: rgba(0,0,0,0.06) !important; }
+[data-theme="light"] [class~="bg-white/7"]         { background-color: rgba(0,0,0,0.06) !important; }
+[data-theme="light"] [class~="bg-white/[0.08]"]   { background-color: rgba(0,0,0,0.07) !important; }
+[data-theme="light"] [class~="bg-white/[0.09]"]   { background-color: rgba(0,0,0,0.08) !important; }
+[data-theme="light"] [class~="bg-white/[0.12]"]   { background-color: rgba(0,0,0,0.10) !important; }
+
+/* Hover-prefixed bg overrides — Tailwind generates hover:bg-* as a separate class name,
+   so the static overrides above don't apply. Mirror them here with :hover. */
+[data-theme="light"] [class~="hover:bg-white/[0.03]"]:hover  { background-color: rgba(0,0,0,0.03) !important; }
+[data-theme="light"] [class~="hover:bg-white/[0.04]"]:hover  { background-color: rgba(0,0,0,0.04) !important; }
+[data-theme="light"] [class~="hover:bg-white/5"]:hover        { background-color: rgba(0,0,0,0.05) !important; }
+[data-theme="light"] [class~="hover:bg-white/[0.05]"]:hover  { background-color: rgba(0,0,0,0.05) !important; }
+[data-theme="light"] [class~="hover:bg-white/[0.06]"]:hover  { background-color: rgba(0,0,0,0.06) !important; }
+[data-theme="light"] [class~="hover:bg-white/[0.07]"]:hover  { background-color: rgba(0,0,0,0.07) !important; }
+[data-theme="light"] [class~="hover:bg-white/[0.08]"]:hover  { background-color: rgba(0,0,0,0.08) !important; }
+[data-theme="light"] [class~="hover:bg-white/[0.09]"]:hover  { background-color: rgba(0,0,0,0.09) !important; }
+[data-theme="light"] [class~="hover:bg-white/[0.10]"]:hover  { background-color: rgba(0,0,0,0.10) !important; }
+[data-theme="light"] [class~="hover:bg-white/[0.12]"]:hover  { background-color: rgba(0,0,0,0.11) !important; }
 
 /* glass-card adapts to theme */
 [data-theme="light"] .glass-card {
@@ -75,6 +109,11 @@
 
 /* Scrollbar adapts to theme */
 [data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); }
+
+/* Thin icon weight — applied globally; inline FILL styles must also include wght */
+.material-symbols-outlined {
+  font-variation-settings: 'wght' 200;
+}
 
 @layer base {
   *,

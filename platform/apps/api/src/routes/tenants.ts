@@ -40,7 +40,7 @@ import {
 } from "../lib/theme-injector.js";
 import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
 import type { InjectionTarget } from "../lib/theme-injector.js";
-import { canCreateApp } from "../lib/plan-enforcement.js";
+import { canActivateApp } from "../lib/plan-enforcement.js";
 
 export const tenantsRoute: FastifyPluginAsync = async (app) => {
   // ─── POST /tenants ──────────────────────────────────────────────────────────
@@ -134,16 +134,6 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
           .send({ error: "Tenant has no shop domain — complete OAuth installation first" });
       }
 
-      // ── Plan enforcement: check app limit ──
-      const appCheck = await canCreateApp(tenant);
-      if (!appCheck.allowed) {
-        return reply.status(403).send({
-          error: appCheck.reason,
-          upgradeHint: appCheck.upgradeHint,
-          code: "app_limit_reached",
-        });
-      }
-
       const shopifyClientId = process.env["SHOPIFY_CLIENT_ID"];
       const shopifySecretName = process.env["SHOPIFY_SECRET_NAME"];
       const { id: appId } = await createApp({
@@ -199,6 +189,18 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
       if (name?.trim()) await updateAppName(tenantId, appId, name.trim());
       if (status === "active") {
+        // ── Plan enforcement: check active app limit before activating ──
+        const tenant = await getTenantById(tenantId);
+        if (tenant) {
+          const activateCheck = await canActivateApp(tenant);
+          if (!activateCheck.allowed) {
+            return reply.status(403).send({
+              error: activateCheck.reason,
+              upgradeHint: activateCheck.upgradeHint,
+              code: "app_limit_reached",
+            });
+          }
+        }
         await updateAppStatus(appId, "active");
         // Fire-and-forget — restart container + re-register webhooks without blocking response
         reactivateApp(appId).catch((err: unknown) => {

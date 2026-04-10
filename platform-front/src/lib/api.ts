@@ -2,6 +2,7 @@ import type {
   Tenant,
   App,
   TenantStats,
+  BillingUsageResponse,
   WebhookInvocationLogEntry,
   InvocationLogEntry,
   StartGenerationRequest,
@@ -90,6 +91,18 @@ export const api = {
       request<{ deleted: boolean }>(`/tenants/${tenantId}/apps/${appId}/inject-theme`, {
         method: "DELETE",
       }),
+  },
+
+  billing: {
+    usage: (tenantId: string) =>
+      request<BillingUsageResponse>(`/billing/usage/${tenantId}`),
+    subscribe: (tenantId: string, plan: string, interval: "monthly" | "annual" = "monthly") =>
+      request<{ confirmationUrl: string | null }>("/billing/subscribe", {
+        method: "POST",
+        body: JSON.stringify({ tenantId, plan, interval }),
+      }),
+    cancel: (tenantId: string) =>
+      request<{ plan: string }>(`/billing/cancel/${tenantId}`, { method: "POST", body: "{}" }),
   },
 
   generation: {

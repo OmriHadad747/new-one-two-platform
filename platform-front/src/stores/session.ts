@@ -14,10 +14,10 @@ export const useSessionStore = create<SessionState>()(
     (set) => ({
       tenantId: null,
       shopDomain: null,
-      plan: "starter",
+      plan: "free",
       setTenant: (tenantId, shopDomain, plan) =>
         set({ tenantId, shopDomain, plan }),
-      clear: () => set({ tenantId: null, shopDomain: null, plan: "starter" }),
+      clear: () => set({ tenantId: null, shopDomain: null, plan: "free" }),
     }),
     { name: "new-one-two-session" }
   )

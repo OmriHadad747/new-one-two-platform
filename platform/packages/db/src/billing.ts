@@ -77,7 +77,7 @@ export async function getActiveAppCount(tenantId: string): Promise<number> {
   const rows = await sql<{ count: string }[]>`
     SELECT COUNT(*)::TEXT AS count FROM apps
     WHERE tenant_id = ${tenantId}
-      AND status NOT IN ('deleted')
+      AND status = 'active'
   `;
   return parseInt(rows[0]!.count, 10);
 }

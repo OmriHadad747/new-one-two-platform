@@ -16,31 +16,26 @@ invoice — no credit card collection or external payment provider needed.
 
 ## Plans
 
-### Monthly Pricing
+### Pricing
 
-| Feature | Free | Starter ($19/mo) | Growth ($49/mo) | Pro ($99/mo) |
-|---------|------|-------------------|------------------|--------------|
+Annual plans offer ~17% discount — **pay for 10 months, get 12**. Annual billing uses the
+Shopify `ANNUAL` pricing interval, charged once per year via the merchant's Shopify invoice.
+Same plan limits apply — usage resets monthly (aligned with `billing_cycle_anchor`).
+
+| | Free | Starter | Growth | Pro |
+|---|---|---|---|---|
+| **Monthly price** | $0 | $19/mo | $49/mo | $99/mo |
+| **Annual price** | — | $190/yr | $490/yr | $990/yr |
+| ↳ *Effective monthly* | — | *$15.83/mo* | *$40.83/mo* | *$82.50/mo* |
+| ↳ *Annual savings* | — | *$38/yr* | *$98/yr* | *$198/yr* |
+| **Trial** | — | 7 days | 7 days | 14 days |
 | **Active Apps** | 1 | 3 | 10 | 999 |
-| **New Generations/mo** | 1 | 3 | 10 | 999 |
-| **Revisions/mo** | Unlimited | Unlimited | Unlimited | Unlimited |
-| **App Categories** | A only | A + C | All (A-D) | All (A-D) |
+| **Generations/mo** | 1 | 3 | 10 | 999 |
+| **Revisions/mo** | ∞ | ∞ | ∞ | ∞ |
+| **App Categories** | C only | A + C | All (A–D) | All (A–D) |
 | **App Executions/mo** | 1,000 | 10,000 | 50,000 | 200,000 |
 | **Emails/mo** | 100 | 1,000 | 5,000 | 20,000 |
 | **SMS/mo** | 0 | 0 | 100 | 500 |
-| **Trial** | — | 7 days | 7 days | 14 days |
-
-### Annual Pricing (~17% discount — pay for 10 months, get 12)
-
-| Plan | Monthly | Annual | Effective Monthly | Savings |
-|------|---------|--------|-------------------|---------|
-| Free | $0 | — | — | — |
-| Starter | $19/mo | $190/yr | $15.83/mo | $38/yr |
-| Growth | $49/mo | $490/yr | $40.83/mo | $98/yr |
-| Pro | $99/mo | $990/yr | $82.50/mo | $198/yr |
-
-Annual billing uses the Shopify `ANNUAL` pricing interval. The subscription is charged once
-per year via the merchant's Shopify invoice. Same plan limits apply — usage resets monthly
-(aligned with `billing_cycle_anchor`).
 
 ### Why revisions are unlimited
 
@@ -56,9 +51,9 @@ analytics and product improvement — but never for billing enforcement.
 
 | Category | Description | Available On |
 |----------|-------------|--------------|
-| A — Storefront + Backend | Widget + handler (no admin UI) | Free, Starter, Growth, Pro |
+| A — Storefront + Backend | Widget + handler (no admin UI) | Starter, Growth, Pro |
 | B — Storefront + Backend + Admin | Widget + handler + admin panel | Growth, Pro |
-| C — Backend Only | Handler only (webhook/cron automation) | Starter, Growth, Pro |
+| C — Backend Only | Handler only (webhook/cron automation) | Free, Starter, Growth, Pro |
 | D — Backend + Admin | Handler + admin panel (no widget) | Growth, Pro |
 
 ## Architecture
@@ -435,10 +430,20 @@ ORDER BY created_at DESC;
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SHOPIFY_BILLING_TEST_MODE` | `"true"` | Set to `"false"` for production Shopify charges |
+| `SHOPIFY_BILLING_MODE` | `"disabled"` | Controls how billing is handled — see below |
 | `SHOPIFY_CLIENT_SECRET` | — | Used for HMAC verification on billing webhooks |
 | `PLATFORM_URL` | `http://localhost:3002` | Billing callback return URL |
 | `DASHBOARD_URL` | `http://localhost:3000` | Post-approval redirect |
+
+### `SHOPIFY_BILLING_MODE` values
+
+| Value | When to use | What happens |
+|-------|-------------|--------------|
+| `disabled` | Local dev, custom apps | Shopify is bypassed. Plan is applied directly in the DB. No confirmation URL is returned. Use when your Shopify app is a **custom app** — custom apps are blocked from the Billing API by Shopify. |
+| `test` | Staging / unlisted app with a dev store | Calls Shopify Billing API with `test: true`. No real money is charged. Merchant sees the confirmation page. Requires the app to be **public or unlisted** in the Partner dashboard. |
+| `live` | Production | Calls Shopify Billing API with `test: false`. Real charges on merchant's Shopify invoice. |
+
+> **Note:** To enable `test` or `live` mode, your Shopify app must be converted from a **custom app** to a **public or unlisted app** in the [Shopify Partner dashboard](https://partners.shopify.com). See the section below.
 
 ## Wiring Status
 
@@ -459,3 +464,31 @@ ORDER BY created_at DESC;
 - [ ] **Usage charge overages** — Shopify UsageCharge API for Growth/Pro email/SMS overages
 - [ ] **Grace period** — 3-day grace on execution limits before hard-blocking
 - [ ] **Dunning emails** — notify merchants when limits are approaching (80%, 100%)
+
+## Converting to a Public / Unlisted App (enables real Billing API)
+
+Shopify blocks the Billing API for **custom apps** (apps created directly in a store's admin).
+To test or charge merchants you need a **public** or **unlisted** app in the Partner dashboard.
+
+### Steps
+
+1. Go to [partners.shopify.com](https://partners.shopify.com) → **Apps** → create a new app (or use an existing one).
+2. Under **App setup**, set the **App URL** to your platform URL (e.g. `https://your-platform.com/oauth/install`).
+3. Add the required OAuth redirect URL: `https://your-platform.com/oauth/callback`.
+4. In **Distribution**, choose **Unlisted** (lets you share a direct install link without App Store review).
+5. Copy the new **Client ID** and **Client Secret** into your `.env`:
+   ```
+   SHOPIFY_CLIENT_ID=<new-client-id>
+   SHOPIFY_CLIENT_SECRET=<new-client-secret>
+   ```
+6. Set billing mode:
+   - For staging with a dev store: `SHOPIFY_BILLING_MODE=test`
+   - For production: `SHOPIFY_BILLING_MODE=live`
+7. Re-install the app on your dev store via the new install link — the existing custom-app token won't work.
+
+### After converting
+
+- Merchants install via the Partner dashboard install link (or a direct URL you share).
+- The Billing API becomes available — `POST /billing/subscribe` will return a real `confirmationUrl`.
+- In `test` mode, clicking the Shopify confirmation page charges nothing; Shopify marks the charge as `TEST`.
+- The `billing/callback` redirect and `APP_SUBSCRIPTIONS_UPDATE` webhook will fire as expected.

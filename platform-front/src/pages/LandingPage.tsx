@@ -257,7 +257,7 @@ export function LandingPage() {
               ].map(({ icon, color, bg, title, desc }) => (
                 <div key={title} className="bg-surface border border-white/[0.06] rounded-xl p-5 flex flex-col gap-3 hover:border-white/[0.12] transition-colors">
                   <div className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center ${color} shrink-0`}>
-                    <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+                    <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>{icon}</span>
                   </div>
                   <div>
                     <p className="text-[13px] font-bold text-ink mb-1">{title}</p>
@@ -300,14 +300,14 @@ export function LandingPage() {
               ].map(({ file, icon, color, bg, label, desc }) => (
                 <div key={file} className="flex items-center gap-4 px-5 py-3.5">
                   <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
-                    <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+                    <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>{icon}</span>
                   </div>
                   <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0`}>{file}</span>
                   <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                     <span className="text-[12px] font-semibold text-ink">{label}</span>
                     <span className="text-[11px] text-faint">{desc}</span>
                   </div>
-                  <span className={`material-symbols-outlined text-[14px] shrink-0 ${theme === "light" ? "text-emerald-600/60" : "text-emerald-400/60"}`} style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+                  <span className={`material-symbols-outlined text-[14px] shrink-0 ${theme === "light" ? "text-emerald-600/60" : "text-emerald-400/60"}`} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>check_circle</span>
                 </div>
               ))}
             </div>
@@ -323,7 +323,7 @@ export function LandingPage() {
               ].map(({ file, icon, color, bg, tagCls, label, tag, desc }) => (
                 <div key={file} className="flex items-center gap-4 px-5 py-3.5 opacity-70 hover:opacity-100 transition-opacity">
                   <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
-                    <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+                    <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>{icon}</span>
                   </div>
                   <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0`}>{file}</span>
                   <div className="flex-1 min-w-0 flex flex-col gap-0.5">

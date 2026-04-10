@@ -37,6 +37,9 @@ import { getAllPlans, getPlanLimits, PLANS } from "../lib/plans.js";
 import { createSubscription, cancelSubscription } from "../lib/shopify-billing.js";
 
 const DASHBOARD_URL = process.env["DASHBOARD_URL"] ?? "http://localhost:3000";
+// SHOPIFY_BILLING_MODE: "disabled" | "test" | "live"
+// "disabled" skips Shopify and applies the plan directly — required for custom apps.
+const SHOPIFY_BILLING_ENABLED = (process.env["SHOPIFY_BILLING_MODE"] ?? "disabled") !== "disabled";
 
 export const billingRoute: FastifyPluginAsync = async (app) => {
   // ─── GET /billing/plans ─────────────────────────────────────────────────────
@@ -145,6 +148,31 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
           toPlan: "free",
         });
         return reply.send({ confirmationUrl: null, plan: "free" });
+      }
+
+      // Dev bypass — Shopify Billing API requires a public/unlisted app.
+      // Custom apps return "Custom apps cannot use the Billing API".
+      if (!SHOPIFY_BILLING_ENABLED) {
+        const planDef = PLANS[plan];
+        const trialEndsAt =
+          planDef && planDef.limits.trialDays > 0
+            ? new Date(Date.now() + planDef.limits.trialDays * 86400000)
+            : null;
+        await updateTenantBilling(tenantId, {
+          billingPlan: plan,
+          billingInterval: interval,
+          subscriptionStatus: "active",
+          trialEndsAt,
+        });
+        await logBillingEvent({
+          tenantId,
+          eventType: "dev_plan_override",
+          fromPlan: tenant.billingPlan,
+          toPlan: plan,
+          metadata: { interval, note: "SHOPIFY_BILLING_ENABLED=false" },
+        });
+        logger.info({ tenantId, plan, interval }, "Dev mode: plan applied directly without Shopify");
+        return reply.send({ confirmationUrl: null, plan });
       }
 
       // Paid plan — create Shopify subscription with chosen interval

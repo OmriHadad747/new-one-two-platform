@@ -19,7 +19,7 @@ export async function createTenant(params: {
       ${params.slug},
       ${params.name},
       'active',
-      ${params.plan ?? "starter"},
+      ${params.plan ?? "free"},
       ${params.shopDomain ?? null},
       ${params.shopifyAccessTokenSecretName ?? null},
       ${params.kmsKeyName ?? "projects/local/locations/global/keyRings/dev/cryptoKeys/dev-key"}

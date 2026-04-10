@@ -688,7 +688,7 @@ function HowItWorksCard({ text }: { text: string }) {
   return (
     <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
       <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04] flex items-center gap-2">
-        <span className="material-symbols-outlined text-accent text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
+        <span className="material-symbols-outlined text-accent text-[13px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>info</span>
         <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How it works</h3>
       </div>
       <div className="px-5 py-4">
@@ -836,7 +836,7 @@ function AppInfoBand({
                     pill.action.cls
                   )}
                 >
-                  <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                  <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>
                     {pill.action.icon}
                   </span>
                   {pill.action.label}
@@ -1082,7 +1082,7 @@ function OverviewTab({
                       className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
                     >
                       <span className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", theme === "light" ? "bg-orange-600/[0.08]" : "bg-orange-400/[0.12]")}>
-                        <span className={cn("material-symbols-outlined text-[15px]", theme === "light" ? "text-orange-700" : "text-orange-300")} style={{ fontVariationSettings: "'FILL' 1" }}>admin_panel_settings</span>
+                        <span className={cn("material-symbols-outlined text-[15px]", theme === "light" ? "text-orange-700" : "text-orange-300")} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>admin_panel_settings</span>
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="text-[12px] font-medium text-ink leading-tight">
@@ -1104,7 +1104,7 @@ function OverviewTab({
                       <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
                         style={{ backgroundColor: theme === "light" ? "rgba(88,166,44,0.12)" : "rgba(150,191,72,0.15)" }}>
                         <span className="material-symbols-outlined text-[15px]"
-                          style={{ color: theme === "light" ? "#3a7d17" : "#96bf48", fontVariationSettings: "'FILL' 1" }}>storefront</span>
+                          style={{ color: theme === "light" ? "#3a7d17" : "#96bf48", fontVariationSettings: "'FILL' 1, 'wght' 200" }}>storefront</span>
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="text-[12px] font-medium text-ink leading-tight">View storefront</div>
@@ -1124,7 +1124,7 @@ function OverviewTab({
                       <div className="flex items-center gap-3 px-4 py-3">
                         <span className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", theme === "light" ? "bg-sky-600/[.08]" : "bg-sky-400/[.12]")}>
                           <span className={cn("material-symbols-outlined text-[15px]", theme === "light" ? "text-sky-700" : "text-sky-300")}
-                            style={{ fontVariationSettings: "'FILL' 1" }}>widgets</span>
+                            style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>widgets</span>
                         </span>
                         <div className="flex-1 min-w-0">
                           <span className="text-[12px] font-medium leading-tight text-ink">
@@ -1176,7 +1176,7 @@ function OverviewTab({
                                   : "text-sky-300 bg-sky-400/[.12] hover:bg-sky-400/[.20] border-sky-400/[.2]"
                               )}
                             >
-                              <span className="material-symbols-outlined" style={{ fontSize: '20px', fontVariationSettings: "'FILL' 1" }}>install_desktop</span>
+                              <span className="material-symbols-outlined" style={{ fontSize: '20px', fontVariationSettings: "'FILL' 1, 'wght' 200" }}>install_desktop</span>
                               Install on test theme
                             </button>
                           ) : (
@@ -1206,7 +1206,7 @@ function OverviewTab({
             <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
               <div className="px-4 py-5 space-y-3 text-center">
                 <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
-                  <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+                  <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
                 </div>
                 <div>
                   <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
@@ -1214,7 +1214,7 @@ function OverviewTab({
                 </div>
                 <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
                   className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
-                  <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+                  <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
                   Start building with Ton
                 </button>
               </div>
@@ -1230,7 +1230,7 @@ function OverviewTab({
                 </p>
                 <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-accent/15 text-accent text-[11px] font-semibold hover:bg-accent/25 transition-colors cursor-pointer border border-accent/25 self-center">
-                  <span className="material-symbols-outlined" style={{ fontSize: '20px', fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: '20px', fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
                   Revise with Ton
                 </button>
               </div>
@@ -1511,7 +1511,7 @@ function InjectWizard({
               {/* Template notice / picker */}
               {candidateTemplates.length === 1 ? (
                 <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-lg bg-accent/[0.07] border border-accent/[0.15]">
-                  <span className="material-symbols-outlined text-[14px] text-accent mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>info</span>
+                  <span className="material-symbols-outlined text-[14px] text-accent mt-0.5" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>info</span>
                   <p className="text-[11.5px] text-accent/90 leading-relaxed">
                     This widget runs on the <span className="font-semibold">{lockedTemplate.name}</span> page.
                     Injecting it on another page would break it.
@@ -1583,7 +1583,7 @@ function InjectWizard({
 
                 const widgetSlot = (
                   <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/[0.12] border border-accent/30 border-dashed">
-                    <span className="material-symbols-outlined text-[13px] text-accent" style={{ fontVariationSettings: "'FILL' 1" }}>science</span>
+                    <span className="material-symbols-outlined text-[13px] text-accent" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>science</span>
                     <span className="text-[11.5px] font-semibold text-accent">Your widget</span>
                   </div>
                 );
@@ -1737,6 +1737,26 @@ export function AppDetailPage() {
     finally { setDeploying(false); }
   };
 
+  // ─── Draft delete ────────────────────────────────────────────────────────────
+
+  const [draftDeleteConfirm, setDraftDeleteConfirm] = useState(false);
+  const [draftDeleting, setDraftDeleting]           = useState(false);
+
+  const handleDraftDelete = async () => {
+    if (!tenantId || !appId) return;
+    setDraftDeleting(true);
+    try {
+      await api.apps.permanentDelete(tenantId, appId);
+      void queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+      navigate("/app/apps");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDraftDeleting(false);
+      setDraftDeleteConfirm(false);
+    }
+  };
+
   // ─── Theme injection ─────────────────────────────────────────────────────────
 
   const [injectWizardOpen, setInjectWizardOpen] = useState(false);
@@ -1772,7 +1792,9 @@ export function AppDetailPage() {
               My Apps
             </button>
             <span className="text-faint/40 select-none">/</span>
-            <span className="text-ink font-semibold truncate">{app?.name ?? "App"}</span>
+            <span className={`font-semibold truncate ${app?.name === "..." ? "text-faint italic" : "text-ink"}`}>
+              {app?.name === "..." ? "Untitled app" : (app?.name ?? "App")}
+            </span>
           </div>
         }
       />
@@ -1793,6 +1815,88 @@ export function AppDetailPage() {
       ) : !app ? (
         <main className="flex-1 flex items-center justify-center">
           <p className="text-sm text-faint">App not found.</p>
+        </main>
+      ) : app.status === "draft" && !latestSession && !isGenerating ? (
+        /* ── Unbuilt draft — full centered empty state ─────────────────────── */
+        <main className="flex-1 flex flex-col items-center justify-center gap-8 px-6">
+          <div className="flex flex-col items-center gap-5 max-w-[400px] text-center">
+            {/* Icon */}
+            <div className="w-16 h-16 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+              <span className="material-symbols-outlined text-accent text-[32px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+            </div>
+
+            {/* Text */}
+            <div className="space-y-2">
+              <h2 className="text-[18px] font-bold text-ink tracking-tight">
+                {app.name === "..." ? "Your app is ready to be born" : `${app.name} hasn't been built yet`}
+              </h2>
+              <p className="text-[13px] text-muted leading-relaxed">
+                Head to the chat and describe what you want this app to do. Ton will plan, generate, and deploy it — all from a single prompt.
+              </p>
+            </div>
+
+            {/* CTA */}
+            <button
+              type="button"
+              onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-accent text-white text-[13px] font-bold transition-all hover:opacity-90 cursor-pointer border-0"
+              style={{ boxShadow: "0 0 20px rgba(167,139,250,0.25)" }}
+            >
+              <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+              Continue building
+            </button>
+
+            {/* Hint */}
+            <div className="flex flex-col gap-2 w-full pt-2">
+              <p className="text-[10px] text-faint uppercase tracking-widest font-semibold">Ideas to get started</p>
+              {[
+                "Send a follow-up email 3 days after purchase",
+                "Show a back-in-stock widget on product pages",
+                "Tag high-value customers automatically",
+              ].map((hint) => (
+                <button
+                  key={hint}
+                  type="button"
+                  onClick={() => navigate(`/app/apps/${app.id}/revise?prompt=${encodeURIComponent(hint)}`)}
+                  className="text-left text-[12px] text-faint px-4 py-2.5 rounded-xl border border-white/[0.07] bg-white/[0.02] hover:border-accent/30 hover:text-ink hover:bg-accent/[0.04] transition-all cursor-pointer"
+                >
+                  {hint}
+                </button>
+              ))}
+            </div>
+
+            {/* Delete draft */}
+            <div className="pt-2">
+              {draftDeleteConfirm ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-faint">Delete this draft?</span>
+                  <button
+                    type="button"
+                    onClick={() => void handleDraftDelete()}
+                    disabled={draftDeleting}
+                    className="text-[11px] text-danger hover:underline bg-transparent border-0 cursor-pointer disabled:opacity-50"
+                  >
+                    {draftDeleting ? "Deleting…" : "Yes, delete"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDraftDeleteConfirm(false)}
+                    className="text-[11px] text-faint hover:text-ink bg-transparent border-0 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setDraftDeleteConfirm(true)}
+                  className="text-[11px] text-faint/50 hover:text-danger transition-colors bg-transparent border-0 cursor-pointer"
+                >
+                  Delete this draft
+                </button>
+              )}
+            </div>
+          </div>
         </main>
       ) : (
         <div className="flex-1 overflow-hidden flex flex-col">
@@ -1832,7 +1936,7 @@ export function AppDetailPage() {
                   onClick={() => navigate(`/app/apps/${app.id}/revise`)}
                   className="flex items-center gap-1 px-3 py-2 text-[12px] font-semibold text-accent border-b-2 border-accent bg-transparent border-x-0 border-t-0 cursor-pointer hover:text-accent/80 transition-colors"
                 >
-                  <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+                  <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
                   Revise
                 </button>
               }

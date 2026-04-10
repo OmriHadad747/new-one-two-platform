@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { useSearchParams, useParams } from "react-router";
+import { useSearchParams, useParams, useNavigate } from "react-router";
 import { TopBar } from "@/components/layout/TopBar";
 import { ChatMessages, type ChatMessage, type DeployBundle } from "@/components/features/generation/ChatMessages";
 import { ChatInput } from "@/components/features/generation/ChatInput";
@@ -63,7 +63,7 @@ const WELCOME: ChatMessage = {
 function nameFromPrompt(prompt: string): string {
   const clean = prompt.replace(/[^a-zA-Z0-9 ]/g, " ").trim();
   const words = clean.split(/\s+/).slice(0, 5).join(" ");
-  return words.charAt(0).toUpperCase() + words.slice(1) || "New App";
+  return words.charAt(0).toUpperCase() + words.slice(1) || "New app";
 }
 
 function slugFromName(name: string): string {
@@ -73,11 +73,26 @@ function slugFromName(name: string): string {
   );
 }
 
+/** Parse a raw API error string into a user-facing message + optional upgrade hint. */
+function parseGenError(raw: string): { text: string; upgradeHint?: string } {
+  try {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]) as { error?: string; upgradeHint?: string; code?: string };
+      if (parsed.error) {
+        return { text: parsed.error, upgradeHint: parsed.upgradeHint };
+      }
+    }
+  } catch { /* ignore */ }
+  return { text: raw };
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function NewAppPage() {
   const { appId: routeAppId } = useParams<{ appId?: string }>();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { tenantId } = useSessionStore();
   const appsQuery = useApps(tenantId);
   const queryClient = useQueryClient();
@@ -87,12 +102,13 @@ export function NewAppPage() {
   );
   const apps = appsQuery.data ?? [];
 
-  const [input, setInput]     = useState("");
+  const [input, setInput]     = useState(searchParams.get("prompt") ?? "");
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevStatus = useRef<string>("idle");
   const genMsgIdRef = useRef<string | null>(null);
   const prevRouteAppId = useRef<string | undefined>(routeAppId);
+  const lastStartParamsRef = useRef<{ appId: string; tenantId: string; prompt: string; preComputedIntent?: Record<string, unknown> } | null>(null);
   // Tracks whether hydration has run for the current mount of this component.
   // Resets to false on every mount so navigation back to the same app re-hydrates.
   const hasHydratedRef = useRef(false);
@@ -108,7 +124,8 @@ export function NewAppPage() {
   const [analyzePhase, setAnalyzePhase]     = useState<"idle" | "thinking" | "awaiting_confirm">("idle");
 
   const { state: gen, start, startRevision, reconnect, restore, reset, cancel } = useGeneration();
-  const { setActive, updateStatus, updateEvents, updateMessages, active: activeGenStore } = useGenerationStore();
+  const { setActive, updateStatus, updateEvents, updateMessages, active: activeGenStore,
+          setDraftMessages, clearDraftMessages, draftMessages } = useGenerationStore();
   const isStreaming  = gen.status === "running";
   const isAnalyzing  = analyzePhase === "thinking";
 
@@ -221,6 +238,20 @@ export function NewAppPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestSessionQuery.data, gen.status, activeApp?.status, activeAppQuery.isSuccess]);
 
+  // Restore pre-generation messages from store when there's no session yet
+  useEffect(() => {
+    if (hasHydratedRef.current) return;
+    if (!selectedAppId) return;
+    // Only restore if session query resolved with no session
+    if (!latestSessionQuery.isSuccess || latestSessionQuery.data) return;
+    const saved = draftMessages[selectedAppId];
+    if (saved?.length && saved.length > 1) {
+      hasHydratedRef.current = true;
+      setMessages(saved);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedAppId, latestSessionQuery.isSuccess, latestSessionQuery.data]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAnalyzing]);
@@ -230,10 +261,18 @@ export function NewAppPage() {
     if (gen.jobId && gen.events.length > 0) updateEvents(gen.jobId, gen.events);
   }, [gen.jobId, gen.events, updateEvents]);
 
-  // Sync messages to store
+  // Sync messages to store (jobId-based for active generation)
   useEffect(() => {
     if (gen.jobId) updateMessages(gen.jobId, messages);
   }, [gen.jobId, messages, updateMessages]);
+
+  // Persist pre-generation messages by appId so they survive navigation before gen starts
+  useEffect(() => {
+    if (gen.jobId) return; // once gen starts, jobId-based persistence takes over
+    if (!selectedAppId) return;
+    if (messages.length <= 1) return; // only WELCOME — nothing to save
+    setDraftMessages(selectedAppId, messages);
+  }, [gen.jobId, selectedAppId, messages, setDraftMessages]);
 
   // Debounced DB save — Layer 2 persistence.
   // Skips the initial single-message state (just WELCOME) and fire-and-forgets
@@ -309,16 +348,38 @@ export function NewAppPage() {
 
     if (prevStatus.current === "running" && gen.status === "failed") {
       const genMsgId = genMsgIdRef.current;
-      const text = gen.error === "Cancelled"
-        ? "Generation cancelled."
-        : `Generation failed: ${gen.error ?? "Unknown error. Please try again."}`;
-      setMessages((prev) => prev.map((m) =>
-        m.id === genMsgId ? { id: m.id, role: "ai" as const, text } : m
-      ));
+      if (gen.error === "Cancelled") {
+        setMessages((prev) => prev.map((m) =>
+          m.id === genMsgId ? { id: m.id, role: "ai" as const, text: "Generation cancelled." } : m
+        ));
+      } else {
+        const { text, upgradeHint } = parseGenError(gen.error ?? "Unknown error. Please try again.");
+        const actions = upgradeHint
+          ? [{ label: "Upgrade plan →", onClick: () => navigate("/app/settings") }]
+          : [
+              {
+                label: "Try again",
+                onClick: () => {
+                  const params = lastStartParamsRef.current;
+                  if (!params || !genMsgIdRef.current) return;
+                  const retryMsgId = genMsgIdRef.current;
+                  setMessages((prev) => prev.map((m) =>
+                    m.id === retryMsgId ? { id: m.id, role: "ai" as const, type: "generating" as const } : m
+                  ));
+                  void start(params);
+                },
+              },
+            ];
+        setMessages((prev) => prev.map((m) =>
+          m.id === genMsgId
+            ? { id: m.id, role: "ai" as const, text: upgradeHint ? text : `Generation failed: ${text}`, actions }
+            : m
+        ));
+      }
     }
 
     prevStatus.current = gen.status;
-  }, [gen.status, gen.jobId, gen.error, updateStatus]);
+  }, [gen.status, gen.jobId, gen.error, updateStatus, navigate, start]);
 
   // ── Analyze ──────────────────────────────────────────────────────────────────
 
@@ -412,6 +473,9 @@ export function NewAppPage() {
               ...prev,
               { id: genMsgId, role: "ai", type: "generating" },
             ]);
+            // Clear draft messages — generation now takes over persistence
+            if (appId) clearDraftMessages(appId);
+            lastStartParamsRef.current = { appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: intent };
             await start({ appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: intent });
           },
         });
@@ -476,8 +540,8 @@ export function NewAppPage() {
     let appIdForAnalyze = selectedAppId;
     if (!selectedAppId && analyzeHistory.length === 0 && tenantId) {
       try {
-        const draftName = nameFromPrompt(prompt);
-        const newApp = await api.apps.create(tenantId, { slug: slugFromName(draftName), name: draftName });
+        // Use "..." as placeholder — real name is set after the name modal confirms
+        const newApp = await api.apps.create(tenantId, { slug: slugFromName("draft-" + Date.now()), name: "..." });
         appIdForAnalyze = newApp.id;
         setSelectedAppId(newApp.id);
         void queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
@@ -522,7 +586,9 @@ export function NewAppPage() {
       ? "Ask for a change to generate a new version..."
       : analyzePhase === "awaiting_confirm"
         ? "Or type here to change your request..."
-        : undefined;
+        : messages.length > 1
+          ? "What would you like to build?"
+          : undefined;
 
   return (
     <>
@@ -542,7 +608,7 @@ export function NewAppPage() {
         }
       />
 
-      <div className="flex-1 overflow-hidden flex flex-col">
+      <div className="flex-1 overflow-hidden flex flex-col relative">
         <ChatMessages
           ref={bottomRef}
           messages={messages}

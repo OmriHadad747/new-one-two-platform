@@ -26,7 +26,7 @@ export function MerchantCallbackPage() {
 
     api.tenants.get(tenantId)
       .then((tenant) => {
-        setTenant(tenant.id, tenant.shopDomain ?? "", tenant.plan);
+        setTenant(tenant.id, tenant.shopDomain ?? "", tenant.billingPlan);
         navigate("/app/apps", { replace: true });
       })
       .catch((err: unknown) => {

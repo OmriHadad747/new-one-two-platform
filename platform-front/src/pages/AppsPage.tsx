@@ -81,7 +81,7 @@ function AppCard({
             onClick={onRevise}
             className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-accent hover:bg-accent/10 border-0 cursor-pointer transition-colors bg-transparent"
           >
-            <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+            <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
             Revise
           </button>
           <button
@@ -138,7 +138,7 @@ export function AppsPage() {
         {!appsQuery.isLoading && !appsQuery.isError && apps.length === 0 && (
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
             <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
-              <span className="material-symbols-outlined text-faint text-[28px]">widgets</span>
+              <span className="material-symbols-outlined text-faint text-[28px]" style={{ fontVariationSettings: "'wght' 200" }}>layers</span>
             </div>
             <div>
               <p className="text-sm font-semibold text-faint">No apps yet</p>
@@ -176,7 +176,7 @@ export function AppsPage() {
                 <span className="material-symbols-outlined text-faint group-hover:text-accent text-[22px] transition-colors duration-200">add</span>
               </div>
               <div className="text-center">
-                <p className="text-[13px] font-semibold text-faint group-hover:text-ink transition-colors duration-200">New App</p>
+                <p className="text-[13px] font-semibold text-faint group-hover:text-ink transition-colors duration-200">New app</p>
                 <p className="text-[11px] text-faint/60 mt-0.5">Build with Ton</p>
               </div>
             </button>

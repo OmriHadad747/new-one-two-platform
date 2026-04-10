@@ -1,6 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
+export function useBillingUsage(tenantId: string | null) {
+  return useQuery({
+    queryKey: ["billing-usage", tenantId],
+    queryFn: () => api.billing.usage(tenantId!),
+    enabled: !!tenantId,
+    staleTime: 60_000,
+  });
+}
+
 export function useApps(tenantId: string | null) {
   return useQuery({
     queryKey: ["apps", tenantId],

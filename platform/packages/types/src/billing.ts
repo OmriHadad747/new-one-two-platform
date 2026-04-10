@@ -99,7 +99,7 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
     limits: {
       maxApps: 1,
       maxGenerationsPerMonth: 1,
-      allowedCategories: ["storefront_backend"],
+      allowedCategories: ["backend"],
       maxAppExecutionsPerMonth: 1_000,
       maxEmailsPerMonth: 100,
       maxSmsPerMonth: 0,

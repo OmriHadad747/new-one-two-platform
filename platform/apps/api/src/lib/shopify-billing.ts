@@ -17,7 +17,11 @@ import type { Tenant } from "@new-one-two/types";
 import { PLANS } from "./plans.js";
 
 const PLATFORM_URL = process.env["PLATFORM_URL"] ?? "http://localhost:3002";
-const BILLING_TEST_MODE = (process.env["SHOPIFY_BILLING_TEST_MODE"] ?? "true") === "true";
+// SHOPIFY_BILLING_MODE: "disabled" | "test" | "live"
+//   disabled — bypass Shopify entirely (custom apps, local dev)
+//   test     — call Shopify with test:true (no real charges, public app staging)
+//   live     — call Shopify with test:false (real charges, production)
+const BILLING_TEST_MODE = (process.env["SHOPIFY_BILLING_MODE"] ?? "disabled") === "test";
 
 // ─── GraphQL Mutations ────────────────────────────────────────────────────────
 

@@ -124,6 +124,7 @@ export async function resolveWebhookContext(
       status: row.tenantStatus as Tenant["status"],
       plan: row.tenantPlan,
       billingPlan: row.tenantBillingPlan as any,
+      billingInterval: "monthly" as any,
       subscriptionStatus: "none" as any,
       shopifySubscriptionId: null,
       trialEndsAt: null,

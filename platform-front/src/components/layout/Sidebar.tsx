@@ -2,7 +2,6 @@ import { NavLink, useNavigate, useParams } from "react-router";
 import { cn } from "@/lib/cn";
 import { useSessionStore } from "@/stores/session";
 import { useGenerationStore } from "@/stores/generation";
-import { useThemeStore } from "@/stores/theme";
 import { useApps } from "@/hooks/useApps";
 import type { App } from "@/types/dashboard";
 
@@ -28,7 +27,6 @@ export function Sidebar() {
   const { tenantId } = useSessionStore();
   const navigate = useNavigate();
   const { appId: activeAppId } = useParams<{ appId?: string }>();
-  const { theme, toggle } = useThemeStore();
   const activeGen = useGenerationStore((s) => s.active);
 
   const appsQuery = useApps(tenantId);
@@ -47,19 +45,9 @@ export function Sidebar() {
         <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-teal flex items-center justify-center text-[13px] font-extrabold text-white leading-none">
           N
         </div>
-        <span className="text-[15px] font-bold text-ink tracking-tight flex-1">
+        <span className="text-[15px] font-bold text-ink tracking-tight">
           New One<span className="text-accent"> Two</span>
         </span>
-        <button
-          type="button"
-          onClick={toggle}
-          title={theme === "dark" ? "Light mode" : "Dark mode"}
-          className="w-7 h-7 flex items-center justify-center rounded-md text-faint hover:text-ink hover:bg-white/[0.06] transition-colors bg-transparent border-0 cursor-pointer"
-        >
-          <span className="material-symbols-outlined text-[16px]">
-            {theme === "dark" ? "light_mode" : "dark_mode"}
-          </span>
-        </button>
       </div>
 
       {/* New App */}
@@ -71,9 +59,9 @@ export function Sidebar() {
         >
           <div className="flex items-center gap-2.5">
             <span className="text-accent text-[14px] leading-none">✦</span>
-            <span>New App</span>
+            <span>New app</span>
           </div>
-          <span className="material-symbols-outlined text-[15px] text-faint">edit_square</span>
+          <span className="material-symbols-outlined text-[8px] text-faint/40" style={{ fontVariationSettings: "'wght' 200" }}>edit</span>
         </button>
       </div>
 
@@ -87,7 +75,10 @@ export function Sidebar() {
           onClick={() => navigate("/app/apps")}
           className="group w-full flex items-center justify-between px-1.5 py-1 rounded-md hover:bg-white/[0.05] transition-colors bg-transparent border-0 cursor-pointer"
         >
-          <span className="text-[10px] font-bold text-faint uppercase tracking-wider group-hover:text-ink transition-colors">My Apps</span>
+          <div className="flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-[13px] text-faint/60 group-hover:text-ink transition-colors" style={{ fontVariationSettings: "'wght' 200" }}>layers</span>
+            <span className="text-[11px] font-semibold text-faint group-hover:text-ink transition-colors">My apps</span>
+          </div>
           <span className="material-symbols-outlined text-[13px] text-faint/50 group-hover:text-accent transition-colors">chevron_right</span>
         </button>
       </div>
@@ -125,7 +116,9 @@ export function Sidebar() {
                 )}
               >
                 <AppStatusDot app={app} isGenerating={isGenerating} />
-                <span className="flex-1 text-[13px] font-medium truncate min-w-0">{app.name}</span>
+                <span className={`flex-1 text-[13px] font-medium truncate min-w-0 ${app.name === "..." ? "text-faint italic" : ""}`}>
+                  {app.name === "..." ? "Untitled app" : app.name}
+                </span>
               </button>
               <button
                 type="button"
@@ -138,7 +131,7 @@ export function Sidebar() {
                     : "opacity-0 group-hover/app:opacity-100 text-faint hover:text-accent hover:bg-accent/10"
                 )}
               >
-                <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+                <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
               </button>
             </div>
           );
@@ -156,7 +149,7 @@ export function Sidebar() {
             )
           }
         >
-          <span className="material-symbols-outlined text-[15px]">settings</span>
+          <span className="material-symbols-outlined text-[13px]">settings</span>
           Settings
         </NavLink>
 
