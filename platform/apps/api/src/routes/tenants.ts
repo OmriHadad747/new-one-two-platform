@@ -40,6 +40,7 @@ import {
 } from "../lib/theme-injector.js";
 import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
 import type { InjectionTarget } from "../lib/theme-injector.js";
+import { canActivateApp } from "../lib/plan-enforcement.js";
 
 export const tenantsRoute: FastifyPluginAsync = async (app) => {
   // ─── POST /tenants ──────────────────────────────────────────────────────────
@@ -188,6 +189,18 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
       if (name?.trim()) await updateAppName(tenantId, appId, name.trim());
       if (status === "active") {
+        // ── Plan enforcement: check active app limit before activating ──
+        const tenant = await getTenantById(tenantId);
+        if (tenant) {
+          const activateCheck = await canActivateApp(tenant);
+          if (!activateCheck.allowed) {
+            return reply.status(403).send({
+              error: activateCheck.reason,
+              upgradeHint: activateCheck.upgradeHint,
+              code: "app_limit_reached",
+            });
+          }
+        }
         await updateAppStatus(appId, "active");
         // Fire-and-forget — restart container + re-register webhooks without blocking response
         reactivateApp(appId).catch((err: unknown) => {

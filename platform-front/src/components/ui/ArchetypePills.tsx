@@ -45,7 +45,7 @@ export function ArchetypePills({ archetype, compact }: ArchetypePillsProps) {
           >
             <span
               className="material-symbols-outlined text-[13px] leading-none"
-              style={{ fontVariationSettings: "'FILL' 1" }}
+              style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
             >
               {icon}
             </span>
@@ -62,7 +62,7 @@ export function ArchetypePills({ archetype, compact }: ArchetypePillsProps) {
           key={icon}
           className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9.5px] font-bold whitespace-nowrap ${cls}`}
         >
-          <span className="material-symbols-outlined text-[11px] leading-none" style={{ fontVariationSettings: "'FILL' 1" }}>
+          <span className="material-symbols-outlined text-[11px] leading-none" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>
             {icon}
           </span>
           {label}

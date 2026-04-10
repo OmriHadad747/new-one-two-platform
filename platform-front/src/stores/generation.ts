@@ -28,10 +28,14 @@ interface ActiveGeneration {
 
 interface GenerationStoreState {
   active: ActiveGeneration | null;
+  /** Pre-generation chat messages keyed by appId — survives navigation before a jobId exists. */
+  draftMessages: Record<string, ChatMessage[]>;
   setActive: (appId: string, jobId: string, status: GenStatus) => void;
   updateStatus: (jobId: string, status: GenStatus) => void;
   updateEvents: (jobId: string, events: ProgressEvent[]) => void;
   updateMessages: (jobId: string, messages: ChatMessage[]) => void;
+  setDraftMessages: (appId: string, messages: ChatMessage[]) => void;
+  clearDraftMessages: (appId: string) => void;
   clear: () => void;
 }
 
@@ -39,6 +43,16 @@ export const useGenerationStore = create<GenerationStoreState>()(
   persist(
     (set, get) => ({
       active: null,
+      draftMessages: {},
+
+      setDraftMessages: (appId, messages) =>
+        set((s) => ({ draftMessages: { ...s.draftMessages, [appId]: messages } })),
+
+      clearDraftMessages: (appId) =>
+        set((s) => {
+          const { [appId]: _, ...rest } = s.draftMessages;
+          return { draftMessages: rest };
+        }),
 
       setActive: (appId, jobId, status) =>
         set((s) => ({
@@ -86,6 +100,12 @@ export const useGenerationStore = create<GenerationStoreState>()(
               ),
             }
           : null,
+        draftMessages: Object.fromEntries(
+          Object.entries(state.draftMessages).map(([appId, msgs]) => [
+            appId,
+            msgs.map(({ actions: _actions, ...msg }) => msg),
+          ])
+        ),
       }),
     }
   )

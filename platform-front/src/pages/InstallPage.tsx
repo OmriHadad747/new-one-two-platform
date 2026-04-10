@@ -153,7 +153,7 @@ export function InstallPage() {
                 <>
                   <span
                     className="material-symbols-outlined text-[18px]"
-                    style={{ fontVariationSettings: "'FILL' 1" }}
+                    style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
                   >
                     shopping_bag
                   </span>
@@ -182,7 +182,7 @@ export function InstallPage() {
                   <div className="w-7 h-7 rounded-full bg-accent/10 flex items-center justify-center shrink-0">
                     <span
                       className="material-symbols-outlined text-accent text-[14px]"
-                      style={{ fontVariationSettings: "'FILL' 1" }}
+                      style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
                     >
                       {step.icon}
                     </span>

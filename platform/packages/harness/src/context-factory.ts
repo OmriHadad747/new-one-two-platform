@@ -6,7 +6,10 @@ import type {
   ServicesClient,
   ShopInfo,
   SmsClient,
+  BillingPlan,
 } from "@new-one-two/types";
+import { getPlanLimits } from "@new-one-two/types";
+import { checkUsageQuota, incrementUsage } from "@new-one-two/db";
 import { buildShopifyAdminClient, buildShopifyStorefrontClient } from "./shopify-client.js";
 
 const SHOPIFY_CLIENT_ID = process.env["SHOPIFY_CLIENT_ID"] ?? null;
@@ -19,10 +22,12 @@ export interface CreateBaseContextOptions {
   loggerTopic: string;
   appId?: string;
   executionLogId?: string;
+  billingPlan?: BillingPlan;
 }
 
 export async function createBaseContext(options: CreateBaseContextOptions): Promise<Omit<HandlerContext, "trigger" | "payload">> {
-  const { tenantId, tx, loggerTopic, appId, executionLogId } = options;
+  const { tenantId, tx, loggerTopic, appId, executionLogId, billingPlan } = options;
+  const plan: BillingPlan = billingPlan ?? "free";
 
   const logger = createRequestLogger({
     tenantId,
@@ -38,6 +43,17 @@ export async function createBaseContext(options: CreateBaseContextOptions): Prom
 
   const sms: SmsClient = {
     async send(params) {
+      const smsLimit = getPlanLimits(plan).maxSmsPerMonth;
+      if (smsLimit === 0) {
+        logger.warn({ tenantId, plan }, "SMS not available on this plan");
+        throw new Error("SMS is not available on your current plan.");
+      }
+      const quota = await checkUsageQuota(tenantId, "sms_sent", smsLimit);
+      if (!quota.allowed) {
+        logger.warn({ tenantId, current: quota.current, limit: quota.limit }, "SMS quota exceeded");
+        throw new Error(`Monthly SMS limit (${quota.limit}) reached.`);
+      }
+      await incrementUsage(tenantId, "sms_sent");
       logger.info(
         { event: "SMS_SENT", tenantId, ...params },
         "sms stub — provider not yet wired"
@@ -71,6 +87,13 @@ export async function createBaseContext(options: CreateBaseContextOptions): Prom
 
   const email: ServicesClient["email"] = {
     async send(params) {
+      const emailLimit = getPlanLimits(plan).maxEmailsPerMonth;
+      const quota = await checkUsageQuota(tenantId, "emails_sent", emailLimit);
+      if (!quota.allowed) {
+        logger.warn({ tenantId, current: quota.current, limit: quota.limit }, "Email quota exceeded");
+        throw new Error(`Monthly email limit (${quota.limit.toLocaleString()}) reached.`);
+      }
+      await incrementUsage(tenantId, "emails_sent");
       logger.info(
         { event: "EMAIL_SENT", tenantId, ...params },
         "email stub — provider not yet wired"

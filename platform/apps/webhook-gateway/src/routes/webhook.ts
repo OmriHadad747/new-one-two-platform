@@ -5,11 +5,13 @@ declare module "fastify" {
     rawBody?: boolean;
   }
 }
-import { resolveWebhookContext, createWebhookInvocationLog } from "@new-one-two/db";
+import { resolveWebhookContext, createWebhookInvocationLog, checkUsageQuota, incrementUsage } from "@new-one-two/db";
 import { getSecret, validateShopifyHmac, hashPayload } from "@new-one-two/crypto";
 import { createRequestLogger } from "@new-one-two/logger";
 import { enqueueWebhook } from "../queue/webhook-queue.js";
 import type { WebhookRouteParams } from "@new-one-two/types";
+import { getPlanLimits } from "@new-one-two/types";
+import type { BillingPlan } from "@new-one-two/types";
 
 // Shopify sends these headers with every webhook
 interface ShopifyWebhookHeaders {
@@ -135,7 +137,26 @@ async function webhookHandler(
     return reply.code(200).send({ status: "duplicate" });
   }
 
-  // ── 5. Enqueue for async execution ────────────────────────────────────────
+  // ── 5. Check execution quota ──────────────────────────────────────────────
+  const tenantPlan = (ctx.tenant.billingPlan ?? "free") as BillingPlan;
+  const execLimit = getPlanLimits(tenantPlan).maxAppExecutionsPerMonth;
+  const quota = await checkUsageQuota(ctx.tenant.id, "app_executions", execLimit);
+  if (!quota.allowed) {
+    log.warn(
+      { tenantId: ctx.tenant.id, plan: tenantPlan, current: quota.current, limit: quota.limit },
+      "Execution quota exceeded — dropping webhook"
+    );
+    // Return 200 so Shopify doesn't retry — the merchant needs to upgrade
+    return reply.code(200).send({
+      status: "quota_exceeded",
+      error: `Monthly execution limit (${quota.limit.toLocaleString()}) reached.`,
+    });
+  }
+
+  // Track the execution
+  await incrementUsage(ctx.tenant.id, "app_executions");
+
+  // ── 6. Enqueue for async execution ────────────────────────────────────────
   const job = await enqueueWebhook({
     executionLogId,
     tenantId: ctx.tenant.id,

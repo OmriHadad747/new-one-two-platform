@@ -191,7 +191,14 @@ export function useGeneration() {
 export function useLatestCompletedSession(appId: string | null) {
   return useQuery({
     queryKey: ["latest-completed-session", appId],
-    queryFn: () => api.generation.latestCompletedSession(appId!),
+    queryFn: async () => {
+      try {
+        return await api.generation.latestCompletedSession(appId!);
+      } catch (e) {
+        if (e instanceof Error && e.message.startsWith("404")) return null;
+        throw e;
+      }
+    },
     enabled: !!appId,
     staleTime: 60_000,
     retry: false,
@@ -202,7 +209,15 @@ export function useLatestCompletedSession(appId: string | null) {
 export function useLatestSession(appId: string | null) {
   return useQuery({
     queryKey: ["latest-session", appId],
-    queryFn: () => api.generation.latestSession(appId!),
+    queryFn: async () => {
+      try {
+        return await api.generation.latestSession(appId!);
+      } catch (e) {
+        // 404 = no session yet (draft app) — treat as null, not an error
+        if (e instanceof Error && e.message.startsWith("404")) return null;
+        throw e;
+      }
+    },
     enabled: !!appId,
     retry: false,
     staleTime: 0,

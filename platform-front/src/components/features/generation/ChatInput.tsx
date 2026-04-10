@@ -24,7 +24,7 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, on
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 300)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -40,25 +40,30 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, on
   };
 
   return (
-    <div className="px-5 py-4 border-t border-white/7 bg-surface shrink-0">
+    <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-2 px-4 pointer-events-none">
+
+      {/* Hint pills */}
       {!placeholder && (
-        <div className="flex gap-2 mb-2.5 flex-wrap">
+        <div className="flex gap-2 flex-wrap justify-center pointer-events-auto">
           {HINTS.map((h) => (
             <button
               key={h}
               type="button"
               onClick={() => { onChange(h); ref.current?.focus(); autoResize(); }}
-              className="text-[11px] text-faint px-2.5 py-1 border border-white/7 rounded-full hover:border-accent hover:text-accent transition-all duration-150 cursor-pointer bg-transparent"
+              className="text-[11px] text-faint px-2.5 py-1 border border-white/7 rounded-full hover:border-accent hover:text-accent transition-all duration-150 cursor-pointer bg-surface/80 backdrop-blur-sm"
             >
               {h}
             </button>
           ))}
         </div>
       )}
+
+      {/* Floating input */}
       <div
         className={cn(
-          "flex gap-2.5 items-end bg-raised border rounded-xl px-3.5 py-2.5 transition-colors duration-150",
-          "focus-within:border-accent border-white/13"
+          "w-full max-w-[600px] pointer-events-auto",
+          "flex gap-2.5 items-end bg-surface/90 backdrop-blur-xl border rounded-2xl px-4 py-3 transition-colors duration-150",
+          "shadow-[0_8px_32px_rgba(0,0,0,0.35)] focus-within:border-accent border-white/[0.12]"
         )}
       >
         <textarea
@@ -76,16 +81,16 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, on
           <button
             type="button"
             onClick={onStop}
-            className="w-8 h-8 rounded-lg bg-red-500/20 border border-red-500/40 flex items-center justify-center transition-all duration-150 hover:bg-red-500/30 shrink-0 cursor-pointer"
+            className="w-7 h-7 rounded-lg bg-red-500/20 border border-red-500/40 flex items-center justify-center transition-all duration-150 hover:bg-red-500/30 shrink-0 cursor-pointer"
           >
-            <span className="w-3 h-3 bg-red-400 rounded-sm block" />
+            <span className="w-2.5 h-2.5 bg-red-400 rounded-sm block" />
           </button>
         ) : (
           <button
             type="button"
             onClick={onSubmit}
             disabled={disabled || !value.trim()}
-            className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white text-sm transition-all duration-150 hover:bg-accent-hi disabled:opacity-40 disabled:cursor-not-allowed shrink-0 border-0 cursor-pointer"
+            className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white text-sm transition-all duration-150 hover:bg-accent-hi disabled:opacity-40 disabled:cursor-not-allowed shrink-0 border-0 cursor-pointer"
           >
             ↑
           </button>

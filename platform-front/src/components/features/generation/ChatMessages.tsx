@@ -169,7 +169,7 @@ function GeneratingCard({ events, isCompleted }: { events: ProgressEvent[]; isCo
             <div key={agent} className="flex items-center gap-3">
               <div className="w-5 h-5 flex items-center justify-center shrink-0">
                 {status === "completed" && (
-                  <span className="material-symbols-outlined text-accent/70 text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>task_alt</span>
+                  <span className="material-symbols-outlined text-accent/70 text-[16px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>task_alt</span>
                 )}
                 {status === "running" && !isParallelSibling && (
                   <span className="w-2 h-2 rounded-full bg-accent animate-pulse-subtle block" />
@@ -258,7 +258,7 @@ function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
       {/* Summary card */}
       <div className="bg-white/[0.04] border border-white/[0.07] rounded-xl p-4 space-y-3">
         <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-accent text-[19px]" style={{ fontVariationSettings: "'FILL' 1" }}>auto_awesome</span>
+          <span className="material-symbols-outlined text-accent text-[19px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
           <span className="text-[15px] font-bold text-ink">Generation complete</span>
         </div>
         {bundle && (
@@ -346,7 +346,7 @@ function ClarifyingCard({
     return (
       <div className="mt-2">
         <span className="inline-flex items-center gap-1.5 text-[12.5px] px-3 py-1.5 rounded-xl bg-accent/10 text-accent border border-accent/20 font-medium">
-          <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+          <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>check_circle</span>
           {data.answeredText}
         </span>
       </div>
@@ -413,7 +413,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
   ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, onClarifyAnswer }, ref) => {
     return (
     <div className="flex-1 overflow-y-auto">
-      <div className="px-5 py-6 flex flex-col gap-6 w-full max-w-[760px] mx-auto">
+      <div className="px-5 pt-6 pb-32 flex flex-col gap-6 w-full max-w-[760px] mx-auto">
         {messages.map((msg) => {
           if (msg.role === "user") {
             return (
@@ -430,9 +430,6 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
           // AI message
           return (
             <div key={msg.id} className="flex gap-3 items-start">
-              <div className="w-[28px] h-[28px] rounded-lg shrink-0 flex items-center justify-center text-[12px] font-bold select-none bg-gradient-to-br from-accent to-teal text-white mt-0.5">
-                A
-              </div>
               <div className="flex-1 min-w-0">
                 <div className="text-[11px] font-bold text-accent mb-2 tracking-wide">Ton</div>
 
@@ -481,9 +478,6 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
 
         {isAnalyzing && (
           <div className="flex gap-3 items-start">
-            <div className="w-[28px] h-[28px] rounded-lg shrink-0 flex items-center justify-center text-[12px] font-bold bg-gradient-to-br from-accent to-teal text-white select-none mt-0.5">
-              A
-            </div>
             <div className="flex-1 min-w-0">
               <div className="text-[11px] font-bold text-accent mb-2 tracking-wide">Ton</div>
               <p className="text-[13px] text-faint animate-pulse">Thinking…</p>

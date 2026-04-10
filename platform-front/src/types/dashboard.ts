@@ -5,12 +5,19 @@ export type TenantStatus = "active" | "suspended" | "pending";
 export type AppStatus = "draft" | "ready" | "active" | "inactive" | "deleted";
 export type AppArchetype = "storefront_backend" | "storefront_backend_admin" | "backend" | "backend_admin";
 
+export type BillingPlan = "free" | "starter" | "growth" | "pro";
+export type BillingInterval = "monthly" | "annual";
+export type SubscriptionStatus = "none" | "pending" | "active" | "frozen" | "cancelled";
+
 export interface Tenant {
   id: string;
   slug: string;
   name: string;
   status: TenantStatus;
   plan: string;
+  billingPlan: BillingPlan;
+  billingInterval: BillingInterval;
+  subscriptionStatus: SubscriptionStatus;
   shopDomain: string | null;
   createdAt: string;
   updatedAt: string;
@@ -110,6 +117,34 @@ export interface InvocationLogEntry {
   durationMs: number | null;
   errorMessage: string | null;
   invokedAt: string;
+}
+
+// ─── Billing Usage ───────────────────────────────────────────────────────────
+
+export interface PlanLimits {
+  maxApps: number;
+  maxGenerationsPerMonth: number;
+  maxAppExecutionsPerMonth: number;
+  maxEmailsPerMonth: number;
+  maxSmsPerMonth: number;
+  trialDays: number;
+}
+
+export interface UsagePeriod {
+  generations: number;
+  revisions: number;
+  appExecutions: number;
+  emailsSent: number;
+  smsSent: number;
+}
+
+export interface BillingUsageResponse {
+  plan: BillingPlan;
+  interval: BillingInterval;
+  subscriptionStatus: SubscriptionStatus;
+  trialEndsAt: string | null;
+  usage: UsagePeriod;
+  limits: PlanLimits;
 }
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
