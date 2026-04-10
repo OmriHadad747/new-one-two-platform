@@ -6,7 +6,6 @@ import { RequireAuth } from "@/components/layout/RequireAuth";
 import { LandingPage } from "@/pages/LandingPage";
 import { InstallPage } from "@/pages/InstallPage";
 import { MerchantCallbackPage } from "@/pages/MerchantCallbackPage";
-import { DashboardPage } from "@/pages/DashboardPage";
 import { NewAppPage } from "@/pages/NewAppPage";
 import { AppsPage } from "@/pages/AppsPage";
 import { AppDetailPage } from "@/pages/AppDetailPage";

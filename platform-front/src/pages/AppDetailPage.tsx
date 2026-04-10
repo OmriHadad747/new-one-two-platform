@@ -264,7 +264,7 @@ function AppHeader({
           </div>
           <button
             type="button"
-            onClick={() => void navigator.clipboard.writeText(app.id)}
+            onClick={() => void navigator.clipboard?.writeText(app.id)}
             title="Copy App ID"
             className="flex items-center gap-1.5 bg-transparent border-0 p-0 cursor-pointer group"
           >
@@ -410,7 +410,7 @@ function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
 
   const current = files.find((f) => f.id === activeFile) ?? files[0];
   const copyCode = () => {
-    void navigator.clipboard.writeText(current.code).then(() => {
+    void navigator.clipboard?.writeText(current.code).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });

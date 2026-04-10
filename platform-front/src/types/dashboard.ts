@@ -83,20 +83,6 @@ export interface InjectThemeResponse {
   editorUrl: string;
 }
 
-// ─── Dashboard UI helpers ─────────────────────────────────────────────────────
-
-/** Computed from TenantStats — kept for StatsGrid component compatibility. */
-export type DashboardStats = TenantStats;
-
-export interface ActivityItem {
-  id: string;
-  icon: string;
-  text: string;
-  time: string;
-  tag: string;
-  tagVariant: "purple" | "teal";
-}
-
 // ─── Execution Logs ───────────────────────────────────────────────────────────
 
 export interface WebhookInvocationLogEntry {
