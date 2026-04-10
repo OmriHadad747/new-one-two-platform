@@ -9,9 +9,8 @@ import { useGenerationStore } from "@/stores/generation";
 import { useApps, useApp } from "@/hooks/useApps";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { SessionBundle, GenerationBundle } from "@/types/dashboard";
+import type { SessionBundle, GenerationBundle, AppArchetype, AnalyzeMessage } from "@/types/dashboard";
 import { NameAppModal } from "@/components/features/generation/NameAppModal";
-import type { AnalyzeMessage } from "@/types/dashboard";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -73,14 +72,14 @@ function slugFromName(name: string): string {
   );
 }
 
-/** Parse a raw API error string into a user-facing message + optional upgrade hint. */
-function parseGenError(raw: string): { text: string; upgradeHint?: string } {
+/** Parse a raw API error string into a user-facing message + optional upgrade hint + error code. */
+function parseGenError(raw: string): { text: string; upgradeHint?: string; code?: string } {
   try {
     const match = raw.match(/\{[\s\S]*\}/);
     if (match) {
       const parsed = JSON.parse(match[0]) as { error?: string; upgradeHint?: string; code?: string };
       if (parsed.error) {
-        return { text: parsed.error, upgradeHint: parsed.upgradeHint };
+        return { text: parsed.error, upgradeHint: parsed.upgradeHint, code: parsed.code };
       }
     }
   } catch { /* ignore */ }
@@ -353,28 +352,44 @@ export function NewAppPage() {
           m.id === genMsgId ? { id: m.id, role: "ai" as const, text: "Generation cancelled." } : m
         ));
       } else {
-        const { text, upgradeHint } = parseGenError(gen.error ?? "Unknown error. Please try again.");
-        const actions = upgradeHint
-          ? [{ label: "Upgrade plan →", onClick: () => navigate("/app/settings") }]
-          : [
-              {
-                label: "Try again",
-                onClick: () => {
-                  const params = lastStartParamsRef.current;
-                  if (!params || !genMsgIdRef.current) return;
-                  const retryMsgId = genMsgIdRef.current;
-                  setMessages((prev) => prev.map((m) =>
-                    m.id === retryMsgId ? { id: m.id, role: "ai" as const, type: "generating" as const } : m
-                  ));
-                  void start(params);
+        const { text, upgradeHint, code } = parseGenError(gen.error ?? "Unknown error. Please try again.");
+        const blockedArchetype = code === "category_not_allowed"
+          ? lastStartParamsRef.current?.preComputedIntent?.appCategory as string | undefined
+          : undefined;
+
+        if (blockedArchetype && upgradeHint) {
+          setMessages((prev) => prev.map((m) =>
+            m.id === genMsgId
+              ? {
+                  id: m.id, role: "ai" as const,
+                  planBlock: { archetype: blockedArchetype as AppArchetype, upgradeHint },
+                  actions: [{ label: "Upgrade plan →", onClick: () => navigate("/app/settings") }],
+                }
+              : m
+          ));
+        } else {
+          const actions = upgradeHint
+            ? [{ label: "Upgrade plan →", onClick: () => navigate("/app/settings") }]
+            : [
+                {
+                  label: "Try again",
+                  onClick: () => {
+                    const params = lastStartParamsRef.current;
+                    if (!params || !genMsgIdRef.current) return;
+                    const retryMsgId = genMsgIdRef.current;
+                    setMessages((prev) => prev.map((m) =>
+                      m.id === retryMsgId ? { id: m.id, role: "ai" as const, type: "generating" as const } : m
+                    ));
+                    void start(params);
+                  },
                 },
-              },
-            ];
-        setMessages((prev) => prev.map((m) =>
-          m.id === genMsgId
-            ? { id: m.id, role: "ai" as const, text: upgradeHint ? text : `Generation failed: ${text}`, actions }
-            : m
-        ));
+              ];
+          setMessages((prev) => prev.map((m) =>
+            m.id === genMsgId
+              ? { id: m.id, role: "ai" as const, text: upgradeHint ? text : `Generation failed: ${text}`, actions }
+              : m
+          ));
+        }
       }
     }
 

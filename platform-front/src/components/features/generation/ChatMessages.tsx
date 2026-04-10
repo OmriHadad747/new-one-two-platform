@@ -2,7 +2,7 @@ import { forwardRef, useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { cn } from "@/lib/cn";
 import { ArchetypePills } from "@/components/ui/ArchetypePills";
-import type { ProgressEvent } from "@/types/dashboard";
+import type { AppArchetype, ProgressEvent } from "@/types/dashboard";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,6 +41,8 @@ export interface ChatMessage {
   liveAppId?: string;
   /** For "clarifying" messages. */
   clarifyingData?: ClarifyingData;
+  /** For plan restriction errors — shows archetype pills + upgrade prompt. */
+  planBlock?: { archetype: AppArchetype; upgradeHint: string };
   actions?: ChatMessageAction[];
 }
 
@@ -326,6 +328,34 @@ function LiveCard({ appId }: { appId?: string }) {
   );
 }
 
+// ─── Plan blocked card ────────────────────────────────────────────────────────
+
+function PlanBlockedCard({ archetype, upgradeHint }: { archetype: AppArchetype; upgradeHint: string }) {
+  return (
+    <div className="mt-2.5 max-w-[380px] bg-white/[0.03] border border-white/[0.08] rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.06]">
+        <span
+          className="material-symbols-outlined text-[15px] text-amber"
+          style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+        >
+          lock
+        </span>
+        <span className="text-[12.5px] font-semibold text-ink">Not available on your plan</span>
+      </div>
+
+      {/* Body */}
+      <div className="px-4 py-3 space-y-2.5">
+        <div className="space-y-1.5">
+          <p className="text-[10.5px] font-semibold text-faint uppercase tracking-wider">App type requested</p>
+          <ArchetypePills archetype={archetype} />
+        </div>
+        <p className="text-[11.5px] text-muted leading-relaxed">{upgradeHint}</p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Clarifying card ──────────────────────────────────────────────────────────
 
 function ClarifyingCard({
@@ -451,6 +481,10 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
 
                 {msg.type === "clarifying" && msg.clarifyingData && (
                   <ClarifyingCard data={msg.clarifyingData} onAnswer={onClarifyAnswer} />
+                )}
+
+                {msg.planBlock && (
+                  <PlanBlockedCard archetype={msg.planBlock.archetype} upgradeHint={msg.planBlock.upgradeHint} />
                 )}
 
                 {msg.actions && msg.actions.length > 0 && (
