@@ -12,7 +12,7 @@ import { widgetJsRoutes } from "./routes/widget-js.js";
 import { adminUiRoutes } from "./routes/admin-ui.js";
 import { oauthRoute } from "./routes/oauth.js";
 import { billingRoute } from "./routes/billing.js";
-import { authPlugin } from "./plugins/auth.js";
+import { authHook } from "./plugins/auth.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3002", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -43,9 +43,11 @@ export async function buildServer() {
     allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
   });
 
-  // Auth middleware: validates Bearer tokens on protected routes.
-  // Exempt: /health, /oauth, /widgets, /admin-ui, POST /billing/webhook
-  await app.register(authPlugin);
+  // Auth hook: validates Bearer tokens (or ?token= query param for SSE) on
+  // protected routes. Added directly via addHook to avoid Fastify encapsulation —
+  // ensures the hook applies to ALL routes, not just those inside a sub-plugin.
+  // Exempt: /health, /oauth, /widgets, /admin-ui, billing callback/webhook
+  app.addHook("onRequest", authHook);
 
   await app.register(healthRoute, { prefix: "/health" });
   await app.register(generationRoute, { prefix: "/generation" });

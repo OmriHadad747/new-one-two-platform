@@ -12,8 +12,14 @@
  *   3. This plugin validates the signature, expiry, and attaches the decoded tenant context
  *      to the request so downstream route handlers can trust `request.tenantAuth`.
  *
+ * Token sources (checked in order):
+ *   1. `Authorization: Bearer <token>` header — used by all standard API requests.
+ *   2. `?token=<token>` query parameter — used by EventSource/SSE connections
+ *      (the browser EventSource API does not support custom headers).
+ *
  * Exempt routes (always skip auth):
- *   /health/*, /oauth/*, /widgets/*, /admin-ui/*, POST /billing/webhook
+ *   /health/*, /oauth/*, /widgets/*, /admin-ui/*,
+ *   GET /billing/callback (Shopify redirect), POST /billing/webhook (Shopify webhook)
  */
 
 import { createHmac, timingSafeEqual } from "crypto";
@@ -110,46 +116,69 @@ export function verifyJwt(token: string): TenantAuth | null {
 const EXEMPT_PREFIXES = ["/health", "/oauth", "/widgets", "/admin-ui"];
 
 function isExemptRoute(url: string, method: string): boolean {
+  // Strip query string for prefix matching
+  const path = url.split("?")[0]!;
+
   for (const prefix of EXEMPT_PREFIXES) {
-    if (url.startsWith(prefix)) return true;
+    if (path.startsWith(prefix)) return true;
   }
   // Billing webhook from Shopify (POST /billing/webhook)
-  if (method === "POST" && url === "/billing/webhook") return true;
+  if (method === "POST" && path === "/billing/webhook") return true;
+  // Billing callback — Shopify redirects here after charge approval (GET /billing/callback)
+  if (method === "GET" && path === "/billing/callback") return true;
   return false;
 }
 
-// ─── Plugin ────────────────────────────────────────────────────────────────────
+// ─── Extract Token ─────────────────────────────────────────────────────────────
+// Check Authorization header first, then ?token= query param (for EventSource/SSE
+// which cannot send custom headers).
 
-export async function authPlugin(app: FastifyInstance) {
-  app.addHook(
-    "onRequest",
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      // Always skip exempt routes
-      if (isExemptRoute(request.url, request.method)) return;
+function extractToken(request: FastifyRequest): string | undefined {
+  // 1. Authorization: Bearer <token>
+  const authHeader = request.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    return authHeader.slice(7);
+  }
+  // 2. ?token=<token> query parameter (SSE / EventSource fallback)
+  const query = request.query as Record<string, unknown>;
+  if (typeof query?.["token"] === "string" && query["token"]) {
+    return query["token"];
+  }
+  return undefined;
+}
 
-      const authHeader = request.headers.authorization;
-      if (authHeader?.startsWith("Bearer ")) {
-        const token = authHeader.slice(7);
-        const auth = verifyJwt(token);
-        if (auth) {
-          request.tenantAuth = auth;
-          return; // Authenticated
-        }
-        // Token present but invalid — always reject (even in dev)
-        logger.warn({ url: request.url }, "Invalid or expired auth token");
-        return reply
-          .code(401)
-          .send({ error: "Invalid or expired authentication token" });
-      }
+// ─── Auth Hook ─────────────────────────────────────────────────────────────────
+// Exported as a raw hook function so it can be attached directly to the Fastify
+// instance via app.addHook() — avoids encapsulation issues that would occur if
+// registered as a plugin via app.register() without fastify-plugin.
 
-      // No token at all
-      if (AUTH_REQUIRED) {
-        return reply
-          .code(401)
-          .send({ error: "Authentication required" });
-      }
+export async function authHook(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  // Always skip exempt routes
+  if (isExemptRoute(request.url, request.method)) return;
 
-      // Dev mode: allow through without token
+  const token = extractToken(request);
+  if (token) {
+    const auth = verifyJwt(token);
+    if (auth) {
+      request.tenantAuth = auth;
+      return; // Authenticated
     }
-  );
+    // Token present but invalid — always reject (even in dev)
+    logger.warn({ url: request.url }, "Invalid or expired auth token");
+    return reply
+      .code(401)
+      .send({ error: "Invalid or expired authentication token" });
+  }
+
+  // No token at all
+  if (AUTH_REQUIRED) {
+    return reply
+      .code(401)
+      .send({ error: "Authentication required" });
+  }
+
+  // Dev mode: allow through without token
 }

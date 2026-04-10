@@ -133,8 +133,14 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ feedback }),
       }),
-    progressStream: (jobId: string) =>
-      new EventSource(`${BASE}/generation/${jobId}/progress`),
+    progressStream: (jobId: string) => {
+      // EventSource does not support custom headers, so pass token via query param.
+      const token = getAuthToken();
+      const url = token
+        ? `${BASE}/generation/${jobId}/progress?token=${encodeURIComponent(token)}`
+        : `${BASE}/generation/${jobId}/progress`;
+      return new EventSource(url);
+    },
     analyze: (history: AnalyzeMessage[]) =>
       request<AnalyzeResult>("/generation/analyze", {
         method: "POST",
