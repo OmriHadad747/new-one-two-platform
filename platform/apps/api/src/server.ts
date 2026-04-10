@@ -12,6 +12,7 @@ import { widgetJsRoutes } from "./routes/widget-js.js";
 import { adminUiRoutes } from "./routes/admin-ui.js";
 import { oauthRoute } from "./routes/oauth.js";
 import { billingRoute } from "./routes/billing.js";
+import { authPlugin } from "./plugins/auth.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3002", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -28,7 +29,23 @@ export async function buildServer() {
   // The SSE fan-out and bundle persistence both depend on these being active.
   await startSubscriptions();
 
-  await app.register(cors, { origin: "*", allowedHeaders: "*" });
+  // CORS: in production, restrict to ALLOWED_ORIGINS; in dev, allow all origins
+  // so ngrok, localhost, and Shopify test stores keep working.
+  const allowedOrigins = process.env["ALLOWED_ORIGINS"]
+    ? process.env["ALLOWED_ORIGINS"].split(",").map((o) => o.trim())
+    : undefined;
+
+  await app.register(cors, {
+    origin: process.env["NODE_ENV"] === "production" && allowedOrigins
+      ? allowedOrigins
+      : true,
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
+  });
+
+  // Auth middleware: validates Bearer tokens on protected routes.
+  // Exempt: /health, /oauth, /widgets, /admin-ui, POST /billing/webhook
+  await app.register(authPlugin);
 
   await app.register(healthRoute, { prefix: "/health" });
   await app.register(generationRoute, { prefix: "/generation" });

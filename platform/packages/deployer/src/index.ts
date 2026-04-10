@@ -29,6 +29,7 @@ import {
   getLatestDeployedVersionForApp,
 } from "@new-one-two/db";
 import type { FeatureBundle } from "@new-one-two/types";
+import { uploadWidgetJs, uploadAdminUiJs } from "./gcs-widget.js";
 
 const DEPLOY_MODE = process.env["DEPLOY_MODE"] ?? "cloudrun";
 
@@ -248,9 +249,12 @@ export async function deployFeatureBundle(params: {
     await updateAppArchetype(appId, archetype);
     if (bundle.widgetModule !== null) {
       await updateAppWidgetJs(appId, bundle.widgetModule);
+      // Upload to GCS for production serving (skipped in local dev)
+      await uploadWidgetJs(appId, bundle.widgetModule);
     }
     if (bundle.adminUiModule !== null) {
       await updateAppAdminUiJs(appId, bundle.adminUiModule);
+      await uploadAdminUiJs(appId, bundle.adminUiModule);
     }
 
     // Step 3: Create draft AppVersion from handler code + metadata

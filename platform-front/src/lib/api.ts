@@ -17,13 +17,17 @@ import type {
   InjectThemeResponse,
 } from "@/types/dashboard";
 
+import { getAuthToken } from "./auth.js";
+
 const BASE = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const hasBody = init?.body != null;
+  const token = getAuthToken();
   const res = await fetch(`${BASE}${path}`, {
     headers: {
       ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
     ...init,
