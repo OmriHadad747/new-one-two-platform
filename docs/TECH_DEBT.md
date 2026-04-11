@@ -88,25 +88,92 @@ Once TD-002 is resolved (agents return token counts), call `insertGenerationEven
 
 ---
 
-## TD-007 — Wire real email provider behind `ctx.email.send()`
+## TD-007 — Wire real email delivery + shared email design system behind `ctx.email.send()`
 
 **Current state**
 `ctx.email.send({ to, subject, templateId, data })` exists in the harness contract and is already
 used by generated handlers. The current implementation is a log stub — it emits a structured
-`EMAIL_SENT` log event with the full delivery intent but does not deliver anything.
+`EMAIL_SENT` log event with the full delivery intent but does not deliver anything. Additionally,
+generated handlers today store raw HTML in DB columns (e.g. `email_body_html`) and compile it
+with Handlebars at runtime, meaning merchants are on the hook for authoring cross-client-compatible
+email HTML — which they will not do well.
 
 **Affected files**
 - `platform/packages/harness/src/build-ctx.ts` — stub implementation of `ctx.email`
+- `platform/packages/types/src/harness.ts` — `EmailSendParams` / `EmailClient` contract
 - `generator/templates/harness_contract.py` — documents the `ctx.email` API surface
+- `generator/subagents/handler_agent.py` — emits handler code that composes email HTML inline
 
-**What to do**
-Replace the stub with a real provider adapter (Resend, SendGrid, Postmark, etc.):
-1. Store provider credentials in Secret Manager per-tenant (or platform-wide for MVP).
-2. Implement a provider adapter behind `ctx.email.send()` in `build-ctx.ts`.
-3. Add delivery status tracking and basic error handling (retry / dead-letter).
-4. The harness contract and all generated handlers require zero changes — the API surface is already correct.
+**Why not just use Shopify's email service?**
+Investigated and rejected. Shopify has two email products, neither of which is usable here:
+1. **Shopify Email (marketing)** — merchant-facing UI tool in Admin. No API to send programmatically.
+2. **Customer notifications (transactional)** — fires on ~15 built-in Shopify events (order placed,
+   shipping update, etc.) with Liquid templates editable via the Admin API. Apps can customize
+   templates but cannot trigger sends on arbitrary events, cannot schedule follow-ups, and cannot
+   send anything outside the fixed event list.
 
-**Complexity:** Medium — provider adapter + tenant credential storage + error handling.
+Every Shopify app that sends email (Klaviyo, Postscript, Omnisend, Mailchimp, Privy) uses its own
+MTA. This is the industry norm.
+
+**Hybrid approach to pursue**
+- **For apps whose emails map to a built-in Shopify notification event** (order thank-you, shipping
+  confirmation, order cancelled, etc.): generate a patch to the merchant's native Shopify Liquid
+  template via Admin API `POST /notifications/:id.json` instead of sending via Ton. Zero
+  deliverability work, email comes from Shopify.
+- **For everything else** (abandoned cart follow-ups, back-in-stock, price drop, win-back,
+  post-purchase upsell, subscription nudges): Ton-owned provider (Resend planned) with the
+  platform design system described below.
+
+The generator should decide which path an app falls into during the architect phase and emit
+either a Shopify notification patch OR a `ctx.email.send()` call — never both.
+
+**What to do — delivery (provider adapter)**
+1. Store provider credentials in Secret Manager (platform-wide for MVP; per-tenant later if a
+   merchant wants to bring their own domain/DKIM).
+2. Implement a Resend adapter behind `ctx.email.send()` in `build-ctx.ts`.
+3. Add delivery status tracking (`email_deliveries` table: provider message id, status, bounce
+   reason, opened/clicked) and basic error handling (retry with exponential backoff, dead-letter
+   after N attempts).
+4. Wire Resend webhooks into the webhook-gateway service to update delivery status rows.
+5. Configure SPF / DKIM / DMARC once on the platform sending domain. Merchants never touch DNS.
+
+**What to do — design system (block-based templates)**
+The split is ~80% platform / ~20% merchant:
+
+| Layer | Owner | What it contains |
+|-------|-------|------------------|
+| Rendering engine | Platform | MJML → cross-client HTML at send time |
+| Base layout | Platform | Header, footer, spacing, typography, dark-mode fallbacks |
+| Block library | Platform | `hero`, `product_grid`, `cta_button`, `order_summary`, `text`, `image`, `divider`, `coupon_code` — each pre-tested in Litmus or similar |
+| Brand tokens | Merchant (once) | Logo URL, primary color, secondary color, font family, footer text, support email, unsubscribe URL — stored in new `merchant_brand` table, set during onboarding |
+| Content | Merchant (per app) | Subject, block titles, copy, variable bindings — editable in each app's admin UI |
+| Escape hatch | Merchant (advanced) | Raw HTML mode for merchants who want full control; warn that cross-client compatibility is on them |
+
+Update `EmailSendParams` to accept either a `blocks: EmailBlock[]` array (default path) or a
+`rawHtml: string` (escape hatch). The generator should default all new apps to blocks. The harness
+renders blocks → MJML → HTML using the merchant's brand tokens at send time, not at generation
+time, so brand changes propagate instantly without regenerating apps.
+
+**Migration of existing generated apps**
+Test-result apps (e.g. `abandoned_cart_recovery`) currently store `email_body_html` as a TEXT
+column. Leave them alone — they'll keep working via the raw-HTML escape hatch. New generations
+use the block system.
+
+**What to update in the generator**
+- `generator/templates/harness_contract.py` — document the new `blocks` parameter and the
+  available block types.
+- `generator/subagents/architect_agent.py` — add a decision step: "is this email covered by a
+  Shopify native notification event?" If yes, emit a notification patch instead of a handler email.
+- `generator/subagents/handler_agent.py` — stop emitting `email_body_html` columns; emit
+  `ctx.email.send({ to, subject, blocks: [...] })` calls with inline block definitions.
+
+**Complexity:** High — provider adapter + design system + generator changes + Shopify native
+notification path + delivery tracking. Split into sub-tickets when picked up:
+- **TD-007a** Resend adapter + credential storage + delivery tracking table
+- **TD-007b** MJML block library + `merchant_brand` table + brand-token resolution at send time
+- **TD-007c** Generator decision: Shopify native notification patch vs Ton-sent email
+- **TD-007d** Generator: switch handler emission from raw HTML to blocks
+- **TD-007e** Resend webhook ingest for delivery status updates
 
 ---
 
