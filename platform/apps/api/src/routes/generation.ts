@@ -28,6 +28,10 @@ import {
   updateAppStatus,
   updateAppArchetype,
   getAppByIdOnly,
+  setAppUsesEmail,
+  createAppEmailConfigFromStarter,
+  isAppEmailConfigured,
+  sql,
 } from "@new-one-two/db";
 import { deployFeatureBundle, deployAppVersion } from "@new-one-two/deployer";
 import { getTenantById } from "@new-one-two/db";
@@ -48,6 +52,62 @@ function archetypeFromBundle(bundle: Record<string, unknown>): AppArchetype {
   if (hasAdmin)              return "backend_admin";
   if (hasWidget)             return "storefront_backend";
   return "backend";
+}
+
+/**
+ * If the bundle uses email, persist the usesEmail flag + variable manifest on
+ * `apps`, and seed `app_email_configs` with the AI-generated starter content
+ * (configured_by_merchant = FALSE — deploy is blocked until the merchant
+ * confirms in the Email tab).
+ *
+ * Re-running this on revisions is safe: ON CONFLICT in
+ * createAppEmailConfigFromStarter updates the template. The
+ * configured_by_merchant flag is preserved because it's not mentioned in the
+ * UPDATE clause of the upsert — so a revision never silently un-confirms a
+ * previously-approved email.
+ */
+async function applyBundleEmailMetadata(
+  appId: string,
+  tenantId: string,
+  bundle: Record<string, unknown>
+): Promise<void> {
+  const usesEmail = bundle["usesEmail"] === true;
+  await setAppUsesEmail(appId, usesEmail);
+
+  if (!usesEmail) return;
+
+  const variables = Array.isArray(bundle["emailVariables"])
+    ? (bundle["emailVariables"] as unknown[]).filter((v): v is string => typeof v === "string")
+    : [];
+  await sql`
+    UPDATE apps SET email_variables = ${JSON.stringify(variables)}::jsonb WHERE id = ${appId}
+  `;
+
+  const starter = bundle["emailStarterContent"] as
+    | { subject?: string; heading?: string | null; body?: string; ctaLabel?: string | null; ctaUrl?: string | null }
+    | undefined;
+  if (!starter?.subject || !starter?.body) {
+    logger.warn(
+      { appId, tenantId },
+      "bundle.usesEmail=true but emailStarterContent missing subject/body — skipping app_email_configs seed"
+    );
+    return;
+  }
+
+  const emailType = bundle["emailTypeSuggestion"] === "marketing" ? "marketing" : "transactional";
+
+  await createAppEmailConfigFromStarter({
+    appId,
+    tenantId,
+    starter: {
+      subject: starter.subject,
+      heading: starter.heading ?? null,
+      body: starter.body,
+      ctaLabel: starter.ctaLabel ?? null,
+      ctaUrl: starter.ctaUrl ?? null,
+    },
+    emailType,
+  });
 }
 
 /**
@@ -128,6 +188,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
             // Set archetype immediately so app detail shows correct type badges
             // before the merchant deploys.
             await updateAppArchetype(appId, archetypeFromBundle(bundle));
+            // Persist email metadata (usesEmail flag, variables, seeded config)
+            // so the Email tab can render and deploy can block correctly.
+            await applyBundleEmailMetadata(appId, tenantId, bundle);
             // Transition app to "ready" — bundle stored, awaiting merchant deploy.
             await updateAppStatus(appId, "ready");
           } else {
@@ -326,6 +389,20 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
             error: `App must be in 'ready' state to deploy (current: ${appRecord?.status ?? "unknown"})`,
           });
         }
+
+        // Block deploy if the bundle sends emails but the merchant hasn't
+        // confirmed the email content yet. The Email tab in the dashboard
+        // flips `configured_by_merchant` to TRUE on first save.
+        const bundleUsesEmail = (session.bundle as Record<string, unknown> | null)?.["usesEmail"] === true;
+        if (bundleUsesEmail) {
+          const confirmed = await isAppEmailConfigured(session.appId);
+          if (!confirmed) {
+            return reply.status(409).send({
+              error: "email_not_confirmed",
+              message: "This app sends emails. Please review and save the email content in the Email tab before deploying.",
+            });
+          }
+        }
       }
 
       const bundleKeys = session.bundle ? Object.keys(session.bundle as Record<string, unknown>) : [];
@@ -420,6 +497,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
             await storeBundleInSession(newJobId, bundle, "completed");
             // Update archetype in case the revision changed the bundle shape.
             await updateAppArchetype(session.appId!, archetypeFromBundle(bundle));
+            // Refresh email metadata from the revised bundle. configured_by_merchant
+            // is intentionally preserved by the upsert's update clause.
+            await applyBundleEmailMetadata(session.appId!, session.tenantId!, bundle);
             // Revision succeeded: move app back to "ready" for merchant to re-deploy.
             await updateAppStatus(session.appId!, "ready");
           } else {
