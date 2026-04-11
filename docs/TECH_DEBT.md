@@ -104,32 +104,51 @@ email HTML — which they will not do well.
 - `generator/templates/harness_contract.py` — documents the `ctx.email` API surface
 - `generator/subagents/handler_agent.py` — emits handler code that composes email HTML inline
 
-**Why not just use Shopify's email service?**
-Investigated and rejected. Shopify has two email products, neither of which is usable here:
-1. **Shopify Email (marketing)** — merchant-facing UI tool in Admin. No API to send programmatically.
-2. **Customer notifications (transactional)** — fires on ~15 built-in Shopify events (order placed,
-   shipping update, etc.) with Liquid templates editable via the Admin API. Apps can customize
-   templates but cannot trigger sends on arbitrary events, cannot schedule follow-ups, and cannot
-   send anything outside the fixed event list.
+**Scope: one path, Ton-owned, no exceptions**
+All Ton-sent emails go through a single pipeline: Resend delivery + MJML block rendering +
+merchant brand tokens resolved at send time. There is no hybrid path, no Shopify native
+notification patching, no per-app branching in the generator. One mental model for merchants,
+one code path in the generator, one analytics surface, one billing model.
 
-Every Shopify app that sends email (Klaviyo, Postscript, Omnisend, Mailchimp, Privy) uses its own
-MTA. This is the industry norm.
+**Why not Shopify's email products?**
+Investigated and rejected:
+1. **Shopify Email (marketing)** — merchant-facing UI in Admin. No programmatic send API.
+2. **Customer notifications (transactional)** — fires on ~15 built-in Shopify events only.
+   Templates are editable via Admin API but sends cannot be triggered programmatically. Cannot
+   schedule follow-ups, cannot do sequences, cannot send on arbitrary events.
 
-**Hybrid approach to pursue**
-- **For apps whose emails map to a built-in Shopify notification event** (order thank-you, shipping
-  confirmation, order cancelled, etc.): generate a patch to the merchant's native Shopify Liquid
-  template via Admin API `POST /notifications/:id.json` instead of sending via Ton. Zero
-  deliverability work, email comes from Shopify.
-- **For everything else** (abandoned cart follow-ups, back-in-stock, price drop, win-back,
-  post-purchase upsell, subscription nudges): Ton-owned provider (Resend planned) with the
-  platform design system described below.
+Every Shopify app that sends email (Klaviyo, Postscript, Omnisend, Mailchimp, Privy) runs its
+own MTA. This is the industry norm and the only workable design.
 
-The generator should decide which path an app falls into during the architect phase and emit
-either a Shopify notification patch OR a `ctx.email.send()` call — never both.
+**Why not even a hybrid (Shopify-native-where-possible + Ton for the rest)?**
+Rejected after consideration. The downsides outweigh the one benefit (skipping SPF/DKIM on one
+domain):
+- **Two merchant mental models** — some emails edited in Ton's admin UI, others in Shopify Admin
+  → Notifications. Same merchant, same "email feature," totally different workflows.
+- **Blind analytics** — Shopify-native notifications don't report delivery, open, click, or
+  bounce events back to Ton. Half the merchant's email activity would be invisible to the
+  platform dashboard and billing quota.
+- **No unified brand system** — a Shopify-native order confirmation would not use the merchant's
+  Ton brand tokens. Their abandoned-cart follow-up would. Brand inconsistency across emails
+  from "the same store" is a deal-breaker.
+- **Intrusive to merchant config** — patching a merchant's native Shopify Liquid templates
+  modifies data they may have customized themselves. Uninstalling Ton leaves orphaned patches.
+- **Generator fragility** — classifying each email as "native-eligible" or "Ton-sent" is a
+  decision the architect agent can get wrong. A misclassified app is a broken app.
+- **No overlap with the catalog anyway** — every email-sending app in `SUPPORTED_APPS_CATALOG.md`
+  (Price Drop Alert, Back In Stock, Product Waitlist, Abandoned Cart Recovery, Post-Purchase
+  Review Request, Low Inventory Digest, Spin-to-Win, Product Q&A, Order Thank You Email) is an
+  email Shopify does not send natively. Even "Order Thank You Email" is an additional branded
+  email sent after the order (coupon for next order, cross-sell, brand story), not a replacement
+  for Shopify's automatic order confirmation.
+
+**Order confirmation customization is explicitly out of scope.** If a merchant wants to change
+their order confirmation email, they do it in Shopify Admin → Settings → Notifications. Ton
+does not offer that as an app type and should not generate apps that try to.
 
 **What to do — delivery (provider adapter)**
-1. Store provider credentials in Secret Manager (platform-wide for MVP; per-tenant later if a
-   merchant wants to bring their own domain/DKIM).
+1. Store provider credentials in Secret Manager (platform-wide sending domain for MVP;
+   per-tenant custom domain is a later optimization for merchants who want their own DKIM).
 2. Implement a Resend adapter behind `ctx.email.send()` in `build-ctx.ts`.
 3. Add delivery status tracking (`email_deliveries` table: provider message id, status, bounce
    reason, opened/clicked) and basic error handling (retry with exponential backoff, dead-letter
@@ -150,7 +169,7 @@ The split is ~80% platform / ~20% merchant:
 | Escape hatch | Merchant (advanced) | Raw HTML mode for merchants who want full control; warn that cross-client compatibility is on them |
 
 Update `EmailSendParams` to accept either a `blocks: EmailBlock[]` array (default path) or a
-`rawHtml: string` (escape hatch). The generator should default all new apps to blocks. The harness
+`rawHtml: string` (escape hatch). The generator defaults all new apps to blocks. The harness
 renders blocks → MJML → HTML using the merchant's brand tokens at send time, not at generation
 time, so brand changes propagate instantly without regenerating apps.
 
@@ -161,19 +180,16 @@ use the block system.
 
 **What to update in the generator**
 - `generator/templates/harness_contract.py` — document the new `blocks` parameter and the
-  available block types.
-- `generator/subagents/architect_agent.py` — add a decision step: "is this email covered by a
-  Shopify native notification event?" If yes, emit a notification patch instead of a handler email.
+  available block types. Remove any guidance about authoring raw email HTML.
 - `generator/subagents/handler_agent.py` — stop emitting `email_body_html` columns; emit
   `ctx.email.send({ to, subject, blocks: [...] })` calls with inline block definitions.
 
-**Complexity:** High — provider adapter + design system + generator changes + Shopify native
-notification path + delivery tracking. Split into sub-tickets when picked up:
+**Complexity:** Medium-High — provider adapter + design system + generator changes + delivery
+tracking. Split into sub-tickets when picked up:
 - **TD-007a** Resend adapter + credential storage + delivery tracking table
 - **TD-007b** MJML block library + `merchant_brand` table + brand-token resolution at send time
-- **TD-007c** Generator decision: Shopify native notification patch vs Ton-sent email
-- **TD-007d** Generator: switch handler emission from raw HTML to blocks
-- **TD-007e** Resend webhook ingest for delivery status updates
+- **TD-007c** Generator: switch handler emission from raw HTML to blocks
+- **TD-007d** Resend webhook ingest for delivery status updates
 
 ---
 
