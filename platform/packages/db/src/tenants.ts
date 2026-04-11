@@ -256,6 +256,8 @@ export async function getAppById(
       themeInjectionThemeId: string | null;
       currentSemver: string | null;
       activeAppVersionId: string | null;
+      usesEmail: boolean;
+      emailVariables: string[] | null;
       createdAt: Date;
       updatedAt: Date;
     }>
@@ -276,6 +278,8 @@ export async function getAppById(
       a.theme_injection_theme_id             AS "themeInjectionThemeId",
       av.semver                              AS "currentSemver",
       df.app_version_id                      AS "activeAppVersionId",
+      a.uses_email                           AS "usesEmail",
+      a.email_variables                      AS "emailVariables",
       a.created_at                           AS "createdAt",
       a.updated_at                           AS "updatedAt"
     FROM apps a
@@ -302,6 +306,8 @@ export async function getAppById(
     themeInjectionThemeId: row.themeInjectionThemeId ?? null,
     currentSemver: row.currentSemver ?? null,
     activeAppVersionId: row.activeAppVersionId ?? null,
+    usesEmail: row.usesEmail ?? false,
+    emailVariables: row.emailVariables ?? [],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -436,6 +442,8 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
       themeInjectionThemeId: string | null;
       currentSemver: string | null;
       activeAppVersionId: string | null;
+      usesEmail: boolean;
+      emailVariables: string[] | null;
       createdAt: Date;
       updatedAt: Date;
     }>
@@ -456,6 +464,8 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
       a.theme_injection_theme_id             AS "themeInjectionThemeId",
       av.semver                              AS "currentSemver",
       df.app_version_id                      AS "activeAppVersionId",
+      a.uses_email                           AS "usesEmail",
+      a.email_variables                      AS "emailVariables",
       a.created_at                           AS "createdAt",
       a.updated_at                           AS "updatedAt"
     FROM apps a
@@ -481,6 +491,8 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
     themeInjectionThemeId: row.themeInjectionThemeId ?? null,
     currentSemver: row.currentSemver ?? null,
     activeAppVersionId: row.activeAppVersionId ?? null,
+    usesEmail: row.usesEmail ?? false,
+    emailVariables: row.emailVariables ?? [],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }));
@@ -719,6 +731,8 @@ export async function getAdminUiAppsByShop(shopDomain: string): Promise<App[]> {
     themeInjectionThemeId: null,
     currentSemver: null,
     activeAppVersionId: null,
+    usesEmail: false,
+    emailVariables: [],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }));

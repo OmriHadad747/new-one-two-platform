@@ -91,11 +91,20 @@ export async function createBaseContext(options: CreateBaseContextOptions): Prom
   // inside `createEmailService`. If `appId` is not set (e.g. system-level
   // invocation), `ctx.email.send` becomes a no-op that logs a warning — the
   // service needs per-app context to load the merchant's template.
+  //
+  // The "storeName" used in the From field is derived from the shop domain —
+  // "acme.myshopify.com" becomes "acme". MVP tradeoff: avoids a per-send DB
+  // lookup to fetch tenants.name. A future iteration can thread the real
+  // tenant name through ctx creation if merchants complain.
+  const storeNameFromDomain = APP_SHOP_DOMAIN
+    ? APP_SHOP_DOMAIN.replace(/\.myshopify\.com$/i, "").replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+    : "Your Store";
+
   const email: ServicesClient["email"] = appId
     ? createEmailService({
         tenantId,
         appId,
-        storeName: APP_SHOP_DOMAIN || "Your Store",
+        storeName: storeNameFromDomain,
         plan,
         logger,
       })

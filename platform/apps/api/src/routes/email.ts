@@ -25,11 +25,15 @@ import {
   insertEmailSuppression,
   insertEmailDelivery,
   updateEmailDeliveryStatus,
-  getAppById,
   getTenantById,
   sql,
 } from "@new-one-two/db";
 import type { EmailType } from "@new-one-two/types";
+import {
+  renderEmail,
+  signUnsubscribeToken,
+  verifyUnsubscribeToken,
+} from "@new-one-two/harness";
 import { Resend } from "resend";
 
 const RESEND_API_KEY = process.env["RESEND_API_KEY"] ?? "";
@@ -154,20 +158,21 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
         return reply.status(404).send({ error: "Email config not found for this app" });
       }
 
-      const appRow = await getAppById(config.tenantId, appId);
-      if (!appRow) {
-        return reply.status(404).send({ error: "App not found" });
-      }
-
       const tenant = await getTenantById(config.tenantId);
       if (!tenant) {
         return reply.status(404).send({ error: "Tenant not found" });
       }
 
-      // Pick recipient: explicit override > tenant's Shopify account email > support email
-      const recipient = (recipientOverride?.trim())
-        || (tenant as { email?: string }).email
-        || `test@${appRow.shopDomain}`;
+      // Test send requires a target address. The merchant provides one
+      // explicitly in the POST body — we don't derive it from any other
+      // source because tenants don't have a dedicated notifications email.
+      if (!recipientOverride?.trim()) {
+        return reply.status(400).send({
+          error: "recipient is required",
+          message: "Provide your email address to receive the test send.",
+        });
+      }
+      const recipient = recipientOverride.trim();
 
       // Variables manifest from the bundle → sample values
       const variablesRow = await sql<{ emailVariables: string[] | null }[]>`
@@ -179,9 +184,6 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       const brand = await getTenantBrand(config.tenantId);
 
       // Render the email using the harness renderer for consistency.
-      const { renderEmail, signUnsubscribeToken } = await import(
-        "@new-one-two/harness/dist/email-renderer.js"
-      );
       const unsubscribeUrl = `https://ton-platform.com/u/${signUnsubscribeToken(
         config.tenantId,
         recipient
@@ -279,9 +281,6 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { token: string } }>(
     "/u/:token",
     async (req, reply) => {
-      const { verifyUnsubscribeToken } = await import(
-        "@new-one-two/harness/dist/email-renderer.js"
-      );
       const parsed = verifyUnsubscribeToken(req.params.token);
       if (!parsed) {
         return reply
@@ -311,9 +310,6 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { token: string } }>(
     "/u/:token/confirm",
     async (req, reply) => {
-      const { verifyUnsubscribeToken } = await import(
-        "@new-one-two/harness/dist/email-renderer.js"
-      );
       const parsed = verifyUnsubscribeToken(req.params.token);
       if (!parsed) {
         return reply

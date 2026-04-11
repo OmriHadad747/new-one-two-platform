@@ -20,7 +20,7 @@
 // continues normally. Only missing config or quota exhaustion throws.
 
 import { Resend } from "resend";
-import type { EmailClient, EmailSendParams, EmailType } from "@new-one-two/types";
+import type { EmailClient, EmailSendParams } from "@new-one-two/types";
 import type { HandlerLogger } from "@new-one-two/types";
 import {
   checkUsageQuota,
