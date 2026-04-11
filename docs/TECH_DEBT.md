@@ -88,108 +88,25 @@ Once TD-002 is resolved (agents return token counts), call `insertGenerationEven
 
 ---
 
-## TD-007 — Wire real email delivery + shared email design system behind `ctx.email.send()`
+## TD-007 — Wire real email provider behind `ctx.email.send()`
 
 **Current state**
 `ctx.email.send({ to, subject, templateId, data })` exists in the harness contract and is already
 used by generated handlers. The current implementation is a log stub — it emits a structured
-`EMAIL_SENT` log event with the full delivery intent but does not deliver anything. Additionally,
-generated handlers today store raw HTML in DB columns (e.g. `email_body_html`) and compile it
-with Handlebars at runtime, meaning merchants are on the hook for authoring cross-client-compatible
-email HTML — which they will not do well.
+`EMAIL_SENT` log event with the full delivery intent but does not deliver anything.
 
 **Affected files**
 - `platform/packages/harness/src/build-ctx.ts` — stub implementation of `ctx.email`
-- `platform/packages/types/src/harness.ts` — `EmailSendParams` / `EmailClient` contract
 - `generator/templates/harness_contract.py` — documents the `ctx.email` API surface
-- `generator/subagents/handler_agent.py` — emits handler code that composes email HTML inline
 
-**Scope: one path, Ton-owned, no exceptions**
-All Ton-sent emails go through a single pipeline: Resend delivery + MJML block rendering +
-merchant brand tokens resolved at send time. There is no hybrid path, no Shopify native
-notification patching, no per-app branching in the generator. One mental model for merchants,
-one code path in the generator, one analytics surface, one billing model.
+**What to do**
+Replace the stub with a real provider adapter (Resend, SendGrid, Postmark, etc.):
+1. Store provider credentials in Secret Manager per-tenant (or platform-wide for MVP).
+2. Implement a provider adapter behind `ctx.email.send()` in `build-ctx.ts`.
+3. Add delivery status tracking and basic error handling (retry / dead-letter).
+4. The harness contract and all generated handlers require zero changes — the API surface is already correct.
 
-**Why not Shopify's email products?**
-Investigated and rejected:
-1. **Shopify Email (marketing)** — merchant-facing UI in Admin. No programmatic send API.
-2. **Customer notifications (transactional)** — fires on ~15 built-in Shopify events only.
-   Templates are editable via Admin API but sends cannot be triggered programmatically. Cannot
-   schedule follow-ups, cannot do sequences, cannot send on arbitrary events.
-
-Every Shopify app that sends email (Klaviyo, Postscript, Omnisend, Mailchimp, Privy) runs its
-own MTA. This is the industry norm and the only workable design.
-
-**Why not even a hybrid (Shopify-native-where-possible + Ton for the rest)?**
-Rejected after consideration. The downsides outweigh the one benefit (skipping SPF/DKIM on one
-domain):
-- **Two merchant mental models** — some emails edited in Ton's admin UI, others in Shopify Admin
-  → Notifications. Same merchant, same "email feature," totally different workflows.
-- **Blind analytics** — Shopify-native notifications don't report delivery, open, click, or
-  bounce events back to Ton. Half the merchant's email activity would be invisible to the
-  platform dashboard and billing quota.
-- **No unified brand system** — a Shopify-native order confirmation would not use the merchant's
-  Ton brand tokens. Their abandoned-cart follow-up would. Brand inconsistency across emails
-  from "the same store" is a deal-breaker.
-- **Intrusive to merchant config** — patching a merchant's native Shopify Liquid templates
-  modifies data they may have customized themselves. Uninstalling Ton leaves orphaned patches.
-- **Generator fragility** — classifying each email as "native-eligible" or "Ton-sent" is a
-  decision the architect agent can get wrong. A misclassified app is a broken app.
-- **No overlap with the catalog anyway** — every email-sending app in `SUPPORTED_APPS_CATALOG.md`
-  (Price Drop Alert, Back In Stock, Product Waitlist, Abandoned Cart Recovery, Post-Purchase
-  Review Request, Low Inventory Digest, Spin-to-Win, Product Q&A, Order Thank You Email) is an
-  email Shopify does not send natively. Even "Order Thank You Email" is an additional branded
-  email sent after the order (coupon for next order, cross-sell, brand story), not a replacement
-  for Shopify's automatic order confirmation.
-
-**Order confirmation customization is explicitly out of scope.** If a merchant wants to change
-their order confirmation email, they do it in Shopify Admin → Settings → Notifications. Ton
-does not offer that as an app type and should not generate apps that try to.
-
-**What to do — delivery (provider adapter)**
-1. Store provider credentials in Secret Manager (platform-wide sending domain for MVP;
-   per-tenant custom domain is a later optimization for merchants who want their own DKIM).
-2. Implement a Resend adapter behind `ctx.email.send()` in `build-ctx.ts`.
-3. Add delivery status tracking (`email_deliveries` table: provider message id, status, bounce
-   reason, opened/clicked) and basic error handling (retry with exponential backoff, dead-letter
-   after N attempts).
-4. Wire Resend webhooks into the webhook-gateway service to update delivery status rows.
-5. Configure SPF / DKIM / DMARC once on the platform sending domain. Merchants never touch DNS.
-
-**What to do — design system (block-based templates)**
-The split is ~80% platform / ~20% merchant:
-
-| Layer | Owner | What it contains |
-|-------|-------|------------------|
-| Rendering engine | Platform | MJML → cross-client HTML at send time |
-| Base layout | Platform | Header, footer, spacing, typography, dark-mode fallbacks |
-| Block library | Platform | `hero`, `product_grid`, `cta_button`, `order_summary`, `text`, `image`, `divider`, `coupon_code` — each pre-tested in Litmus or similar |
-| Brand tokens | Merchant (once) | Logo URL, primary color, secondary color, font family, footer text, support email, unsubscribe URL — stored in new `merchant_brand` table, set during onboarding |
-| Content | Merchant (per app) | Subject, block titles, copy, variable bindings — editable in each app's admin UI |
-| Escape hatch | Merchant (advanced) | Raw HTML mode for merchants who want full control; warn that cross-client compatibility is on them |
-
-Update `EmailSendParams` to accept either a `blocks: EmailBlock[]` array (default path) or a
-`rawHtml: string` (escape hatch). The generator defaults all new apps to blocks. The harness
-renders blocks → MJML → HTML using the merchant's brand tokens at send time, not at generation
-time, so brand changes propagate instantly without regenerating apps.
-
-**Migration of existing generated apps**
-Test-result apps (e.g. `abandoned_cart_recovery`) currently store `email_body_html` as a TEXT
-column. Leave them alone — they'll keep working via the raw-HTML escape hatch. New generations
-use the block system.
-
-**What to update in the generator**
-- `generator/templates/harness_contract.py` — document the new `blocks` parameter and the
-  available block types. Remove any guidance about authoring raw email HTML.
-- `generator/subagents/handler_agent.py` — stop emitting `email_body_html` columns; emit
-  `ctx.email.send({ to, subject, blocks: [...] })` calls with inline block definitions.
-
-**Complexity:** Medium-High — provider adapter + design system + generator changes + delivery
-tracking. Split into sub-tickets when picked up:
-- **TD-007a** Resend adapter + credential storage + delivery tracking table
-- **TD-007b** MJML block library + `merchant_brand` table + brand-token resolution at send time
-- **TD-007c** Generator: switch handler emission from raw HTML to blocks
-- **TD-007d** Resend webhook ingest for delivery status updates
+**Complexity:** Medium — provider adapter + tenant credential storage + error handling.
 
 ---
 
