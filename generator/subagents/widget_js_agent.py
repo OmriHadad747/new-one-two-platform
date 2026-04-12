@@ -64,7 +64,18 @@ RULES:
    Decision rule: if the data is publicly available from Shopify's storefront (product details,
    variant availability, pricing, cart) → host.storefront(). If it requires your backend
    (DB state, Admin-API-only data, writes) → host.call().
-4. Never access window.*, document.* (except container.querySelector patterns), or globals.
+4. DOM scoping — route ALL DOM access through `container` or document creation helpers:
+   ALLOWED:   container.querySelector()  container.querySelectorAll()
+              container.appendChild()    container.innerHTML
+              document.createElement()   document.createTextNode()
+   FORBIDDEN: document.querySelector()  document.getElementById()
+              document.body             document.head
+              document.title            document.cookie
+              window.* (any property)
+   CSS/styles — inject into container, never document.head:
+     const style = document.createElement('style');
+     style.textContent = `.my-widget { color: red; }`;
+     container.appendChild(style);
    EXCEPTION: location.pathname and location.search are allowed for reading the current page URL.
 5. Never use eval(), Function(), setTimeout, setInterval
 6. Never hardcode tenant IDs, shop domains, or entity IDs.

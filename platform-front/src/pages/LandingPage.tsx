@@ -318,22 +318,19 @@ export function LandingPage() {
             </div>
             <div className="divide-y divide-white/[0.04]">
               {[
-                { file: "widget.js",   icon: "widgets",              color: theme === "light" ? "text-sky-700"    : "text-sky-300",    bg: theme === "light" ? "bg-sky-600/[.08]"    : "bg-sky-400/[.12]",    tagCls: theme === "light" ? "text-sky-700 bg-sky-600/[.08] border-sky-600/[.18]"       : "text-sky-300 bg-sky-400/[.12] border-sky-400/[.2]",    label: "Storefront Widget", tag: "Storefront", desc: "Rendered inside your Shopify theme — no iframe." },
-                { file: "admin_ui.js", icon: "admin_panel_settings", color: theme === "light" ? "text-orange-700" : "text-orange-300", bg: theme === "light" ? "bg-orange-600/[.08]" : "bg-orange-400/[.12]", tagCls: theme === "light" ? "text-orange-700 bg-orange-600/[.08] border-orange-600/[.18]" : "text-orange-300 bg-orange-400/[.12] border-orange-400/[.2]", label: "Admin UI",          tag: "Admin",      desc: "Merchant controls embedded in Shopify Admin." },
-              ].map(({ file, icon, color, bg, tagCls, label, tag, desc }) => (
-                <div key={file} className="flex items-center gap-4 px-5 py-3.5 opacity-70 hover:opacity-100 transition-opacity">
-                  <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
+                { file: "widget.js",   icon: "widgets",              color: theme === "light" ? "text-sky-700"    : "text-sky-300",    bg: theme === "light" ? "bg-sky-600/[.08]"    : "bg-sky-400/[.12]",    label: "Storefront Widget", desc: "Rendered inside your Shopify theme — no iframe." },
+                { file: "admin_ui.js", icon: "admin_panel_settings", color: theme === "light" ? "text-orange-700" : "text-orange-300", bg: theme === "light" ? "bg-orange-600/[.08]" : "bg-orange-400/[.12]", label: "Admin UI",          desc: "Merchant controls embedded in Shopify Admin." },
+              ].map(({ file, icon, color, bg, label, desc }) => (
+                <div key={file} className="flex items-center gap-4 px-5 py-3.5">
+                  <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0 opacity-60`}>
                     <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>{icon}</span>
                   </div>
-                  <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0`}>{file}</span>
+                  <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0 opacity-60`}>{file}</span>
                   <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[12px] font-semibold text-ink">{label}</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${tagCls}`}>{tag}</span>
-                    </div>
+                    <span className="text-[12px] font-semibold text-ink">{label}</span>
                     <span className="text-[11px] text-faint">{desc}</span>
                   </div>
-                  <span className="material-symbols-outlined text-faint/20 text-[14px] shrink-0">radio_button_unchecked</span>
+                  <span className="material-symbols-outlined text-faint/20 text-[14px] shrink-0 opacity-60">radio_button_unchecked</span>
                 </div>
               ))}
             </div>

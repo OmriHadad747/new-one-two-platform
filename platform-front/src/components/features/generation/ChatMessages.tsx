@@ -34,13 +34,15 @@ export interface ChatMessage {
   role: "ai" | "user";
   text?: string;
   /** Special inline card type rendered below the text. */
-  type?: "generating" | "deploy-ready" | "live" | "clarifying";
+  type?: "generating" | "deploy-ready" | "live" | "clarifying" | "confirm";
   /** For "deploy-ready" messages. */
   deployBundle?: DeployBundle;
   /** For "live" messages — the app id to link to. */
   liveAppId?: string;
   /** For "clarifying" messages. */
   clarifyingData?: ClarifyingData;
+  /** For "confirm" messages — serializable data to reconstruct Generate/Change actions after hydration. */
+  confirmData?: { intent: Record<string, unknown>; originalPrompt: string };
   /** For plan restriction errors — shows archetype pills + upgrade prompt. */
   planBlock?: { archetype: AppArchetype; upgradeHint: string };
   actions?: ChatMessageAction[];
@@ -128,7 +130,7 @@ function resolveStepStatus(
   return "waiting";
 }
 
-function GeneratingCard({ events, isCompleted }: { events: ProgressEvent[]; isCompleted?: boolean }) {
+function GeneratingCard({ events, isCompleted, stuckWarning }: { events: ProgressEvent[]; isCompleted?: boolean; stuckWarning?: boolean }) {
   const byAgent = events.reduce<Record<string, ProgressEvent>>((acc, e) => {
     acc[e.agent] = e;
     return acc;
@@ -207,6 +209,14 @@ function GeneratingCard({ events, isCompleted }: { events: ProgressEvent[]; isCo
       {latestMessage && (
         <div className="mt-3 pt-3 border-t border-white/[0.06]">
           <p className="text-[11px] text-accent animate-pulse-subtle leading-relaxed">{latestMessage}</p>
+        </div>
+      )}
+      {stuckWarning && !isCompleted && (
+        <div className="mt-3 pt-3 border-t border-amber/20">
+          <div className="flex items-start gap-2 text-[11px] text-amber leading-relaxed">
+            <span className="material-symbols-outlined text-[14px] shrink-0 mt-px">warning</span>
+            <span>This is taking longer than expected. You can wait or cancel and try again.</span>
+          </div>
         </div>
       )}
     </div>
@@ -436,11 +446,13 @@ interface ChatMessagesProps {
   liveGenEvents?: ProgressEvent[];
   /** True once gen.status === "completed" — clears stale "running" step states */
   generationCompleted?: boolean;
+  /** True when the generating card has been running for too long without progress. */
+  stuckWarning?: boolean;
   onClarifyAnswer?: (text: string) => void;
 }
 
 export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
-  ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, onClarifyAnswer }, ref) => {
+  ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, stuckWarning, onClarifyAnswer }, ref) => {
     return (
     <div className="flex-1 overflow-y-auto">
       <div className="px-5 pt-6 pb-32 flex flex-col gap-6 w-full max-w-[760px] mx-auto">
@@ -468,7 +480,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
                 )}
 
                 {msg.type === "generating" && (
-                  <GeneratingCard events={liveGenEvents} isCompleted={generationCompleted} />
+                  <GeneratingCard events={liveGenEvents} isCompleted={generationCompleted} stuckWarning={stuckWarning} />
                 )}
 
                 {msg.type === "deploy-ready" && (

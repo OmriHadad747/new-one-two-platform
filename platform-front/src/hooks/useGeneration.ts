@@ -29,6 +29,9 @@ export function useGeneration() {
     });
   }, []);
 
+  // Limits SSE reconnect attempts to prevent infinite reconnect loops.
+  const reconnectCountRef = useRef(0);
+
   const reset = useCallback(() => {
     esRef.current?.close();
     esRef.current = null;
@@ -74,27 +77,49 @@ export function useGeneration() {
       es.close();
       esRef.current = null;
 
-      // Stream closed before we got a "completed" message (e.g. deploy finished
-      // while navigating away, or connection dropped). Check the server for the
-      // real final status — do NOT leave the UI stuck at "running".
-      api.generation.result(jobId)
-        .then((res) => {
-          const sessionStatus = (res as { status?: string }).status;
-          const succeeded = sessionStatus === "completed" || res.bundle != null;
-          _setState((prev) => ({
-            ...prev,
-            status: succeeded ? "completed" : "failed",
-            completedEvent: null,
-            error: succeeded ? null : ((res as { errorMessage?: string }).errorMessage ?? "Generation failed"),
-          }));
-        })
-        .catch(() => {
+      // Stream closed before we got a "completed" message. Poll the server with
+      // retries — the backend may still be running (e.g., slow LLM call). A single
+      // poll would false-fail healthy slow generations.
+      const RETRY_DELAYS = [0, 3000, 6000, 12000];
+
+      const pollWithRetry = async () => {
+        for (let i = 0; i < RETRY_DELAYS.length; i++) {
+          if (RETRY_DELAYS[i] > 0) await new Promise((r) => setTimeout(r, RETRY_DELAYS[i]));
+          // Bail if status changed while we were waiting (e.g., user cancelled)
+          if (stateRef.current.status !== "running") return;
+          try {
+            const res = await api.generation.result(jobId);
+            const sessionStatus = (res as { status?: string }).status;
+
+            if (sessionStatus !== "running") {
+              const succeeded = sessionStatus === "completed" || res.bundle != null;
+              _setState((prev) => ({
+                ...prev,
+                status: succeeded ? "completed" : "failed",
+                completedEvent: null,
+                error: succeeded ? null : ((res as { errorMessage?: string }).errorMessage ?? "Generation failed"),
+              }));
+              return;
+            }
+            // Still running — continue retrying
+          } catch {
+            // Network error — continue retrying
+          }
+        }
+        // All polls returned "running" — attempt one SSE reconnect if allowed
+        if (reconnectCountRef.current < 2) {
+          reconnectCountRef.current++;
+          _openStream(jobId);
+        } else {
           _setState((prev) => ({
             ...prev,
             status: "failed",
-            error: "Connection lost",
+            error: "Connection lost — please refresh the page",
           }));
-        });
+        }
+      };
+
+      void pollWithRetry();
     };
   }, [_setState]);
 
@@ -102,6 +127,7 @@ export function useGeneration() {
   const start = useCallback(
     async (params: { appId: string; tenantId: string; prompt: string; preComputedIntent?: Record<string, unknown> }) => {
       esRef.current?.close();
+      reconnectCountRef.current = 0;
       setState({ ...INITIAL, status: "running" });
 
       let jobId: string;
@@ -130,6 +156,7 @@ export function useGeneration() {
   const startRevision = useCallback(
     async (jobId: string, feedback: string) => {
       esRef.current?.close();
+      reconnectCountRef.current = 0;
       setState({ ...INITIAL, status: "running" });
 
       let newJobId: string;
@@ -174,11 +201,13 @@ export function useGeneration() {
     _openStream(jobId);
   }, [_openStream]);
 
-  /** Restore a completed generation without touching the SSE stream. */
-  const restore = useCallback((jobId: string) => {
+  /** Restore a completed/failed/cancelled generation without touching the SSE stream. */
+  const restore = useCallback((jobId: string, status: "completed" | "failed" | "cancelled" = "completed") => {
     esRef.current?.close();
-    setState({ ...INITIAL, status: "completed", jobId });
-  }, []);
+    const localStatus = status === "cancelled" ? "failed" : status;
+    const error = status === "cancelled" ? "Cancelled" : status === "failed" ? "Generation failed" : null;
+    _setState({ ...INITIAL, status: localStatus, jobId, error });
+  }, [_setState]);
 
   return { state, start, startRevision, reconnect, restore, reset, approve, cancel };
 }

@@ -51,6 +51,7 @@ def get_llm(max_tokens: int = 2048, model: Optional[str] = None) -> ChatAnthropi
         model=resolved_model,  # type: ignore[call-arg]
         max_tokens=max_tokens,
         api_key=settings.anthropic_api_key,
+        timeout=120,
     )
 
 

@@ -11,7 +11,7 @@
  */
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { ProgressEvent } from "@/types/dashboard";
+import type { ProgressEvent, AnalyzeMessage } from "@/types/dashboard";
 import type { ChatMessage } from "@/components/features/generation/ChatMessages";
 
 export type GenStatus = "idle" | "running" | "completed" | "failed";
@@ -26,16 +26,24 @@ interface ActiveGeneration {
   messages: ChatMessage[];
 }
 
+export type AnalyzePhase = "idle" | "thinking" | "awaiting_confirm";
+
 interface GenerationStoreState {
   active: ActiveGeneration | null;
   /** Pre-generation chat messages keyed by appId — survives navigation before a jobId exists. */
   draftMessages: Record<string, ChatMessage[]>;
+  /** Persisted analyze conversation phase — survives navigation so confirm cards stay actionable. */
+  analyzePhase: AnalyzePhase;
+  /** Persisted analyze conversation history — survives navigation so context isn't lost mid-clarification. */
+  analyzeHistory: AnalyzeMessage[];
   setActive: (appId: string, jobId: string, status: GenStatus) => void;
   updateStatus: (jobId: string, status: GenStatus) => void;
   updateEvents: (jobId: string, events: ProgressEvent[]) => void;
   updateMessages: (jobId: string, messages: ChatMessage[]) => void;
   setDraftMessages: (appId: string, messages: ChatMessage[]) => void;
   clearDraftMessages: (appId: string) => void;
+  setAnalyzePhase: (phase: AnalyzePhase) => void;
+  setAnalyzeHistory: (history: AnalyzeMessage[]) => void;
   clear: () => void;
 }
 
@@ -44,6 +52,8 @@ export const useGenerationStore = create<GenerationStoreState>()(
     (set, get) => ({
       active: null,
       draftMessages: {},
+      analyzePhase: "idle" as AnalyzePhase,
+      analyzeHistory: [] as AnalyzeMessage[],
 
       setDraftMessages: (appId, messages) =>
         set((s) => ({ draftMessages: { ...s.draftMessages, [appId]: messages } })),
@@ -53,6 +63,9 @@ export const useGenerationStore = create<GenerationStoreState>()(
           const { [appId]: _, ...rest } = s.draftMessages;
           return { draftMessages: rest };
         }),
+
+      setAnalyzePhase: (phase) => set({ analyzePhase: phase }),
+      setAnalyzeHistory: (history) => set({ analyzeHistory: history }),
 
       setActive: (appId, jobId, status) =>
         set((s) => ({
@@ -80,7 +93,7 @@ export const useGenerationStore = create<GenerationStoreState>()(
         if (active?.jobId === jobId) set({ active: { ...active, messages } });
       },
 
-      clear: () => set({ active: null }),
+      clear: () => set({ active: null, analyzePhase: "idle" as AnalyzePhase, analyzeHistory: [] }),
     }),
     {
       name: "gen-store-v1",
@@ -106,6 +119,8 @@ export const useGenerationStore = create<GenerationStoreState>()(
             msgs.map(({ actions: _actions, ...msg }) => msg),
           ])
         ),
+        analyzePhase: state.analyzePhase,
+        analyzeHistory: state.analyzeHistory,
       }),
     }
   )

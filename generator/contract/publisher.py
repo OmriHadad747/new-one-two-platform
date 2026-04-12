@@ -32,7 +32,8 @@ def publish_progress(event: ProgressEvent) -> None:
     publisher = _get_publisher()
     topic = f"projects/{_project()}/topics/generation.progress"
     data = json.dumps(event.model_dump(exclude_none=True)).encode("utf-8")
-    publisher.publish(topic, data=data, jobId=event.jobId, agent=event.agent)
+    future = publisher.publish(topic, data=data, jobId=event.jobId, agent=event.agent)
+    future.result(timeout=10)
 
 
 def publish_completed(bundle_msg: FeatureBundleMessage) -> None:
@@ -40,4 +41,5 @@ def publish_completed(bundle_msg: FeatureBundleMessage) -> None:
     publisher = _get_publisher()
     topic = f"projects/{_project()}/topics/generation.completed"
     data = json.dumps(bundle_msg.to_dict()).encode("utf-8")
-    publisher.publish(topic, data=data, jobId=bundle_msg.jobId, status=bundle_msg.status)
+    future = publisher.publish(topic, data=data, jobId=bundle_msg.jobId, status=bundle_msg.status)
+    future.result(timeout=10)

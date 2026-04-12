@@ -734,7 +734,7 @@ function buildStatusPill(
   onRedeploy: () => void,
   onDeactivate: () => void,
 ) {
-  const sessionFailed = latestSession?.status === "failed";
+  const sessionFailed = latestSession?.status === "failed" || latestSession?.status === "cancelled";
   const isReady    = app.status === "ready" && !sessionFailed;
   const isReadyFallback = app.status === "ready" && sessionFailed && hasFallback;
   const isReadyBlocked  = app.status === "ready" && sessionFailed && !hasFallback;
@@ -765,6 +765,13 @@ function buildStatusPill(
     pillBorder: "border-danger/20", pillBg: "bg-danger/[0.04]",
     action: null,
     note: "No successful version to deploy — generate a new version first",
+  };
+  if (isActive && sessionFailed) return {
+    statusDot: "bg-teal", statusText: "Active",
+    pillBorder: "border-teal/20", pillBg: "bg-teal/[0.05]",
+    action: { icon: "pause_circle", label: deploying ? "Deactivating…" : "Deactivate", onClick: onDeactivate,
+      cls: "text-danger hover:bg-danger/[0.10]" },
+    note: "Latest revision failed — running previous version",
   };
   if (isActive) return {
     statusDot: "bg-teal", statusText: "Active",
@@ -1054,8 +1061,8 @@ function OverviewTab({
         {/* ── RIGHT COLUMN ─────────────────────────────────────────────── */}
         <div className="space-y-4">
 
-          {/* Shopify — only for generated apps (above How to test) */}
-          {latestSession !== null && (storeFrontUrl || adminUrl) && (() => {
+          {/* Shopify — only for built apps with matching archetype */}
+          {latestSession !== null && app.status !== "draft" && ((hasAdminUI && adminUrl) || (hasWidget && storeFrontUrl)) && (() => {
             const isInjected = hasWidget && app.themeInjectionStatus === "injected" && app.themeInjectionThemeId;
             // Editor URL works reliably (no password wall) — use it as the primary "open" action
             const editorUrl = isInjected && effectiveShop
@@ -1078,7 +1085,7 @@ function OverviewTab({
                 <div>
 
                   {/* ── Admin ── */}
-                  {adminUrl && (
+                  {hasAdminUI && adminUrl && (
                     <a href={adminUrl} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
                     >
@@ -1086,19 +1093,15 @@ function OverviewTab({
                         <span className={cn("material-symbols-outlined text-[15px]", theme === "light" ? "text-orange-700" : "text-orange-300")} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>admin_panel_settings</span>
                       </span>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[12px] font-medium text-ink leading-tight">
-                          {hasAdminUI ? "Admin panel" : "Shopify Admin"}
-                        </div>
-                        <div className="text-[10px] text-faint mt-0.5">
-                          {hasAdminUI ? "Open your app's admin UI" : "Open Shopify store dashboard"}
-                        </div>
+                        <div className="text-[12px] font-medium text-ink leading-tight">Admin panel</div>
+                        <div className="text-[10px] text-faint mt-0.5">Open your app's admin UI</div>
                       </div>
                       <span className="material-symbols-outlined text-[13px] text-faint/40 group-hover:text-faint transition-colors">arrow_outward</span>
                     </a>
                   )}
 
                   {/* ── Storefront ── */}
-                  {storefrontPreviewUrl && (
+                  {hasWidget && storefrontPreviewUrl && (
                     <a href={storefrontPreviewUrl} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
                     >
@@ -1203,20 +1206,34 @@ function OverviewTab({
           })()}
 
           {/* How to test / Revise CTA */}
-          {latestSession === null ? (
+          {(latestSession === null || app.status === "draft") ? (
             <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
               <div className="px-4 py-5 space-y-3 text-center">
-                <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
-                  <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
-                </div>
-                <div>
-                  <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
-                  <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
-                </div>
+                {latestSession?.status === "failed" ? (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-danger text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>error</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Generation failed</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Something went wrong. Adjust your prompt and try again.</p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
+                    </div>
+                  </>
+                )}
                 <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
                   className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
                   <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
-                  Start building with Ton
+                  {latestSession?.status === "failed" ? "Try again" : "Start building with Ton"}
                 </button>
               </div>
             </section>
@@ -1688,12 +1705,12 @@ export function AppDetailPage() {
   const queryClient       = useQueryClient();
 
   const [mainTab, setMainTab]         = useState<"overview" | "logs" | "versions" | "email" | "settings">("overview");
-  const [activeLogTab, setActiveLogTab] = useState<"webhook" | "widget" | "admin">("webhook");
+  const [logFilter, setLogFilter]     = useState<"all" | "webhook" | "widget" | "admin">("all");
   const [deploying, setDeploying]     = useState(false);
 
-  const logsEnabled       = (mainTab === "logs" && activeLogTab === "webhook") || mainTab === "overview";
-  const widgetLogsEnabled = (mainTab === "logs" && activeLogTab === "widget")  || mainTab === "overview";
-  const adminLogsEnabled  = (mainTab === "logs" && activeLogTab === "admin")   || mainTab === "overview";
+  const logsEnabled       = mainTab === "logs" || mainTab === "overview";
+  const widgetLogsEnabled = mainTab === "logs" || mainTab === "overview";
+  const adminLogsEnabled  = mainTab === "logs" || mainTab === "overview";
 
   const logsQuery       = useWebhookAppLogs(tenantId, appId ?? null, logsEnabled);
   const widgetLogsQuery = useWidgetLogs(tenantId, appId ?? null, widgetLogsEnabled);
@@ -1704,12 +1721,20 @@ export function AppDetailPage() {
   const latestCompletedSession = latestCompletedSessionQuery.data ?? null;
   const sessions               = sessionsQuery.data ?? [];
   // True when the latest session failed but a prior completed session exists to fall back to.
-  const hasFallback   = latestSession?.status === "failed"
-    && sessions.some((s) => s.status === "completed");
-  // When the latest failed, use the last completed session for display data (triggers, explanation).
-  const displaySession = (latestSession?.status === "failed" ? latestCompletedSession : latestSession) ?? latestSession;
+  const sessionFailed = latestSession?.status === "failed" || latestSession?.status === "cancelled";
+  // True when the latest session failed/cancelled but a prior completed session exists to fall back to.
+  const hasFallback   = sessionFailed && latestCompletedSession !== null;
+  // When the latest failed/cancelled, use the last completed session for display data (triggers, explanation).
+  const displaySession = (sessionFailed ? latestCompletedSession : latestSession) ?? latestSession;
   const activeGen     = useGenerationStore((s) => s.active);
-  const isGenerating  = activeGen?.appId === appId && activeGen?.status === "running";
+  const isGenerating  = (activeGen?.appId === appId && activeGen?.status === "running") || latestSession?.status === "running";
+
+  // Archetype-derived flags — used by Logs filter buttons + Shopify links
+  const hasWidget     = !!(displaySession?.bundle?.widgetModule  ?? (app?.appArchetype === "storefront_backend" || app?.appArchetype === "storefront_backend_admin"));
+  const hasAdminUI    = !!(displaySession?.bundle?.adminUiModule ?? (app?.appArchetype === "backend_admin"      || app?.appArchetype === "storefront_backend_admin"));
+  const webhookTopics = displaySession?.webhookTopics ?? [];
+  const cronSchedule  = displaySession?.cronSchedule ?? null;
+  const hasWebhook    = webhookTopics.length > 0 || !!cronSchedule;
 
   const invalidateAppCache = () =>
     queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
@@ -1743,12 +1768,30 @@ export function AppDetailPage() {
     finally { setDeploying(false); }
   };
 
+  const [deactivateConfirm, setDeactivateConfirm] = useState(false);
+
   const handleDeactivate = async () => {
     if (!tenantId || !appId) return;
+    // If a test theme is injected, confirm before proceeding — deactivation will also remove it.
+    if (app?.themeInjectionStatus === "injected" && !deactivateConfirm) {
+      setDeactivateConfirm(true);
+      return;
+    }
+    setDeactivateConfirm(false);
     setDeploying(true);
-    try { await api.apps.setStatus(tenantId, appId, "inactive"); await appQuery.refetch(); void invalidateAppCache(); }
-    catch (err) { alert(err instanceof Error ? err.message : "Deactivation failed"); }
-    finally { setDeploying(false); }
+    try {
+      // Remove injected test theme first so the store isn't left with a broken widget.
+      if (app?.themeInjectionStatus === "injected") {
+        await api.apps.deleteInjectedTheme(tenantId, appId);
+      }
+      await api.apps.setStatus(tenantId, appId, "inactive");
+      await appQuery.refetch();
+      void invalidateAppCache();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Deactivation failed");
+    } finally {
+      setDeploying(false);
+    }
   };
 
   // ─── Draft delete ────────────────────────────────────────────────────────────
@@ -1787,11 +1830,6 @@ export function AppDetailPage() {
       alert(err instanceof Error ? err.message : "Failed to delete test theme");
     }
   };
-
-  const activeLogsQuery =
-    activeLogTab === "webhook" ? logsQuery
-    : activeLogTab === "widget" ? widgetLogsQuery
-    : adminLogsQuery;
 
   return (
     <>
@@ -1933,6 +1971,30 @@ export function AppDetailPage() {
             isBuilding={isGenerating}
           />
 
+          {/* Deactivation confirm — shown when app has an injected test theme */}
+          {deactivateConfirm && (
+            <div className="px-7 py-3 bg-amber/[0.06] border-b border-amber/20 flex items-center gap-3">
+              <span className="material-symbols-outlined text-amber text-[16px]">warning</span>
+              <span className="text-[12px] text-muted flex-1">
+                This app has an injected test theme. Deactivating will also delete the test theme from your Shopify store.
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleDeactivate()}
+                className="text-[12px] px-3 py-1 rounded-lg bg-danger/15 text-danger hover:bg-danger/25 transition-colors cursor-pointer border-0 font-medium"
+              >
+                Deactivate &amp; remove theme
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeactivateConfirm(false)}
+                className="text-[12px] text-faint hover:text-ink transition-colors bg-transparent border-0 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
           {/* Tab bar */}
           <div className="border-b border-white/[0.07] px-7 shrink-0">
             <TabBar
@@ -1981,53 +2043,74 @@ export function AppDetailPage() {
           {/* LOGS */}
           {mainTab === "logs" && (
             <main className="flex-1 overflow-y-auto p-7">
-              <div className="mb-5">
-                <TabBar
-                  tabs={[
-                    { id: "webhook" as const, label: "Webhook" },
-                    { id: "widget"  as const, label: "Widget"  },
-                    { id: "admin"   as const, label: "Admin"   },
-                  ]}
-                  active={activeLogTab}
-                  onChange={setActiveLogTab}
-                  end={
-                    <>
-                      {activeLogsQuery.isFetching && <span className="text-[10px] text-faint">Refreshing…</span>}
-                      <button type="button" onClick={() => void activeLogsQuery.refetch()}
-                        className="text-[11px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer underline"
-                      >Refresh</button>
-                    </>
-                  }
-                />
+              {/* Filter buttons — only render filters relevant to this app's archetype */}
+              <div className="flex items-center gap-2 mb-5 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-1 flex-wrap">
+                  {(
+                    [
+                      { id: "all",     label: "All",     show: true          },
+                      { id: "webhook", label: "Webhook", show: hasWebhook    },
+                      { id: "widget",  label: "Widget",  show: hasWidget     },
+                      { id: "admin",   label: "Admin",   show: hasAdminUI    },
+                    ] as const
+                  ).filter((f) => f.show).map((f) => (
+                    <button key={f.id} type="button"
+                      onClick={() => setLogFilter(f.id)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer",
+                        logFilter === f.id
+                          ? "bg-accent/15 text-accent border-accent/25"
+                          : "bg-white/[0.05] text-faint border-white/[0.08] hover:text-ink hover:bg-white/[0.08]"
+                      )}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                {(logsQuery.isFetching || widgetLogsQuery.isFetching || adminLogsQuery.isFetching) && (
+                  <span className="text-[10px] text-faint">Refreshing…</span>
+                )}
+                <button type="button"
+                  onClick={() => { void logsQuery.refetch(); void widgetLogsQuery.refetch(); void adminLogsQuery.refetch(); }}
+                  className="text-[11px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer underline"
+                >Refresh</button>
               </div>
 
-              {activeLogTab === "webhook" && (
-                <>
-                  {logsQuery.isError && <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>}
-                  {!logsQuery.isError && (logsQuery.data ?? []).length === 0 && <EmptyLogs label="No webhook executions yet" sub="Logs appear here once Shopify sends events to your app." />}
-                  {(logsQuery.data ?? []).length > 0 && (
-                    <LogTable>{(logsQuery.data ?? []).map((e, i, a) => <LogRow key={e.id} entry={e} last={i === a.length - 1} />)}</LogTable>
-                  )}
-                </>
-              )}
-              {activeLogTab === "widget" && (
-                <>
-                  {widgetLogsQuery.isError && <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>}
-                  {!widgetLogsQuery.isError && (widgetLogsQuery.data ?? []).length === 0 && <EmptyLogs label="No widget calls yet" sub="Logs appear once the storefront widget calls your backend." />}
-                  {(widgetLogsQuery.data ?? []).length > 0 && (
-                    <LogTable pathHeader="Path">{(widgetLogsQuery.data ?? []).map((e, i, a) => <InvocationLogRow key={e.id} entry={e} last={i === a.length - 1} />)}</LogTable>
-                  )}
-                </>
-              )}
-              {activeLogTab === "admin" && (
-                <>
-                  {adminLogsQuery.isError && <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>}
-                  {!adminLogsQuery.isError && (adminLogsQuery.data ?? []).length === 0 && <EmptyLogs label="No admin calls yet" sub="Logs appear once the Admin UI panel calls your backend." />}
-                  {(adminLogsQuery.data ?? []).length > 0 && (
-                    <LogTable pathHeader="Path">{(adminLogsQuery.data ?? []).map((e, i, a) => <InvocationLogRow key={e.id} entry={e} last={i === a.length - 1} />)}</LogTable>
-                  )}
-                </>
-              )}
+              {/* Unified log list */}
+              {(() => {
+                type AnyLogEntry =
+                  | { kind: "webhook"; data: WebhookInvocationLogEntry; ts: string }
+                  | { kind: "widget" | "admin"; data: InvocationLogEntry; ts: string };
+
+                const webhookEntries = (logFilter === "all" || logFilter === "webhook") ? (logsQuery.data ?? []) : [];
+                const widgetEntries  = (logFilter === "all" || logFilter === "widget")  ? (widgetLogsQuery.data ?? []) : [];
+                const adminEntries   = (logFilter === "all" || logFilter === "admin")   ? (adminLogsQuery.data ?? []) : [];
+
+                const merged: AnyLogEntry[] = [
+                  ...webhookEntries.map((d) => ({ kind: "webhook" as const, data: d, ts: d.queuedAt })),
+                  ...widgetEntries.map((d)  => ({ kind: "widget"  as const, data: d, ts: d.invokedAt })),
+                  ...adminEntries.map((d)   => ({ kind: "admin"   as const, data: d, ts: d.invokedAt })),
+                ].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+
+                if (logsQuery.isError || widgetLogsQuery.isError || adminLogsQuery.isError) {
+                  return <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>;
+                }
+                if (logsQuery.isLoading || widgetLogsQuery.isLoading || adminLogsQuery.isLoading) {
+                  return null;
+                }
+                if (merged.length === 0) {
+                  return <EmptyLogs label="No handler executions yet" sub="Logs appear here once your app's handlers are invoked." />;
+                }
+                return (
+                  <LogTable pathHeader="Event / Path">
+                    {merged.map((entry, i, arr) =>
+                      entry.kind === "webhook"
+                        ? <LogRow key={entry.data.id} entry={entry.data} last={i === arr.length - 1} showSource />
+                        : <InvocationLogRow key={entry.data.id} entry={entry.data} source={entry.kind} last={i === arr.length - 1} />
+                    )}
+                  </LogTable>
+                );
+              })()}
             </main>
           )}
 
