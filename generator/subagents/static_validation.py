@@ -817,8 +817,9 @@ FORBIDDEN_WIDGET_JS_PATTERNS = [
         "window.parent/top/opener/frames cross-frame access is not allowed",
     ),
     (
-        r"\bdocument\.(?!querySelector|querySelectorAll|createElement|createTextNode|getElementById|body)",
-        "direct document.* access is not allowed outside container queries",
+        r"\bdocument\.(?!createElement|createTextNode)",
+        "direct document.* access is not allowed — use container.querySelector() and container.appendChild() instead. "
+        "For styles: const s = document.createElement('style'); s.textContent = '...'; container.appendChild(s) — never document.head.",
     ),
     (r"\bsetTimeout\s*\(", "setTimeout is not allowed"),
     (r"\bsetInterval\s*\(", "setInterval is not allowed"),
@@ -924,8 +925,9 @@ FORBIDDEN_ADMIN_UI_PATTERNS = [
         "window.parent/top/opener/frames cross-frame access is not allowed",
     ),
     (
-        r"\bdocument\.(?!querySelector|querySelectorAll|createElement|createTextNode|getElementById)",
-        "direct document.* access is not allowed outside container queries — use container.querySelector() patterns",
+        r"\bdocument\.(?!createElement|createTextNode)",
+        "direct document.* access is not allowed — use container.querySelector() and container.appendChild() instead. "
+        "For styles: const s = document.createElement('style'); s.textContent = '...'; container.appendChild(s) — never document.head.",
     ),
     (
         r"https?://",

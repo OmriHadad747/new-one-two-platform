@@ -154,9 +154,18 @@ RULES:
 2. Render only inside `container` — never access the DOM outside it.
 3. All backend requests use bridge.call(). NEVER use raw fetch(), XMLHttpRequest, or hardcoded URLs.
 4. Never access window.* globals.
-5. Never access document.* directly — only use container.querySelector / container.querySelectorAll /
-   container.getElementById for DOM access. Validation rejects direct document.* calls.
-   EXCEPTION: document.createElement and document.createTextNode are allowed for building DOM nodes.
+5. DOM scoping — route ALL DOM access through `container` or document creation helpers:
+   ALLOWED:   container.querySelector()  container.querySelectorAll()
+              container.appendChild()    container.innerHTML
+              document.createElement()   document.createTextNode()
+   FORBIDDEN: document.querySelector()  document.getElementById()
+              document.body             document.head
+              document.title            document.cookie
+              window.* (any property)
+   CSS/styles — inject into container, never document.head:
+     const style = document.createElement('style');
+     style.textContent = `.my-widget { color: red; }`;
+     container.appendChild(style);
 6. Never use eval(), Function(), setTimeout (except for debounce with < 500ms), setInterval.
 7. Never hardcode tenant IDs, shop domains, or entity IDs — read from bridge.context.
 8. All bridge.call() paths must come from the adminApiCatalog — never invent paths.
