@@ -106,6 +106,9 @@ class WidgetJsGenerator(Generator):
             f"{catalog_desc}\n"
             f"{ux_block}"
             f"{prior_block}"
+            "\nCRITICAL (validation rejects violations):\n"
+            "- NEVER document.head / document.body — append styles and elements to `container`\n"
+            "- NEVER setTimeout / setInterval — use event-driven patterns only\n\n"
             "Generate the widget ES module. Output ONLY the raw JavaScript."
         )
 
@@ -120,10 +123,26 @@ class WidgetJsGenerator(Generator):
         )
         if js_start and js_start.start() > 0:
             text = text[js_start.start() :]
+        text = _sanitize_dom_access(text)
         return text.strip()
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         return validate_widget_artifact(artifact, ctx.platform_api_catalog)
+
+
+# ── Post-parse sanitisation ──────────────────────────────────────────────────
+
+
+def _sanitize_dom_access(code: str) -> str:
+    """Auto-fix common DOM access violations that the LLM repeatedly generates.
+
+    Targets patterns that are always wrong in a sandboxed widget/panel:
+      document.head.appendChild(el) → container.appendChild(el)
+      document.body.appendChild(el) → container.appendChild(el)
+    """
+    code = re.sub(r"\bdocument\.head\b", "container", code)
+    code = re.sub(r"\bdocument\.body\b", "container", code)
+    return code
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────
