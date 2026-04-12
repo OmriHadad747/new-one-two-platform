@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useSearchParams, useParams, useNavigate } from "react-router";
 import { TopBar } from "@/components/layout/TopBar";
 import { ChatMessages, type ChatMessage, type DeployBundle } from "@/components/features/generation/ChatMessages";
@@ -9,7 +9,7 @@ import { useGenerationStore } from "@/stores/generation";
 import { useApps, useApp } from "@/hooks/useApps";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { SessionBundle, GenerationBundle, AppArchetype, AnalyzeMessage } from "@/types/dashboard";
+import type { SessionBundle, GenerationBundle, AppArchetype, AnalyzeMessage, App } from "@/types/dashboard";
 import { NameAppModal } from "@/components/features/generation/NameAppModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -106,13 +106,17 @@ export function NewAppPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevStatus = useRef<string>("idle");
   const genMsgIdRef = useRef<string | null>(null);
-  const prevRouteAppId = useRef<string | undefined>(routeAppId);
+  const prevRouteAppId = useRef<string | undefined | null>(null);
   const lastStartParamsRef = useRef<{ appId: string; tenantId: string; prompt: string; preComputedIntent?: Record<string, unknown> } | null>(null);
   // Tracks whether hydration has run for the current mount of this component.
   // Resets to false on every mount so navigation back to the same app re-hydrates.
   const hasHydratedRef = useRef(false);
   // Prevents double-click on "Generate →" from firing two concurrent generation jobs.
   const confirmingRef = useRef(false);
+  // Tracks whether a draft app has been pre-created in this conversation mount.
+  // Using a ref (not store state) so it resets on every component mount and is immune
+  // to stale Zustand analyzeHistory from a previous session.
+  const draftCreatedRef = useRef(false);
 
   // Name modal
   const [nameModal, setNameModal] = useState<{
@@ -133,11 +137,14 @@ export function NewAppPage() {
   const latestSessionQuery = useLatestSession(selectedAppId);
 
   // ── Reset all state when the user navigates to a different app's revise page ─
-  useEffect(() => {
+  // useLayoutEffect fires synchronously before paint, preventing a flash of stale
+  // analyzePhase/analyzeHistory from a previous session on the first render.
+  useLayoutEffect(() => {
     if (routeAppId === prevRouteAppId.current) return;
     prevRouteAppId.current = routeAppId;
     genMsgIdRef.current = null;
     hasHydratedRef.current = false;
+    draftCreatedRef.current = false;
     reset();
     setSelectedAppId(routeAppId ?? null);
     setMessages([WELCOME]);
@@ -418,9 +425,11 @@ export function NewAppPage() {
                   },
                 },
               ];
+          // Keep the generating card in place — show failure inside it + actions below.
+          // This preserves the step-by-step context so the user can see where it failed.
           setMessages((prev) => prev.map((m) =>
             m.id === genMsgId
-              ? { id: m.id, role: "ai" as const, text: upgradeHint ? text : `Generation failed: ${text}`, actions }
+              ? { ...m, type: "generating" as const, text: upgradeHint ? text : `Generation failed: ${text}`, generatingFailed: true, actions }
               : m
           ));
         }
@@ -481,6 +490,7 @@ export function NewAppPage() {
           }
 
           setAnalyzePhase("idle");
+          setAnalyzeHistory([]);
 
           const genMsgId = crypto.randomUUID();
           genMsgIdRef.current = genMsgId;
@@ -597,21 +607,21 @@ export function NewAppPage() {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", text: prompt }]);
     const newHistory: AnalyzeMessage[] = [...analyzeHistory, { role: "user", content: prompt }];
     setAnalyzeHistory(newHistory);
-    if (analyzePhase === "awaiting_confirm") {
-      setAnalyzeHistory(newHistory);
-    }
 
     // First message with no app yet → create a draft immediately so it appears in the sidebar
     let appIdForAnalyze = selectedAppId;
-    if (!selectedAppId && analyzeHistory.length === 0 && tenantId) {
+    if (!selectedAppId && !draftCreatedRef.current && tenantId) {
+      draftCreatedRef.current = true;
       try {
         // Use "..." as placeholder — real name is set after the name modal confirms
         const newApp = await api.apps.create(tenantId, { slug: slugFromName("draft-" + Date.now()), name: "..." });
         appIdForAnalyze = newApp.id;
         setSelectedAppId(newApp.id);
+        // Immediately prepend to cache so the sidebar updates synchronously, then refetch.
+        queryClient.setQueryData<App[]>(["apps", tenantId], (old) => [newApp as App, ...(old ?? [])]);
         void queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
       } catch {
-        // non-fatal — continue without pre-created app
+        draftCreatedRef.current = false; // allow retry if creation failed
       }
     }
 
@@ -653,9 +663,11 @@ export function NewAppPage() {
         ? "Describe what you'd like to build..."
         : analyzePhase === "awaiting_confirm"
           ? "Or type here to change your request..."
-          : messages.length > 1
-            ? "What would you like to build?"
-            : undefined;
+          : analyzePhase === "thinking"
+            ? "Analyzing your request…"
+            : messages.length > 1
+              ? "What would you like to build?"
+              : undefined;
 
   return (
     <>
@@ -669,7 +681,11 @@ export function NewAppPage() {
       <TopBar
         title={activeApp ? activeApp.name : "New App"}
         subtitle={
-          activeApp && (gen.status === "completed" || latestSessionQuery.data?.status === "completed")
+          activeApp && (
+            gen.status === "completed" ||
+            latestSessionQuery.data?.status === "completed" ||
+            (gen.status === "running" && activeApp.status !== "draft")
+          )
             ? "Revision"
             : "New app"
         }

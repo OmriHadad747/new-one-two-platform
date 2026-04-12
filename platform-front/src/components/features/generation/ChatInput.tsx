@@ -1,4 +1,4 @@
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useEffect } from "react";
 import { cn } from "@/lib/cn";
 
 const HINTS = [
@@ -27,9 +27,11 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, on
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, []);
 
+  // Resize whenever value changes — catches both typing and external resets (e.g. after submit).
+  useEffect(() => { autoResize(); }, [value, autoResize]);
+
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     onChange(e.target.value);
-    autoResize();
   };
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

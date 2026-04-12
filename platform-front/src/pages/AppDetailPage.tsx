@@ -945,7 +945,7 @@ function MiniStats({
 // ─── Overview tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({
-  app, latestSession, recentLogs, recentWidgetLogs, recentAdminLogs, recentLogsLoading, shopDomain, onLogsTab,
+  app, latestSession, isBuilding, recentLogs, recentWidgetLogs, recentAdminLogs, recentLogsLoading, shopDomain, onLogsTab,
   injectingWidget, injectError, onInjectWidget, onDeleteInjectedTheme,
 }: {
   app: App;
@@ -953,6 +953,7 @@ function OverviewTab({
     status: string; webhookTopics?: string[]; cronSchedule?: string | null;
     prompt?: string | null; bundle?: SessionBundle | null;
   } | null;
+  isBuilding: boolean;
   recentLogs: WebhookInvocationLogEntry[];
   recentWidgetLogs: InvocationLogEntry[];
   recentAdminLogs: InvocationLogEntry[];
@@ -1002,6 +1003,69 @@ function OverviewTab({
     durationMs: e.data.durationMs,
     ts: e.ts,
   }));
+
+  // Draft apps have no left-column content — render a single centered card instead of a two-column grid.
+  if (app.status === "draft") {
+    return (
+      <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center p-7">
+        <div className="w-full max-w-[360px]">
+          {/* How to test / Revise CTA */}
+          {(latestSession === null || app.status === "draft") ? (
+            <section className="bg-white/[0.04] rounded-xl overflow-hidden">
+              <div className="px-4 py-5 space-y-3 text-center">
+                {isBuilding ? (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-accent text-[20px] animate-pulse-subtle" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Generating your app…</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Ton is building your app. Head to the chat to follow along.</p>
+                    </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-white/[0.06] text-muted text-[13px] font-semibold transition-all hover:bg-white/[0.09] cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                      Watch progress
+                    </button>
+                  </>
+                ) : latestSession?.status === "failed" ? (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-danger text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>error</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Generation failed</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Something went wrong. Adjust your prompt and try again.</p>
+                    </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      Try again
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
+                    </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      Start building with Ton
+                    </button>
+                  </>
+                )}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 overflow-y-auto flex flex-col">
@@ -1091,7 +1155,7 @@ function OverviewTab({
         <div className="space-y-4">
 
           {/* Shopify — only for built apps with matching archetype */}
-          {latestSession !== null && app.status !== "draft" && ((hasAdminUI && adminUrl) || (hasWidget && storeFrontUrl)) && (() => {
+          {latestSession !== null && ((hasAdminUI && adminUrl) || (hasWidget && storeFrontUrl)) && (() => {
             const isInjected = hasWidget && app.themeInjectionStatus === "injected" && app.themeInjectionThemeId;
             // Editor URL works reliably (no password wall) — use it as the primary "open" action
             const editorUrl = isInjected && effectiveShop
@@ -1235,10 +1299,25 @@ function OverviewTab({
           })()}
 
           {/* How to test / Revise CTA */}
-          {(latestSession === null || app.status === "draft") ? (
+          {latestSession === null ? (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-5 space-y-3 text-center">
-                {latestSession?.status === "failed" ? (
+                {isBuilding ? (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-accent text-[20px] animate-pulse-subtle" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Generating your app…</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Ton is building your app. Head to the chat to follow along.</p>
+                    </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-white/[0.06] text-muted text-[13px] font-semibold transition-all hover:bg-white/[0.09] cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                      Watch progress
+                    </button>
+                  </>
+                ) : latestSession?.status === "failed" ? (
                   <>
                     <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center mx-auto">
                       <span className="material-symbols-outlined text-danger text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>error</span>
@@ -1247,6 +1326,11 @@ function OverviewTab({
                       <p className="text-[13px] font-semibold text-ink">Generation failed</p>
                       <p className="text-[11px] text-faint mt-1 leading-relaxed">Something went wrong. Adjust your prompt and try again.</p>
                     </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      Try again
+                    </button>
                   </>
                 ) : (
                   <>
@@ -1257,13 +1341,13 @@ function OverviewTab({
                       <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
                       <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
                     </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      Start building with Ton
+                    </button>
                   </>
                 )}
-                <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
-                  <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
-                  {latestSession?.status === "failed" ? "Try again" : "Start building with Ton"}
-                </button>
               </div>
             </section>
           ) : (
@@ -2056,6 +2140,7 @@ export function AppDetailPage() {
             <OverviewTab
               app={app}
               latestSession={displaySession}
+              isBuilding={isGenerating}
               recentLogs={logsQuery.data ?? []}
               recentWidgetLogs={widgetLogsQuery.data ?? []}
               recentAdminLogs={adminLogsQuery.data ?? []}

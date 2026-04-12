@@ -43,6 +43,8 @@ export interface ChatMessage {
   clarifyingData?: ClarifyingData;
   /** For "confirm" messages — serializable data to reconstruct Generate/Change actions after hydration. */
   confirmData?: { intent: Record<string, unknown>; originalPrompt: string };
+  /** Set on a "generating" message when the generation has failed — shows an inline failure banner. */
+  generatingFailed?: boolean;
   /** For plan restriction errors — shows archetype pills + upgrade prompt. */
   planBlock?: { archetype: AppArchetype; upgradeHint: string };
   actions?: ChatMessageAction[];
@@ -130,7 +132,7 @@ function resolveStepStatus(
   return "waiting";
 }
 
-function GeneratingCard({ events, isCompleted, stuckWarning }: { events: ProgressEvent[]; isCompleted?: boolean; stuckWarning?: boolean }) {
+function GeneratingCard({ events, isCompleted, stuckWarning, isFailed }: { events: ProgressEvent[]; isCompleted?: boolean; stuckWarning?: boolean; isFailed?: boolean }) {
   const byAgent = events.reduce<Record<string, ProgressEvent>>((acc, e) => {
     acc[e.agent] = e;
     return acc;
@@ -211,7 +213,15 @@ function GeneratingCard({ events, isCompleted, stuckWarning }: { events: Progres
           <p className="text-[11px] text-accent animate-pulse-subtle leading-relaxed">{latestMessage}</p>
         </div>
       )}
-      {stuckWarning && !isCompleted && (
+      {isFailed && (
+        <div className="mt-3 pt-3 border-t border-danger/20">
+          <div className="flex items-start gap-2 text-[11px] text-danger leading-relaxed">
+            <span className="material-symbols-outlined text-[14px] shrink-0 mt-px">error</span>
+            <span>Generation failed. See the error above for details.</span>
+          </div>
+        </div>
+      )}
+      {stuckWarning && !isCompleted && !isFailed && (
         <div className="mt-3 pt-3 border-t border-amber/20">
           <div className="flex items-start gap-2 text-[11px] text-amber leading-relaxed">
             <span className="material-symbols-outlined text-[14px] shrink-0 mt-px">warning</span>
@@ -480,7 +490,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
                 )}
 
                 {msg.type === "generating" && (
-                  <GeneratingCard events={liveGenEvents} isCompleted={generationCompleted} stuckWarning={stuckWarning} />
+                  <GeneratingCard events={liveGenEvents} isCompleted={generationCompleted} stuckWarning={stuckWarning} isFailed={msg.generatingFailed} />
                 )}
 
                 {msg.type === "deploy-ready" && (

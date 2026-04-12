@@ -41,7 +41,7 @@ from templates.harness_contract import (
 
 class HandlerGenerator(Generator):
     name = "handler"
-    max_tokens = 8192
+    max_tokens = 16000
 
     # ── Generator interface ────────────────────────────────────────────────────
 
@@ -169,7 +169,9 @@ def _format_webhook_contract(plan: Dict[str, Any]) -> str:
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
     if payload_fields:
-        lines.append(f"Payload fields to read from ctx.payload: {', '.join(payload_fields)}")
+        lines.append(
+            f"Payload fields to read from ctx.payload: {', '.join(payload_fields)}"
+        )
     if must_produce:
         lines.append(f"Handler must resolve before DB writes: {must_produce}")
     lines.append(
@@ -275,7 +277,9 @@ def _format_platform_gaps(plan: Dict[str, Any]) -> str:
     gaps = (plan.get("appContracts") or {}).get("platformGaps") or []
     if not gaps:
         return ""
-    lines = "\n".join(f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps)
+    lines = "\n".join(
+        f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps
+    )
     return f"\nPlatform limitations (implement exactly as stated):\n{lines}\n"
 
 
