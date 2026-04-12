@@ -223,9 +223,6 @@ class AdminUiGenerator(Generator):
             f"{catalog_desc}\n"
             f"{gaps_block}"
             f"{prior_block}"
-            "\nCRITICAL (validation rejects violations):\n"
-            "- NEVER document.head / document.body — append styles and elements to `container`\n"
-            "- NEVER import / export default — vanilla JS only, export function mount(...)\n\n"
             "Generate the Admin UI panel ES module. Output ONLY the raw JavaScript."
         )
 
@@ -239,28 +236,11 @@ class AdminUiGenerator(Generator):
         )
         if js_start and js_start.start() > 0:
             text = text[js_start.start() :]
-        text = _sanitize_dom_access(text)
         return text.strip()
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         admin_catalog = _extract_admin_catalog(ctx.plan)
         return validate_admin_ui_artifact(artifact, admin_catalog)
-
-
-# ── Post-parse sanitisation ──────────────────────────────────────────────────
-
-
-def _sanitize_dom_access(code: str) -> str:
-    """Auto-fix common DOM access violations that the LLM repeatedly generates.
-
-    Targets patterns that are always wrong in a sandboxed admin panel:
-      document.head.appendChild(el) → container.appendChild(el)
-      document.body.appendChild(el) → container.appendChild(el)
-      document.head.append(el)      → container.append(el)
-    """
-    code = re.sub(r"\bdocument\.head\b", "container", code)
-    code = re.sub(r"\bdocument\.body\b", "container", code)
-    return code
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────

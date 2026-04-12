@@ -41,7 +41,7 @@ from templates.harness_contract import (
 
 class HandlerGenerator(Generator):
     name = "handler"
-    max_tokens = 16000
+    max_tokens = 8192
 
     # ── Generator interface ────────────────────────────────────────────────────
 
