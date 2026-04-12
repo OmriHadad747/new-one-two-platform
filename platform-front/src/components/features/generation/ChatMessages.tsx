@@ -269,11 +269,14 @@ function ExplanationText({ text }: { text: string }) {
 
 function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
   const navigate = useNavigate();
-  const triggerLabel =
-    bundle?.triggerType === "cron"   ? "Scheduled (cron)"  :
-    bundle?.triggerType === "admin"  ? "Admin-triggered"   :
-    bundle?.triggerType === "widget" ? "Widget interaction" :
-    bundle?.triggerTopics?.[0]       ?? "Webhook-triggered";
+  const triggerLabel = (() => {
+    const labels: string[] = [];
+    if (bundle?.triggerType === "cron")   labels.push("Scheduled (cron)");
+    if (bundle?.triggerType === "admin")  labels.push("Admin-triggered");
+    if (bundle?.triggerType === "widget") labels.push("Widget interaction");
+    if (bundle?.triggerTopics?.length)    labels.push(...bundle.triggerTopics);
+    return labels.length > 0 ? labels.join(", ") : "Webhook-triggered";
+  })();
 
   return (
     <div className="mt-2.5 max-w-[420px] space-y-3">

@@ -6,6 +6,7 @@ FROM base AS deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
+COPY packages/crypto/package.json ./packages/crypto/
 COPY packages/db/package.json ./packages/db/
 COPY packages/deployer/package.json ./packages/deployer/
 COPY packages/logger/package.json ./packages/logger/
@@ -18,6 +19,7 @@ WORKDIR /app
 COPY . .
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=deps /app/packages/crypto/node_modules ./packages/crypto/node_modules
 COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=deps /app/packages/deployer/node_modules ./packages/deployer/node_modules
 COPY --from=deps /app/packages/logger/node_modules ./packages/logger/node_modules
@@ -31,6 +33,7 @@ RUN apk update && apk upgrade --no-cache && \
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
+COPY packages/crypto/package.json ./packages/crypto/
 COPY packages/db/package.json ./packages/db/
 COPY packages/deployer/package.json ./packages/deployer/
 COPY packages/logger/package.json ./packages/logger/
@@ -38,6 +41,7 @@ COPY packages/pubsub-client/package.json ./packages/pubsub-client/
 COPY packages/types/package.json ./packages/types/
 RUN pnpm install --frozen-lockfile --prod
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
+COPY --from=builder /app/packages/crypto/dist ./packages/crypto/dist
 COPY --from=builder /app/packages/db/dist ./packages/db/dist
 COPY --from=builder /app/packages/deployer/dist ./packages/deployer/dist
 COPY --from=builder /app/packages/logger/dist ./packages/logger/dist

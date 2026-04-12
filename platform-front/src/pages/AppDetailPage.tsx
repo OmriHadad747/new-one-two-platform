@@ -1298,8 +1298,8 @@ function OverviewTab({
             );
           })()}
 
-          {/* How to test / Revise CTA */}
-          {latestSession === null ? (
+          {/* How to test / Revise CTA — hidden during revision (isBuilding) like "How it works" */}
+          {(latestSession === null || isBuilding) ? (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-5 space-y-3 text-center">
                 {isBuilding ? (
@@ -2162,10 +2162,10 @@ export function AppDetailPage() {
                 <div className="flex items-center gap-1.5 flex-1 flex-wrap">
                   {(
                     [
-                      { id: "all",     label: "All",     show: true          },
-                      { id: "webhook", label: "Webhook", show: hasWebhook    },
-                      { id: "widget",  label: "Widget",  show: hasWidget     },
-                      { id: "admin",   label: "Admin",   show: hasAdminUI    },
+                      { id: "all",     label: "All",               show: true          },
+                      { id: "webhook", label: "Shopify Webhooks",  show: hasWebhook    },
+                      { id: "widget",  label: "Storefront Widget", show: hasWidget     },
+                      { id: "admin",   label: "Admin UI",          show: hasAdminUI    },
                     ] as const
                   ).filter((f) => f.show).map((f) => (
                     <button key={f.id} type="button"
