@@ -72,12 +72,12 @@ function StatTile({
   const maxLabel = unlimited ? "∞" : max.toLocaleString();
 
   return (
-    <div className={`rounded-xl p-3 flex flex-col gap-2 border ${
+    <div className={`rounded-xl p-3 flex flex-col gap-2 ${
       danger
-        ? "bg-danger/[0.06] border-danger/20"
+        ? "bg-danger/[0.06]"
         : warn
-        ? "bg-amber-400/[0.06] border-amber-400/20"
-        : "bg-white/[0.05] border-white/[0.07]"
+        ? "bg-amber-400/[0.06]"
+        : "bg-white/[0.05]"
     }`}>
       <div className="flex items-start justify-between">
         <div>
@@ -107,7 +107,7 @@ function StatTile({
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-2.5 border-b border-white/[0.05] last:border-0">
+    <div className="flex items-center justify-between py-2.5 border-b border-white/[0.04] last:border-0">
       <span className="text-[12px] text-faint">{label}</span>
       <span className="text-[12px] text-ink font-medium">{value}</span>
     </div>
@@ -196,7 +196,7 @@ function PlanModal({
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)" }}
     >
-      <div className="bg-surface border border-white/[0.08] rounded-2xl w-full max-w-[580px] overflow-hidden shadow-2xl">
+      <div className="bg-surface rounded-xl w-full max-w-[580px] overflow-hidden shadow-2xl">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5">
@@ -215,7 +215,7 @@ function PlanModal({
 
         {/* Interval toggle */}
         <div className="px-6 pb-4">
-          <div className="inline-flex items-center gap-0.5 p-1 rounded-lg bg-white/[0.04] border border-white/[0.06]">
+          <div className="inline-flex items-center gap-0.5 p-1 rounded-lg bg-white/[0.04]">
             {(["monthly", "annual"] as const).map((opt) => (
               <button
                 key={opt}
@@ -257,10 +257,10 @@ function PlanModal({
             return (
               <div
                 key={plan.id}
-                className={`rounded-xl p-4 flex flex-col gap-3 border relative ${
+                className={`rounded-xl p-4 flex flex-col gap-3 relative ${
                   plan.highlight
-                    ? "border-accent/30 bg-accent/[0.05]"
-                    : "border-white/[0.07] bg-white/[0.02]"
+                    ? "bg-accent/[0.05] ring-1 ring-accent/25"
+                    : "bg-white/[0.03]"
                 }`}
               >
                 {plan.highlight && (
@@ -377,7 +377,7 @@ export function SettingsPage() {
       <main className="flex-1 overflow-y-auto py-5 px-8 w-full max-w-[680px] mx-auto space-y-3">
 
         {/* ── Plan ──────────────────────────────────────────────────────── */}
-        <section className="bg-white/[0.03] border border-white/[0.07] rounded-2xl overflow-hidden">
+        <section className="bg-white/[0.03] rounded-xl overflow-hidden">
 
           <div className="px-6 pt-4 pb-2">
             <span className="text-[11px] font-semibold text-faint uppercase tracking-widest">Plan</span>
@@ -426,7 +426,7 @@ export function SettingsPage() {
         </section>
 
         {/* ── Workspace ─────────────────────────────────────────────────── */}
-        <section className="bg-white/[0.03] border border-white/[0.07] rounded-2xl overflow-hidden">
+        <section className="bg-white/[0.03] rounded-xl overflow-hidden">
 
           <div className="px-6 pt-4 pb-2">
             <span className="text-[11px] font-semibold text-faint uppercase tracking-widest">Workspace</span>
@@ -461,7 +461,7 @@ export function SettingsPage() {
           </div>
 
           {/* Account rows */}
-          <div className="px-6 border-t border-white/[0.05] pt-1 pb-2">
+          <div className="px-6 border-t border-white/[0.04] pt-1 pb-2">
             {tenantQuery.isLoading ? (
               <div className="py-4 space-y-3">
                 {[1, 2, 3].map((i) => <div key={i} className="h-4 bg-white/[0.04] rounded animate-pulse-subtle" />)}
@@ -477,7 +477,7 @@ export function SettingsPage() {
         </section>
 
         {/* ── Danger Zone ───────────────────────────────────────────────── */}
-        <section className="bg-danger/[0.03] border border-danger/25 rounded-2xl overflow-hidden">
+        <section className="bg-danger/[0.03] rounded-xl overflow-hidden">
           <div className="px-6 pt-4 pb-2">
             <span className="text-[11px] font-semibold text-danger/60 uppercase tracking-widest">Danger Zone</span>
           </div>

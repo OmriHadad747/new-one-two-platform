@@ -5,7 +5,7 @@ interface LoadingProps {
 export function LoadingSpinner({ message = "Loading…" }: LoadingProps) {
   return (
     <div className="flex flex-col items-center justify-center flex-1 gap-3 py-20">
-      <div className="w-6 h-6 rounded-full border-2 border-white/13 border-t-accent animate-spin" />
+      <div className="w-6 h-6 rounded-full border-2 border-faint/20 border-t-accent animate-spin" />
       <span className="text-sm text-faint">{message}</span>
     </div>
   );
@@ -28,7 +28,7 @@ export function ErrorMessage({
         <button
           type="button"
           onClick={onRetry}
-          className="text-xs text-faint px-3 py-1.5 border border-white/13 rounded-lg hover:text-ink hover:border-white/25 transition-all bg-transparent cursor-pointer"
+          className="text-xs text-faint px-3 py-1.5 rounded-lg bg-white/[0.04] hover:text-ink hover:bg-white/[0.08] transition-all cursor-pointer"
         >
           Retry
         </button>

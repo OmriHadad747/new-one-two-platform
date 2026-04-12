@@ -50,7 +50,7 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, on
               key={h}
               type="button"
               onClick={() => { onChange(h); ref.current?.focus(); autoResize(); }}
-              className="text-[11px] text-faint px-2.5 py-1 border border-white/7 rounded-full hover:border-accent hover:text-accent transition-all duration-150 cursor-pointer bg-surface/80 backdrop-blur-sm"
+              className="text-[11px] text-faint px-2.5 py-1 rounded-full hover:text-accent hover:bg-accent/[0.06] transition-all duration-150 cursor-pointer bg-surface/80 backdrop-blur-sm"
             >
               {h}
             </button>
@@ -62,8 +62,8 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, on
       <div
         className={cn(
           "w-full max-w-[600px] pointer-events-auto",
-          "flex gap-2.5 items-end bg-surface/90 backdrop-blur-xl border rounded-2xl px-4 py-3 transition-colors duration-150",
-          "shadow-[0_8px_32px_rgba(0,0,0,0.35)] focus-within:border-accent border-white/[0.12]"
+          "flex gap-2.5 items-end bg-surface/90 backdrop-blur-xl rounded-2xl px-4 py-3 transition-colors duration-150",
+          "shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
         )}
       >
         <textarea
