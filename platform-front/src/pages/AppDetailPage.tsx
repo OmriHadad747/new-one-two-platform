@@ -828,7 +828,7 @@ function AppInfoBand({
   const pill = buildStatusPill(app, latestSession, deploying, isBuilding, hasFallback, onDeploy, onRedeploy, onDeactivate);
 
   return (
-    <div className="flex flex-col shrink-0 border-b border-white/[0.06]">
+    <div className="flex flex-col shrink-0 border-b border-white/[0.04]">
       <div className="flex items-center justify-between">
 
         {/* ── App type ── */}
@@ -1014,7 +1014,7 @@ function OverviewTab({
           {/* Triggers */}
           {(webhookTopics.length > 0 || cronSchedule) && (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
+              <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Triggers</h3>
               </div>
               <div className="divide-y divide-white/[0.05]">
@@ -1050,7 +1050,7 @@ function OverviewTab({
           {/* Recent activity */}
           {latestSession !== null && (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04] flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.04] flex items-center justify-between">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Recent Activity</h3>
                 <button type="button" onClick={onLogsTab}
                   className="text-[10px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer">
@@ -1100,7 +1100,7 @@ function OverviewTab({
             return (
               <section className="bg-white/[0.04] rounded-xl overflow-hidden">
                 {/* Section header */}
-                <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
                   <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Open in Shopify</h3>
                 </div>
 
@@ -1149,7 +1149,7 @@ function OverviewTab({
                   {/* ── new-one-two App Block (widget apps only) ── */}
                   {hasWidget && (
                     <div className={cn(isInjected && "bg-accent/[0.03]")}>
-                      <div className={cn("mx-4 mt-3 mb-1 border-t", theme === "light" ? "border-black/[0.10]" : "border-white/[0.08]")} />
+                      <div className={cn("mx-4 mt-3 mb-1 border-t", theme === "light" ? "border-black/[0.06]" : "border-white/[0.04]")} />
                       {/* Block header row */}
                       <div className="flex items-center gap-3 px-4 py-3">
                         <span className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", theme === "light" ? "bg-sky-600/[.08]" : "bg-sky-400/[.12]")}>
@@ -1251,7 +1251,7 @@ function OverviewTab({
             </section>
           ) : (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
+              <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How to test</h3>
               </div>
               <div className="mx-4 mt-4 mb-3 px-3.5 py-3 bg-accent/5 border border-accent/[0.12] rounded-xl space-y-2.5 flex flex-col">
@@ -1365,7 +1365,7 @@ function SettingsPanel({
       {app.status !== "deleted" && (
         <section>
           <h2 className="text-[11px] font-bold text-danger uppercase tracking-wider mb-4">Danger Zone</h2>
-          <div className="bg-danger/5 border border-danger/20 rounded-xl divide-y divide-danger/10">
+          <div className="bg-danger/5 rounded-xl divide-y divide-danger/10">
 
             {/* Soft delete */}
             <div className="px-5 py-4 flex items-center justify-between gap-4">
@@ -1681,7 +1681,7 @@ function InjectWizard({
 
         {/* Footer */}
         {!loading && (
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.07]">
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.04]">
             <button
               onClick={onClose}
               className="px-4 py-2 text-[12px] font-medium text-muted hover:text-ink bg-white/[0.04] hover:bg-white/[0.08] rounded-lg transition-colors cursor-pointer"

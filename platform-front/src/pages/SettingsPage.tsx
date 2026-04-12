@@ -215,7 +215,7 @@ function PlanModal({
 
         {/* Interval toggle */}
         <div className="px-6 pb-4">
-          <div className="inline-flex items-center gap-0.5 p-1 rounded-lg bg-white/[0.04] border border-white/[0.06]">
+          <div className="inline-flex items-center gap-0.5 p-1 rounded-lg bg-white/[0.04]">
             {(["monthly", "annual"] as const).map((opt) => (
               <button
                 key={opt}
@@ -461,7 +461,7 @@ export function SettingsPage() {
           </div>
 
           {/* Account rows */}
-          <div className="px-6 border-t border-white/[0.05] pt-1 pb-2">
+          <div className="px-6 border-t border-white/[0.04] pt-1 pb-2">
             {tenantQuery.isLoading ? (
               <div className="py-4 space-y-3">
                 {[1, 2, 3].map((i) => <div key={i} className="h-4 bg-white/[0.04] rounded animate-pulse-subtle" />)}

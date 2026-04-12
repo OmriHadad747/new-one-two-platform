@@ -10,7 +10,6 @@ const CFG_DARK: Record<string, StatusCfg> = {
   ready:    { label: "Ready",    dot: "bg-amber-400 animate-pulse",      badge: "bg-amber-400/[.12] text-amber-300"              },
   active:   { label: "Live",     dot: "bg-emerald-500 animate-pulse",    badge: "bg-emerald-500/[.12] text-emerald-400"          },
   inactive: { label: "Inactive", dot: "bg-danger",                       badge: "bg-danger/10 text-danger"                      },
-  deleted:  { label: "Deleted",  dot: "bg-danger opacity-50",            badge: "bg-danger/5 text-danger/60"                    },
 };
 
 const CFG_LIGHT: Record<string, StatusCfg> = {
@@ -19,7 +18,6 @@ const CFG_LIGHT: Record<string, StatusCfg> = {
   ready:    { label: "Ready",    dot: "bg-amber-600 animate-pulse",      badge: "bg-amber-600/[.08] text-amber-700"              },
   active:   { label: "Live",     dot: "bg-emerald-600 animate-pulse",    badge: "bg-emerald-600/[.08] text-emerald-700"          },
   inactive: { label: "Inactive", dot: "bg-danger",                       badge: "bg-danger/10 text-danger"                      },
-  deleted:  { label: "Deleted",  dot: "bg-danger opacity-50",            badge: "bg-danger/5 text-danger/60"                    },
 };
 
 interface AppStatusBadgeProps {
@@ -35,7 +33,7 @@ export function AppStatusBadge({ status, isBuilding, size = "md" }: AppStatusBad
   const CFG = theme === "light" ? CFG_LIGHT : CFG_DARK;
 
   const effectiveStatus = isBuilding ? "building" : status;
-  const cfg = CFG[effectiveStatus] ?? CFG.deleted;
+  const cfg = CFG[effectiveStatus] ?? CFG.draft;
 
   if (size === "sm") {
     return (
