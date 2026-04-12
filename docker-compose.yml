@@ -194,9 +194,9 @@ services:
     ports:
       - "8001:8001"
     env_file:
-      - path: ./generator/.env
+      - path: ./generator/envs/.env.local
         required: false
-      - path: ./generator/.env.docker
+      - path: ./generator/envs/.env.docker
         required: false
     depends_on:
       pubsub-init:
