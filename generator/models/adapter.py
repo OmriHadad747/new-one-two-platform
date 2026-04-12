@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from anthropic import APIStatusError
+from anthropic import APIStatusError, APITimeoutError
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -28,6 +28,11 @@ log = logging.getLogger(__name__)
 # Retryable HTTP status codes: 529 = overloaded, 429 = rate-limited.
 _RETRYABLE_STATUS = {429, 529}
 _RETRY_DELAYS = [5, 15, 30]  # seconds between attempts (3 retries total)
+
+# Base timeout + per-token budget.  16k-token revision calls routinely take
+# 3-5 minutes; the old flat 120 s was too short.
+_TIMEOUT_BASE_S = 60
+_TIMEOUT_PER_TOKEN_S = 0.05  # ~50 ms/token → 800 s ceiling for 16k tokens
 
 
 @dataclass
@@ -47,28 +52,38 @@ def get_llm(max_tokens: int = 2048, model: Optional[str] = None) -> ChatAnthropi
     """
     settings = get_settings()
     resolved_model = model or "claude-haiku-4-5-20251001"
+    timeout = _TIMEOUT_BASE_S + int(max_tokens * _TIMEOUT_PER_TOKEN_S)
     return ChatAnthropic(
         model=resolved_model,  # type: ignore[call-arg]
         max_tokens=max_tokens,
         api_key=settings.anthropic_api_key,
-        timeout=120,
+        timeout=timeout,
     )
 
 
 def _invoke_with_retry(llm: ChatAnthropic, messages: list) -> object:
     """
-    Calls llm.invoke(messages) with exponential backoff on 529/429 errors.
+    Calls llm.invoke(messages) with backoff on recoverable errors.
+
+    Retries on:
+      - APITimeoutError  (read timeout — transient network or slow generation)
+      - APIStatusError   with status 429 / 529 (rate-limited or overloaded)
+
     Raises the original exception after all retries are exhausted.
     """
     for attempt, delay in enumerate([0] + _RETRY_DELAYS, start=1):
         if delay:
-            log.warning("Anthropic overloaded/rate-limited — retrying in %ds (attempt %d)…", delay, attempt)
             time.sleep(delay)
         try:
             return llm.invoke(messages)
+        except APITimeoutError:
+            if attempt > len(_RETRY_DELAYS):
+                raise
+            log.warning("Anthropic request timed out — retrying in %ds (attempt %d)…", _RETRY_DELAYS[attempt - 1], attempt)
         except APIStatusError as exc:
             if exc.status_code not in _RETRYABLE_STATUS or attempt > len(_RETRY_DELAYS):
                 raise
+            log.warning("Anthropic overloaded/rate-limited (%s) — retrying in %ds (attempt %d)…", exc.status_code, _RETRY_DELAYS[attempt - 1], attempt)
 
 
 def invoke(llm: ChatAnthropic, system: str, user: str) -> LLMResponse:
