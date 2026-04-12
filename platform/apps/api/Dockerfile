@@ -26,7 +26,8 @@ COPY --from=deps /app/packages/types/node_modules ./packages/types/node_modules
 RUN pnpm --filter @new-one-two/api... build
 
 FROM node:22-alpine AS runner
-RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
+RUN apk update && apk upgrade --no-cache && \
+    corepack enable && corepack prepare pnpm@9.0.0 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/api/package.json ./apps/api/
