@@ -13,6 +13,7 @@ import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useThemeStore } from "@/stores/theme";
+import { EmailTab } from "@/components/features/email/EmailTab";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1686,7 +1687,7 @@ export function AppDetailPage() {
   const { approve }       = useGeneration();
   const queryClient       = useQueryClient();
 
-  const [mainTab, setMainTab]         = useState<"overview" | "logs" | "versions" | "settings">("overview");
+  const [mainTab, setMainTab]         = useState<"overview" | "logs" | "versions" | "email" | "settings">("overview");
   const [activeLogTab, setActiveLogTab] = useState<"webhook" | "widget" | "admin">("webhook");
   const [deploying, setDeploying]     = useState(false);
 
@@ -1716,9 +1717,22 @@ export function AppDetailPage() {
   const handleDeployDraft = async () => {
     if (!latestSession?.jobId) return;
     setDeploying(true);
-    try { await approve(latestSession.jobId); await appQuery.refetch(); void invalidateAppCache(); }
-    catch (err) { alert(err instanceof Error ? err.message : "Deployment failed"); }
-    finally { setDeploying(false); }
+    try {
+      await approve(latestSession.jobId);
+      await appQuery.refetch();
+      void invalidateAppCache();
+    } catch (err) {
+      // Intercept the platform's email_not_confirmed 409 and jump to the Email tab.
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("email_not_confirmed")) {
+        setMainTab("email");
+        alert("This app sends emails. Review and save the email content before deploying.");
+      } else {
+        alert(message || "Deployment failed");
+      }
+    } finally {
+      setDeploying(false);
+    }
   };
 
   const handleRedeploy = async () => {
@@ -1926,6 +1940,9 @@ export function AppDetailPage() {
                 { id: "overview" as const, label: "Dashboard" },
                 { id: "logs"     as const, label: "Logs"     },
                 { id: "versions" as const, label: "Versions"  },
+                ...(app.usesEmail
+                  ? [{ id: "email" as const, label: "Email" }]
+                  : []),
                 { id: "settings" as const, label: "Settings" },
               ]}
               active={mainTab}
@@ -2023,6 +2040,9 @@ export function AppDetailPage() {
               app={app}
             />
           )}
+
+          {/* EMAIL — only shown when the app sends emails */}
+          {mainTab === "email" && app.usesEmail && <EmailTab appId={app.id} />}
 
           {/* SETTINGS */}
           {mainTab === "settings" && (

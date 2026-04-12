@@ -55,6 +55,10 @@ export interface App {
   themeInjectionThemeId: string | null; // numeric Shopify theme ID as string
   currentSemver: string | null;        // semver of the currently deployed version; null if never deployed
   activeAppVersionId: string | null;   // app_version_id of the currently active deployed_function; null if not active
+  /** TRUE when the generated handler calls ctx.email.send(). Drives Email tab + deploy blocking. */
+  usesEmail: boolean;
+  /** Variable names the handler passes in ctx.email.send({data:...}). Powers the token palette in the Email tab. */
+  emailVariables: string[];
   createdAt: Date;
   updatedAt: Date;
 }

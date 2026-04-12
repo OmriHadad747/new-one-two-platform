@@ -6,6 +6,7 @@
 // Consumed by: api (generation routes), deployer
 
 import type { AppArchetype } from "./domain.js";
+import type { EmailStarterContent, EmailType } from "./harness.js";
 
 /** Published to generation.requested by apps/api. */
 export interface GenerationRequestMessage {
@@ -83,6 +84,15 @@ export interface FeatureBundle {
   handlerModule: HandlerModule;
   dbMigration: DbMigration;
   explanation: FeatureExplanation;
+  // ─── Email metadata (set when the handler calls ctx.email.send) ─────────────
+  /** TRUE when the handler calls ctx.email.send(). Drives Email tab + deploy block. */
+  usesEmail?: boolean;
+  /** Variable names the handler passes in `data` — shown to the merchant as a token palette. */
+  emailVariables?: string[];
+  /** Architect's suggested classification. Merchant can override in the Email tab. */
+  emailTypeSuggestion?: EmailType;
+  /** AI-generated starter template, used to pre-fill `app_email_configs` on deploy. */
+  emailStarterContent?: EmailStarterContent;
 }
 
 export interface AgentTraceEntry {

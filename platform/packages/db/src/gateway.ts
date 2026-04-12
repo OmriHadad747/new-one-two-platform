@@ -150,6 +150,8 @@ export async function resolveWebhookContext(
       themeInjectionThemeId: null,
       currentSemver: null,
       activeAppVersionId: null,
+      usesEmail: false,
+      emailVariables: [],
       createdAt: row.appCreatedAt,
       updatedAt: row.appUpdatedAt,
     },

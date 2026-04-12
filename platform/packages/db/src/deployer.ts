@@ -146,6 +146,7 @@ export async function getAppByIdOnly(appId: string): Promise<App | null> {
     appArchetype: string; widgetJs: string | null; adminUiJs: string | null;
     shopifyClientId: string; shopifySecretName: string; shopDomain: string;
     themeInjectionStatus: string; themeInjectionThemeId: string | null;
+    usesEmail: boolean; emailVariables: string[] | null;
     createdAt: Date; updatedAt: Date;
   }>>`
     SELECT id, tenant_id AS "tenantId", slug, name, status,
@@ -154,6 +155,7 @@ export async function getAppByIdOnly(appId: string): Promise<App | null> {
            shopify_secret_name AS "shopifySecretName", shop_domain AS "shopDomain",
            theme_injection_status AS "themeInjectionStatus",
            theme_injection_theme_id AS "themeInjectionThemeId",
+           uses_email AS "usesEmail", email_variables AS "emailVariables",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM apps WHERE id = ${appId} LIMIT 1
   `;
@@ -168,6 +170,8 @@ export async function getAppByIdOnly(appId: string): Promise<App | null> {
     themeInjectionThemeId: row.themeInjectionThemeId ?? null,
     currentSemver: null,
     activeAppVersionId: null,
+    usesEmail: row.usesEmail ?? false,
+    emailVariables: row.emailVariables ?? [],
     createdAt: row.createdAt, updatedAt: row.updatedAt,
   };
 }

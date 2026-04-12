@@ -126,6 +126,9 @@ function isExemptRoute(url: string, method: string): boolean {
   if (method === "POST" && path === "/billing/webhook") return true;
   // Billing callback — Shopify redirects here after charge approval (GET /billing/callback)
   if (method === "GET" && path === "/billing/callback") return true;
+  // Email unsubscribe page — customers click these from their inbox (no auth).
+  // Matches /email/u/:token and /email/u/:token/confirm.
+  if (path.startsWith("/email/u/")) return true;
   return false;
 }
 

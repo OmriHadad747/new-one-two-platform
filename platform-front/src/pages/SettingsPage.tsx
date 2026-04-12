@@ -6,6 +6,7 @@ import { useSessionStore } from "@/stores/session";
 import { useTenant, useTenantStats, useBillingUsage } from "@/hooks/useApps";
 import { api } from "@/lib/api";
 import type { BillingPlan } from "@/types/dashboard";
+import { BrandPanel } from "@/components/features/email/BrandPanel";
 
 // ─── Ring Progress ────────────────────────────────────────────────────────────
 
@@ -472,6 +473,9 @@ export function SettingsPage() {
             <Button variant="danger" size="sm">Disconnect</Button>
           </div>
         </section>
+
+        {/* Email brand — tenant-level, shared across every email-using app */}
+        {tenantId && <BrandPanel tenantId={tenantId} />}
 
       </main>
 
