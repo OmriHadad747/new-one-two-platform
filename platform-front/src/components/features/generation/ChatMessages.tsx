@@ -158,7 +158,7 @@ function GeneratingCard({ events, isCompleted }: { events: ProgressEvent[]; isCo
   const latestMessage = activeAgent ? (byAgent[activeAgent]?.message ?? null) : null;
 
   return (
-    <div className="mt-2.5 bg-white/[0.04] border border-white/[0.07] rounded-xl p-4 max-w-[420px]">
+    <div className="mt-2.5 bg-white/[0.04] rounded-xl p-4 max-w-[420px]">
       <p className="text-[10px] font-bold text-faint uppercase tracking-wider mb-3.5">
         Building your app
       </p>
@@ -205,7 +205,7 @@ function GeneratingCard({ events, isCompleted }: { events: ProgressEvent[]; isCo
         })}
       </div>
       {latestMessage && (
-        <div className="mt-3 pt-3 border-t border-white/[0.06]">
+        <div className="mt-3 pt-3 border-t border-white/[0.04]">
           <p className="text-[11px] text-accent animate-pulse-subtle leading-relaxed">{latestMessage}</p>
         </div>
       )}
@@ -258,7 +258,7 @@ function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
   return (
     <div className="mt-2.5 max-w-[420px] space-y-3">
       {/* Summary card */}
-      <div className="bg-white/[0.04] border border-white/[0.07] rounded-xl p-4 space-y-3">
+      <div className="bg-white/[0.04] rounded-xl p-4 space-y-3">
         <div className="flex items-center gap-2">
           <span className="material-symbols-outlined text-accent text-[19px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
           <span className="text-[15px] font-bold text-ink">Generation complete</span>
@@ -276,7 +276,7 @@ function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
           </div>
         )}
         {bundle?.explanation && (
-          <div className="pt-2.5 border-t border-white/[0.06]">
+          <div className="pt-2.5 border-t border-white/[0.04]">
             <ExplanationText text={bundle.explanation} />
           </div>
         )}
@@ -287,7 +287,7 @@ function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
         <button
           type="button"
           onClick={() => navigate(`/app/apps/${bundle.appId}`)}
-          className="w-full flex items-center justify-between px-4 py-2.5 bg-white/[0.04] border border-white/[0.07] rounded-xl text-[12.5px] font-semibold text-muted hover:bg-white/[0.07] hover:text-ink transition-colors cursor-pointer"
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-white/[0.04] rounded-xl text-[12.5px] font-semibold text-muted hover:bg-white/[0.07] hover:text-ink transition-colors cursor-pointer"
         >
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-[15px]">dashboard</span>
@@ -315,7 +315,7 @@ function LiveCard({ appId }: { appId?: string }) {
         <button
           type="button"
           onClick={() => navigate(`/app/apps/${appId}`)}
-          className="w-full flex items-center justify-between px-4 py-2.5 bg-white/[0.04] border border-white/[0.07] rounded-xl text-[12.5px] font-semibold text-muted hover:bg-white/[0.07] hover:text-ink transition-colors cursor-pointer"
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-white/[0.04] rounded-xl text-[12.5px] font-semibold text-muted hover:bg-white/[0.07] hover:text-ink transition-colors cursor-pointer"
         >
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-[15px]">dashboard</span>
@@ -332,9 +332,9 @@ function LiveCard({ appId }: { appId?: string }) {
 
 function PlanBlockedCard({ archetype, upgradeHint }: { archetype: AppArchetype; upgradeHint: string }) {
   return (
-    <div className="mt-2.5 max-w-[380px] bg-white/[0.03] border border-white/[0.08] rounded-xl overflow-hidden">
+    <div className="mt-2.5 max-w-[380px] bg-white/[0.03] rounded-xl overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.06]">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.04]">
         <span
           className="material-symbols-outlined text-[15px] text-amber"
           style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
@@ -396,7 +396,7 @@ function ClarifyingCard({
               key={s}
               type="button"
               onClick={() => submit(s)}
-              className="w-full text-left text-[13px] px-4 py-2.5 rounded-xl bg-white/[0.04] hover:bg-accent/8 border border-white/[0.09] hover:border-accent/30 text-muted hover:text-ink transition-all duration-150 cursor-pointer"
+              className="w-full text-left text-[13px] px-4 py-2.5 rounded-xl bg-white/[0.04] hover:bg-accent/8 text-muted hover:text-ink transition-all duration-150 cursor-pointer"
             >
               {s}
             </button>
@@ -412,7 +412,7 @@ function ClarifyingCard({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") submit(text); }}
           placeholder={data.suggestions.length > 0 ? "Or type your own…" : "Type your answer…"}
-          className="flex-1 text-[13px] bg-white/[0.04] border border-white/[0.09] rounded-xl px-3.5 py-2 text-ink placeholder:text-faint outline-none focus:border-accent/40 transition-colors"
+          className="flex-1 text-[13px] bg-white/[0.04] rounded-xl px-3.5 py-2 text-ink placeholder:text-faint outline-none transition-colors"
         />
         <button
           type="button"
@@ -448,7 +448,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
           if (msg.role === "user") {
             return (
               <div key={msg.id} className="flex justify-end">
-                <div className="max-w-[72%] bg-raised border border-white/[0.12] rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-sm">
+                <div className="max-w-[72%] bg-raised rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-sm">
                   {msg.text && (
                     <p className="text-[13px] text-ink leading-relaxed">{msg.text}</p>
                   )}
@@ -496,7 +496,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
                         onClick={action.onClick}
                         className={
                           action.variant === "ghost"
-                            ? "text-xs px-3 py-1.5 rounded-lg border border-white/13 text-muted hover:text-ink hover:border-white/25 transition-all duration-150 cursor-pointer bg-transparent"
+                            ? "text-xs px-3 py-1.5 rounded-lg bg-white/[0.04] text-muted hover:text-ink hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
                             : "text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hi transition-all duration-150 cursor-pointer border-0"
                         }
                       >

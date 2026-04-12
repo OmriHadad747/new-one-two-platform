@@ -9,6 +9,7 @@ import { useLatestSession, useLatestCompletedSession, useGeneration, useAppSessi
 import type { SessionSummary } from "@/types/dashboard";
 import type { WebhookInvocationLogEntry, InvocationLogEntry, App, SessionBundle, ThemeTemplate, InjectionTarget } from "@/types/dashboard";
 import { ArchetypePills } from "@/components/ui/ArchetypePills";
+import { Tag } from "@/components/ui/Badge";
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -54,18 +55,32 @@ function humanizeCron(expr: string): string | null {
 
 // ─── Status configs ───────────────────────────────────────────────────────────
 
-const LOG_STATUS_CFG = {
-  success: { dot: "bg-teal",                     label: "success", cls: "text-teal"    },
-  failed:  { dot: "bg-danger",                   label: "failed",  cls: "text-danger"  },
-  running: { dot: "bg-accent animate-pulse",     label: "running", cls: "text-accent"  },
-  queued:  { dot: "bg-faint",                    label: "queued",  cls: "text-faint"   },
-  timeout: { dot: "bg-amber-400",                label: "timeout", cls: "text-amber-400"},
+const LOG_STATUS_CFG_DARK = {
+  success: { dot: "bg-emerald-500",              label: "success", cls: "text-emerald-400" },
+  failed:  { dot: "bg-danger",                   label: "failed",  cls: "text-danger"      },
+  running: { dot: "bg-accent animate-pulse",     label: "running", cls: "text-accent"      },
+  queued:  { dot: "bg-faint",                    label: "queued",  cls: "text-faint"       },
+  timeout: { dot: "bg-amber-400",                label: "timeout", cls: "text-amber-300"   },
 } satisfies Record<WebhookInvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
 
-const INVOCATION_STATUS_CFG = {
-  success: { dot: "bg-teal",                 label: "success", cls: "text-teal"   },
-  failed:  { dot: "bg-danger",               label: "failed",  cls: "text-danger" },
-  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent" },
+const LOG_STATUS_CFG_LIGHT = {
+  success: { dot: "bg-emerald-600",              label: "success", cls: "text-emerald-700" },
+  failed:  { dot: "bg-danger",                   label: "failed",  cls: "text-danger"      },
+  running: { dot: "bg-accent animate-pulse",     label: "running", cls: "text-accent"      },
+  queued:  { dot: "bg-faint",                    label: "queued",  cls: "text-faint"       },
+  timeout: { dot: "bg-amber-600",                label: "timeout", cls: "text-amber-700"   },
+} satisfies Record<WebhookInvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
+
+const INVOCATION_STATUS_CFG_DARK = {
+  success: { dot: "bg-emerald-500",          label: "success", cls: "text-emerald-400" },
+  failed:  { dot: "bg-danger",               label: "failed",  cls: "text-danger"      },
+  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent"      },
+} satisfies Record<InvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
+
+const INVOCATION_STATUS_CFG_LIGHT = {
+  success: { dot: "bg-emerald-600",          label: "success", cls: "text-emerald-700" },
+  failed:  { dot: "bg-danger",               label: "failed",  cls: "text-danger"      },
+  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent"      },
 } satisfies Record<InvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
 
 // ─── Syntax highlighting ──────────────────────────────────────────────────────
@@ -228,9 +243,11 @@ function CodeBlock({ code, lang }: { code: string; lang: "js" | "sql" }) {
 
 const AVATAR_GRADIENTS = [
   "from-violet-500 to-indigo-600",
+  "from-blue-500 to-cyan-600",
   "from-teal-500 to-emerald-600",
-  "from-amber-500 to-orange-500",
+  "from-amber-500 to-orange-600",
   "from-rose-500 to-pink-600",
+  "from-fuchsia-500 to-purple-600",
   "from-sky-500 to-blue-600",
   "from-lime-500 to-green-600",
 ];
@@ -246,7 +263,7 @@ function AppHeader({
   const gradient = AVATAR_GRADIENTS[seed % AVATAR_GRADIENTS.length];
 
   return (
-    <div className="px-7 py-5 border-b border-white/[0.07] shrink-0">
+    <div className="px-7 py-5 border-b border-white/[0.04] shrink-0">
       <div className="flex items-start gap-4">
         <div className={cn("w-12 h-12 rounded-2xl bg-gradient-to-br flex items-center justify-center shrink-0 shadow-lg", gradient)}>
           <span className="text-[14px] font-black text-white tracking-tight">{initials}</span>
@@ -255,7 +272,7 @@ function AppHeader({
           <div className="flex items-center gap-2.5 flex-wrap mb-1.5">
             <h2 className="text-[18px] font-bold text-ink">{app.name}</h2>
             {isGenerating && (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent border border-accent/20 animate-pulse">Building…</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent animate-pulse">Building…</span>
             )}
           </div>
           <div className="flex items-center gap-3 text-[11px] text-faint mb-1.5">
@@ -284,7 +301,7 @@ function AppHeader({
 function EmptyLogs({ label, sub }: { label: string; sub: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
-      <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
+      <div className="w-10 h-10 rounded-xl bg-white/[0.04] flex items-center justify-center">
         <span className="material-symbols-outlined text-faint text-[20px]">receipt_long</span>
       </div>
       <p className="text-sm text-faint">{label}</p>
@@ -295,8 +312,8 @@ function EmptyLogs({ label, sub }: { label: string; sub: string }) {
 
 function LogTable({ pathHeader = "Event / Error", children }: { pathHeader?: string; children: React.ReactNode }) {
   return (
-    <div className="bg-surface border border-white/[0.07] rounded-xl overflow-hidden">
-      <div className="grid grid-cols-[16px_1fr_100px] gap-4 px-5 py-2.5 border-b border-white/[0.07] bg-white/[0.02]">
+    <div className="bg-surface rounded-xl overflow-hidden">
+      <div className="grid grid-cols-[16px_1fr_100px] gap-4 px-5 py-2.5 border-b border-white/[0.04] bg-white/[0.02]">
         <span />
         <span className="text-[10px] font-bold text-faint uppercase tracking-wider">{pathHeader}</span>
         <span className="text-[10px] font-bold text-faint uppercase tracking-wider text-right">Duration</span>
@@ -307,14 +324,15 @@ function LogTable({ pathHeader = "Event / Error", children }: { pathHeader?: str
 }
 
 function LogRow({ entry, last, showSource }: { entry: WebhookInvocationLogEntry; last: boolean; showSource?: boolean }) {
-  const cfg = LOG_STATUS_CFG[entry.status];
+  const theme = useThemeStore((s) => s.theme);
+  const cfg = (theme === "light" ? LOG_STATUS_CFG_LIGHT : LOG_STATUS_CFG_DARK)[entry.status];
   return (
     <div className={cn("flex items-start gap-4 px-5 py-3", !last && "border-b border-white/[0.05]")}>
       <div className="pt-1.5 shrink-0"><span className={cn("w-2 h-2 rounded-full block", cfg.dot)} /></div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12px] font-mono text-ink truncate">{entry.topic}</span>
-          {showSource && <span className="text-[9.5px] font-bold uppercase tracking-wide text-faint border border-white/15 px-1 py-0.5 rounded">webhook</span>}
+          {showSource && <Tag variant="source">webhook</Tag>}
           <span className={cn("text-[10px] font-bold uppercase tracking-wide", cfg.cls)}>{cfg.label}</span>
         </div>
         {entry.errorMessage && <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>}
@@ -328,14 +346,15 @@ function LogRow({ entry, last, showSource }: { entry: WebhookInvocationLogEntry;
 }
 
 function InvocationLogRow({ entry, last, source }: { entry: InvocationLogEntry; last: boolean; source?: "widget" | "admin" }) {
-  const cfg = INVOCATION_STATUS_CFG[entry.status];
+  const theme = useThemeStore((s) => s.theme);
+  const cfg = (theme === "light" ? INVOCATION_STATUS_CFG_LIGHT : INVOCATION_STATUS_CFG_DARK)[entry.status];
   return (
     <div className={cn("flex items-start gap-4 px-5 py-3", !last && "border-b border-white/[0.05]")}>
       <div className="pt-1.5 shrink-0"><span className={cn("w-2 h-2 rounded-full block", cfg.dot)} /></div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12px] font-mono text-ink truncate">{entry.path}</span>
-          {source && <span className="text-[9.5px] font-bold uppercase tracking-wide text-faint border border-white/15 px-1 py-0.5 rounded">{source}</span>}
+          {source && <Tag variant="source">{source}</Tag>}
           <span className={cn("text-[10px] font-bold uppercase tracking-wide", cfg.cls)}>{cfg.label}</span>
         </div>
         {entry.errorMessage && <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>}
@@ -360,7 +379,7 @@ function TabBar<T extends string>({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-1 border-b border-white/[0.07] pb-0">
+    <div className="flex items-center gap-1 border-b border-white/[0.04] pb-0">
       {tabs.map((t) => (
         <button key={t.id} type="button" onClick={() => onChange(t.id)}
           className={cn(
@@ -401,7 +420,7 @@ function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
   if (!files.length) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-        <div className="w-12 h-12 rounded-xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
+        <div className="w-12 h-12 rounded-xl bg-white/[0.04] flex items-center justify-center">
           <span className="material-symbols-outlined text-faint text-[22px]">code_blocks</span>
         </div>
         <p className="text-sm text-faint">No generated code yet</p>
@@ -420,7 +439,7 @@ function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Tab bar */}
-      <div className="flex items-center gap-1 border-b border-white/[0.07] shrink-0 bg-surface">
+      <div className="flex items-center gap-1 border-b border-white/[0.04] shrink-0 bg-surface">
         {files.map((f) => (
           <button key={f.id} type="button" onClick={() => setActiveFile(f.id)}
             className={cn(
@@ -447,10 +466,16 @@ function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
 
 // ─── Versions tab ─────────────────────────────────────────────────────────────
 
-const SESSION_STATUS_CFG = {
-  completed: { dot: "bg-teal",                     label: "Generated",  cls: "text-teal"   },
-  failed:    { dot: "bg-danger",                   label: "Failed",     cls: "text-danger" },
-  running:   { dot: "bg-accent animate-pulse",     label: "Running",    cls: "text-accent" },
+const SESSION_STATUS_CFG_DARK = {
+  completed: { dot: "bg-emerald-500",              label: "Generated",  cls: "text-emerald-400" },
+  failed:    { dot: "bg-danger",                   label: "Failed",     cls: "text-danger"      },
+  running:   { dot: "bg-accent animate-pulse",     label: "Running",    cls: "text-accent"      },
+} satisfies Record<string, { dot: string; label: string; cls: string }>;
+
+const SESSION_STATUS_CFG_LIGHT = {
+  completed: { dot: "bg-emerald-600",              label: "Generated",  cls: "text-emerald-700" },
+  failed:    { dot: "bg-danger",                   label: "Failed",     cls: "text-danger"      },
+  running:   { dot: "bg-accent animate-pulse",     label: "Running",    cls: "text-accent"      },
 } satisfies Record<string, { dot: string; label: string; cls: string }>;
 
 function VersionsTab({
@@ -461,6 +486,8 @@ function VersionsTab({
   latestSession: { status: string; bundle?: import("@/types/dashboard").SessionBundle | null } | null;
   app: App;
 }) {
+  const theme = useThemeStore((s) => s.theme);
+  const SESSION_STATUS_CFG = theme === "light" ? SESSION_STATUS_CFG_LIGHT : SESSION_STATUS_CFG_DARK;
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Default selection: latest session
@@ -480,14 +507,14 @@ function VersionsTab({
     <div className="flex-1 overflow-hidden flex gap-0">
 
       {/* ── Left: session list ── */}
-      <div className="w-[260px] shrink-0 border-r border-white/[0.07] flex flex-col overflow-hidden">
-        <div className="px-4 py-3 border-b border-white/[0.07] bg-white/[0.02] shrink-0">
+      <div className="w-[260px] shrink-0 border-r border-white/[0.04] flex flex-col overflow-hidden">
+        <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.02] shrink-0">
           <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Generation history</h3>
         </div>
         <div className="flex-1 overflow-y-auto">
           {sessionsLoading ? (
             <div className="p-3 space-y-2">
-              {[1,2,3].map((i) => <div key={i} className="h-14 bg-white/[0.03] rounded-lg animate-pulse-subtle border border-white/[0.06]" />)}
+              {[1,2,3].map((i) => <div key={i} className="h-14 bg-white/[0.03] rounded-lg animate-pulse-subtle" />)}
             </div>
           ) : sessions.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-[11px] text-faint">No versions yet</div>
@@ -516,8 +543,10 @@ function VersionsTab({
                         <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cfg.dot)} />
                         <span className={cn("text-[10px] font-semibold", cfg.cls)}>{cfg.label}</span>
                         {isLive && (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-teal/15 border border-teal/25 text-[9px] font-bold text-teal uppercase tracking-wide leading-none">
-                            <span className="w-1 h-1 rounded-full bg-teal animate-pulse inline-block" />
+                          <span className={cn("inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide leading-none",
+                            theme === "light" ? "bg-emerald-600/[.08] text-emerald-700" : "bg-emerald-500/[.12] text-emerald-400"
+                          )}>
+                            <span className={cn("w-1 h-1 rounded-full animate-pulse inline-block", theme === "light" ? "bg-emerald-600" : "bg-emerald-500")} />
                             Live
                           </span>
                         )}
@@ -687,8 +716,8 @@ function HowItWorksCard({ text }: { text: string }) {
   const hasMore  = sentences.length > PREVIEW;
 
   return (
-    <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
-      <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04] flex items-center gap-2">
+    <section className="bg-white/[0.04] rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.03] flex items-center gap-2">
         <span className="material-symbols-outlined text-accent text-[13px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>info</span>
         <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How it works</h3>
       </div>
@@ -808,7 +837,7 @@ function AppInfoBand({
           <div className="flex items-center gap-2 flex-wrap">
             <ArchetypePills archetype={app.appArchetype} />
             {app.currentSemver && (
-              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.10] text-faint/70">
+              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-white/[0.06] text-faint/70">
                 v{app.currentSemver}
               </span>
             )}
@@ -894,7 +923,7 @@ function MiniStats({
   return (
     <div className="grid grid-cols-4 gap-2">
       {stats.map((s) => (
-        <div key={s.label} className="bg-white/[0.06] border border-white/[0.10] rounded-xl px-3.5 py-3">
+        <div key={s.label} className="bg-white/[0.04] rounded-xl px-3.5 py-3">
           <div className="flex items-center gap-1 text-faint mb-1.5">
             <span className="material-symbols-outlined text-[12px]">{s.icon}</span>
             <span className="text-[9.5px] font-bold uppercase tracking-wider">{s.label}</span>
@@ -984,7 +1013,7 @@ function OverviewTab({
 
           {/* Triggers */}
           {(webhookTopics.length > 0 || cronSchedule) && (
-            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+            <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Triggers</h3>
               </div>
@@ -994,7 +1023,7 @@ function OverviewTab({
                     <p className="text-[11px] font-semibold text-faint mb-2">Active webhooks</p>
                     <div className="flex flex-wrap gap-1.5">
                       {webhookTopics.map((t) => (
-                        <span key={t} className="text-[11px] font-mono px-2 py-0.5 bg-white/[0.05] border border-white/[0.07] rounded-md text-ink">
+                        <span key={t} className="text-[11px] font-mono px-2 py-0.5 bg-white/[0.05] rounded-md text-ink">
                           {t}
                         </span>
                       ))}
@@ -1005,7 +1034,7 @@ function OverviewTab({
                   <div className="px-5 py-3.5">
                     <p className="text-[11px] font-semibold text-faint mb-1.5">Cron schedule</p>
                     <div className="flex items-center gap-3">
-                      <code className="text-[12px] font-mono text-ink bg-white/[0.04] px-2.5 py-1 rounded-lg border border-white/[0.07]">
+                      <code className="text-[12px] font-mono text-ink bg-white/[0.04] px-2.5 py-1 rounded-lg">
                         {cronSchedule}
                       </code>
                       {humanizeCron(cronSchedule) && (
@@ -1020,7 +1049,7 @@ function OverviewTab({
 
           {/* Recent activity */}
           {latestSession !== null && (
-            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+            <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04] flex items-center justify-between">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Recent Activity</h3>
                 <button type="button" onClick={onLogsTab}
@@ -1069,7 +1098,7 @@ function OverviewTab({
               : storeFrontUrl;
 
             return (
-              <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+              <section className="bg-white/[0.04] rounded-xl overflow-hidden">
                 {/* Section header */}
                 <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
                   <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Open in Shopify</h3>
@@ -1204,7 +1233,7 @@ function OverviewTab({
 
           {/* How to test / Revise CTA */}
           {latestSession === null ? (
-            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+            <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-5 space-y-3 text-center">
                 <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
                   <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
@@ -1221,7 +1250,7 @@ function OverviewTab({
               </div>
             </section>
           ) : (
-            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+            <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How to test</h3>
               </div>
@@ -1307,7 +1336,7 @@ function SettingsPanel({
 
       <section>
         <h2 className="text-[11px] font-bold text-faint uppercase tracking-wider mb-4">Identity</h2>
-        <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl divide-y divide-white/[0.05]">
+        <div className="bg-white/[0.03] rounded-xl divide-y divide-white/[0.04]">
           <div className="flex items-center justify-between gap-4 px-5 py-4">
             <div>
               <p className="text-[13px] font-medium text-ink">Name</p>
@@ -1481,9 +1510,9 @@ function InjectWizard({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-surface border border-white/[0.09] rounded-2xl shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto">
+      <div className="bg-surface rounded-xl shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.07]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.04]">
           <div>
             <h2 className="text-[14px] font-bold text-ink">Inject app block</h2>
             <p className="text-[11px] text-faint mt-0.5">Duplicates your active theme and adds the app block to a section</p>
@@ -1620,7 +1649,7 @@ function InjectWizard({
                     <label className="text-[11px] font-medium text-faint">
                       Click a slot to choose where the widget is inserted
                     </label>
-                    <div className="p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl space-y-0.5">
+                    <div className="p-3 bg-white/[0.03] rounded-xl space-y-0.5">
                       {blocks.length === 0 ? (
                         <>
                           {widgetSlot}
@@ -1632,7 +1661,7 @@ function InjectWizard({
                           {blocks.map((id, idx) => (
                             <div key={id}>
                               {clampedInsert === idx ? widgetSlot : null}
-                              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+                              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03]">
                                 <span className="material-symbols-outlined text-[13px] text-faint/40">widgets</span>
                                 <span className="text-[11px] text-faint">{blockNames[id] ?? "Block"}</span>
                               </div>
@@ -1655,7 +1684,7 @@ function InjectWizard({
           <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.07]">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-[12px] font-medium text-muted hover:text-ink bg-transparent border border-white/[0.08] rounded-lg transition-colors cursor-pointer"
+              className="px-4 py-2 text-[12px] font-medium text-muted hover:text-ink bg-white/[0.04] hover:bg-white/[0.08] rounded-lg transition-colors cursor-pointer"
             >
               Cancel
             </button>
@@ -1816,14 +1845,14 @@ export function AppDetailPage() {
       {appQuery.isLoading ? (
         <main className="flex-1 overflow-y-auto p-7">
           <div className="space-y-3">
-            <div className="flex items-center gap-4 pb-5 border-b border-white/[0.07]">
+            <div className="flex items-center gap-4 pb-5 border-b border-white/[0.04]">
               <div className="w-12 h-12 rounded-2xl bg-white/[0.05] animate-pulse-subtle" />
               <div className="space-y-2 flex-1">
                 <div className="h-5 w-48 bg-white/[0.05] rounded-lg animate-pulse-subtle" />
                 <div className="h-3 w-64 bg-white/[0.03] rounded-lg animate-pulse-subtle" />
               </div>
             </div>
-            {[1,2,3,4,5].map((i) => <div key={i} className="h-12 bg-white/[0.03] rounded-xl animate-pulse-subtle border border-white/[0.06]" />)}
+            {[1,2,3,4,5].map((i) => <div key={i} className="h-12 bg-white/[0.03] rounded-xl animate-pulse-subtle" />)}
           </div>
         </main>
       ) : !app ? (
@@ -1835,7 +1864,7 @@ export function AppDetailPage() {
         <main className="flex-1 flex flex-col items-center justify-center gap-8 px-6">
           <div className="flex flex-col items-center gap-5 max-w-[400px] text-center">
             {/* Icon */}
-            <div className="w-16 h-16 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+            <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center">
               <span className="material-symbols-outlined text-accent text-[32px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
             </div>
 
@@ -1872,7 +1901,7 @@ export function AppDetailPage() {
                   key={hint}
                   type="button"
                   onClick={() => navigate(`/app/apps/${app.id}/revise?prompt=${encodeURIComponent(hint)}`)}
-                  className="text-left text-[12px] text-faint px-4 py-2.5 rounded-xl border border-white/[0.07] bg-white/[0.02] hover:border-accent/30 hover:text-ink hover:bg-accent/[0.04] transition-all cursor-pointer"
+                  className="text-left text-[12px] text-faint px-4 py-2.5 rounded-xl bg-white/[0.03] hover:text-ink hover:bg-accent/[0.06] transition-all cursor-pointer"
                 >
                   {hint}
                 </button>
@@ -1934,7 +1963,7 @@ export function AppDetailPage() {
           />
 
           {/* Tab bar */}
-          <div className="border-b border-white/[0.07] px-7 shrink-0">
+          <div className="border-b border-white/[0.04] px-7 shrink-0">
             <TabBar
               tabs={[
                 { id: "overview" as const, label: "Dashboard" },

@@ -56,7 +56,7 @@ export function BrandPanel({ tenantId }: Props) {
   };
 
   return (
-    <section className="border border-white/[0.07] rounded-xl p-5">
+    <section className="bg-white/[0.03] rounded-xl p-5">
       <div className="mb-1">
         <h2 className="text-[14px] font-semibold text-ink">Email brand</h2>
         <p className="text-[12px] text-faint mt-0.5">
@@ -67,10 +67,10 @@ export function BrandPanel({ tenantId }: Props) {
       {toast && (
         <div
           className={cn(
-            "mt-3 mb-1 px-3 py-2 rounded-md text-[12px] border",
+            "mt-3 mb-1 px-3 py-2 rounded-lg text-[12px]",
             toast.kind === "ok"
-              ? "border-teal/30 bg-teal/5 text-teal"
-              : "border-danger/30 bg-danger/5 text-danger"
+              ? "bg-teal/10 text-teal"
+              : "bg-danger/10 text-danger"
           )}
         >
           {toast.msg}
@@ -84,13 +84,13 @@ export function BrandPanel({ tenantId }: Props) {
             value={logoUrl}
             onChange={(e) => { setLogoUrl(e.target.value); markDirty(); }}
             placeholder="https://cdn.shopify.com/..."
-            className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.1] rounded-md text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
+            className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
           />
           {logoUrl && (
             // Previewing raw user input — safe because it's a merchant's own logo URL
             // rendered in their own dashboard; no cross-tenant exposure.
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={logoUrl} alt="Logo preview" className="mt-2 max-h-12 border border-white/[0.07] rounded bg-white/[0.02] p-1" />
+            <img src={logoUrl} alt="Logo preview" className="mt-2 max-h-12 rounded-lg bg-white/[0.03] p-1" />
           )}
         </Field>
 
@@ -100,14 +100,14 @@ export function BrandPanel({ tenantId }: Props) {
               type="color"
               value={primaryColor}
               onChange={(e) => { setPrimaryColor(e.target.value); markDirty(); }}
-              className="w-10 h-9 border border-white/[0.1] rounded bg-transparent cursor-pointer"
+              className="w-10 h-9 border border-white/[0.08] rounded-lg bg-transparent cursor-pointer"
             />
             <input
               type="text"
               value={primaryColor}
               onChange={(e) => { setPrimaryColor(e.target.value); markDirty(); }}
               placeholder="#1a73e8"
-              className="flex-1 px-3 py-2 bg-white/[0.03] border border-white/[0.1] rounded-md text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none font-mono"
+              className="flex-1 px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none font-mono"
             />
           </div>
         </Field>
@@ -118,7 +118,7 @@ export function BrandPanel({ tenantId }: Props) {
             onChange={(e) => { setFooterText(e.target.value); markDirty(); }}
             rows={3}
             placeholder="Acme Coffee Co. · 123 Main St, Austin TX · (555) 555-5555"
-            className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.1] rounded-md text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
+            className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
           />
         </Field>
 
@@ -128,7 +128,7 @@ export function BrandPanel({ tenantId }: Props) {
             value={supportEmail}
             onChange={(e) => { setSupportEmail(e.target.value); markDirty(); }}
             placeholder="support@yourstore.com"
-            className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.1] rounded-md text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
+            className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
           />
         </Field>
       </div>

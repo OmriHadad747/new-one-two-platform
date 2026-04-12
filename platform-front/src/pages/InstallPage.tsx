@@ -101,7 +101,7 @@ export function InstallPage() {
           </div>
 
           {/* Form card */}
-          <div className="bg-surface border border-white/[0.08] rounded-2xl p-7 space-y-5">
+          <div className="bg-surface rounded-xl p-7 space-y-5">
             <div>
               <label
                 htmlFor="shop-input"

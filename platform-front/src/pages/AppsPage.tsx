@@ -41,7 +41,7 @@ function AppCard({
   const gradient = AVATAR_GRADIENTS[seed % AVATAR_GRADIENTS.length];
 
   return (
-    <div className="group bg-white/[0.03] border border-white/[0.07] rounded-xl overflow-hidden hover:border-white/[0.13] hover:bg-white/[0.05] transition-colors duration-150 flex flex-col">
+    <div className="group bg-white/[0.03] rounded-xl overflow-hidden hover:bg-white/[0.05] transition-colors duration-150 flex flex-col">
 
       {/* Clickable body */}
       <button
@@ -73,7 +73,7 @@ function AppCard({
       </button>
 
       {/* Footer */}
-      <div className="px-5 py-3 border-t border-white/[0.05] flex items-center justify-between shrink-0">
+      <div className="px-5 py-3 border-t border-white/[0.04] flex items-center justify-between shrink-0">
         <span className="text-[11px] text-faint/70">{timeAgo(app.updatedAt)}</span>
         <div className="flex items-center gap-1">
           <button
@@ -115,7 +115,7 @@ export function AppsPage() {
         {appsQuery.isLoading && (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-[130px] bg-white/[0.03] rounded-2xl animate-pulse-subtle border border-white/[0.06]" />
+              <div key={i} className="h-[130px] bg-white/[0.03] rounded-xl animate-pulse-subtle" />
             ))}
           </div>
         )}
@@ -137,7 +137,7 @@ export function AppsPage() {
         {/* Empty state */}
         {!appsQuery.isLoading && !appsQuery.isError && apps.length === 0 && (
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
+            <div className="w-14 h-14 rounded-2xl bg-white/[0.04] flex items-center justify-center">
               <span className="material-symbols-outlined text-faint text-[28px]" style={{ fontVariationSettings: "'wght' 200" }}>layers</span>
             </div>
             <div>
@@ -170,7 +170,7 @@ export function AppsPage() {
             <button
               type="button"
               onClick={() => navigate("/app/new")}
-              className="group flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-white/[0.09] hover:border-accent/40 hover:bg-accent/[0.04] transition-all duration-200 cursor-pointer bg-transparent min-h-[130px]"
+              className="group flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-white/[0.09] hover:border-accent/40 hover:bg-accent/[0.04] transition-all duration-200 cursor-pointer bg-transparent min-h-[130px]"
             >
               <div className="w-10 h-10 rounded-xl bg-white/[0.04] group-hover:bg-accent/12 flex items-center justify-center transition-colors duration-200">
                 <span className="material-symbols-outlined text-faint group-hover:text-accent text-[22px] transition-colors duration-200">add</span>

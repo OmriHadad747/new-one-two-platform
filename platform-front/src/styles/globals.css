@@ -101,7 +101,6 @@
 /* glass-card adapts to theme */
 [data-theme="light"] .glass-card {
   background: rgba(255, 255, 255, 0.85);
-  border-color: rgba(0, 0, 0, 0.08);
 }
 
 /* divide-white-opacity → divide-black-opacity in light mode */
@@ -154,7 +153,6 @@
   .glass-card {
     background: rgba(31, 31, 36, 0.6);
     backdrop-filter: blur(24px);
-    border: 1px solid rgba(149, 142, 160, 0.15);
   }
 
   /* Kinetic button lift */
