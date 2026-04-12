@@ -5,7 +5,7 @@ export type TenantStatus = "active" | "suspended" | "pending";
 export type AppStatus = "draft" | "ready" | "active" | "inactive" | "deleted";
 export type AppArchetype = "storefront_backend" | "storefront_backend_admin" | "backend" | "backend_admin";
 
-export type BillingPlan = "free" | "starter" | "growth" | "pro";
+export type BillingPlan = "free" | "starter" | "growth" | "pro" | "internal";
 export type BillingInterval = "monthly" | "annual";
 export type SubscriptionStatus = "none" | "pending" | "active" | "frozen" | "cancelled";
 
@@ -38,6 +38,70 @@ export interface App {
   activeAppVersionId: string | null;
   createdAt: string;
   updatedAt: string;
+  // Email integration metadata — set by the generator and platform at bundle
+  // completion. `usesEmail` drives the Email tab in AppDetailPage, and
+  // `emailVariables` powers the token palette inside it.
+  usesEmail?: boolean;
+  emailVariables?: string[];
+}
+
+// ─── Email integration ──────────────────────────────────────────────────────
+
+export type EmailType = "transactional" | "marketing";
+
+export interface AppEmailConfig {
+  appId: string;
+  tenantId: string;
+  subjectTemplate: string;
+  headingTemplate: string | null;
+  bodyTemplate: string;
+  ctaLabel: string | null;
+  ctaUrlTemplate: string | null;
+  emailType: EmailType;
+  configuredByMerchant: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TenantBrand {
+  tenantId: string;
+  logoUrl: string | null;
+  primaryColor: string | null;
+  footerText: string | null;
+  supportEmail: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmailStatsSummary {
+  sent: number;
+  delivered: number;
+  bounced: number;
+  complained: number;
+  failed: number;
+  suppressed: number;
+}
+
+export interface EmailConfigResponse {
+  config: AppEmailConfig;
+  brand: TenantBrand | null;
+  variables: string[];
+}
+
+export interface EmailConfigUpdateBody {
+  subjectTemplate: string;
+  headingTemplate: string | null;
+  bodyTemplate: string;
+  ctaLabel: string | null;
+  ctaUrlTemplate: string | null;
+  emailType: EmailType;
+}
+
+export interface TenantBrandUpdateBody {
+  logoUrl?: string | null;
+  primaryColor?: string | null;
+  footerText?: string | null;
+  supportEmail?: string | null;
 }
 
 // ─── Theme Injection ──────────────────────────────────────────────────────────
@@ -81,20 +145,6 @@ export interface InjectThemeResponse {
   themeName: string;
   previewUrl: string;
   editorUrl: string;
-}
-
-// ─── Dashboard UI helpers ─────────────────────────────────────────────────────
-
-/** Computed from TenantStats — kept for StatsGrid component compatibility. */
-export type DashboardStats = TenantStats;
-
-export interface ActivityItem {
-  id: string;
-  icon: string;
-  text: string;
-  time: string;
-  tag: string;
-  tagVariant: "purple" | "teal";
 }
 
 // ─── Execution Logs ───────────────────────────────────────────────────────────

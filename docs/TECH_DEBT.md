@@ -88,28 +88,6 @@ Once TD-002 is resolved (agents return token counts), call `insertGenerationEven
 
 ---
 
-## TD-007 — Wire real email provider behind `ctx.email.send()`
-
-**Current state**
-`ctx.email.send({ to, subject, templateId, data })` exists in the harness contract and is already
-used by generated handlers. The current implementation is a log stub — it emits a structured
-`EMAIL_SENT` log event with the full delivery intent but does not deliver anything.
-
-**Affected files**
-- `platform/packages/harness/src/build-ctx.ts` — stub implementation of `ctx.email`
-- `generator/templates/harness_contract.py` — documents the `ctx.email` API surface
-
-**What to do**
-Replace the stub with a real provider adapter (Resend, SendGrid, Postmark, etc.):
-1. Store provider credentials in Secret Manager per-tenant (or platform-wide for MVP).
-2. Implement a provider adapter behind `ctx.email.send()` in `build-ctx.ts`.
-3. Add delivery status tracking and basic error handling (retry / dead-letter).
-4. The harness contract and all generated handlers require zero changes — the API surface is already correct.
-
-**Complexity:** Medium — provider adapter + tenant credential storage + error handling.
-
----
-
 ## TD-008 — MCP umbrella session: one NPX spawn per pipeline run
 
 **Current state**

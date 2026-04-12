@@ -2,7 +2,7 @@ import { NavLink, useNavigate, useParams } from "react-router";
 import { cn } from "@/lib/cn";
 import { useSessionStore } from "@/stores/session";
 import { useGenerationStore } from "@/stores/generation";
-import { useApps } from "@/hooks/useApps";
+import { useApps, useTenant } from "@/hooks/useApps";
 import type { App } from "@/types/dashboard";
 
 // ─── Status dot ───────────────────────────────────────────────────────────────
@@ -23,8 +23,9 @@ function AppStatusDot({ app, isGenerating }: { app: App; isGenerating: boolean }
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
-  const { shopDomain, plan, clear } = useSessionStore();
-  const { tenantId } = useSessionStore();
+  const { shopDomain, clear, tenantId } = useSessionStore();
+  const tenantQuery = useTenant(tenantId);
+  const plan = tenantQuery.data?.billingPlan ?? "free";
   const navigate = useNavigate();
   const { appId: activeAppId } = useParams<{ appId?: string }>();
   const activeGen = useGenerationStore((s) => s.active);

@@ -15,15 +15,25 @@ import type {
   ThemeTemplatesResponse,
   InjectionTarget,
   InjectThemeResponse,
+  EmailConfigResponse,
+  EmailConfigUpdateBody,
+  EmailStatsSummary,
+  AppEmailConfig,
+  TenantBrand,
+  TenantBrandUpdateBody,
 } from "@/types/dashboard";
+
+import { getAuthToken } from "./auth.js";
 
 const BASE = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const hasBody = init?.body != null;
+  const token = getAuthToken();
   const res = await fetch(`${BASE}${path}`, {
     headers: {
       ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
     ...init,
@@ -129,8 +139,14 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ feedback }),
       }),
-    progressStream: (jobId: string) =>
-      new EventSource(`${BASE}/generation/${jobId}/progress`),
+    progressStream: (jobId: string) => {
+      // EventSource does not support custom headers, so pass token via query param.
+      const token = getAuthToken();
+      const url = token
+        ? `${BASE}/generation/${jobId}/progress?token=${encodeURIComponent(token)}`
+        : `${BASE}/generation/${jobId}/progress`;
+      return new EventSource(url);
+    },
     analyze: (history: AnalyzeMessage[]) =>
       request<AnalyzeResult>("/generation/analyze", {
         method: "POST",
@@ -158,6 +174,35 @@ export const api = {
       request<Record<string, unknown>>(`/widgets/${encodeURIComponent(shopDomain)}/${appId}/widget/trigger`, {
         method: "POST",
         body: JSON.stringify({ test: true, ...payload }),
+      }),
+  },
+
+  email: {
+    // Per-app email configuration
+    getConfig: (appId: string) =>
+      request<EmailConfigResponse>(`/email/apps/${appId}/config`),
+    updateConfig: (appId: string, body: EmailConfigUpdateBody) =>
+      request<{ config: AppEmailConfig }>(`/email/apps/${appId}/config`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
+    sendTest: (appId: string, recipient?: string) =>
+      request<{ success: boolean; deliveryId: string; recipient: string }>(
+        `/email/apps/${appId}/test`,
+        {
+          method: "POST",
+          body: JSON.stringify({ recipient }),
+        }
+      ),
+    getStats: (appId: string) =>
+      request<EmailStatsSummary>(`/email/apps/${appId}/stats`),
+    // Tenant brand
+    getBrand: (tenantId: string) =>
+      request<{ brand: TenantBrand | null }>(`/email/tenants/${tenantId}/brand`),
+    updateBrand: (tenantId: string, body: TenantBrandUpdateBody) =>
+      request<{ brand: TenantBrand }>(`/email/tenants/${tenantId}/brand`, {
+        method: "PUT",
+        body: JSON.stringify(body),
       }),
   },
 } as const;

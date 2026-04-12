@@ -24,8 +24,7 @@ export interface Tenant {
   slug: string;                 // unique, URL-safe
   name: string;
   status: TenantStatus;
-  plan: string;                 // legacy TEXT column — use billingPlan for billing logic
-  billingPlan: import("./billing.js").BillingPlan;   // "free" | "starter" | "growth" | "pro"
+  billingPlan: import("./billing.js").BillingPlan;   // "free" | "starter" | "growth" | "pro" | "internal"
   billingInterval: import("./billing.js").BillingInterval; // "monthly" | "annual"
   subscriptionStatus: import("./billing.js").SubscriptionStatus;
   shopifySubscriptionId: string | null;
@@ -56,6 +55,10 @@ export interface App {
   themeInjectionThemeId: string | null; // numeric Shopify theme ID as string
   currentSemver: string | null;        // semver of the currently deployed version; null if never deployed
   activeAppVersionId: string | null;   // app_version_id of the currently active deployed_function; null if not active
+  /** TRUE when the generated handler calls ctx.email.send(). Drives Email tab + deploy blocking. */
+  usesEmail: boolean;
+  /** Variable names the handler passes in ctx.email.send({data:...}). Powers the token palette in the Email tab. */
+  emailVariables: string[];
   createdAt: Date;
   updatedAt: Date;
 }

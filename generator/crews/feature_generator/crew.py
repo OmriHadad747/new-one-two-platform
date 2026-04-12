@@ -48,6 +48,7 @@ from subagents.architect_agent import run_architect_agent
 from subagents.revision_agent import run_revision_agent
 from subagents.validator_agent import run_validator_agent
 from subagents.registry import GENERATORS
+from subagents.email_metadata import extract_email_metadata
 from subagents.static_validation import (
     validate_architect_plan,
     validate_widget_handler_contract,
@@ -163,6 +164,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
 
         _publish_success(
             request,
+            intent,
             plan,
             artifacts,
             is_storefront,
@@ -550,6 +552,7 @@ def _phase_explanation(
 
 def _publish_success(
     request: GenerationRequest,
+    intent: Dict,
     plan: Dict,
     artifacts: Dict[str, str],
     is_storefront: bool,
@@ -572,6 +575,12 @@ def _publish_success(
         return re.findall(r"""['"]([^'"]+)['"]""", match.group(1))
 
     app_contracts = plan.get("appContracts") or {}
+
+    # Email metadata: regex-scan the handler for ctx.email.send() + extract
+    # variables and build starter content. Drives the Email tab + deploy
+    # blocking on the platform side.
+    email_meta = extract_email_metadata(handler_code, intent or {}, plan or {})
+
     bundle = Bundle(
         widgetModule=artifacts.get("widget_js") if is_storefront else None,
         adminUiModule=artifacts.get("admin_ui") if is_admin_ui else None,
@@ -596,6 +605,10 @@ def _publish_success(
                 estimatedMonthlyCost=technical.get("estimatedMonthlyCost", "$0"),
             ),
         ),
+        usesEmail=bool(email_meta.get("usesEmail")),
+        emailVariables=email_meta.get("emailVariables", []) or [],
+        emailTypeSuggestion=email_meta.get("emailTypeSuggestion"),
+        emailStarterContent=email_meta.get("emailStarterContent"),
     )
 
     total_ms = _now_ms() - start_ms

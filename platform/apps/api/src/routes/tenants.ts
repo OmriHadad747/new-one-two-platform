@@ -48,7 +48,7 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   app.post<{ Body: CreateTenantRequest }>(
     "/",
     async (req: FastifyRequest<{ Body: CreateTenantRequest }>, reply: FastifyReply) => {
-      const { id, slug, name, plan } = req.body;
+      const { id, slug, name } = req.body;
 
       if (!slug || !name) {
         return reply.status(400).send({ error: "slug and name are required" });
@@ -56,7 +56,6 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
       const { id: tenantId } = await createTenant({
         ...(id !== undefined && { id }),
-        ...(plan !== undefined && { plan }),
         slug,
         name,
       });

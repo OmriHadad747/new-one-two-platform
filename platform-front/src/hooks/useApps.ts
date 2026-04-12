@@ -47,16 +47,6 @@ export function useTenantStats(tenantId: string | null) {
   });
 }
 
-export function useWebhookLogs(tenantId: string | null, limit = 20) {
-  return useQuery({
-    queryKey: ["logs", tenantId, limit],
-    queryFn: () => api.tenants.logs(tenantId!, limit),
-    enabled: !!tenantId,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-  });
-}
-
 /**
  * Polls execution logs filtered to a single app every 5 seconds.
  * Used by the AppTestingPanel to show live backend activity.

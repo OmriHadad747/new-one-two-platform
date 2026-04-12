@@ -74,6 +74,15 @@ class FeatureExplanation(BaseModel):
     technical: TechnicalExplanation
 
 
+class EmailStarterContent(BaseModel):
+    """AI-generated pre-fill used to seed app_email_configs on deploy."""
+    subject: str
+    heading: Optional[str] = None
+    body: str
+    ctaLabel: Optional[str] = None
+    ctaUrl: Optional[str] = None
+
+
 class Bundle(BaseModel):
     widgetModule: Optional[str] = (
         None  # storefront ES module (storefront_backend / storefront_backend_admin apps)
@@ -88,15 +97,28 @@ class Bundle(BaseModel):
     dbMigration: DbMigration
     explanation: FeatureExplanation
 
+    # ─── Email metadata (set when handler calls ctx.email.send) ──────────────
+    usesEmail: bool = False
+    emailVariables: List[str] = Field(default_factory=list)
+    emailTypeSuggestion: Optional[Literal["transactional", "marketing"]] = None
+    emailStarterContent: Optional[EmailStarterContent] = None
+
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "widgetModule": self.widgetModule,
             "adminUiModule": self.adminUiModule,
             "widgetTargetTemplates": self.widgetTargetTemplates,
             "handlerModule": self.handlerModule.model_dump(),
             "dbMigration": self.dbMigration.model_dump(),
             "explanation": self.explanation.model_dump(),
+            "usesEmail": self.usesEmail,
+            "emailVariables": self.emailVariables,
         }
+        if self.emailTypeSuggestion is not None:
+            d["emailTypeSuggestion"] = self.emailTypeSuggestion
+        if self.emailStarterContent is not None:
+            d["emailStarterContent"] = self.emailStarterContent.model_dump()
+        return d
 
 
 class AgentTraceEntry(BaseModel):

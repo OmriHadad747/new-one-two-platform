@@ -19,6 +19,7 @@ import {
   updateTenantStorefrontToken,
 } from "@new-one-two/db";
 import { reRegisterTenantWebhooks } from "../lib/shopify-webhooks.js";
+import { signJwt } from "../plugins/auth.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -149,7 +150,11 @@ export const oauthRoute: FastifyPluginAsync = async (app) => {
         logger.warn({ err, shop, tenantId }, "Failed to re-register webhooks after OAuth — continuing");
       }
 
-      return reply.redirect(`${DASHBOARD_URL}/merchants/${tenantId}`);
+      // Issue a platform JWT so the dashboard can authenticate subsequent API calls.
+      const platformToken = signJwt({ tenantId, shopDomain: shop });
+      const redirectUrl = new URL(`${DASHBOARD_URL}/merchants/${tenantId}`);
+      redirectUrl.searchParams.set("token", platformToken);
+      return reply.redirect(redirectUrl.toString());
     }
   );
 };

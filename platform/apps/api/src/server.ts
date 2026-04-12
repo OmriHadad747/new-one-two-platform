@@ -12,6 +12,8 @@ import { widgetJsRoutes } from "./routes/widget-js.js";
 import { adminUiRoutes } from "./routes/admin-ui.js";
 import { oauthRoute } from "./routes/oauth.js";
 import { billingRoute } from "./routes/billing.js";
+import { emailRoute } from "./routes/email.js";
+import { authHook } from "./plugins/auth.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3002", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -28,7 +30,25 @@ export async function buildServer() {
   // The SSE fan-out and bundle persistence both depend on these being active.
   await startSubscriptions();
 
-  await app.register(cors, { origin: "*", allowedHeaders: "*" });
+  // CORS: in production, restrict to ALLOWED_ORIGINS; in dev, allow all origins
+  // so ngrok, localhost, and Shopify test stores keep working.
+  const allowedOrigins = process.env["ALLOWED_ORIGINS"]
+    ? process.env["ALLOWED_ORIGINS"].split(",").map((o) => o.trim())
+    : undefined;
+
+  await app.register(cors, {
+    origin: process.env["NODE_ENV"] === "production" && allowedOrigins
+      ? allowedOrigins
+      : true,
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
+  });
+
+  // Auth hook: validates Bearer tokens (or ?token= query param for SSE) on
+  // protected routes. Added directly via addHook to avoid Fastify encapsulation —
+  // ensures the hook applies to ALL routes, not just those inside a sub-plugin.
+  // Exempt: /health, /oauth, /widgets, /admin-ui, billing callback/webhook
+  app.addHook("onRequest", authHook);
 
   await app.register(healthRoute, { prefix: "/health" });
   await app.register(generationRoute, { prefix: "/generation" });
@@ -37,6 +57,7 @@ export async function buildServer() {
   await app.register(adminUiRoutes, { prefix: "/admin-ui" });
   await app.register(oauthRoute, { prefix: "/oauth" });
   await app.register(billingRoute, { prefix: "/billing" });
+  await app.register(emailRoute, { prefix: "/email" });
 
   app.setErrorHandler((err, _req, reply) => {
     logger.error({ err }, "Unhandled error");

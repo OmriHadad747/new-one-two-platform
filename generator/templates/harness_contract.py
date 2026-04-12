@@ -105,13 +105,48 @@ ctx.shop — Shopify store info
 
 These are provided by the platform. No npm package needed — always available via ctx.
 
-ctx.services.email.send({ to, subject, templateId?, data? }) → Promise<void>
-  Send a transactional email. Stub in MVP (logs EMAIL_SENT) — real Resend in Phase 3.
-    to:         recipient email address
-    subject:    email subject line
-    templateId: optional provider template ID (short opaque string like 'd-abc123', NEVER a URL)
-    data:       optional template variables, e.g. { firstName, productTitle }
-  Example: await ctx.services.email.send({ to: order.email, subject: 'Your order shipped!', data: { trackingNumber } })
+ctx.services.email.send({ to, data? }) → Promise<void>
+  Send an email via the platform's email service (Resend-backed).
+
+  The handler ONLY provides the recipient and runtime variables. The platform
+  owns everything else — subject, body, brand, layout, from address, delivery,
+  tracking, unsubscribe. The merchant configures the template (subject, body,
+  CTA, brand) in the Ton dashboard's Email tab; any {{variable}} placeholders
+  they put in those fields are resolved against `data` at send time.
+
+    to:    recipient email address (string)
+    data:  optional variables bound to {{variable}} placeholders in the
+           merchant-configured template. Include whatever dynamic values the
+           merchant will want to reference: customer name, order ID, product
+           title, URLs, amounts, etc.
+
+  DO NOT pass `subject`, `templateId`, or HTML — those fields no longer exist
+  on the API. DO NOT store email HTML in your app's DB tables or compile
+  templates with Handlebars inside the handler — the platform does all of that.
+
+  The variable names you pass in `data` become the token palette shown to the
+  merchant in the Email tab, so use descriptive names (customerName, cartTotal,
+  recoveryUrl) rather than single letters.
+
+  Example:
+    await ctx.services.email.send({
+      to: cart.customerEmail,
+      data: {
+        customerName: cart.customerName,
+        cartTotal:    cart.total,
+        currency:     cart.currency,
+        recoveryUrl:  cart.recoveryUrl,
+      },
+    })
+
+  The merchant-configured template might then read:
+    Subject: "{{customerName}}, your cart is waiting"
+    Body:    "Come back and finish your order — {{cartTotal}} {{currency}}."
+    CTA:     "Return to checkout" → {{recoveryUrl}}
+
+  Deploy is blocked on apps that call ctx.email.send until the merchant has
+  saved the Email tab at least once. That's by design — uncustomized emails
+  would look generic and hurt the merchant's brand.
 
 ctx.services.sms.send({ to, body }) → Promise<void>
   Send an SMS. Stub in MVP (logs SMS_SENT) — real Twilio in Phase 3.

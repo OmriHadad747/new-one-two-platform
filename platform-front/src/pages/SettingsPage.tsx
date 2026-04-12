@@ -4,8 +4,10 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { useSessionStore } from "@/stores/session";
 import { useTenant, useTenantStats, useBillingUsage } from "@/hooks/useApps";
+import { useThemeStore } from "@/stores/theme";
 import { api } from "@/lib/api";
 import type { BillingPlan } from "@/types/dashboard";
+import { BrandPanel } from "@/components/features/email/BrandPanel";
 
 // ─── Ring Progress ────────────────────────────────────────────────────────────
 
@@ -324,13 +326,26 @@ function PlanModal({
   );
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Plan badge styles ────────────────────────────────────────────────────────
+// Inline styles bypass Tailwind scanning — color values are always applied.
+// Dark: light tints on dark surfaces. Light: solid chip colors on white.
 
-const PLAN_COLORS: Record<string, string> = {
-  free:    "text-faint border-white/10 bg-white/[0.04]",
-  starter: "text-sky-300 border-sky-400/20 bg-sky-400/[0.08]",
-  growth:  "text-emerald-300 border-emerald-400/20 bg-emerald-400/[0.08]",
-  pro:     "text-accent border-accent/20 bg-accent/[0.08]",
+type PlanStyle = { color: string; borderColor: string; backgroundColor: string };
+
+const PLAN_BADGE_DARK: Record<string, PlanStyle> = {
+  free:     { color: "var(--color-faint)",  borderColor: "rgba(255,255,255,0.10)", backgroundColor: "rgba(255,255,255,0.04)" },
+  starter:  { color: "#7dd3fc",             borderColor: "rgba(56,189,248,0.25)",  backgroundColor: "rgba(56,189,248,0.08)"  },
+  growth:   { color: "#6ee7b7",             borderColor: "rgba(52,211,153,0.25)",  backgroundColor: "rgba(52,211,153,0.08)"  },
+  pro:      { color: "var(--color-accent)", borderColor: "rgba(167,139,250,0.25)", backgroundColor: "rgba(167,139,250,0.08)" },
+  internal: { color: "#fcd34d",             borderColor: "rgba(251,191,36,0.25)",  backgroundColor: "rgba(251,191,36,0.08)"  },
+};
+
+const PLAN_BADGE_LIGHT: Record<string, PlanStyle> = {
+  free:     { color: "var(--color-faint)",  borderColor: "rgba(0,0,0,0.12)",       backgroundColor: "rgba(0,0,0,0.04)"       },
+  starter:  { color: "#075985",             borderColor: "#7dd3fc",                backgroundColor: "#f0f9ff"                 },
+  growth:   { color: "#065f46",             borderColor: "#6ee7b7",                backgroundColor: "#ecfdf5"                 },
+  pro:      { color: "var(--color-accent)", borderColor: "rgba(124,58,237,0.35)",  backgroundColor: "#f5f3ff"                 },
+  internal: { color: "#92400e",             borderColor: "#f59e0b",                backgroundColor: "#fffbeb"                 },
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -340,15 +355,17 @@ export function SettingsPage() {
   const tenantQuery  = useTenant(tenantId);
   const statsQuery   = useTenantStats(tenantId);
   const usageQuery   = useBillingUsage(tenantId);
+  const { theme }    = useThemeStore();
   const [showUpgrade, setShowUpgrade] = useState(false);
 
   const tenant  = tenantQuery.data;
   const stats   = statsQuery.data;
   const billing = usageQuery.data;
 
-  const plan     = tenant?.billingPlan ?? "free";
-  const planColor = PLAN_COLORS[plan] ?? PLAN_COLORS["free"]!;
-  const canUpgrade = plan !== "pro";
+  const plan      = tenant?.billingPlan ?? "free";
+  const planTable = theme === "light" ? PLAN_BADGE_LIGHT : PLAN_BADGE_DARK;
+  const planStyle = planTable[plan] ?? planTable["free"]!;
+  const canUpgrade = plan !== "pro" && plan !== "internal";
   const connectedDomain = shopDomain ?? tenant?.shopDomain ?? null;
 
   const limits = billing?.limits;
@@ -368,7 +385,7 @@ export function SettingsPage() {
 
           <div className="flex items-center justify-between px-6 pb-3">
             <div className="flex items-center gap-3">
-              <span className={`text-[12px] font-semibold px-3 py-1 rounded-full border capitalize ${planColor}`}>{plan}</span>
+              <span className="text-[12px] font-semibold px-3 py-1 rounded-full border capitalize" style={planStyle}>{plan}</span>
               {tenant?.subscriptionStatus === "active" && <span className="text-[12px] text-teal">· Active</span>}
               {tenant?.subscriptionStatus === "frozen" && <span className="text-[12px] text-danger">· Payment issue</span>}
               {tenant?.subscriptionStatus === "pending" && <span className="text-[12px] text-faint">· Pending</span>}
@@ -472,6 +489,9 @@ export function SettingsPage() {
             <Button variant="danger" size="sm">Disconnect</Button>
           </div>
         </section>
+
+        {/* Email brand — tenant-level, shared across every email-using app */}
+        {tenantId && <BrandPanel tenantId={tenantId} />}
 
       </main>
 

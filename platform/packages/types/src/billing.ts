@@ -4,7 +4,7 @@
 // Shopify Billing API is the sole payment provider (custom distribution, 0% rev share).
 // Plans gate: app count, generation count, app categories, service quotas.
 
-export type BillingPlan = "free" | "starter" | "growth" | "pro";
+export type BillingPlan = "free" | "starter" | "growth" | "pro" | "internal";
 
 export type BillingInterval = "monthly" | "annual";
 
@@ -161,6 +161,26 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
       trialDays: 14,
     },
   },
+  internal: {
+    id: "internal",
+    name: "Internal",
+    priceMonthly: 0,
+    priceYearly: 0,
+    limits: {
+      maxApps: 999_999,
+      maxGenerationsPerMonth: 999_999,
+      allowedCategories: [
+        "storefront_backend",
+        "storefront_backend_admin",
+        "backend",
+        "backend_admin",
+      ],
+      maxAppExecutionsPerMonth: 999_999,
+      maxEmailsPerMonth: 999_999,
+      maxSmsPerMonth: 999_999,
+      trialDays: 0,
+    },
+  },
 };
 
 export function getPlanLimits(plan: BillingPlan): PlanLimits {
@@ -168,7 +188,7 @@ export function getPlanLimits(plan: BillingPlan): PlanLimits {
 }
 
 export function getAllPlans(): PlanDefinition[] {
-  return Object.values(PLANS);
+  return Object.values(PLANS).filter(p => p.id !== "internal");
 }
 
 // ─── API DTOs ─────────────────────────────────────────────────────────────────
