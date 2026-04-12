@@ -523,6 +523,77 @@ export function NewAppPage() {
     ];
   }, [apps, tenantId, start, queryClient, clearDraftMessages, setAnalyzePhase, setAnalyzeHistory]);
 
+  // ── Component-picker confirm handlers ─────────────────────────────────────
+
+  const handleConfirmGenerate = useCallback((
+    msgId: string,
+    updatedIntent: Record<string, unknown>,
+    originalPrompt: string,
+  ) => {
+    if (confirmingRef.current) return;
+    confirmingRef.current = true;
+
+    const appIdForGen = selectedAppId;
+    const suggestedName = appIdForGen
+      ? (apps.find((a) => a.id === appIdForGen)?.name ?? nameFromPrompt(originalPrompt))
+      : nameFromPrompt(originalPrompt);
+
+    setNameModal({
+      suggestedName,
+      onConfirm: async (chosenName: string) => {
+        setNameModal(null);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === msgId ? { ...m, confirmData: undefined } : m)),
+        );
+
+        let appId = appIdForGen;
+        if (!appId) {
+          const slug = slugFromName(chosenName);
+          try {
+            const newApp = await api.apps.create(tenantId!, { slug, name: chosenName });
+            appId = newApp.id;
+            setSelectedAppId(newApp.id);
+            await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+          } catch (err) {
+            setMessages((prev) => [
+              ...prev,
+              { id: crypto.randomUUID(), role: "ai" as const, text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}` },
+            ]);
+            setAnalyzePhase("idle");
+            confirmingRef.current = false;
+            return;
+          }
+        } else {
+          await api.apps.rename(tenantId!, appId, chosenName).catch(() => null);
+          await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+          await queryClient.invalidateQueries({ queryKey: ["app", tenantId, appId] });
+        }
+
+        setAnalyzePhase("idle");
+        setAnalyzeHistory([]);
+
+        const genMsgId = crypto.randomUUID();
+        genMsgIdRef.current = genMsgId;
+        setMessages((prev) => [
+          ...prev,
+          { id: genMsgId, role: "ai" as const, type: "generating" as const },
+        ]);
+        if (appId) clearDraftMessages(appId);
+        lastStartParamsRef.current = { appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: updatedIntent };
+        await start({ appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: updatedIntent });
+      },
+    });
+  }, [selectedAppId, apps, tenantId, start, queryClient, clearDraftMessages, setAnalyzePhase, setAnalyzeHistory]);
+
+  const handleConfirmChangeRequest = useCallback((msgId: string) => {
+    setMessages((prev) => prev.map((m) =>
+      m.id === msgId ? { ...m, confirmData: undefined } : m,
+    ));
+    setAnalyzePhase("idle");
+    setAnalyzeHistory([]);
+    confirmingRef.current = false;
+  }, [setAnalyzePhase, setAnalyzeHistory]);
+
   // ── Analyze ──────────────────────────────────────────────────────────────────
 
   const runAnalyze = useCallback(async (history: AnalyzeMessage[], appIdForGen: string | null) => {
@@ -700,6 +771,8 @@ export function NewAppPage() {
           generationCompleted={gen.status === "completed"}
           stuckWarning={stuckWarning}
           onClarifyAnswer={handleClarifyAnswer}
+          onConfirmGenerate={handleConfirmGenerate}
+          onConfirmChangeRequest={handleConfirmChangeRequest}
         />
         <ChatInput
           value={input}
