@@ -222,7 +222,7 @@ async function processWebhookJob(job: Job<WebhookJobPayload>): Promise<void> {
 
 // ─── Worker Events ─────────────────────────────────────────────────────────────
 
-worker.on("error", (err) => {
+worker.on("error", (err: Error) => {
   console.error("Worker error:", err);
 });
 
