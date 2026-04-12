@@ -26,7 +26,7 @@ Step-by-step instructions to deploy the New One Two Platform to Google Cloud Pla
        └────┬─────┘       │     ┌──────▼───────┐
             │             │     │   Harness     │
        ┌────▼─────┐       │     │  Cloud Run    │
-       │Generator │       │     │ (per-tenant)  │
+       │Generator │       │     │  (per-app)    │
        │Cloud Run │       │     └──────────────┘
        └──────────┘       │
                     ┌─────▼──────────────────────┐
@@ -52,10 +52,10 @@ Step-by-step instructions to deploy the New One Two Platform to Google Cloud Pla
 ## Step 1: Create GCP Project
 
 ```bash
-export PROJECT_ID=new-one-two-prod   # choose your project ID
+export PROJECT_ID=newonetwo-493019
 export REGION=us-central1
 
-gcloud projects create $PROJECT_ID
+# Project already created via GCP Console — skip gcloud projects create
 gcloud config set project $PROJECT_ID
 
 # Enable billing (do this in the Console if not already done)
@@ -76,7 +76,8 @@ gcloud services enable \
   secretmanager.googleapis.com \
   storage.googleapis.com \
   vpcaccess.googleapis.com \
-  compute.googleapis.com
+  compute.googleapis.com \
+  servicenetworking.googleapis.com
 ```
 
 ## Step 3: Create Artifact Registry Repository
@@ -93,11 +94,25 @@ export REGISTRY=$REGION-docker.pkg.dev/$PROJECT_ID/new-one-two
 
 ## Step 4: Set Up Networking
 
-Cloud Run services need to reach Cloud SQL and Memorystore via private IP.
-Create a VPC connector:
+Two things are needed: private services access (VPC peering so Cloud SQL gets a
+private IP) and a VPC connector (so Cloud Run can reach that private IP).
 
 ```bash
-# Create a VPC connector for Cloud Run → private services
+# 1. Allocate an IP range for Google-managed services (Cloud SQL, Memorystore)
+gcloud compute addresses create google-managed-services-default \
+  --global \
+  --purpose=VPC_PEERING \
+  --prefix-length=16 \
+  --network=default
+
+# 2. Create the VPC peering connection (enables --no-assign-ip on Cloud SQL)
+gcloud services vpc-peerings connect \
+  --service=servicenetworking.googleapis.com \
+  --ranges=google-managed-services-default \
+  --network=default \
+  --project=$PROJECT_ID
+
+# 3. Create a VPC connector for Cloud Run → private services
 gcloud compute networks vpc-access connectors create platform-connector \
   --region=$REGION \
   --range=10.8.0.0/28
@@ -108,11 +123,19 @@ export VPC_CONNECTOR=projects/$PROJECT_ID/locations/$REGION/connectors/platform-
 
 ## Step 5: Provision Cloud SQL (PostgreSQL 16)
 
+> **Tier note:** GCP now defaults to the `ENTERPRISE_PLUS` edition, which only
+> accepts `db-perf-optimized-N-*` tiers (expensive). Adding `--edition=ENTERPRISE`
+> unlocks the cheaper `db-custom-*` naming. See the
+> [Bootstrap vs Production Sizing](#bootstrap-vs-production-sizing) section below
+> to pick the right tier for your stage.
+
 ```bash
-# Create the instance (adjust tier for your needs)
+# Create the instance
+# Bootstrap tier shown — see sizing table to upgrade for production
 gcloud sql instances create new-one-two-db \
   --database-version=POSTGRES_16 \
-  --tier=db-custom-2-4096 \
+  --edition=ENTERPRISE \
+  --tier=db-custom-1-3840 \
   --region=$REGION \
   --storage-size=20GB \
   --storage-auto-increase \
@@ -144,8 +167,8 @@ Save the private IP as `$DB_HOST`.
 ### Run Migrations
 
 ```bash
-# Install Cloud SQL Proxy locally
-gcloud components install cloud-sql-proxy
+# Install Cloud SQL Proxy locally (one-time)
+brew install cloud-sql-proxy
 
 # Start proxy in a separate terminal
 cloud-sql-proxy $PROJECT_ID:$REGION:new-one-two-db --port 5432
@@ -664,6 +687,54 @@ gcloud iam service-accounts keys create /tmp/ci-key.json \
 cat /tmp/ci-key.json   # copy this entire JSON as the GCP_SA_KEY secret
 rm /tmp/ci-key.json
 ```
+
+---
+
+## Bootstrap vs Production Sizing
+
+Cost comparison to help decide what to run at each stage.
+
+### Cloud SQL
+
+| Stage | Flags | vCPU | RAM | Est. cost/mo |
+|-------|-------|------|-----|-------------|
+| Bootstrap | `--edition=ENTERPRISE --tier=db-f1-micro` | 0.6 shared | 0.6 GB | ~$8 |
+| Early prod | `--edition=ENTERPRISE --tier=db-custom-1-3840` | 1 | 3.75 GB | ~$52 |
+| Prod | `--edition=ENTERPRISE --tier=db-custom-2-7680` | 2 | 7.5 GB | ~$103 |
+| Prod+ | `--edition=ENTERPRISE_PLUS --tier=db-perf-optimized-N-2` | 2 | 16 GB | ~$300+ |
+
+`db-f1-micro` qualifies for the GCP Always Free tier (1 instance, us-central1,
+up to 30 GB storage). Fine for solo testing, not for real merchant traffic.
+`db-custom-1-3840` is the recommended bootstrap production tier — real vCPU,
+enough RAM for RLS-heavy queries, and ~$52/mo.
+
+To upgrade an existing instance without recreating it:
+```bash
+gcloud sql instances patch new-one-two-db --tier=db-custom-2-7680
+```
+
+### Memorystore (Redis)
+
+| Stage | Flags | Est. cost/mo |
+|-------|-------|-------------|
+| Bootstrap | `--size=1` | ~$49 |
+| Prod | `--size=2` | ~$97 |
+
+No free tier. `--size=1` (1 GB) is the minimum and sufficient until you have
+many concurrent generation sessions.
+
+### Cloud Run (per service)
+
+| Setting | Bootstrap | Production |
+|---------|-----------|------------|
+| `--min-instances` | `0` (scale to zero) | `1` (no cold starts) |
+| `--max-instances` | `3` | `10` |
+| API memory | `256Mi` | `512Mi` |
+| Generator memory | `512Mi` | `1Gi` |
+
+`--min-instances=0` saves ~$15–30/mo per service but adds a cold-start delay
+(~2–3 s) on the first request after idle. Fine for bootstrap; set to `1` before
+going to real merchants.
 
 ---
 

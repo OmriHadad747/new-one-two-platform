@@ -7,19 +7,17 @@ export async function createTenant(params: {
   id?: string;
   slug: string;
   name: string;
-  plan?: string;
   shopDomain?: string;
   shopifyAccessTokenSecretName?: string;
   kmsKeyName?: string;
 }): Promise<{ id: string }> {
   const rows = await sql<{ id: string }[]>`
-    INSERT INTO tenants (id, slug, name, status, plan, shop_domain, shopify_access_token_secret_name, kms_key_name)
+    INSERT INTO tenants (id, slug, name, status, shop_domain, shopify_access_token_secret_name, kms_key_name)
     VALUES (
       ${params.id ?? sql`uuid_generate_v4()`},
       ${params.slug},
       ${params.name},
       'active',
-      ${params.plan ?? "free"},
       ${params.shopDomain ?? null},
       ${params.shopifyAccessTokenSecretName ?? null},
       ${params.kmsKeyName ?? "projects/local/locations/global/keyRings/dev/cryptoKeys/dev-key"}
@@ -36,7 +34,6 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       slug: string;
       name: string;
       status: string;
-      plan: string;
       billingPlan: string;
       billingInterval: string;
       subscriptionStatus: string;
@@ -57,7 +54,6 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       slug,
       name,
       status,
-      plan,
       billing_plan                            AS "billingPlan",
       billing_interval                        AS "billingInterval",
       subscription_status                     AS "subscriptionStatus",
@@ -82,7 +78,6 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
     slug: row.slug,
     name: row.name,
     status: row.status as Tenant["status"],
-    plan: row.plan,
     billingPlan: row.billingPlan as Tenant["billingPlan"],
     billingInterval: (row.billingInterval ?? "monthly") as Tenant["billingInterval"],
     subscriptionStatus: row.subscriptionStatus as Tenant["subscriptionStatus"],
@@ -109,7 +104,6 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
       slug: string;
       name: string;
       status: string;
-      plan: string;
       billingPlan: string;
       billingInterval: string;
       subscriptionStatus: string;
@@ -130,7 +124,6 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
       slug,
       name,
       status,
-      plan,
       billing_plan                            AS "billingPlan",
       billing_interval                        AS "billingInterval",
       subscription_status                     AS "subscriptionStatus",
@@ -155,7 +148,6 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
     slug: row.slug,
     name: row.name,
     status: row.status as Tenant["status"],
-    plan: row.plan,
     billingPlan: row.billingPlan as Tenant["billingPlan"],
     billingInterval: (row.billingInterval ?? "monthly") as Tenant["billingInterval"],
     subscriptionStatus: row.subscriptionStatus as Tenant["subscriptionStatus"],

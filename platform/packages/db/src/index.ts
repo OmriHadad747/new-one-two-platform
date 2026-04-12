@@ -24,7 +24,6 @@ export {
   createGenerationSession,
   updateGenerationSession,
   cancelGenerationSession,
-  insertGenerationEvent,
   createDraftAppVersion,
   getLatestSessionForApp,
   getSessionsForApp,
