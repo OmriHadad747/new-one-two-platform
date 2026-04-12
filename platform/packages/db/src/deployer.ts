@@ -126,6 +126,8 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
       themeInjectionThemeId: null,
       currentSemver: null,
       activeAppVersionId: null,
+      usesEmail: false,
+      emailVariables: [],
       createdAt: row.appCreatedAt,
       updatedAt: row.appUpdatedAt,
     },

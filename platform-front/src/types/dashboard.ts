@@ -5,7 +5,7 @@ export type TenantStatus = "active" | "suspended" | "pending";
 export type AppStatus = "draft" | "ready" | "active" | "inactive" | "deleted";
 export type AppArchetype = "storefront_backend" | "storefront_backend_admin" | "backend" | "backend_admin";
 
-export type BillingPlan = "free" | "starter" | "growth" | "pro";
+export type BillingPlan = "free" | "starter" | "growth" | "pro" | "internal";
 export type BillingInterval = "monthly" | "annual";
 export type SubscriptionStatus = "none" | "pending" | "active" | "frozen" | "cancelled";
 
