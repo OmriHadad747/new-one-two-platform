@@ -151,6 +151,21 @@ jobs:
             );
           "
 
+          # Bootstrap: if the tracking table is empty but the schema already
+          # exists (e.g. DB was initialized manually), mark existing migrations
+          # as applied so we don't re-run them and fail on duplicate objects.
+          TRACKING_EMPTY=$(psql "${PSQL_ARGS[@]}" -tAc "SELECT COUNT(*) FROM _schema_migrations")
+          if [ "$TRACKING_EMPTY" = "0" ]; then
+            SCHEMA_EXISTS=$(psql "${PSQL_ARGS[@]}" -tAc "SELECT 1 FROM pg_type WHERE typname='tenant_status'")
+            if [ "$SCHEMA_EXISTS" = "1" ]; then
+              echo "Schema already exists but tracking table is empty — recording existing migrations as applied."
+              for migration in platform/packages/db/migrations/*.sql; do
+                filename=$(basename "$migration")
+                psql "${PSQL_ARGS[@]}" -c "INSERT INTO _schema_migrations (filename) VALUES ('${filename}') ON CONFLICT DO NOTHING"
+              done
+            fi
+          fi
+
           # Run only NEW migration files in order
           for migration in platform/packages/db/migrations/*.sql; do
             filename=$(basename "$migration")
