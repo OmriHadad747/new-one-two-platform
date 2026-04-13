@@ -46,6 +46,4 @@ scripts/
 
 handler.js
 
-shopify_mcp/cache/
-
-pass-temp
+generator/shopify_mcp/cache/
