@@ -302,8 +302,11 @@ jobs:
 
       - name: Deploy frontend to GCS
         run: |
-          gsutil -m rsync -r -d platform-front/dist gs://${{ vars.FRONTEND_BUCKET }}/
-          gsutil -m setmeta -h "Cache-Control:public, max-age=3600" \
-            "gs://${{ vars.FRONTEND_BUCKET }}/assets/**"
-          gsutil -m setmeta -h "Cache-Control:no-cache" \
-            "gs://${{ vars.FRONTEND_BUCKET }}/index.html"
+          gcloud storage rsync -r --delete-unmatched-destination-objects \
+            platform-front/dist gs://${{ vars.FRONTEND_BUCKET }}/
+          gcloud storage objects update \
+            "gs://${{ vars.FRONTEND_BUCKET }}/assets/**" \
+            --cache-control="public, max-age=3600"
+          gcloud storage objects update \
+            "gs://${{ vars.FRONTEND_BUCKET }}/index.html" \
+            --cache-control="no-cache"
