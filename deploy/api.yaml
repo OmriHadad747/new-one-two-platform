@@ -49,7 +49,7 @@ spec:
             - name: GENERATOR_URL
               value: https://generator-wofefyatrq-uc.a.run.app
             - name: PLATFORM_URL
-              value: https://api.newonetwo.com
+              value: https://dashboard.newonetwo.com/api
             - name: DASHBOARD_URL
               value: https://dashboard.newonetwo.com
             - name: WEBHOOK_BASE_URL
