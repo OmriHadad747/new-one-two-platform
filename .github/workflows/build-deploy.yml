@@ -245,7 +245,9 @@ jobs:
           env_vars: |
             DATABASE_URL=${{ secrets.DATABASE_URL }}
             REDIS_HOST=${{ vars.REDIS_HOST }}
+            REDIS_PORT=${{ vars.REDIS_PORT }}
             REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+            REDIS_TLS=true
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             SHOPIFY_CLIENT_ID=${{ secrets.SHOPIFY_CLIENT_ID }}
             SHOPIFY_CLIENT_SECRET=${{ secrets.SHOPIFY_CLIENT_SECRET }}
