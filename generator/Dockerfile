@@ -12,4 +12,4 @@ COPY . .
 ENV PORT=8001
 EXPOSE 8001
 
-CMD ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "api.server:create_app", "--factory", "--host", "0.0.0.0", "--port", "8001"]

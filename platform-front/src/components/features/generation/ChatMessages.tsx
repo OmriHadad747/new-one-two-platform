@@ -2,6 +2,7 @@ import { forwardRef, useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { cn } from "@/lib/cn";
 import { ArchetypePills } from "@/components/ui/ArchetypePills";
+import { useThemeStore } from "@/stores/theme";
 import type { AppArchetype, ProgressEvent } from "@/types/dashboard";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -269,11 +270,14 @@ function ExplanationText({ text }: { text: string }) {
 
 function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
   const navigate = useNavigate();
-  const triggerLabel =
-    bundle?.triggerType === "cron"   ? "Scheduled (cron)"  :
-    bundle?.triggerType === "admin"  ? "Admin-triggered"   :
-    bundle?.triggerType === "widget" ? "Widget interaction" :
-    bundle?.triggerTopics?.[0]       ?? "Webhook-triggered";
+  const triggerLabel = (() => {
+    const labels: string[] = [];
+    if (bundle?.triggerType === "cron")   labels.push("Scheduled (cron)");
+    if (bundle?.triggerType === "admin")  labels.push("Admin-triggered");
+    if (bundle?.triggerType === "widget") labels.push("Widget interaction");
+    if (bundle?.triggerTopics?.length)    labels.push(...bundle.triggerTopics);
+    return labels.length > 0 ? labels.join(", ") : "Webhook-triggered";
+  })();
 
   return (
     <div className="mt-2.5 max-w-[420px] space-y-3">
@@ -448,6 +452,146 @@ function ClarifyingCard({
   );
 }
 
+// ─── Component picker (confirm card) ─────────────────────────────────────────
+
+type ComponentDef = {
+  key: string;
+  icon: string;
+  label: string;
+  locked?: boolean;
+  darkCls: { active: string; inactive: string };
+  lightCls: { active: string; inactive: string };
+};
+
+const COMPONENTS: ComponentDef[] = [
+  {
+    key: "backend",
+    icon: "bolt",
+    label: "Backend",
+    locked: true,
+    darkCls:  { active: "bg-emerald-400/[.12] text-emerald-300 border-emerald-400/20", inactive: "" },
+    lightCls: { active: "bg-emerald-600/[.08] text-emerald-700 border-emerald-600/15", inactive: "" },
+  },
+  {
+    key: "widget",
+    icon: "widgets",
+    label: "Storefront Widget",
+    darkCls:  { active: "bg-sky-400/[.12] text-sky-300 border-sky-400/20",          inactive: "bg-white/[0.03] text-faint border-white/[0.06]" },
+    lightCls: { active: "bg-sky-600/[.08] text-sky-700 border-sky-600/15",          inactive: "bg-black/[0.02] text-muted/60 border-black/[0.06]" },
+  },
+  {
+    key: "admin",
+    icon: "admin_panel_settings",
+    label: "Admin UI",
+    darkCls:  { active: "bg-orange-400/[.12] text-orange-300 border-orange-400/20", inactive: "bg-white/[0.03] text-faint border-white/[0.06]" },
+    lightCls: { active: "bg-orange-600/[.08] text-orange-700 border-orange-600/15", inactive: "bg-black/[0.02] text-muted/60 border-black/[0.06]" },
+  },
+];
+
+function ConfirmCard({
+  confirmData,
+  onGenerate,
+  onChangeRequest,
+}: {
+  confirmData: { intent: Record<string, unknown>; originalPrompt: string };
+  onGenerate: (updatedIntent: Record<string, unknown>, originalPrompt: string) => void;
+  onChangeRequest: () => void;
+}) {
+  const theme = useThemeStore((s) => s.theme);
+  const isDark = theme !== "light";
+  const appCategory = (confirmData.intent.appCategory as string) ?? "backend";
+
+  const [hasWidget, setHasWidget] = useState(
+    appCategory === "storefront_backend" || appCategory === "storefront_backend_admin",
+  );
+  const [hasAdmin, setHasAdmin] = useState(
+    appCategory === "storefront_backend_admin" || appCategory === "backend_admin",
+  );
+
+  const handleGenerate = () => {
+    const cat =
+      hasWidget && hasAdmin ? "storefront_backend_admin" :
+      hasWidget             ? "storefront_backend" :
+      hasAdmin              ? "backend_admin" :
+      "backend";
+    onGenerate({ ...confirmData.intent, appCategory: cat }, confirmData.originalPrompt);
+  };
+
+  return (
+    <div className="mt-3 max-w-[420px]">
+      <p className="text-[10px] font-bold text-faint uppercase tracking-wider mb-2">Components</p>
+
+      <div className="flex flex-wrap gap-1.5 mb-1.5">
+        {COMPONENTS.map((comp) => {
+          const isActive = comp.key === "backend" || (comp.key === "widget" ? hasWidget : hasAdmin);
+          const palette = isDark ? comp.darkCls : comp.lightCls;
+          const cls = isActive ? palette.active : palette.inactive;
+
+          return (
+            <button
+              key={comp.key}
+              type="button"
+              disabled={comp.locked}
+              onClick={() => {
+                if (comp.key === "widget") setHasWidget((v) => !v);
+                if (comp.key === "admin")  setHasAdmin((v) => !v);
+              }}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all duration-150",
+                cls,
+                comp.locked
+                  ? "cursor-default opacity-80"
+                  : "cursor-pointer hover:opacity-90",
+              )}
+            >
+              <span
+                className="material-symbols-outlined text-[13px] leading-none"
+                style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+              >
+                {comp.icon}
+              </span>
+              {comp.label}
+              {!comp.locked && (
+                <span className={cn(
+                  "w-3.5 h-3.5 rounded-[4px] border flex items-center justify-center ml-0.5 transition-colors",
+                  isActive
+                    ? isDark ? "bg-white/20 border-white/25" : "bg-current/15 border-current/25"
+                    : isDark ? "bg-white/[0.04] border-white/[0.08]" : "bg-black/[0.04] border-black/[0.08]",
+                )}>
+                  {isActive && (
+                    <span className="material-symbols-outlined text-[10px] leading-none" style={{ fontVariationSettings: "'wght' 600" }}>
+                      check
+                    </span>
+                  )}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="text-[10px] text-faint mb-3">Backend is always included. Toggle optional components.</p>
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={handleGenerate}
+          className="text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hi transition-all duration-150 cursor-pointer border-0"
+        >
+          Generate →
+        </button>
+        <button
+          type="button"
+          onClick={onChangeRequest}
+          className="text-xs px-3 py-1.5 rounded-lg bg-white/[0.04] text-muted hover:text-ink hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
+        >
+          Change request
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface ChatMessagesProps {
@@ -459,10 +603,14 @@ interface ChatMessagesProps {
   /** True when the generating card has been running for too long without progress. */
   stuckWarning?: boolean;
   onClarifyAnswer?: (text: string) => void;
+  /** Called when user clicks "Generate →" on the confirm card (with component picker selections). */
+  onConfirmGenerate?: (msgId: string, updatedIntent: Record<string, unknown>, originalPrompt: string) => void;
+  /** Called when user clicks "Change request" on the confirm card. */
+  onConfirmChangeRequest?: (msgId: string) => void;
 }
 
 export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
-  ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, stuckWarning, onClarifyAnswer }, ref) => {
+  ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, stuckWarning, onClarifyAnswer, onConfirmGenerate, onConfirmChangeRequest }, ref) => {
     return (
     <div className="flex-1 overflow-y-auto">
       <div className="px-5 pt-6 pb-32 flex flex-col gap-6 w-full max-w-[760px] mx-auto">
@@ -505,11 +653,19 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
                   <ClarifyingCard data={msg.clarifyingData} onAnswer={onClarifyAnswer} />
                 )}
 
+                {msg.type === "confirm" && msg.confirmData && onConfirmGenerate && (
+                  <ConfirmCard
+                    confirmData={msg.confirmData}
+                    onGenerate={(intent, prompt) => onConfirmGenerate(msg.id, intent, prompt)}
+                    onChangeRequest={() => onConfirmChangeRequest?.(msg.id)}
+                  />
+                )}
+
                 {msg.planBlock && (
                   <PlanBlockedCard archetype={msg.planBlock.archetype} upgradeHint={msg.planBlock.upgradeHint} />
                 )}
 
-                {msg.actions && msg.actions.length > 0 && (
+                {msg.actions && msg.actions.length > 0 && !(msg.type === "confirm" && onConfirmGenerate) && (
                   <div className="flex gap-2 mt-3 flex-wrap">
                     {msg.actions.map((action) => (
                       <button
