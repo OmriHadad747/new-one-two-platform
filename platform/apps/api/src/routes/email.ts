@@ -26,6 +26,7 @@ import {
   insertEmailDelivery,
   updateEmailDeliveryStatus,
   getTenantById,
+  getAppByIdOnly,
   sql,
 } from "@new-one-two/db";
 import type { EmailType } from "@new-one-two/types";
@@ -81,6 +82,7 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       if (!config) {
         return reply.status(404).send({ error: "Email config not found for this app" });
       }
+      if (!requireTenant(req, reply, config.tenantId)) return;
 
       const brand = await getTenantBrand(config.tenantId);
 
@@ -113,6 +115,12 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
     "/apps/:appId/config",
     async (req, reply) => {
       const { appId } = req.params;
+
+      // Authorize: verify caller owns this app's tenant
+      const appRecord = await getAppByIdOnly(appId);
+      if (!appRecord) return reply.status(404).send({ error: "App not found" });
+      if (!requireTenant(req, reply, appRecord.tenantId)) return;
+
       const body = req.body;
 
       if (!body.subjectTemplate?.trim()) {
@@ -158,6 +166,7 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       if (!config) {
         return reply.status(404).send({ error: "Email config not found for this app" });
       }
+      if (!requireTenant(req, reply, config.tenantId)) return;
 
       const tenant = await getTenantById(config.tenantId);
       if (!tenant) {
@@ -239,7 +248,12 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { appId: string } }>(
     "/apps/:appId/stats",
     async (req, reply) => {
-      const stats = await getAppEmailStats(req.params.appId);
+      const { appId } = req.params;
+      const appRecord = await getAppByIdOnly(appId);
+      if (!appRecord) return reply.status(404).send({ error: "App not found" });
+      if (!requireTenant(req, reply, appRecord.tenantId)) return;
+
+      const stats = await getAppEmailStats(appId);
       return reply.send(stats);
     }
   );
