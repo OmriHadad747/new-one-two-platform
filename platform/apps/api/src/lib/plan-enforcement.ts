@@ -129,7 +129,7 @@ export async function canSendSms(tenantId: string, plan: BillingPlan): Promise<E
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function denied(reason: string, plan: BillingPlan): EnforcementResult {
-  const next = ({ free: "starter", starter: "growth", growth: "pro", pro: null } as const)[plan];
+  const next = ({ free: "starter", starter: "growth", growth: "pro", pro: null, internal: null } as const)[plan];
   return next !== null
     ? { allowed: false, reason, upgradeHint: `Upgrade to the ${next} plan for higher limits.` }
     : { allowed: false, reason };
