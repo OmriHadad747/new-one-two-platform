@@ -646,9 +646,22 @@ export async function getTenantStats(tenantId: string): Promise<{
       SELECT
         COUNT(*)                           AS "calls",
         AVG(duration_ms)                   AS "avgMs"
-      FROM webhook_invocation_logs
-      WHERE tenant_id  = ${tenantId}
-        AND queued_at >= date_trunc('month', NOW())
+      FROM (
+        SELECT duration_ms
+        FROM webhook_invocation_logs
+        WHERE tenant_id = ${tenantId}
+          AND queued_at >= date_trunc('month', NOW())
+        UNION ALL
+        SELECT duration_ms
+        FROM admin_invocation_logs
+        WHERE tenant_id = ${tenantId}
+          AND invoked_at >= date_trunc('month', NOW())
+        UNION ALL
+        SELECT duration_ms
+        FROM widget_invocation_logs
+        WHERE tenant_id = ${tenantId}
+          AND invoked_at >= date_trunc('month', NOW())
+      ) all_invocations
     `,
   ]);
 
