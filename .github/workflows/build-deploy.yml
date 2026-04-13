@@ -35,11 +35,6 @@ concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
-  GCP_REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
-  REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
-
 jobs:
   # ─── Determine environment ──────────────────────────────────────────────────
   setup:
@@ -68,6 +63,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: setup
     environment: ${{ needs.setup.outputs.environment }}
+    env:
+      GCP_REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
+      REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
     strategy:
       matrix:
         service:
@@ -131,15 +129,25 @@ jobs:
           cloud-sql-proxy ${{ vars.CLOUD_SQL_CONNECTION }} --port 5432 &
           sleep 3
 
-          # Run all migration files in order
+          PSQL="PGPASSWORD=${{ secrets.DB_PASSWORD }} psql -h 127.0.0.1 -p 5432 -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }}"
+
+          # Create migration tracking table (idempotent)
+          eval $PSQL -c "CREATE TABLE IF NOT EXISTS _schema_migrations (
+            filename TEXT PRIMARY KEY,
+            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );"
+
+          # Run only NEW migration files in order
           for migration in platform/packages/db/migrations/*.sql; do
-            echo "Running migration: $migration"
-            PGPASSWORD="${{ secrets.DB_PASSWORD }}" psql \
-              -h 127.0.0.1 -p 5432 \
-              -U "${{ secrets.DB_USER }}" \
-              -d "${{ secrets.DB_NAME }}" \
-              -f "$migration" \
-              --set ON_ERROR_STOP=1
+            filename=$(basename "$migration")
+            already=$(eval $PSQL -tAc "SELECT 1 FROM _schema_migrations WHERE filename = '${filename}'")
+            if [ "$already" = "1" ]; then
+              echo "Skipping already-applied: $filename"
+              continue
+            fi
+            echo "Running migration: $filename"
+            eval $PSQL -f "$migration" --set ON_ERROR_STOP=1
+            eval $PSQL -c "INSERT INTO _schema_migrations (filename) VALUES ('${filename}')"
           done
         env:
           PGCONNECT_TIMEOUT: 10
@@ -149,6 +157,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [setup, build, migrate]
     environment: ${{ needs.setup.outputs.environment }}
+    env:
+      GCP_REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
+      REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
     strategy:
       matrix:
         service:
