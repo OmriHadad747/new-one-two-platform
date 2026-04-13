@@ -35,6 +35,7 @@ import type {
 } from "@new-one-two/types";
 import { getAllPlans, getPlanLimits, PLANS } from "../lib/plans.js";
 import { createSubscription, cancelSubscription } from "../lib/shopify-billing.js";
+import { requireTenant } from "../plugins/auth.js";
 
 const DASHBOARD_URL = process.env["DASHBOARD_URL"] ?? "http://localhost:3000";
 // SHOPIFY_BILLING_MODE: "disabled" | "test" | "live"
@@ -79,7 +80,8 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Params: { tenantId: string } }>,
       reply: FastifyReply
     ) => {
-      const { tenantId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
         return reply.status(404).send({ error: "Tenant not found" });
@@ -108,12 +110,15 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Body: SubscribeRequest }>,
       reply: FastifyReply
     ) => {
-      const { tenantId, plan, interval: rawInterval } = req.body;
+      const { tenantId: rawTenantId, plan, interval: rawInterval } = req.body;
       const interval: BillingInterval = rawInterval === "annual" ? "annual" : "monthly";
 
-      if (!tenantId || !plan) {
+      if (!rawTenantId || !plan) {
         return reply.status(400).send({ error: "tenantId and plan are required" });
       }
+
+      const tenantId = requireTenant(req, reply, rawTenantId);
+      if (!tenantId) return;
 
       if (!(plan in PLANS)) {
         return reply.status(400).send({ error: `Invalid plan: ${plan}` });
@@ -265,7 +270,8 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Params: { tenantId: string } }>,
       reply: FastifyReply
     ) => {
-      const { tenantId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
         return reply.status(404).send({ error: "Tenant not found" });
@@ -416,7 +422,8 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Params: { tenantId: string } }>,
       reply: FastifyReply
     ) => {
-      const { tenantId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
         return reply.status(404).send({ error: "Tenant not found" });
@@ -468,7 +475,8 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Params: { tenantId: string } }>,
       reply: FastifyReply
     ) => {
-      const { tenantId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
         return reply.status(404).send({ error: "Tenant not found" });

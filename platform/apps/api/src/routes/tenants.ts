@@ -41,6 +41,7 @@ import {
 import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
 import type { InjectionTarget } from "../lib/theme-injector.js";
 import { canActivateApp } from "../lib/plan-enforcement.js";
+import { requireTenant } from "../plugins/auth.js";
 
 export const tenantsRoute: FastifyPluginAsync = async (app) => {
   // ─── POST /tenants ──────────────────────────────────────────────────────────
@@ -69,7 +70,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { tenantId: string } }>(
     "/:tenantId",
     async (req: FastifyRequest<{ Params: { tenantId: string } }>, reply: FastifyReply) => {
-      const tenant = await getTenantById(req.params.tenantId);
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const tenant = await getTenantById(tenantId);
       if (!tenant) {
         return reply.status(404).send({ error: "Tenant not found" });
       }
@@ -82,7 +85,8 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { tenantId: string } }>(
     "/:tenantId/stats",
     async (req: FastifyRequest<{ Params: { tenantId: string } }>, reply: FastifyReply) => {
-      const { tenantId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
         return reply.status(404).send({ error: "Tenant not found" });
@@ -97,7 +101,8 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { tenantId: string } }>(
     "/:tenantId/apps",
     async (req: FastifyRequest<{ Params: { tenantId: string } }>, reply: FastifyReply) => {
-      const { tenantId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
         return reply.status(404).send({ error: "Tenant not found" });
@@ -115,7 +120,8 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Params: { tenantId: string }; Body: CreateAppRequest }>,
       reply: FastifyReply
     ) => {
-      const { tenantId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
       const { id, slug, name } = req.body;
 
       if (!slug || !name) {
@@ -157,7 +163,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Params: { tenantId: string; appId: string } }>,
       reply: FastifyReply
     ) => {
-      const { tenantId, appId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) {
         return reply.status(404).send({ error: "App not found" });
@@ -174,7 +182,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Params: { tenantId: string; appId: string }; Body: { name?: string; status?: string } }>,
       reply: FastifyReply
     ) => {
-      const { tenantId, appId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const { appId } = req.params;
       const { name, status } = req.body;
 
       if (!name?.trim() && !status) {
@@ -231,7 +241,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   app.delete<{ Params: { tenantId: string; appId: string } }>(
     "/:tenantId/apps/:appId",
     async (req: FastifyRequest<{ Params: { tenantId: string; appId: string } }>, reply: FastifyReply) => {
-      const { tenantId, appId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) return reply.status(404).send({ error: "App not found" });
       await permanentDeleteApp(appId);
@@ -244,7 +256,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { tenantId: string; appId: string }; Querystring: { limit?: string } }>(
     "/:tenantId/apps/:appId/widget-logs",
     async (req, reply) => {
-      const { tenantId, appId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const { appId } = req.params;
       const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200);
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) return reply.status(404).send({ error: "App not found" });
@@ -258,7 +272,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { tenantId: string; appId: string }; Querystring: { limit?: string } }>(
     "/:tenantId/apps/:appId/admin-logs",
     async (req, reply) => {
-      const { tenantId, appId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const { appId } = req.params;
       const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200);
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) return reply.status(404).send({ error: "App not found" });
@@ -273,7 +289,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { tenantId: string; appId: string } }>(
     "/:tenantId/apps/:appId/theme-templates",
     async (req, reply) => {
-      const { tenantId, appId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) return reply.status(404).send({ error: "App not found" });
 
@@ -299,7 +317,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   }>(
     "/:tenantId/apps/:appId/inject-theme",
     async (req, reply) => {
-      const { tenantId, appId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const { appId } = req.params;
       const { targets } = req.body;
 
       if (!targets?.length) {
@@ -342,7 +362,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
   app.delete<{ Params: { tenantId: string; appId: string } }>(
     "/:tenantId/apps/:appId/inject-theme",
     async (req, reply) => {
-      const { tenantId, appId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) return reply.status(404).send({ error: "App not found" });
       if (foundApp.themeInjectionStatus !== "injected" || !foundApp.themeInjectionThemeId) {
@@ -376,7 +398,8 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       }>,
       reply: FastifyReply
     ) => {
-      const { tenantId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
       const limit = Math.min(parseInt(req.query.limit ?? "20", 10), 100);
 
       const tenant = await getTenantById(tenantId);

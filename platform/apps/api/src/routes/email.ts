@@ -26,6 +26,7 @@ import {
   insertEmailDelivery,
   updateEmailDeliveryStatus,
   getTenantById,
+  getAppByIdOnly,
   sql,
 } from "@new-one-two/db";
 import type { EmailType } from "@new-one-two/types";
@@ -35,6 +36,7 @@ import {
   verifyUnsubscribeToken,
 } from "@new-one-two/harness";
 import { Resend } from "resend";
+import { requireTenant } from "../plugins/auth.js";
 
 const RESEND_API_KEY = process.env["RESEND_API_KEY"] ?? "";
 const RESEND_FROM_TRANSACTIONAL =
@@ -80,6 +82,7 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       if (!config) {
         return reply.status(404).send({ error: "Email config not found for this app" });
       }
+      if (!requireTenant(req, reply, config.tenantId)) return;
 
       const brand = await getTenantBrand(config.tenantId);
 
@@ -112,6 +115,12 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
     "/apps/:appId/config",
     async (req, reply) => {
       const { appId } = req.params;
+
+      // Authorize: verify caller owns this app's tenant
+      const appRecord = await getAppByIdOnly(appId);
+      if (!appRecord) return reply.status(404).send({ error: "App not found" });
+      if (!requireTenant(req, reply, appRecord.tenantId)) return;
+
       const body = req.body;
 
       if (!body.subjectTemplate?.trim()) {
@@ -157,6 +166,7 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       if (!config) {
         return reply.status(404).send({ error: "Email config not found for this app" });
       }
+      if (!requireTenant(req, reply, config.tenantId)) return;
 
       const tenant = await getTenantById(config.tenantId);
       if (!tenant) {
@@ -238,7 +248,12 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { appId: string } }>(
     "/apps/:appId/stats",
     async (req, reply) => {
-      const stats = await getAppEmailStats(req.params.appId);
+      const { appId } = req.params;
+      const appRecord = await getAppByIdOnly(appId);
+      if (!appRecord) return reply.status(404).send({ error: "App not found" });
+      if (!requireTenant(req, reply, appRecord.tenantId)) return;
+
+      const stats = await getAppEmailStats(appId);
       return reply.send(stats);
     }
   );
@@ -248,7 +263,9 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { tenantId: string } }>(
     "/tenants/:tenantId/brand",
     async (req, reply) => {
-      const brand = await getTenantBrand(req.params.tenantId);
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const brand = await getTenantBrand(tenantId);
       return reply.send({ brand });
     }
   );
@@ -266,7 +283,8 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
   }>(
     "/tenants/:tenantId/brand",
     async (req, reply) => {
-      const { tenantId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
       const brand = await upsertTenantBrand({ tenantId, ...req.body });
       return reply.send({ brand });
     }

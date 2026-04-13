@@ -1,5 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
+import { Redis } from "ioredis";
 import { logger } from "@new-one-two/logger";
 import {
   startSubscriptions,
@@ -42,6 +44,32 @@ export async function buildServer() {
       : true,
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
+  });
+
+  // Rate limiting: 100 req/min per tenant (authenticated) or per IP (anonymous).
+  // Uses Redis for distributed counting across Cloud Run instances.
+  const redisHost = process.env["REDIS_HOST"];
+  await app.register(rateLimit, {
+    max: 100,
+    timeWindow: "1 minute",
+    ...(redisHost && {
+      redis: new Redis({
+        host: redisHost,
+        port: parseInt(process.env["REDIS_PORT"] ?? "6379", 10),
+        password: process.env["REDIS_PASSWORD"],
+        tls: process.env["REDIS_TLS"] === "true" ? {} : undefined,
+        enableReadyCheck: false,
+        maxRetriesPerRequest: 3,
+      }),
+    }),
+    keyGenerator: (request) => {
+      return request.tenantAuth?.tenantId ?? request.ip;
+    },
+    allowList: (request) => {
+      // Don't rate-limit health checks or widget serving
+      const path = request.url.split("?")[0]!;
+      return path.startsWith("/health") || path.startsWith("/widgets") || path.startsWith("/admin-ui");
+    },
   });
 
   // Auth hook: validates Bearer tokens (or ?token= query param for SSE) on

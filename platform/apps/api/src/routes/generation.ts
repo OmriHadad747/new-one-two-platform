@@ -43,6 +43,7 @@ import type {
 } from "@new-one-two/types";
 import { canStartGeneration, isCategoryAllowed } from "../lib/plan-enforcement.js";
 import { trackGeneration, trackRevision, trackRevisionClassification } from "../lib/usage-tracking.js";
+import { requireTenant } from "../plugins/auth.js";
 
 /** Derive AppArchetype from a raw bundle object. */
 function archetypeFromBundle(bundle: Record<string, unknown>): AppArchetype {
@@ -129,13 +130,17 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   app.post<{ Body: StartGenerationRequest }>(
     "/",
     async (req: FastifyRequest<{ Body: StartGenerationRequest }>, reply: FastifyReply) => {
-      const { appId, tenantId, prompt, preComputedIntent } = req.body as StartGenerationRequest & { preComputedIntent?: Record<string, unknown> };
+      const body = req.body as StartGenerationRequest & { preComputedIntent?: Record<string, unknown> };
+      const { appId, prompt, preComputedIntent } = body;
 
-      if (!appId || !tenantId || !prompt) {
+      if (!appId || !body.tenantId || !prompt) {
         return reply
           .status(400)
           .send({ error: "appId, tenantId, and prompt are required" });
       }
+
+      const tenantId = requireTenant(req, reply, body.tenantId);
+      if (!tenantId) return;
 
       // ── Plan enforcement: check generation quota ──
       const tenant = await getTenantById(tenantId);
