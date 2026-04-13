@@ -501,12 +501,20 @@ function ConfirmCard({
   const isDark = theme !== "light";
   const appCategory = (confirmData.intent.appCategory as string) ?? "backend";
 
-  const [hasWidget, setHasWidget] = useState(
-    appCategory === "storefront_backend" || appCategory === "storefront_backend_admin",
-  );
-  const [hasAdmin, setHasAdmin] = useState(
-    appCategory === "storefront_backend_admin" || appCategory === "backend_admin",
-  );
+  // What the AI originally suggested
+  const aiSuggestedWidget = appCategory === "storefront_backend" || appCategory === "storefront_backend_admin";
+  const aiSuggestedAdmin  = appCategory === "storefront_backend_admin" || appCategory === "backend_admin";
+
+  const [hasWidget, setHasWidget] = useState(aiSuggestedWidget);
+  const [hasAdmin, setHasAdmin]   = useState(aiSuggestedAdmin);
+
+  // Mandatory clarification when merchant adds a component the AI didn't suggest
+  const widgetAdded = hasWidget && !aiSuggestedWidget;
+  const adminAdded  = hasAdmin  && !aiSuggestedAdmin;
+  const [widgetDesc, setWidgetDesc] = useState("");
+  const [adminDesc, setAdminDesc]   = useState("");
+
+  const needsClarification = (widgetAdded && !widgetDesc.trim()) || (adminAdded && !adminDesc.trim());
 
   const handleGenerate = () => {
     const cat =
@@ -514,7 +522,12 @@ function ConfirmCard({
       hasWidget             ? "storefront_backend" :
       hasAdmin              ? "backend_admin" :
       "backend";
-    onGenerate({ ...confirmData.intent, appCategory: cat }, confirmData.originalPrompt);
+
+    const extra: Record<string, unknown> = {};
+    if (widgetAdded && widgetDesc.trim()) extra.widgetDescription = widgetDesc.trim();
+    if (adminAdded && adminDesc.trim())   extra.adminDescription = adminDesc.trim();
+
+    onGenerate({ ...confirmData.intent, appCategory: cat, ...extra }, confirmData.originalPrompt);
   };
 
   return (
@@ -570,13 +583,59 @@ function ConfirmCard({
         })}
       </div>
 
+      {/* Mandatory clarification inputs for added components */}
+      {widgetAdded && (
+        <div className="mb-2">
+          <label className="block text-[10px] font-semibold text-danger mb-1">
+            You added Storefront Widget — what should it display? <span className="opacity-60">*</span>
+          </label>
+          <input
+            type="text"
+            value={widgetDesc}
+            onChange={(e) => setWidgetDesc(e.target.value)}
+            placeholder="e.g. show loyalty points balance on the product page"
+            className={cn(
+              "w-full text-[11px] px-2.5 py-1.5 rounded-lg border outline-none transition-colors",
+              isDark
+                ? "bg-danger/[0.04] border-danger/30 text-ink placeholder:text-faint/40 focus:border-danger/60"
+                : "bg-danger/[0.04] border-danger/30 text-ink placeholder:text-muted/40 focus:border-danger/60",
+            )}
+          />
+        </div>
+      )}
+      {adminAdded && (
+        <div className="mb-2">
+          <label className="block text-[10px] font-semibold text-danger mb-1">
+            You added Admin UI — what should it manage? <span className="opacity-60">*</span>
+          </label>
+          <input
+            type="text"
+            value={adminDesc}
+            onChange={(e) => setAdminDesc(e.target.value)}
+            placeholder="e.g. dashboard to configure reward tiers and view analytics"
+            className={cn(
+              "w-full text-[11px] px-2.5 py-1.5 rounded-lg border outline-none transition-colors",
+              isDark
+                ? "bg-danger/[0.04] border-danger/30 text-ink placeholder:text-faint/40 focus:border-danger/60"
+                : "bg-danger/[0.04] border-danger/30 text-ink placeholder:text-muted/40 focus:border-danger/60",
+            )}
+          />
+        </div>
+      )}
+
       <p className="text-[10px] text-faint mb-3">Backend is always included. Toggle optional components.</p>
 
       <div className="flex gap-2">
         <button
           type="button"
           onClick={handleGenerate}
-          className="text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hi transition-all duration-150 cursor-pointer border-0"
+          disabled={needsClarification}
+          className={cn(
+            "text-xs px-3 py-1.5 rounded-lg transition-all duration-150 border-0",
+            needsClarification
+              ? "bg-accent/40 text-white/50 cursor-not-allowed"
+              : "bg-accent text-white hover:bg-accent-hi cursor-pointer",
+          )}
         >
           Generate →
         </button>

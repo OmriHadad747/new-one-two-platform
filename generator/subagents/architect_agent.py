@@ -339,7 +339,7 @@ Feature intent:
 {intent_json}
 
 App archetype: {archetype}
-{quality_brief_section}{api_context_section}
+{quality_brief_section}{component_descriptions_section}{api_context_section}
 Produce the structural plan and binding contracts."""
 
 
@@ -394,12 +394,31 @@ def run_architect_agent(
         else ""
     )
 
+    # Merchant-added component descriptions — these are provided when the merchant
+    # manually added a widget or admin panel that the AI didn't originally suggest.
+    # The descriptions explain what the merchant expects from that component.
+    comp_parts = []
+    widget_desc = intent.get("widgetDescription", "")
+    admin_desc = intent.get("adminDescription", "")
+    if widget_desc:
+        comp_parts.append(f"  Widget (merchant-added): {widget_desc}")
+    if admin_desc:
+        comp_parts.append(f"  Admin panel (merchant-added): {admin_desc}")
+    component_descriptions_section = (
+        "\nMerchant-provided component descriptions (components added beyond the AI suggestion — "
+        "incorporate these requirements into the contracts):\n"
+        + "\n".join(comp_parts) + "\n"
+        if comp_parts
+        else ""
+    )
+
     user = _ARCHITECT_USER_TEMPLATE.format(
         error_block=error_block,
         prompt=prompt,
         intent_json=json.dumps(intent, indent=2),
         archetype=app_archetype,
         quality_brief_section=quality_brief_section,
+        component_descriptions_section=component_descriptions_section,
         api_context_section=api_context_section,
     )
 

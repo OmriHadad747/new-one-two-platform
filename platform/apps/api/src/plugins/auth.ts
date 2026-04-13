@@ -42,7 +42,7 @@ declare module "fastify" {
 // ─── Config ────────────────────────────────────────────────────────────────────
 
 const JWT_SECRET =
-  process.env["JWT_SECRET"] ?? process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
+  process.env["JWT_SECRET"] || process.env["SHOPIFY_CLIENT_SECRET"] || "";
 const AUTH_REQUIRED = process.env["API_AUTH_REQUIRED"] === "true";
 const TOKEN_EXPIRY_SEC = 60 * 60 * 24 * 7; // 7 days
 

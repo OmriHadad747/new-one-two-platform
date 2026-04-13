@@ -10,7 +10,8 @@ import type { SessionSummary } from "@/types/dashboard";
 import type { WebhookInvocationLogEntry, InvocationLogEntry, App, SessionBundle, ThemeTemplate, InjectionTarget } from "@/types/dashboard";
 import { ArchetypePills } from "@/components/ui/ArchetypePills";
 import { Tag } from "@/components/ui/Badge";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useThemeStore } from "@/stores/theme";
@@ -188,7 +189,10 @@ function CodeBlock({ code, lang }: { code: string; lang: "js" | "sql" }) {
   const gutterW = lines.length >= 100 ? 54 : 44;
 
   return (
-    <div className="h-full overflow-auto" style={{ background: pal.bg }}>
+    <div
+      className={`h-full overflow-auto rounded-lg border ${theme === "light" ? "border-black/[0.08]" : "border-white/[0.08]"}`}
+      style={{ background: pal.bg }}
+    >
       {/* display:table keeps the sticky gutter cell pinned while
           the code cell scrolls horizontally with the container */}
       <div
@@ -253,44 +257,81 @@ const AVATAR_GRADIENTS = [
 ];
 
 function AppHeader({
-  app, isGenerating,
+  app, isGenerating, statusPill,
 }: {
   app: App;
   isGenerating: boolean;
+  statusPill: ReturnType<typeof buildStatusPill>;
 }) {
   const initials = app.name.split(" ").slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
   const seed = app.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
   const gradient = AVATAR_GRADIENTS[seed % AVATAR_GRADIENTS.length];
 
   return (
-    <div className="px-7 py-5 border-b border-white/[0.04] shrink-0">
-      <div className="flex items-start gap-4">
-        <div className={cn("w-12 h-12 rounded-2xl bg-gradient-to-br flex items-center justify-center shrink-0 shadow-lg", gradient)}>
-          <span className="text-[14px] font-black text-white tracking-tight">{initials}</span>
+    <div className="px-8 h-[124px] flex items-center border-b border-white/[0.04] shrink-0">
+      <div className="flex items-center gap-5 flex-1 min-w-0">
+
+        {/* Avatar */}
+        <div className={cn("w-11 h-11 rounded-2xl bg-gradient-to-br flex items-center justify-center shrink-0 shadow-lg", gradient)}>
+          <span className="text-[13px] font-black text-white tracking-tight">{initials}</span>
         </div>
+
+        {/* Left: name, dates, archetype pills */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2.5 flex-wrap mb-1.5">
-            <h2 className="text-[18px] font-bold text-ink">{app.name}</h2>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h2 className="text-[17px] font-bold text-ink truncate">{app.name}</h2>
             {isGenerating && (
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent animate-pulse">Building…</span>
             )}
           </div>
-          <div className="flex items-center gap-3 text-[11px] text-faint mb-1.5">
+          <div className="flex items-center gap-3 text-[11px] text-faint mt-1.5">
             <span>Created {formatDate(app.createdAt)}</span>
             <span className="opacity-40">·</span>
             <span>Updated {timeAgo(app.updatedAt)}</span>
           </div>
-          <button
-            type="button"
-            onClick={() => void navigator.clipboard?.writeText(app.id)}
-            title="Copy App ID"
-            className="flex items-center gap-1.5 bg-transparent border-0 p-0 cursor-pointer group"
-          >
-            <span className="text-[10px] text-faint/40 font-medium">App ID</span>
-            <span className="font-mono text-[10px] text-faint/40 group-hover:text-accent transition-colors">{app.id}</span>
-            <span className="material-symbols-outlined text-[11px] text-faint/25 group-hover:text-accent transition-colors">content_copy</span>
-          </button>
+          <div className="flex items-center gap-2 mt-3">
+            <span className="text-[9px] font-bold uppercase tracking-widest text-faint/35">App types</span>
+            <ArchetypePills archetype={app.appArchetype} />
+            {app.currentSemver && (
+              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-white/[0.06] text-faint/70">
+                v{app.currentSemver}
+              </span>
+            )}
+          </div>
         </div>
+
+        {/* Right: status */}
+        <div className="w-72 shrink-0 flex flex-col items-start gap-1">
+          <span className="text-[9px] font-bold uppercase tracking-widest text-faint/35">Status</span>
+          <div className={cn("flex items-stretch rounded-full border overflow-hidden text-[11px] font-medium", statusPill.pillBorder, statusPill.pillBg)}>
+            <div className="flex items-center justify-center gap-1.5 px-3 py-1">
+              <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", statusPill.statusDot)} />
+              <span className="text-ink/80 whitespace-nowrap">{statusPill.statusText}</span>
+            </div>
+            {statusPill.action && (
+              <>
+                <span className={cn("w-px self-stretch", statusPill.pillBorder)} />
+                <button
+                  type="button"
+                  onClick={statusPill.action.onClick}
+                  className={cn(
+                    "flex items-center justify-center gap-1 px-3 py-1 transition-colors cursor-pointer border-0 bg-transparent font-semibold whitespace-nowrap",
+                    statusPill.action.cls
+                  )}
+                >
+                  <span className="material-symbols-outlined text-[11px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>
+                    {statusPill.action.icon}
+                  </span>
+                  {statusPill.action.label}
+                </button>
+              </>
+            )}
+          </div>
+          <p className="text-[10px] text-faint/60 leading-snug max-w-[280px] text-left min-h-[14px]">
+            {statusPill.note ?? ""}
+          </p>
+        </div>
+
       </div>
     </div>
   );
@@ -399,36 +440,54 @@ function TabBar<T extends string>({
   );
 }
 
-// ─── Code viewer ──────────────────────────────────────────────────────────────
+// ─── Session status configs ───────────────────────────────────────────────────
 
-function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
-  const files = [
-    ...(bundle?.handlerModule?.code  ? [{ id: "handler"   as const, label: "handler.js",    lang: "js"  as const, code: bundle.handlerModule.code   }] : []),
-    ...(bundle?.dbMigration?.sql     ? [{ id: "migration" as const, label: "migration.sql",  lang: "sql" as const, code: bundle.dbMigration.sql      }] : []),
-    ...(bundle?.widgetModule         ? [{ id: "widget"    as const, label: "widget.js",      lang: "js"  as const, code: bundle.widgetModule          }] : []),
-    ...(bundle?.adminUiModule        ? [{ id: "admin"     as const, label: "admin-ui.js",    lang: "js"  as const, code: bundle.adminUiModule         }] : []),
-  ];
+const SESSION_STATUS_CFG_DARK = {
+  completed: { dot: "bg-emerald-500",          label: "Generated", cls: "text-emerald-400" },
+  failed:    { dot: "bg-danger",               label: "Failed",    cls: "text-danger"      },
+  running:   { dot: "bg-accent animate-pulse", label: "Running",   cls: "text-accent"      },
+} satisfies Record<string, { dot: string; label: string; cls: string }>;
 
-  const [activeFile, setActiveFile] = useState<string>(files[0]?.id ?? "handler");
+const SESSION_STATUS_CFG_LIGHT = {
+  completed: { dot: "bg-emerald-600",          label: "Generated", cls: "text-emerald-700" },
+  failed:    { dot: "bg-danger",               label: "Failed",    cls: "text-danger"      },
+  running:   { dot: "bg-accent animate-pulse", label: "Running",   cls: "text-accent"      },
+} satisfies Record<string, { dot: string; label: string; cls: string }>;
+
+// ─── Code modal ───────────────────────────────────────────────────────────────
+
+type CodeFile = { id: string; label: string; lang: "js" | "sql"; code: string };
+
+function CodeModal({
+  files, activeFile, onFileChange, onClose, theme,
+}: {
+  files: CodeFile[];
+  activeFile: string;
+  onFileChange: (id: string) => void;
+  onClose: () => void;
+  theme: "dark" | "light";
+}) {
   const [copied, setCopied] = useState(false);
+  const idx = files.findIndex((f) => f.id === activeFile);
+  const current = files[idx] ?? files[0]!;
 
+  // Keyboard navigation
   useEffect(() => {
-    if (files.length && !files.find((f) => f.id === activeFile)) setActiveFile(files[0].id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bundle]);
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") { onClose(); return; }
+      if (e.key === "ArrowLeft"  && idx > 0)               onFileChange(files[idx - 1]!.id);
+      if (e.key === "ArrowRight" && idx < files.length - 1) onFileChange(files[idx + 1]!.id);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [idx, files, onClose, onFileChange]);
 
-  if (!files.length) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-        <div className="w-12 h-12 rounded-xl bg-white/[0.04] flex items-center justify-center">
-          <span className="material-symbols-outlined text-faint text-[22px]">code_blocks</span>
-        </div>
-        <p className="text-sm text-faint">No generated code yet</p>
-      </div>
-    );
-  }
+  // Lock body scroll
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
 
-  const current = files.find((f) => f.id === activeFile) ?? files[0];
   const copyCode = () => {
     void navigator.clipboard?.writeText(current.code).then(() => {
       setCopied(true);
@@ -436,47 +495,377 @@ function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
     });
   };
 
+  const sep = <span className={cn("w-px h-4 mx-1.5 self-center shrink-0", theme === "light" ? "bg-black/[0.12]" : "bg-white/[0.12]")} />;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-5 animate-backdrop-in" style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}>
+      {/* Click-away */}
+      <div className="absolute inset-0" onClick={onClose} />
+
+      {/* Panel */}
+      <div
+        className={cn(
+          "relative flex flex-col rounded-2xl border overflow-hidden shadow-2xl animate-modal-in",
+          "w-[92vw] h-[88vh] max-w-7xl",
+          theme === "light"
+            ? "bg-white border-black/[0.08]"
+            : "bg-surface border-white/[0.08]"
+        )}
+      >
+        {/* Ambient violet glow */}
+        <div
+          className="absolute top-0 inset-x-0 h-48 pointer-events-none z-0"
+          style={{ background: "radial-gradient(ellipse 60% 100% at 50% 0%, rgba(167,139,250,0.10) 0%, transparent 100%)" }}
+        />
+
+        {/* ── Header ───────────────────────────────────────── */}
+        <div className="relative z-10 flex items-center gap-0.5 border-b border-white/[0.06] shrink-0 px-2">
+
+          {/* File tabs */}
+          {files.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => onFileChange(f.id)}
+              className={cn(
+                "px-4 py-3 text-[12px] font-mono border-b-2 -mb-px transition-colors bg-transparent border-x-0 border-t-0 cursor-pointer",
+                f.id === activeFile ? "border-accent text-ink" : "border-transparent text-faint hover:text-ink"
+              )}
+            >{f.label}</button>
+          ))}
+
+          <div className="flex-1" />
+
+          {/* Copy */}
+          <button
+            type="button"
+            onClick={copyCode}
+            className="flex items-center gap-1.5 text-[11px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer px-3 py-2.5 rounded-lg hover:bg-white/[0.05]"
+          >
+            <span className="material-symbols-outlined text-[14px]">{copied ? "check" : "content_copy"}</span>
+            {copied ? "Copied" : "Copy"}
+          </button>
+
+          {sep}
+
+          {/* Close */}
+          <button
+            type="button"
+            onClick={onClose}
+            title="Close (Esc)"
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-faint hover:text-ink hover:bg-white/[0.06] transition-colors bg-transparent border-0 cursor-pointer shrink-0 mr-1"
+          >
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+
+        {/* ── Code ─────────────────────────────────────────── */}
+        <div className="relative z-10 flex-1 overflow-hidden">
+          <CodeBlock code={current.code} lang={current.lang} />
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── Code viewer ──────────────────────────────────────────────────────────────
+
+function CodeViewer({
+  bundle, sessions, selectedSession, onSelectSession, sessionsLoading, app,
+}: {
+  bundle: SessionBundle | null | undefined;
+  sessions: SessionSummary[];
+  selectedSession: SessionSummary | null;
+  onSelectSession: (id: string) => void;
+  sessionsLoading: boolean;
+  app: App;
+}) {
+  const theme = useThemeStore((s) => s.theme);
+  const SESSION_STATUS_CFG = theme === "light" ? SESSION_STATUS_CFG_LIGHT : SESSION_STATUS_CFG_DARK;
+
+  const [activeFile, setActiveFile] = useState<string>("handler");
+  const [copied, setCopied] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalActiveFile, setModalActiveFile] = useState<string>("handler");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerPos, setPickerPos] = useState({ top: 0, left: 0 });
+  const pickerBtnRef = useRef<HTMLButtonElement>(null);
+  const pickerDropRef = useRef<HTMLDivElement>(null);
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (!pickerOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (
+        pickerBtnRef.current?.contains(e.target as Node) ||
+        pickerDropRef.current?.contains(e.target as Node)
+      ) return;
+      setPickerOpen(false);
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [pickerOpen]);
+
+  const openPicker = () => {
+    if (pickerBtnRef.current) {
+      const r = pickerBtnRef.current.getBoundingClientRect();
+      setPickerPos({ top: r.bottom + 6, left: r.left });
+    }
+    setPickerOpen((p) => !p);
+  };
+
+  const files = [
+    ...(bundle?.handlerModule?.code ? [{ id: "handler"   as const, label: "handler.js",   lang: "js"  as const, code: bundle.handlerModule.code }] : []),
+    ...(bundle?.dbMigration?.sql    ? [{ id: "migration" as const, label: "migration.sql", lang: "sql" as const, code: bundle.dbMigration.sql    }] : []),
+    ...(bundle?.widgetModule        ? [{ id: "widget"    as const, label: "widget.js",     lang: "js"  as const, code: bundle.widgetModule       }] : []),
+    ...(bundle?.adminUiModule       ? [{ id: "admin"     as const, label: "admin-ui.js",   lang: "js"  as const, code: bundle.adminUiModule      }] : []),
+  ];
+
+  useEffect(() => {
+    if (files.length && !files.find((f) => f.id === activeFile)) setActiveFile(files[0].id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle]);
+
+  // Only completed sessions are numbered as versions
+  const completedSessions = sessions.filter((s) => s.status === "completed");
+  const totalVersions = completedSessions.length;
+  function getVersionNum(s: SessionSummary): number | null {
+    const idx = completedSessions.findIndex((c) => c.id === s.id);
+    return idx >= 0 ? totalVersions - idx : null;
+  }
+
+  const current = files.find((f) => f.id === activeFile) ?? files[0];
+  const status = selectedSession?.status;
+  const borderFaint = theme === "light" ? "border-black/[0.06]" : "border-white/[0.05]";
+
+  const copyCode = () => {
+    if (!current) return;
+    void navigator.clipboard?.writeText(current.code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Tab bar */}
-      <div className="flex items-center gap-1 border-b border-white/[0.04] shrink-0 bg-surface">
-        {files.map((f) => (
-          <button key={f.id} type="button" onClick={() => setActiveFile(f.id)}
-            className={cn(
-              "px-3.5 py-2.5 text-[11px] font-mono border-b-2 -mb-px transition-colors bg-transparent border-x-0 border-t-0 cursor-pointer",
-              activeFile === f.id ? "border-accent text-ink" : "border-transparent text-faint hover:text-ink"
-            )}
-          >{f.label}</button>
-        ))}
+    <div className="flex-1 overflow-hidden flex flex-row">
+
+      {/* ── Left sidebar ──────────────────────────────────────── */}
+      <div className={cn("w-44 shrink-0 flex flex-col border-r overflow-y-auto", borderFaint)}>
+
+        {/* HISTORY */}
+        <div className="shrink-0 pt-3 pb-2 px-2">
+          <p className="px-1 pb-1.5 text-[9px] font-bold uppercase tracking-widest text-faint/40 select-none">History</p>
+          {sessionsLoading ? (
+            <div className="h-8 bg-white/[0.03] rounded-lg animate-pulse-subtle" />
+          ) : sessions.length === 0 ? (
+            <p className="px-1 text-[11px] text-faint/50">No versions yet</p>
+          ) : (() => {
+            const selCfg = selectedSession
+              ? (SESSION_STATUS_CFG[selectedSession.status as keyof typeof SESSION_STATUS_CFG] ?? { dot: "bg-faint/40", label: selectedSession.status, cls: "text-faint" })
+              : null;
+            const selVNum = selectedSession ? getVersionNum(selectedSession) : null;
+            return (
+              <button
+                ref={pickerBtnRef}
+                type="button"
+                onClick={openPicker}
+                className={cn(
+                  "w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-left transition-colors bg-transparent cursor-pointer",
+                  pickerOpen ? "border-accent/30 bg-accent/[0.07]" : "border-white/[0.06] hover:bg-white/[0.04]"
+                )}
+              >
+                {selCfg && <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", selCfg.dot)} />}
+                <span className="text-[11px] font-mono text-ink flex-1 truncate">
+                  {selVNum ? `v${selVNum}` : (selCfg?.label ?? "—")}
+                </span>
+                <span className="material-symbols-outlined text-[13px] text-faint/50 shrink-0">
+                  {pickerOpen ? "expand_less" : "expand_more"}
+                </span>
+              </button>
+            );
+          })()}
+
+          {/* Portal dropdown */}
+          {pickerOpen && createPortal(
+            <div
+              ref={pickerDropRef}
+              className={cn(
+                "fixed z-[300] w-72 rounded-xl border shadow-2xl overflow-hidden",
+                theme === "light"
+                  ? "bg-white border-black/[0.08] shadow-black/10"
+                  : "bg-[#1a1a1f] border-white/[0.08] shadow-black/60"
+              )}
+              style={{ top: pickerPos.top, left: pickerPos.left }}
+            >
+              <div className="max-h-80 overflow-y-auto py-1">
+                {sessions.map((s) => {
+                  const cfg = SESSION_STATUS_CFG[s.status as keyof typeof SESSION_STATUS_CFG]
+                    ?? { dot: "bg-faint/40", label: s.status, cls: "text-faint" };
+                  const vNum = getVersionNum(s);
+                  const live = app.status === "active" && !!s.appVersionId && s.appVersionId === app.activeAppVersionId;
+                  const isSel = s.id === selectedSession?.id;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => { onSelectSession(s.id); setPickerOpen(false); }}
+                      className={cn(
+                        "w-full text-left px-3 py-2 flex flex-col gap-0.5 border-0 cursor-pointer transition-colors",
+                        isSel
+                          ? "bg-accent/[0.08]"
+                          : theme === "light" ? "bg-transparent hover:bg-black/[0.04]" : "bg-transparent hover:bg-white/[0.04]"
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cfg.dot)} />
+                        {vNum ? (
+                          <span className="text-[10px] font-bold text-faint/60 shrink-0">v{vNum}</span>
+                        ) : (
+                          <span className={cn("text-[10px] font-bold uppercase tracking-wide shrink-0", cfg.cls)}>{cfg.label}</span>
+                        )}
+                        <span className="text-[11px] text-ink/80 truncate flex-1">{s.prompt}</span>
+                        {live && (
+                          <span className={cn(
+                            "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide leading-none shrink-0",
+                            theme === "light" ? "bg-emerald-600/[.08] text-emerald-700" : "bg-emerald-500/[.12] text-emerald-400"
+                          )}>
+                            <span className={cn("w-1 h-1 rounded-full animate-pulse inline-block", theme === "light" ? "bg-emerald-600" : "bg-emerald-500")} />
+                            Live
+                          </span>
+                        )}
+                      </div>
+                      {s.status === "failed" && s.errorMessage && (
+                        <p className="text-[10px] text-danger/70 font-mono truncate pl-[18px]">{s.errorMessage}</p>
+                      )}
+                      <p className="text-[9.5px] text-faint/40 pl-[18px]">{formatDate(s.createdAt)}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>,
+            document.body
+          )}
+        </div>
+
+        {/* FILES */}
+        {status === "completed" && files.length > 0 && (
+          <>
+            <div className={cn("mx-3 shrink-0 border-t", borderFaint)} />
+            <div className="shrink-0 pt-3 pb-2">
+              <p className="px-3 pb-1.5 text-[9px] font-bold uppercase tracking-widest text-faint/40 select-none">Files</p>
+              <div className="px-2 space-y-0.5">
+                {files.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setActiveFile(f.id)}
+                    className={cn(
+                      "w-full text-left px-2 py-1.5 rounded-lg text-[11px] font-mono transition-colors bg-transparent border-0 cursor-pointer",
+                      activeFile === f.id
+                        ? "text-accent bg-accent/[0.07]"
+                        : "text-faint hover:text-ink hover:bg-white/[0.04]"
+                    )}
+                  >{f.label}</button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
         <div className="flex-1" />
-        <button type="button" onClick={copyCode}
-          className="flex items-center gap-1.5 text-[11px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer px-3.5 py-2.5"
-        >
-          <span className="material-symbols-outlined text-[14px]">{copied ? "check" : "content_copy"}</span>
-          {copied ? "Copied" : "Copy"}
-        </button>
       </div>
-      {/* Highlighted code */}
-      <div className="flex-1 overflow-hidden">
-        <CodeBlock code={current.code} lang={current.lang} />
+
+      {/* ── Code area ─────────────────────────────────────────── */}
+      <div className="flex-1 relative h-full overflow-hidden">
+        {!selectedSession ? (
+          <div className="flex items-center justify-center h-full text-[12px] text-faint">No version selected</div>
+        ) : status === "running" ? (
+          <div className="flex items-center justify-center h-full gap-2 text-[12px] text-accent">
+            <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+            Generating…
+          </div>
+        ) : status === "failed" ? (
+          <div className="flex items-center justify-center h-full p-8">
+            <div className="w-full max-w-lg flex flex-col gap-3 mx-auto">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-danger/[0.08] border border-danger/20 flex items-center justify-center shrink-0">
+                  <span className="material-symbols-outlined text-danger text-[16px]">error</span>
+                </div>
+                <p className="text-[13px] font-semibold text-ink/80">Generation failed</p>
+              </div>
+              {selectedSession.errorMessage && (
+                <pre className={cn(
+                  "text-[11px] font-mono leading-relaxed p-4 rounded-lg border overflow-x-auto whitespace-pre-wrap break-words",
+                  theme === "light"
+                    ? "bg-danger/[0.04] border-danger/15 text-danger/80"
+                    : "bg-danger/[0.06] border-danger/20 text-danger/70"
+                )}>{selectedSession.errorMessage}</pre>
+              )}
+              <p className="text-[10px] text-faint/40 text-center">Internal error · customer-facing messages coming soon</p>
+            </div>
+          </div>
+        ) : files.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
+            <div className="w-12 h-12 rounded-xl bg-white/[0.04] flex items-center justify-center">
+              <span className="material-symbols-outlined text-faint text-[22px]">code_blocks</span>
+            </div>
+            <p className="text-sm text-faint">No generated code yet</p>
+          </div>
+        ) : current ? (
+          <div className="relative h-full mr-40">
+            {/* Action buttons — overlaid top-right inside the code block */}
+            <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={copyCode}
+                title="Copy code"
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all border-0 cursor-pointer backdrop-blur-sm",
+                  theme === "light"
+                    ? "bg-white/80 text-faint hover:text-ink hover:bg-white shadow-sm"
+                    : "bg-black/50 text-faint hover:text-ink hover:bg-black/70"
+                )}
+              >
+                <span className="material-symbols-outlined text-[14px]">{copied ? "check" : "content_copy"}</span>
+                {copied ? "Copied" : "Copy"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setModalActiveFile(activeFile); setModalOpen(true); }}
+                title="Expand in modal"
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all border-0 cursor-pointer backdrop-blur-sm",
+                  theme === "light"
+                    ? "bg-white/80 text-faint hover:text-ink hover:bg-white shadow-sm"
+                    : "bg-black/50 text-faint hover:text-ink hover:bg-black/70"
+                )}
+              >
+                <span className="material-symbols-outlined text-[14px]">open_in_full</span>
+                Expand
+              </button>
+            </div>
+            <CodeBlock code={current.code} lang={current.lang} />
+          </div>
+        ) : null}
       </div>
+
+      {/* Expanded modal */}
+      {modalOpen && files.length > 0 && (
+        <CodeModal
+          files={files}
+          activeFile={modalActiveFile}
+          onFileChange={setModalActiveFile}
+          onClose={() => setModalOpen(false)}
+          theme={theme}
+        />
+      )}
+
     </div>
   );
 }
 
 // ─── Versions tab ─────────────────────────────────────────────────────────────
-
-const SESSION_STATUS_CFG_DARK = {
-  completed: { dot: "bg-emerald-500",              label: "Generated",  cls: "text-emerald-400" },
-  failed:    { dot: "bg-danger",                   label: "Failed",     cls: "text-danger"      },
-  running:   { dot: "bg-accent animate-pulse",     label: "Running",    cls: "text-accent"      },
-} satisfies Record<string, { dot: string; label: string; cls: string }>;
-
-const SESSION_STATUS_CFG_LIGHT = {
-  completed: { dot: "bg-emerald-600",              label: "Generated",  cls: "text-emerald-700" },
-  failed:    { dot: "bg-danger",                   label: "Failed",     cls: "text-danger"      },
-  running:   { dot: "bg-accent animate-pulse",     label: "Running",    cls: "text-accent"      },
-} satisfies Record<string, { dot: string; label: string; cls: string }>;
 
 function VersionsTab({
   sessions, sessionsLoading, latestSession, app,
@@ -486,8 +875,6 @@ function VersionsTab({
   latestSession: { status: string; bundle?: import("@/types/dashboard").SessionBundle | null } | null;
   app: App;
 }) {
-  const theme = useThemeStore((s) => s.theme);
-  const SESSION_STATUS_CFG = theme === "light" ? SESSION_STATUS_CFG_LIGHT : SESSION_STATUS_CFG_DARK;
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Default selection: latest session
@@ -496,102 +883,21 @@ function VersionsTab({
   }, [sessions, selectedId]);
 
   const selected = sessions.find((s) => s.id === selectedId) ?? sessions[0] ?? null;
-  // Show code from latestSession when selectedId matches the first (latest) session
   const isLatest = selected?.id === sessions[0]?.id;
-  // For non-latest completed sessions, fetch their bundle on demand
   const nonLatestJobId = (!isLatest && selected?.status === "completed") ? (selected.jobId ?? null) : null;
   const { data: selectedBundleData } = useSessionBundle(nonLatestJobId);
   const bundleToShow = isLatest ? latestSession?.bundle : (selectedBundleData?.bundle ?? null);
 
   return (
-    <div className="flex-1 overflow-hidden flex gap-0">
-
-      {/* ── Left: session list ── */}
-      <div className="w-[260px] shrink-0 border-r border-white/[0.04] flex flex-col overflow-hidden">
-        <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.02] shrink-0">
-          <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Generation history</h3>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {sessionsLoading ? (
-            <div className="p-3 space-y-2">
-              {[1,2,3].map((i) => <div key={i} className="h-14 bg-white/[0.03] rounded-lg animate-pulse-subtle" />)}
-            </div>
-          ) : sessions.length === 0 ? (
-            <div className="flex items-center justify-center h-32 text-[11px] text-faint">No versions yet</div>
-          ) : (
-            <div className="p-2 space-y-1">
-              {sessions.map((s, i) => {
-                const cfg = SESSION_STATUS_CFG[s.status as keyof typeof SESSION_STATUS_CFG]
-                  ?? { dot: "bg-faint/40", label: s.status, cls: "text-faint" };
-                const isSelected = s.id === selected?.id;
-                // "Live" = this session's bundle is what's currently running in production
-                const isLive = app.status === "active" && !!s.appVersionId && s.appVersionId === app.activeAppVersionId;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => setSelectedId(s.id)}
-                    className={cn(
-                      "w-full text-left px-3 py-2.5 rounded-lg border transition-colors cursor-pointer bg-transparent",
-                      isSelected
-                        ? "border-accent/30 bg-accent/[0.07]"
-                        : "border-transparent hover:bg-white/[0.04] hover:border-white/[0.08]"
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2 mb-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cfg.dot)} />
-                        <span className={cn("text-[10px] font-semibold", cfg.cls)}>{cfg.label}</span>
-                        {isLive && (
-                          <span className={cn("inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide leading-none",
-                            theme === "light" ? "bg-emerald-600/[.08] text-emerald-700" : "bg-emerald-500/[.12] text-emerald-400"
-                          )}>
-                            <span className={cn("w-1 h-1 rounded-full animate-pulse inline-block", theme === "light" ? "bg-emerald-600" : "bg-emerald-500")} />
-                            Live
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[9.5px] text-faint/60 shrink-0">
-                        v{sessions.length - i}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-ink/70 truncate leading-tight">{s.prompt}</p>
-                    {s.status === "failed" && s.errorMessage && (
-                      <p className="text-[10px] text-danger/80 truncate mt-0.5">{s.errorMessage}</p>
-                    )}
-                    <p className="text-[10px] text-faint/50 mt-1">{formatDate(s.createdAt)}</p>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── Right: code viewer ── */}
-      <div className="flex-1 overflow-hidden flex flex-col">
-        {!selected ? (
-          <div className="flex-1 flex items-center justify-center text-[12px] text-faint">Select a version to view code</div>
-        ) : selected.status === "failed" ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8">
-            <div className="w-12 h-12 rounded-xl bg-danger/[0.08] border border-danger/20 flex items-center justify-center">
-              <span className="material-symbols-outlined text-danger text-[22px]">error</span>
-            </div>
-            <p className="text-[13px] font-semibold text-ink/80">Generation failed</p>
-            {selected.errorMessage && (
-              <p className="text-[12px] text-faint max-w-[420px]">{selected.errorMessage}</p>
-            )}
-          </div>
-        ) : selected.status === "running" ? (
-          <div className="flex-1 flex items-center justify-center gap-2 text-[12px] text-accent">
-            <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
-            Generating…
-          </div>
-        ) : (
-          <CodeViewer bundle={bundleToShow} />
-        )}
-      </div>
-
+    <div className="flex-1 overflow-hidden">
+      <CodeViewer
+        bundle={bundleToShow}
+        sessions={sessions}
+        selectedSession={selected}
+        onSelectSession={setSelectedId}
+        sessionsLoading={sessionsLoading}
+        app={app}
+      />
     </div>
   );
 }
@@ -821,77 +1127,6 @@ function buildStatusPill(
     pillBorder: "border-white/[0.08]", pillBg: "bg-white/[0.02]",
     action: null, note: null,
   };
-}
-
-function AppInfoBand({
-  app, latestSession, hasFallback, onDeploy, onRedeploy, onDeactivate, deploying, isBuilding,
-}: {
-  app: App;
-  latestSession: { status: string } | null;
-  hasFallback: boolean;
-  onDeploy: () => void; onRedeploy: () => void; onDeactivate: () => void;
-  deploying: boolean; isBuilding: boolean;
-}) {
-  const pill = buildStatusPill(app, latestSession, deploying, isBuilding, hasFallback, onDeploy, onRedeploy, onDeactivate);
-
-  return (
-    <div className="flex flex-col shrink-0 border-b border-white/[0.04]">
-      <div className="flex items-center justify-between">
-
-        {/* ── App type ── */}
-        <div className="flex flex-col gap-1.5 px-5 py-2.5">
-          <span className="text-[10px] text-faint/40 font-medium whitespace-nowrap">App type</span>
-          <div className="flex items-center gap-2 flex-wrap">
-            <ArchetypePills archetype={app.appArchetype} />
-            {app.currentSemver && (
-              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-white/[0.06] text-faint/70">
-                v{app.currentSemver}
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div className="w-px bg-white/[0.06] my-1.5 shrink-0" />
-
-        {/* ── Status + action ── */}
-        <div className="flex flex-col gap-1.5 px-5 py-2.5">
-          <span className="text-[10px] text-faint/40 font-medium whitespace-nowrap">Status</span>
-          <div className={cn("flex items-stretch rounded-full border overflow-hidden text-[12px] font-medium", pill.pillBorder, pill.pillBg)}>
-            <div className="flex items-center justify-center gap-2 px-3.5 py-1.5 min-w-[130px]">
-              <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", pill.statusDot)} />
-              <span className="text-ink/80 whitespace-nowrap">{pill.statusText}</span>
-            </div>
-            {pill.action && (
-              <>
-                <span className={cn("w-px self-stretch", pill.pillBorder)} />
-                <button
-                  type="button"
-                  onClick={pill.action.onClick}
-                  disabled={deploying}
-                  className={cn(
-                    "flex items-center justify-center gap-1.5 px-3.5 py-1.5 min-w-[120px] transition-colors cursor-pointer border-0 bg-transparent disabled:opacity-40 disabled:cursor-not-allowed font-semibold whitespace-nowrap",
-                    pill.action.cls
-                  )}
-                >
-                  <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>
-                    {pill.action.icon}
-                  </span>
-                  {pill.action.label}
-                </button>
-              </>
-            )}
-          </div>
-          {pill.note && (
-            <div className="flex items-center gap-1 text-[10px] text-faint/70">
-              <span className="material-symbols-outlined text-[11px]">info</span>
-              {pill.note}
-            </div>
-          )}
-        </div>
-
-      </div>
-    </div>
-  );
 }
 
 function MiniStats({
@@ -1821,6 +2056,9 @@ export function AppDetailPage() {
   const [logFilter, setLogFilter]     = useState<"all" | "webhook" | "widget" | "admin">("all");
   const [deploying, setDeploying]     = useState(false);
 
+  // Reset to Dashboard tab when switching between apps
+  useEffect(() => { setMainTab("overview"); }, [appId]);
+
   const logsEnabled       = mainTab === "logs" || mainTab === "overview";
   const widgetLogsEnabled = mainTab === "logs" || mainTab === "overview";
   const adminLogsEnabled  = mainTab === "logs" || mainTab === "overview";
@@ -2066,22 +2304,11 @@ export function AppDetailPage() {
       ) : (
         <div className="flex-1 overflow-hidden flex flex-col">
 
-          {/* App Header — always visible */}
+          {/* App Header — name, dates, archetype pills, status pill */}
           <AppHeader
             app={app}
             isGenerating={isGenerating}
-          />
-
-          {/* App type + status band — always visible above tabs */}
-          <AppInfoBand
-            app={app}
-            latestSession={latestSession}
-            hasFallback={hasFallback}
-            onDeploy={handleDeployDraft}
-            onRedeploy={handleRedeploy}
-            onDeactivate={handleDeactivate}
-            deploying={deploying}
-            isBuilding={isGenerating}
+            statusPill={buildStatusPill(app, latestSession, deploying, isGenerating, hasFallback, handleDeployDraft, handleRedeploy, handleDeactivate)}
           />
 
           {/* Deactivation confirm — shown when app has an injected test theme */}
