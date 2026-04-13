@@ -132,25 +132,28 @@ jobs:
           cloud-sql-proxy ${{ vars.CLOUD_SQL_CONNECTION }} --port 5432 &
           sleep 3
 
-          PSQL="PGPASSWORD=${{ secrets.DB_PASSWORD }} psql -h 127.0.0.1 -p 5432 -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }}"
+          export PGPASSWORD="${{ secrets.DB_PASSWORD }}"
+          PSQL_ARGS=(-h 127.0.0.1 -p 5432 -U "${{ secrets.DB_USER }}" -d "${{ secrets.DB_NAME }}")
 
           # Create migration tracking table (idempotent)
-          eval $PSQL -c "CREATE TABLE IF NOT EXISTS _schema_migrations (
-            filename TEXT PRIMARY KEY,
-            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-          );"
+          psql "${PSQL_ARGS[@]}" -c "
+            CREATE TABLE IF NOT EXISTS _schema_migrations (
+              filename TEXT PRIMARY KEY,
+              applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+          "
 
           # Run only NEW migration files in order
           for migration in platform/packages/db/migrations/*.sql; do
             filename=$(basename "$migration")
-            already=$(eval $PSQL -tAc "SELECT 1 FROM _schema_migrations WHERE filename = '${filename}'")
+            already=$(psql "${PSQL_ARGS[@]}" -tAc "SELECT 1 FROM _schema_migrations WHERE filename = '${filename}'")
             if [ "$already" = "1" ]; then
               echo "Skipping already-applied: $filename"
               continue
             fi
             echo "Running migration: $filename"
-            eval $PSQL -f "$migration" --set ON_ERROR_STOP=1
-            eval $PSQL -c "INSERT INTO _schema_migrations (filename) VALUES ('${filename}')"
+            psql "${PSQL_ARGS[@]}" -f "$migration" -v ON_ERROR_STOP=1
+            psql "${PSQL_ARGS[@]}" -c "INSERT INTO _schema_migrations (filename) VALUES ('${filename}')"
           done
         env:
           PGCONNECT_TIMEOUT: 10
