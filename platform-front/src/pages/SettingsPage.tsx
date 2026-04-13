@@ -4,8 +4,10 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { useSessionStore } from "@/stores/session";
 import { useTenant, useTenantStats, useBillingUsage } from "@/hooks/useApps";
+import { useThemeStore } from "@/stores/theme";
 import { api } from "@/lib/api";
 import type { BillingPlan } from "@/types/dashboard";
+import { BrandPanel } from "@/components/features/email/BrandPanel";
 
 // ─── Ring Progress ────────────────────────────────────────────────────────────
 
@@ -70,12 +72,12 @@ function StatTile({
   const maxLabel = unlimited ? "∞" : max.toLocaleString();
 
   return (
-    <div className={`rounded-xl p-3 flex flex-col gap-2 border ${
+    <div className={`rounded-xl p-3 flex flex-col gap-2 ${
       danger
-        ? "bg-danger/[0.06] border-danger/20"
+        ? "bg-danger/[0.06]"
         : warn
-        ? "bg-amber-400/[0.06] border-amber-400/20"
-        : "bg-white/[0.05] border-white/[0.07]"
+        ? "bg-amber-400/[0.06]"
+        : "bg-white/[0.05]"
     }`}>
       <div className="flex items-start justify-between">
         <div>
@@ -105,7 +107,7 @@ function StatTile({
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-2.5 border-b border-white/[0.05] last:border-0">
+    <div className="flex items-center justify-between py-2.5 border-b border-white/[0.04] last:border-0">
       <span className="text-[12px] text-faint">{label}</span>
       <span className="text-[12px] text-ink font-medium">{value}</span>
     </div>
@@ -194,7 +196,7 @@ function PlanModal({
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)" }}
     >
-      <div className="bg-surface border border-white/[0.08] rounded-2xl w-full max-w-[580px] overflow-hidden shadow-2xl">
+      <div className="bg-surface rounded-xl w-full max-w-[580px] overflow-hidden shadow-2xl">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5">
@@ -213,7 +215,7 @@ function PlanModal({
 
         {/* Interval toggle */}
         <div className="px-6 pb-4">
-          <div className="inline-flex items-center gap-0.5 p-1 rounded-lg bg-white/[0.04] border border-white/[0.06]">
+          <div className="inline-flex items-center gap-0.5 p-1 rounded-lg bg-white/[0.04]">
             {(["monthly", "annual"] as const).map((opt) => (
               <button
                 key={opt}
@@ -255,10 +257,10 @@ function PlanModal({
             return (
               <div
                 key={plan.id}
-                className={`rounded-xl p-4 flex flex-col gap-3 border relative ${
+                className={`rounded-xl p-4 flex flex-col gap-3 relative ${
                   plan.highlight
-                    ? "border-accent/30 bg-accent/[0.05]"
-                    : "border-white/[0.07] bg-white/[0.02]"
+                    ? "bg-accent/[0.05] ring-1 ring-accent/25"
+                    : "bg-white/[0.03]"
                 }`}
               >
                 {plan.highlight && (
@@ -324,13 +326,26 @@ function PlanModal({
   );
 }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Plan badge styles ────────────────────────────────────────────────────────
+// Inline styles bypass Tailwind scanning — color values are always applied.
+// Dark: light tints on dark surfaces. Light: solid chip colors on white.
 
-const PLAN_COLORS: Record<string, string> = {
-  free:    "text-faint border-white/10 bg-white/[0.04]",
-  starter: "text-sky-300 border-sky-400/20 bg-sky-400/[0.08]",
-  growth:  "text-emerald-300 border-emerald-400/20 bg-emerald-400/[0.08]",
-  pro:     "text-accent border-accent/20 bg-accent/[0.08]",
+type PlanStyle = { color: string; borderColor: string; backgroundColor: string };
+
+const PLAN_BADGE_DARK: Record<string, PlanStyle> = {
+  free:     { color: "var(--color-faint)",  borderColor: "rgba(255,255,255,0.10)", backgroundColor: "rgba(255,255,255,0.04)" },
+  starter:  { color: "#7dd3fc",             borderColor: "rgba(56,189,248,0.25)",  backgroundColor: "rgba(56,189,248,0.08)"  },
+  growth:   { color: "#6ee7b7",             borderColor: "rgba(52,211,153,0.25)",  backgroundColor: "rgba(52,211,153,0.08)"  },
+  pro:      { color: "var(--color-accent)", borderColor: "rgba(167,139,250,0.25)", backgroundColor: "rgba(167,139,250,0.08)" },
+  internal: { color: "#fcd34d",             borderColor: "rgba(251,191,36,0.25)",  backgroundColor: "rgba(251,191,36,0.08)"  },
+};
+
+const PLAN_BADGE_LIGHT: Record<string, PlanStyle> = {
+  free:     { color: "var(--color-faint)",  borderColor: "rgba(0,0,0,0.12)",       backgroundColor: "rgba(0,0,0,0.04)"       },
+  starter:  { color: "#075985",             borderColor: "#7dd3fc",                backgroundColor: "#f0f9ff"                 },
+  growth:   { color: "#065f46",             borderColor: "#6ee7b7",                backgroundColor: "#ecfdf5"                 },
+  pro:      { color: "var(--color-accent)", borderColor: "rgba(124,58,237,0.35)",  backgroundColor: "#f5f3ff"                 },
+  internal: { color: "#92400e",             borderColor: "#f59e0b",                backgroundColor: "#fffbeb"                 },
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -340,15 +355,17 @@ export function SettingsPage() {
   const tenantQuery  = useTenant(tenantId);
   const statsQuery   = useTenantStats(tenantId);
   const usageQuery   = useBillingUsage(tenantId);
+  const { theme }    = useThemeStore();
   const [showUpgrade, setShowUpgrade] = useState(false);
 
   const tenant  = tenantQuery.data;
   const stats   = statsQuery.data;
   const billing = usageQuery.data;
 
-  const plan     = tenant?.billingPlan ?? "free";
-  const planColor = PLAN_COLORS[plan] ?? PLAN_COLORS["free"]!;
-  const canUpgrade = plan !== "pro";
+  const plan      = tenant?.billingPlan ?? "free";
+  const planTable = theme === "light" ? PLAN_BADGE_LIGHT : PLAN_BADGE_DARK;
+  const planStyle = planTable[plan] ?? planTable["free"]!;
+  const canUpgrade = plan !== "pro" && plan !== "internal";
   const connectedDomain = shopDomain ?? tenant?.shopDomain ?? null;
 
   const limits = billing?.limits;
@@ -360,7 +377,7 @@ export function SettingsPage() {
       <main className="flex-1 overflow-y-auto py-5 px-8 w-full max-w-[680px] mx-auto space-y-3">
 
         {/* ── Plan ──────────────────────────────────────────────────────── */}
-        <section className="bg-white/[0.03] border border-white/[0.07] rounded-2xl overflow-hidden">
+        <section className="bg-white/[0.03] rounded-xl overflow-hidden">
 
           <div className="px-6 pt-4 pb-2">
             <span className="text-[11px] font-semibold text-faint uppercase tracking-widest">Plan</span>
@@ -368,7 +385,7 @@ export function SettingsPage() {
 
           <div className="flex items-center justify-between px-6 pb-3">
             <div className="flex items-center gap-3">
-              <span className={`text-[12px] font-semibold px-3 py-1 rounded-full border capitalize ${planColor}`}>{plan}</span>
+              <span className="text-[12px] font-semibold px-3 py-1 rounded-full border capitalize" style={planStyle}>{plan}</span>
               {tenant?.subscriptionStatus === "active" && <span className="text-[12px] text-teal">· Active</span>}
               {tenant?.subscriptionStatus === "frozen" && <span className="text-[12px] text-danger">· Payment issue</span>}
               {tenant?.subscriptionStatus === "pending" && <span className="text-[12px] text-faint">· Pending</span>}
@@ -409,7 +426,7 @@ export function SettingsPage() {
         </section>
 
         {/* ── Workspace ─────────────────────────────────────────────────── */}
-        <section className="bg-white/[0.03] border border-white/[0.07] rounded-2xl overflow-hidden">
+        <section className="bg-white/[0.03] rounded-xl overflow-hidden">
 
           <div className="px-6 pt-4 pb-2">
             <span className="text-[11px] font-semibold text-faint uppercase tracking-widest">Workspace</span>
@@ -444,7 +461,7 @@ export function SettingsPage() {
           </div>
 
           {/* Account rows */}
-          <div className="px-6 border-t border-white/[0.05] pt-1 pb-2">
+          <div className="px-6 border-t border-white/[0.04] pt-1 pb-2">
             {tenantQuery.isLoading ? (
               <div className="py-4 space-y-3">
                 {[1, 2, 3].map((i) => <div key={i} className="h-4 bg-white/[0.04] rounded animate-pulse-subtle" />)}
@@ -460,7 +477,7 @@ export function SettingsPage() {
         </section>
 
         {/* ── Danger Zone ───────────────────────────────────────────────── */}
-        <section className="bg-danger/[0.03] border border-danger/25 rounded-2xl overflow-hidden">
+        <section className="bg-danger/[0.03] rounded-xl overflow-hidden">
           <div className="px-6 pt-4 pb-2">
             <span className="text-[11px] font-semibold text-danger/60 uppercase tracking-widest">Danger Zone</span>
           </div>
@@ -472,6 +489,9 @@ export function SettingsPage() {
             <Button variant="danger" size="sm">Disconnect</Button>
           </div>
         </section>
+
+        {/* Email brand — tenant-level, shared across every email-using app */}
+        {tenantId && <BrandPanel tenantId={tenantId} />}
 
       </main>
 

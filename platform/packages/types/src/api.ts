@@ -8,7 +8,6 @@ export interface CreateTenantRequest {
   id?: string;
   slug: string;
   name: string;
-  plan?: string; // default: "starter"
 }
 
 /** POST /tenants/:tenantId/apps request body. */

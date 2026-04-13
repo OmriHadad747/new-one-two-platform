@@ -7,19 +7,17 @@ export async function createTenant(params: {
   id?: string;
   slug: string;
   name: string;
-  plan?: string;
   shopDomain?: string;
   shopifyAccessTokenSecretName?: string;
   kmsKeyName?: string;
 }): Promise<{ id: string }> {
   const rows = await sql<{ id: string }[]>`
-    INSERT INTO tenants (id, slug, name, status, plan, shop_domain, shopify_access_token_secret_name, kms_key_name)
+    INSERT INTO tenants (id, slug, name, status, shop_domain, shopify_access_token_secret_name, kms_key_name)
     VALUES (
       ${params.id ?? sql`uuid_generate_v4()`},
       ${params.slug},
       ${params.name},
       'active',
-      ${params.plan ?? "free"},
       ${params.shopDomain ?? null},
       ${params.shopifyAccessTokenSecretName ?? null},
       ${params.kmsKeyName ?? "projects/local/locations/global/keyRings/dev/cryptoKeys/dev-key"}
@@ -36,7 +34,6 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       slug: string;
       name: string;
       status: string;
-      plan: string;
       billingPlan: string;
       billingInterval: string;
       subscriptionStatus: string;
@@ -57,7 +54,6 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
       slug,
       name,
       status,
-      plan,
       billing_plan                            AS "billingPlan",
       billing_interval                        AS "billingInterval",
       subscription_status                     AS "subscriptionStatus",
@@ -82,7 +78,6 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
     slug: row.slug,
     name: row.name,
     status: row.status as Tenant["status"],
-    plan: row.plan,
     billingPlan: row.billingPlan as Tenant["billingPlan"],
     billingInterval: (row.billingInterval ?? "monthly") as Tenant["billingInterval"],
     subscriptionStatus: row.subscriptionStatus as Tenant["subscriptionStatus"],
@@ -109,7 +104,6 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
       slug: string;
       name: string;
       status: string;
-      plan: string;
       billingPlan: string;
       billingInterval: string;
       subscriptionStatus: string;
@@ -130,7 +124,6 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
       slug,
       name,
       status,
-      plan,
       billing_plan                            AS "billingPlan",
       billing_interval                        AS "billingInterval",
       subscription_status                     AS "subscriptionStatus",
@@ -155,7 +148,6 @@ export async function getTenantByShopDomain(shopDomain: string): Promise<Tenant 
     slug: row.slug,
     name: row.name,
     status: row.status as Tenant["status"],
-    plan: row.plan,
     billingPlan: row.billingPlan as Tenant["billingPlan"],
     billingInterval: (row.billingInterval ?? "monthly") as Tenant["billingInterval"],
     subscriptionStatus: row.subscriptionStatus as Tenant["subscriptionStatus"],
@@ -256,6 +248,8 @@ export async function getAppById(
       themeInjectionThemeId: string | null;
       currentSemver: string | null;
       activeAppVersionId: string | null;
+      usesEmail: boolean;
+      emailVariables: string[] | null;
       createdAt: Date;
       updatedAt: Date;
     }>
@@ -276,6 +270,8 @@ export async function getAppById(
       a.theme_injection_theme_id             AS "themeInjectionThemeId",
       av.semver                              AS "currentSemver",
       df.app_version_id                      AS "activeAppVersionId",
+      a.uses_email                           AS "usesEmail",
+      a.email_variables                      AS "emailVariables",
       a.created_at                           AS "createdAt",
       a.updated_at                           AS "updatedAt"
     FROM apps a
@@ -302,6 +298,8 @@ export async function getAppById(
     themeInjectionThemeId: row.themeInjectionThemeId ?? null,
     currentSemver: row.currentSemver ?? null,
     activeAppVersionId: row.activeAppVersionId ?? null,
+    usesEmail: row.usesEmail ?? false,
+    emailVariables: row.emailVariables ?? [],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -436,6 +434,8 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
       themeInjectionThemeId: string | null;
       currentSemver: string | null;
       activeAppVersionId: string | null;
+      usesEmail: boolean;
+      emailVariables: string[] | null;
       createdAt: Date;
       updatedAt: Date;
     }>
@@ -456,6 +456,8 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
       a.theme_injection_theme_id             AS "themeInjectionThemeId",
       av.semver                              AS "currentSemver",
       df.app_version_id                      AS "activeAppVersionId",
+      a.uses_email                           AS "usesEmail",
+      a.email_variables                      AS "emailVariables",
       a.created_at                           AS "createdAt",
       a.updated_at                           AS "updatedAt"
     FROM apps a
@@ -481,6 +483,8 @@ export async function getAppsByTenantId(tenantId: string): Promise<App[]> {
     themeInjectionThemeId: row.themeInjectionThemeId ?? null,
     currentSemver: row.currentSemver ?? null,
     activeAppVersionId: row.activeAppVersionId ?? null,
+    usesEmail: row.usesEmail ?? false,
+    emailVariables: row.emailVariables ?? [],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }));
@@ -719,6 +723,8 @@ export async function getAdminUiAppsByShop(shopDomain: string): Promise<App[]> {
     themeInjectionThemeId: null,
     currentSemver: null,
     activeAppVersionId: null,
+    usesEmail: false,
+    emailVariables: [],
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }));

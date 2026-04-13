@@ -11,7 +11,7 @@ export function TopBar({ title, subtitle, actions }: TopBarProps) {
   const { theme, toggle } = useThemeStore();
 
   return (
-    <header className="h-16 flex items-center px-7 gap-4 bg-surface border-b border-white/7 shrink-0">
+    <header className="h-16 flex items-center px-7 gap-4 bg-surface border-b border-white/[0.04] shrink-0">
       <h1 className="flex-1 text-base font-bold text-ink leading-none">
         {title}
         {subtitle && (

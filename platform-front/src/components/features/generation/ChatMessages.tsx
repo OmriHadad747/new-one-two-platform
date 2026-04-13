@@ -2,6 +2,7 @@ import { forwardRef, useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { cn } from "@/lib/cn";
 import { ArchetypePills } from "@/components/ui/ArchetypePills";
+import { useThemeStore } from "@/stores/theme";
 import type { AppArchetype, ProgressEvent } from "@/types/dashboard";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -34,13 +35,17 @@ export interface ChatMessage {
   role: "ai" | "user";
   text?: string;
   /** Special inline card type rendered below the text. */
-  type?: "generating" | "deploy-ready" | "live" | "clarifying";
+  type?: "generating" | "deploy-ready" | "live" | "clarifying" | "confirm";
   /** For "deploy-ready" messages. */
   deployBundle?: DeployBundle;
   /** For "live" messages — the app id to link to. */
   liveAppId?: string;
   /** For "clarifying" messages. */
   clarifyingData?: ClarifyingData;
+  /** For "confirm" messages — serializable data to reconstruct Generate/Change actions after hydration. */
+  confirmData?: { intent: Record<string, unknown>; originalPrompt: string };
+  /** Set on a "generating" message when the generation has failed — shows an inline failure banner. */
+  generatingFailed?: boolean;
   /** For plan restriction errors — shows archetype pills + upgrade prompt. */
   planBlock?: { archetype: AppArchetype; upgradeHint: string };
   actions?: ChatMessageAction[];
@@ -128,7 +133,7 @@ function resolveStepStatus(
   return "waiting";
 }
 
-function GeneratingCard({ events, isCompleted }: { events: ProgressEvent[]; isCompleted?: boolean }) {
+function GeneratingCard({ events, isCompleted, stuckWarning, isFailed }: { events: ProgressEvent[]; isCompleted?: boolean; stuckWarning?: boolean; isFailed?: boolean }) {
   const byAgent = events.reduce<Record<string, ProgressEvent>>((acc, e) => {
     acc[e.agent] = e;
     return acc;
@@ -158,7 +163,7 @@ function GeneratingCard({ events, isCompleted }: { events: ProgressEvent[]; isCo
   const latestMessage = activeAgent ? (byAgent[activeAgent]?.message ?? null) : null;
 
   return (
-    <div className="mt-2.5 bg-white/[0.04] border border-white/[0.07] rounded-xl p-4 max-w-[420px]">
+    <div className="mt-2.5 bg-white/[0.04] rounded-xl p-4 max-w-[420px]">
       <p className="text-[10px] font-bold text-faint uppercase tracking-wider mb-3.5">
         Building your app
       </p>
@@ -205,8 +210,24 @@ function GeneratingCard({ events, isCompleted }: { events: ProgressEvent[]; isCo
         })}
       </div>
       {latestMessage && (
-        <div className="mt-3 pt-3 border-t border-white/[0.06]">
+        <div className="mt-3 pt-3 border-t border-white/[0.04]">
           <p className="text-[11px] text-accent animate-pulse-subtle leading-relaxed">{latestMessage}</p>
+        </div>
+      )}
+      {isFailed && (
+        <div className="mt-3 pt-3 border-t border-danger/20">
+          <div className="flex items-start gap-2 text-[11px] text-danger leading-relaxed">
+            <span className="material-symbols-outlined text-[14px] shrink-0 mt-px">error</span>
+            <span>Generation failed. See the error above for details.</span>
+          </div>
+        </div>
+      )}
+      {stuckWarning && !isCompleted && !isFailed && (
+        <div className="mt-3 pt-3 border-t border-amber/20">
+          <div className="flex items-start gap-2 text-[11px] text-amber leading-relaxed">
+            <span className="material-symbols-outlined text-[14px] shrink-0 mt-px">warning</span>
+            <span>This is taking longer than expected. You can wait or cancel and try again.</span>
+          </div>
         </div>
       )}
     </div>
@@ -249,16 +270,19 @@ function ExplanationText({ text }: { text: string }) {
 
 function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
   const navigate = useNavigate();
-  const triggerLabel =
-    bundle?.triggerType === "cron"   ? "Scheduled (cron)"  :
-    bundle?.triggerType === "admin"  ? "Admin-triggered"   :
-    bundle?.triggerType === "widget" ? "Widget interaction" :
-    bundle?.triggerTopics?.[0]       ?? "Webhook-triggered";
+  const triggerLabel = (() => {
+    const labels: string[] = [];
+    if (bundle?.triggerType === "cron")   labels.push("Scheduled (cron)");
+    if (bundle?.triggerType === "admin")  labels.push("Admin-triggered");
+    if (bundle?.triggerType === "widget") labels.push("Widget interaction");
+    if (bundle?.triggerTopics?.length)    labels.push(...bundle.triggerTopics);
+    return labels.length > 0 ? labels.join(", ") : "Webhook-triggered";
+  })();
 
   return (
     <div className="mt-2.5 max-w-[420px] space-y-3">
       {/* Summary card */}
-      <div className="bg-white/[0.04] border border-white/[0.07] rounded-xl p-4 space-y-3">
+      <div className="bg-white/[0.04] rounded-xl p-4 space-y-3">
         <div className="flex items-center gap-2">
           <span className="material-symbols-outlined text-accent text-[19px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
           <span className="text-[15px] font-bold text-ink">Generation complete</span>
@@ -276,7 +300,7 @@ function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
           </div>
         )}
         {bundle?.explanation && (
-          <div className="pt-2.5 border-t border-white/[0.06]">
+          <div className="pt-2.5 border-t border-white/[0.04]">
             <ExplanationText text={bundle.explanation} />
           </div>
         )}
@@ -287,7 +311,7 @@ function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
         <button
           type="button"
           onClick={() => navigate(`/app/apps/${bundle.appId}`)}
-          className="w-full flex items-center justify-between px-4 py-2.5 bg-white/[0.04] border border-white/[0.07] rounded-xl text-[12.5px] font-semibold text-muted hover:bg-white/[0.07] hover:text-ink transition-colors cursor-pointer"
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-white/[0.04] rounded-xl text-[12.5px] font-semibold text-muted hover:bg-white/[0.07] hover:text-ink transition-colors cursor-pointer"
         >
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-[15px]">dashboard</span>
@@ -315,7 +339,7 @@ function LiveCard({ appId }: { appId?: string }) {
         <button
           type="button"
           onClick={() => navigate(`/app/apps/${appId}`)}
-          className="w-full flex items-center justify-between px-4 py-2.5 bg-white/[0.04] border border-white/[0.07] rounded-xl text-[12.5px] font-semibold text-muted hover:bg-white/[0.07] hover:text-ink transition-colors cursor-pointer"
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-white/[0.04] rounded-xl text-[12.5px] font-semibold text-muted hover:bg-white/[0.07] hover:text-ink transition-colors cursor-pointer"
         >
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-[15px]">dashboard</span>
@@ -332,9 +356,9 @@ function LiveCard({ appId }: { appId?: string }) {
 
 function PlanBlockedCard({ archetype, upgradeHint }: { archetype: AppArchetype; upgradeHint: string }) {
   return (
-    <div className="mt-2.5 max-w-[380px] bg-white/[0.03] border border-white/[0.08] rounded-xl overflow-hidden">
+    <div className="mt-2.5 max-w-[380px] bg-white/[0.03] rounded-xl overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.06]">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.04]">
         <span
           className="material-symbols-outlined text-[15px] text-amber"
           style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
@@ -396,7 +420,7 @@ function ClarifyingCard({
               key={s}
               type="button"
               onClick={() => submit(s)}
-              className="w-full text-left text-[13px] px-4 py-2.5 rounded-xl bg-white/[0.04] hover:bg-accent/8 border border-white/[0.09] hover:border-accent/30 text-muted hover:text-ink transition-all duration-150 cursor-pointer"
+              className="w-full text-left text-[13px] px-4 py-2.5 rounded-xl bg-white/[0.04] hover:bg-accent/8 text-muted hover:text-ink transition-all duration-150 cursor-pointer"
             >
               {s}
             </button>
@@ -412,7 +436,7 @@ function ClarifyingCard({
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") submit(text); }}
           placeholder={data.suggestions.length > 0 ? "Or type your own…" : "Type your answer…"}
-          className="flex-1 text-[13px] bg-white/[0.04] border border-white/[0.09] rounded-xl px-3.5 py-2 text-ink placeholder:text-faint outline-none focus:border-accent/40 transition-colors"
+          className="flex-1 text-[13px] bg-white/[0.04] rounded-xl px-3.5 py-2 text-ink placeholder:text-faint outline-none transition-colors"
         />
         <button
           type="button"
@@ -428,6 +452,146 @@ function ClarifyingCard({
   );
 }
 
+// ─── Component picker (confirm card) ─────────────────────────────────────────
+
+type ComponentDef = {
+  key: string;
+  icon: string;
+  label: string;
+  locked?: boolean;
+  darkCls: { active: string; inactive: string };
+  lightCls: { active: string; inactive: string };
+};
+
+const COMPONENTS: ComponentDef[] = [
+  {
+    key: "backend",
+    icon: "bolt",
+    label: "Backend",
+    locked: true,
+    darkCls:  { active: "bg-emerald-400/[.12] text-emerald-300 border-emerald-400/20", inactive: "" },
+    lightCls: { active: "bg-emerald-600/[.08] text-emerald-700 border-emerald-600/15", inactive: "" },
+  },
+  {
+    key: "widget",
+    icon: "widgets",
+    label: "Storefront Widget",
+    darkCls:  { active: "bg-sky-400/[.12] text-sky-300 border-sky-400/20",          inactive: "bg-white/[0.03] text-faint border-white/[0.06]" },
+    lightCls: { active: "bg-sky-600/[.08] text-sky-700 border-sky-600/15",          inactive: "bg-black/[0.02] text-muted/60 border-black/[0.06]" },
+  },
+  {
+    key: "admin",
+    icon: "admin_panel_settings",
+    label: "Admin UI",
+    darkCls:  { active: "bg-orange-400/[.12] text-orange-300 border-orange-400/20", inactive: "bg-white/[0.03] text-faint border-white/[0.06]" },
+    lightCls: { active: "bg-orange-600/[.08] text-orange-700 border-orange-600/15", inactive: "bg-black/[0.02] text-muted/60 border-black/[0.06]" },
+  },
+];
+
+function ConfirmCard({
+  confirmData,
+  onGenerate,
+  onChangeRequest,
+}: {
+  confirmData: { intent: Record<string, unknown>; originalPrompt: string };
+  onGenerate: (updatedIntent: Record<string, unknown>, originalPrompt: string) => void;
+  onChangeRequest: () => void;
+}) {
+  const theme = useThemeStore((s) => s.theme);
+  const isDark = theme !== "light";
+  const appCategory = (confirmData.intent.appCategory as string) ?? "backend";
+
+  const [hasWidget, setHasWidget] = useState(
+    appCategory === "storefront_backend" || appCategory === "storefront_backend_admin",
+  );
+  const [hasAdmin, setHasAdmin] = useState(
+    appCategory === "storefront_backend_admin" || appCategory === "backend_admin",
+  );
+
+  const handleGenerate = () => {
+    const cat =
+      hasWidget && hasAdmin ? "storefront_backend_admin" :
+      hasWidget             ? "storefront_backend" :
+      hasAdmin              ? "backend_admin" :
+      "backend";
+    onGenerate({ ...confirmData.intent, appCategory: cat }, confirmData.originalPrompt);
+  };
+
+  return (
+    <div className="mt-3 max-w-[420px]">
+      <p className="text-[10px] font-bold text-faint uppercase tracking-wider mb-2">Components</p>
+
+      <div className="flex flex-wrap gap-1.5 mb-1.5">
+        {COMPONENTS.map((comp) => {
+          const isActive = comp.key === "backend" || (comp.key === "widget" ? hasWidget : hasAdmin);
+          const palette = isDark ? comp.darkCls : comp.lightCls;
+          const cls = isActive ? palette.active : palette.inactive;
+
+          return (
+            <button
+              key={comp.key}
+              type="button"
+              disabled={comp.locked}
+              onClick={() => {
+                if (comp.key === "widget") setHasWidget((v) => !v);
+                if (comp.key === "admin")  setHasAdmin((v) => !v);
+              }}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all duration-150",
+                cls,
+                comp.locked
+                  ? "cursor-default opacity-80"
+                  : "cursor-pointer hover:opacity-90",
+              )}
+            >
+              <span
+                className="material-symbols-outlined text-[13px] leading-none"
+                style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+              >
+                {comp.icon}
+              </span>
+              {comp.label}
+              {!comp.locked && (
+                <span className={cn(
+                  "w-3.5 h-3.5 rounded-[4px] border flex items-center justify-center ml-0.5 transition-colors",
+                  isActive
+                    ? isDark ? "bg-white/20 border-white/25" : "bg-current/15 border-current/25"
+                    : isDark ? "bg-white/[0.04] border-white/[0.08]" : "bg-black/[0.04] border-black/[0.08]",
+                )}>
+                  {isActive && (
+                    <span className="material-symbols-outlined text-[10px] leading-none" style={{ fontVariationSettings: "'wght' 600" }}>
+                      check
+                    </span>
+                  )}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="text-[10px] text-faint mb-3">Backend is always included. Toggle optional components.</p>
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={handleGenerate}
+          className="text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hi transition-all duration-150 cursor-pointer border-0"
+        >
+          Generate →
+        </button>
+        <button
+          type="button"
+          onClick={onChangeRequest}
+          className="text-xs px-3 py-1.5 rounded-lg bg-white/[0.04] text-muted hover:text-ink hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
+        >
+          Change request
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface ChatMessagesProps {
@@ -436,11 +600,17 @@ interface ChatMessagesProps {
   liveGenEvents?: ProgressEvent[];
   /** True once gen.status === "completed" — clears stale "running" step states */
   generationCompleted?: boolean;
+  /** True when the generating card has been running for too long without progress. */
+  stuckWarning?: boolean;
   onClarifyAnswer?: (text: string) => void;
+  /** Called when user clicks "Generate →" on the confirm card (with component picker selections). */
+  onConfirmGenerate?: (msgId: string, updatedIntent: Record<string, unknown>, originalPrompt: string) => void;
+  /** Called when user clicks "Change request" on the confirm card. */
+  onConfirmChangeRequest?: (msgId: string) => void;
 }
 
 export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
-  ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, onClarifyAnswer }, ref) => {
+  ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, stuckWarning, onClarifyAnswer, onConfirmGenerate, onConfirmChangeRequest }, ref) => {
     return (
     <div className="flex-1 overflow-y-auto">
       <div className="px-5 pt-6 pb-32 flex flex-col gap-6 w-full max-w-[760px] mx-auto">
@@ -448,7 +618,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
           if (msg.role === "user") {
             return (
               <div key={msg.id} className="flex justify-end">
-                <div className="max-w-[72%] bg-raised border border-white/[0.12] rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-sm">
+                <div className="max-w-[72%] bg-raised rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-sm">
                   {msg.text && (
                     <p className="text-[13px] text-ink leading-relaxed">{msg.text}</p>
                   )}
@@ -468,7 +638,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
                 )}
 
                 {msg.type === "generating" && (
-                  <GeneratingCard events={liveGenEvents} isCompleted={generationCompleted} />
+                  <GeneratingCard events={liveGenEvents} isCompleted={generationCompleted} stuckWarning={stuckWarning} isFailed={msg.generatingFailed} />
                 )}
 
                 {msg.type === "deploy-ready" && (
@@ -483,11 +653,19 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
                   <ClarifyingCard data={msg.clarifyingData} onAnswer={onClarifyAnswer} />
                 )}
 
+                {msg.type === "confirm" && msg.confirmData && onConfirmGenerate && (
+                  <ConfirmCard
+                    confirmData={msg.confirmData}
+                    onGenerate={(intent, prompt) => onConfirmGenerate(msg.id, intent, prompt)}
+                    onChangeRequest={() => onConfirmChangeRequest?.(msg.id)}
+                  />
+                )}
+
                 {msg.planBlock && (
                   <PlanBlockedCard archetype={msg.planBlock.archetype} upgradeHint={msg.planBlock.upgradeHint} />
                 )}
 
-                {msg.actions && msg.actions.length > 0 && (
+                {msg.actions && msg.actions.length > 0 && !(msg.type === "confirm" && onConfirmGenerate) && (
                   <div className="flex gap-2 mt-3 flex-wrap">
                     {msg.actions.map((action) => (
                       <button
@@ -496,7 +674,7 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
                         onClick={action.onClick}
                         className={
                           action.variant === "ghost"
-                            ? "text-xs px-3 py-1.5 rounded-lg border border-white/13 text-muted hover:text-ink hover:border-white/25 transition-all duration-150 cursor-pointer bg-transparent"
+                            ? "text-xs px-3 py-1.5 rounded-lg bg-white/[0.04] text-muted hover:text-ink hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
                             : "text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hi transition-all duration-150 cursor-pointer border-0"
                         }
                       >

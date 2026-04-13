@@ -20,10 +20,13 @@
     "@new-one-two/db": "workspace:*",
     "@new-one-two/crypto": "workspace:*",
     "@new-one-two/logger": "workspace:*",
-    "@new-one-two/types": "workspace:*"
+    "@new-one-two/types": "workspace:*",
+    "mjml": "^4.15.3",
+    "resend": "^4.0.1"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "@types/mjml": "^4.7.4"
   }
 }

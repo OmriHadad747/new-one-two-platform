@@ -48,16 +48,130 @@ export interface ShopInfo {
 
 // ─── ctx.services ─────────────────────────────────────────────────────────────
 
+/**
+ * Parameters handlers pass to `ctx.email.send()`.
+ *
+ * Minimal by design — the handler only provides what only the handler can know
+ * at runtime: who to email (`to`) and the dynamic template variables (`data`).
+ * Everything else — subject, body template, brand, layout, from address,
+ * delivery provider, rendering — is owned by the platform and sourced from the
+ * merchant-configured `app_email_configs` and `tenant_brands` tables at send time.
+ *
+ * The merchant edits the template (subject, heading, body, CTA) in the Ton
+ * dashboard's Email tab. Any `{{variable}}` placeholders the merchant puts in
+ * those fields are resolved against `data` at send time.
+ */
 export interface EmailSendParams {
+  /** Recipient email address. */
   to: string;
-  subject: string;
-  templateId?: string;
+  /** Values bound to {{variable}} placeholders in the merchant-configured template. */
   data?: Record<string, unknown>;
 }
 
-// Provider-agnostic email client. Current implementation: log stub (EMAIL_SENT event).
+/**
+ * Provider-agnostic email client. The platform implementation resolves the
+ * merchant's configured template, applies the tenant brand, renders MJML to
+ * cross-client HTML, and submits via Resend.
+ */
 export interface EmailClient {
   send(params: EmailSendParams): Promise<void>;
+}
+
+// ─── Email configuration entities (platform-owned, not handler-visible) ──────
+// These types describe the email config stored by the platform. Handlers never
+// see them directly — they only call `ctx.email.send({ to, data })`.
+
+export type EmailType = "transactional" | "marketing";
+
+/**
+ * Merchant-configurable email template for a single app.
+ * Auto-created on deploy with AI-generated starter content; merchant edits in
+ * the dashboard Email tab. Deploy is blocked until `configuredByMerchant=true`.
+ */
+export interface AppEmailConfig {
+  appId: string;
+  tenantId: string;
+  subjectTemplate: string;
+  headingTemplate: string | null;
+  bodyTemplate: string;
+  ctaLabel: string | null;
+  ctaUrlTemplate: string | null;
+  emailType: EmailType;
+  configuredByMerchant: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Tenant-level brand shared across all email-using apps of a single merchant. */
+export interface TenantBrand {
+  tenantId: string;
+  logoUrl: string | null;
+  primaryColor: string | null;
+  footerText: string | null;
+  supportEmail: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type EmailDeliveryStatus =
+  | "queued"
+  | "sent"
+  | "delivered"
+  | "bounced"
+  | "complained"
+  | "failed";
+
+export interface EmailDelivery {
+  id: string;
+  tenantId: string;
+  appId: string;
+  recipient: string;
+  subject: string;
+  provider: string;
+  providerMsgId: string | null;
+  status: EmailDeliveryStatus;
+  failureReason: string | null;
+  isTest: boolean;
+  sentAt: Date;
+  deliveredAt: Date | null;
+  bouncedAt: Date | null;
+}
+
+export type EmailSuppressionReason =
+  | "unsubscribed"
+  | "bounced"
+  | "complained"
+  | "manual";
+
+export interface EmailSuppression {
+  tenantId: string;
+  email: string;
+  reason: EmailSuppressionReason;
+  sourceDeliveryId: string | null;
+  createdAt: Date;
+}
+
+/** Aggregate counts returned by the email stats endpoint. */
+export interface EmailStatsSummary {
+  sent: number;
+  delivered: number;
+  bounced: number;
+  complained: number;
+  failed: number;
+  suppressed: number;
+}
+
+/**
+ * AI-generated starter content produced by the handler agent when it detects
+ * `ctx.email.send()` usage. Used to pre-fill `app_email_configs` on deploy so
+ * merchants see a filled-in Email tab instead of a blank form.
+ */
+export interface EmailStarterContent {
+  subject: string;
+  heading: string | null;
+  body: string;
+  ctaLabel: string | null;
+  ctaUrl: string | null;
 }
 
 export interface SmsSendParams {

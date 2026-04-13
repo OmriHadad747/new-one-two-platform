@@ -222,7 +222,7 @@ async function processWebhookJob(job: Job<WebhookJobPayload>): Promise<void> {
 
 // ─── Worker Events ─────────────────────────────────────────────────────────────
 
-worker.on("error", (err) => {
+worker.on("error", (err: Error) => {
   console.error("Worker error:", err);
 });
 
@@ -235,13 +235,24 @@ export async function closeWorker(): Promise<void> {
 if (import.meta.url === `file://${process.argv[1]}`) {
   console.info(`Worker started — concurrency=${CONCURRENCY}`);
 
-  process.on("SIGTERM", async () => {
-    await closeWorker();
-    process.exit(0);
+  // Cloud Run requires a service to listen on a port. Start a minimal HTTP
+  // server that returns 200 for health checks while the worker runs.
+  const PORT = parseInt(process.env["PORT"] ?? "8080", 10);
+  const { createServer } = await import("node:http");
+  const server = createServer((_req, res) => {
+    res.writeHead(200);
+    res.end("ok");
+  });
+  server.listen(PORT, () => {
+    console.info(`Health check server listening on port ${PORT}`);
   });
 
-  process.on("SIGINT", async () => {
+  const shutdown = async () => {
+    server.close();
     await closeWorker();
     process.exit(0);
-  });
+  };
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }

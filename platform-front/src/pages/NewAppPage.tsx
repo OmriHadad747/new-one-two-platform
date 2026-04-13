@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useSearchParams, useParams, useNavigate } from "react-router";
 import { TopBar } from "@/components/layout/TopBar";
 import { ChatMessages, type ChatMessage, type DeployBundle } from "@/components/features/generation/ChatMessages";
@@ -9,7 +9,7 @@ import { useGenerationStore } from "@/stores/generation";
 import { useApps, useApp } from "@/hooks/useApps";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { SessionBundle, GenerationBundle, AppArchetype, AnalyzeMessage } from "@/types/dashboard";
+import type { SessionBundle, GenerationBundle, AppArchetype, AnalyzeMessage, App } from "@/types/dashboard";
 import { NameAppModal } from "@/components/features/generation/NameAppModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -106,11 +106,17 @@ export function NewAppPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevStatus = useRef<string>("idle");
   const genMsgIdRef = useRef<string | null>(null);
-  const prevRouteAppId = useRef<string | undefined>(routeAppId);
+  const prevRouteAppId = useRef<string | undefined | null>(null);
   const lastStartParamsRef = useRef<{ appId: string; tenantId: string; prompt: string; preComputedIntent?: Record<string, unknown> } | null>(null);
   // Tracks whether hydration has run for the current mount of this component.
   // Resets to false on every mount so navigation back to the same app re-hydrates.
   const hasHydratedRef = useRef(false);
+  // Prevents double-click on "Generate →" from firing two concurrent generation jobs.
+  const confirmingRef = useRef(false);
+  // Tracks whether a draft app has been pre-created in this conversation mount.
+  // Using a ref (not store state) so it resets on every component mount and is immune
+  // to stale Zustand analyzeHistory from a previous session.
+  const draftCreatedRef = useRef(false);
 
   // Name modal
   const [nameModal, setNameModal] = useState<{
@@ -118,33 +124,34 @@ export function NewAppPage() {
     onConfirm: (name: string) => void;
   } | null>(null);
 
-  // Analyze conversation
-  const [analyzeHistory, setAnalyzeHistory] = useState<AnalyzeMessage[]>([]);
-  const [analyzePhase, setAnalyzePhase]     = useState<"idle" | "thinking" | "awaiting_confirm">("idle");
-
   const { state: gen, start, startRevision, reconnect, restore, reset, cancel } = useGeneration();
   const { setActive, updateStatus, updateEvents, updateMessages, active: activeGenStore,
-          setDraftMessages, clearDraftMessages, draftMessages } = useGenerationStore();
+          setDraftMessages, clearDraftMessages, draftMessages,
+          analyzePhase, analyzeHistory, setAnalyzePhase, setAnalyzeHistory } = useGenerationStore();
   const isStreaming  = gen.status === "running";
   const isAnalyzing  = analyzePhase === "thinking";
+  const [stuckWarning, setStuckWarning] = useState(false);
 
   const activeAppQuery   = useApp(tenantId, selectedAppId);
   const activeApp        = activeAppQuery.data ?? null;
   const latestSessionQuery = useLatestSession(selectedAppId);
 
   // ── Reset all state when the user navigates to a different app's revise page ─
-  useEffect(() => {
+  // useLayoutEffect fires synchronously before paint, preventing a flash of stale
+  // analyzePhase/analyzeHistory from a previous session on the first render.
+  useLayoutEffect(() => {
     if (routeAppId === prevRouteAppId.current) return;
     prevRouteAppId.current = routeAppId;
     genMsgIdRef.current = null;
     hasHydratedRef.current = false;
+    draftCreatedRef.current = false;
     reset();
     setSelectedAppId(routeAppId ?? null);
     setMessages([WELCOME]);
     setAnalyzeHistory([]);
     setAnalyzePhase("idle");
     prevStatus.current = "idle";
-  }, [routeAppId, reset]);
+  }, [routeAppId, reset, setAnalyzeHistory, setAnalyzePhase]);
 
   // ── Hydrate state from the persisted latest session ─────────────────────────
   useEffect(() => {
@@ -157,6 +164,20 @@ export function NewAppPage() {
       const cached = activeGenStore?.jobId === session.jobId ? activeGenStore : null;
       // Don't reconnect to a job the user already cancelled this session
       if (cached?.status === "failed") return;
+
+      // Staleness guard: if the session hasn't been updated in 10 minutes,
+      // the backend likely crashed — don't attempt reconnect.
+      const updatedAt = (session as { updatedAt?: string }).updatedAt;
+      if (updatedAt && Date.now() - new Date(updatedAt).getTime() > 10 * 60 * 1000) {
+        hasHydratedRef.current = true;
+        restore(session.jobId, "failed");
+        setMessages([
+          WELCOME,
+          { id: crypto.randomUUID(), role: "ai", text: "The previous generation appears to have stalled. Please try again." },
+        ]);
+        return;
+      }
+
       hasHydratedRef.current = true;
       reconnect(session.jobId, cached?.events ?? []);
 
@@ -180,6 +201,9 @@ export function NewAppPage() {
       // Priority 2: In-memory Zustand store (survives soft navigation).
       if (cached?.messages?.length) {
         setMessages(cached.messages);
+        // Ensure genMsgIdRef tracks the generating card so status transitions can replace it
+        const genMsg = cached.messages.find((m) => m.type === "generating");
+        if (genMsg) genMsgIdRef.current = genMsg.id;
         return;
       }
 
@@ -190,13 +214,13 @@ export function NewAppPage() {
       return;
     }
 
-    if (session.status !== "completed" && session.status !== "failed") return;
+    if (session.status !== "completed" && session.status !== "failed" && session.status !== "cancelled") return;
     if (!activeAppQuery.isSuccess) return;
 
     hasHydratedRef.current = true;
 
     const sb = session.bundle as SessionBundle | null | undefined;
-    if (session.jobId) restore(session.jobId);
+    if (session.jobId) restore(session.jobId, session.status as "completed" | "failed" | "cancelled");
 
     // Priority 1: DB-persisted chat history (survives page reload, most durable).
     const dbMessages = session.chatMessages as ChatMessage[] | null | undefined;
@@ -209,6 +233,9 @@ export function NewAppPage() {
     const cachedForSession = activeGenStore?.jobId === session.jobId ? activeGenStore : null;
     if (cachedForSession?.messages?.length) {
       setMessages(cachedForSession.messages);
+      // Ensure genMsgIdRef tracks the generating card so status transitions can replace it
+      const genMsg = cachedForSession.messages.find((m) => m.type === "generating");
+      if (genMsg) genMsgIdRef.current = genMsg.id;
       return;
     }
 
@@ -246,7 +273,14 @@ export function NewAppPage() {
     const saved = draftMessages[selectedAppId];
     if (saved?.length && saved.length > 1) {
       hasHydratedRef.current = true;
-      setMessages(saved);
+      // Reconstruct confirm card actions that were stripped during localStorage serialization
+      const restored = saved.map((m) => {
+        if (m.type === "confirm" && m.confirmData && (!m.actions || m.actions.length === 0)) {
+          return { ...m, actions: buildConfirmActions(m.id, m.confirmData, selectedAppId) };
+        }
+        return m;
+      });
+      setMessages(restored);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAppId, latestSessionQuery.isSuccess, latestSessionQuery.data]);
@@ -254,6 +288,13 @@ export function NewAppPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAnalyzing]);
+
+  // Watchdog: if generation runs for 5 minutes without new SSE events, show a stuck warning.
+  useEffect(() => {
+    if (gen.status !== "running") { setStuckWarning(false); return; }
+    const timer = setTimeout(() => setStuckWarning(true), 5 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [gen.status, gen.events.length]);
 
   // Sync events to store
   useEffect(() => {
@@ -384,9 +425,11 @@ export function NewAppPage() {
                   },
                 },
               ];
+          // Keep the generating card in place — show failure inside it + actions below.
+          // This preserves the step-by-step context so the user can see where it failed.
           setMessages((prev) => prev.map((m) =>
             m.id === genMsgId
-              ? { id: m.id, role: "ai" as const, text: upgradeHint ? text : `Generation failed: ${text}`, actions }
+              ? { ...m, type: "generating" as const, text: upgradeHint ? text : `Generation failed: ${text}`, generatingFailed: true, actions }
               : m
           ));
         }
@@ -396,9 +439,165 @@ export function NewAppPage() {
     prevStatus.current = gen.status;
   }, [gen.status, gen.jobId, gen.error, updateStatus, navigate, start]);
 
+  // ── Confirm action builder (shared between runAnalyze and hydration) ─────────
+
+  const buildConfirmActions = useCallback((
+    confirmMsgId: string,
+    confirmData: { intent: Record<string, unknown>; originalPrompt: string },
+    appIdForGen: string | null,
+  ) => {
+    const handleConfirm = () => {
+      if (confirmingRef.current) return;
+      confirmingRef.current = true;
+      const suggestedName = appIdForGen
+        ? (apps.find((a) => a.id === appIdForGen)?.name ?? nameFromPrompt(confirmData.originalPrompt))
+        : nameFromPrompt(confirmData.originalPrompt);
+
+      setNameModal({
+        suggestedName,
+        onConfirm: async (chosenName: string) => {
+          setNameModal(null);
+          setMessages((prev) =>
+            prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m))
+          );
+
+          let appId = appIdForGen;
+          if (!appId) {
+            const slug = slugFromName(chosenName);
+            try {
+              const newApp = await api.apps.create(tenantId!, { slug, name: chosenName });
+              appId = newApp.id;
+              setSelectedAppId(newApp.id);
+              await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+            } catch (err) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: "ai",
+                  text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}`,
+                },
+              ]);
+              setAnalyzePhase("idle");
+              confirmingRef.current = false;
+              return;
+            }
+          } else {
+            // Always rename — the draft app may not be in the cached apps list yet
+            await api.apps.rename(tenantId!, appId, chosenName).catch(() => null);
+            await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+            await queryClient.invalidateQueries({ queryKey: ["app", tenantId, appId] });
+          }
+
+          setAnalyzePhase("idle");
+          setAnalyzeHistory([]);
+
+          const genMsgId = crypto.randomUUID();
+          genMsgIdRef.current = genMsgId;
+          setMessages((prev) => [
+            ...prev,
+            { id: genMsgId, role: "ai", type: "generating" },
+          ]);
+          // Clear draft messages — generation now takes over persistence
+          if (appId) clearDraftMessages(appId);
+          lastStartParamsRef.current = { appId: appId!, tenantId: tenantId!, prompt: confirmData.originalPrompt, preComputedIntent: confirmData.intent };
+          await start({ appId: appId!, tenantId: tenantId!, prompt: confirmData.originalPrompt, preComputedIntent: confirmData.intent });
+        },
+      });
+    };
+
+    return [
+      { label: "Generate →", onClick: handleConfirm },
+      {
+        label: "Change request",
+        variant: "ghost" as const,
+        onClick: () => {
+          setMessages((prev) => prev.map((m) =>
+            m.id === confirmMsgId ? { ...m, actions: [] } : m
+          ));
+          setAnalyzePhase("idle");
+          setAnalyzeHistory([]);
+          confirmingRef.current = false;
+        },
+      },
+    ];
+  }, [apps, tenantId, start, queryClient, clearDraftMessages, setAnalyzePhase, setAnalyzeHistory]);
+
+  // ── Component-picker confirm handlers ─────────────────────────────────────
+
+  const handleConfirmGenerate = useCallback((
+    msgId: string,
+    updatedIntent: Record<string, unknown>,
+    originalPrompt: string,
+  ) => {
+    if (confirmingRef.current) return;
+    confirmingRef.current = true;
+
+    const appIdForGen = selectedAppId;
+    const suggestedName = appIdForGen
+      ? (apps.find((a) => a.id === appIdForGen)?.name ?? nameFromPrompt(originalPrompt))
+      : nameFromPrompt(originalPrompt);
+
+    setNameModal({
+      suggestedName,
+      onConfirm: async (chosenName: string) => {
+        setNameModal(null);
+        setMessages((prev) =>
+          prev.map((m) => (m.id === msgId ? { ...m, confirmData: undefined } : m)),
+        );
+
+        let appId = appIdForGen;
+        if (!appId) {
+          const slug = slugFromName(chosenName);
+          try {
+            const newApp = await api.apps.create(tenantId!, { slug, name: chosenName });
+            appId = newApp.id;
+            setSelectedAppId(newApp.id);
+            await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+          } catch (err) {
+            setMessages((prev) => [
+              ...prev,
+              { id: crypto.randomUUID(), role: "ai" as const, text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}` },
+            ]);
+            setAnalyzePhase("idle");
+            confirmingRef.current = false;
+            return;
+          }
+        } else {
+          await api.apps.rename(tenantId!, appId, chosenName).catch(() => null);
+          await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+          await queryClient.invalidateQueries({ queryKey: ["app", tenantId, appId] });
+        }
+
+        setAnalyzePhase("idle");
+        setAnalyzeHistory([]);
+
+        const genMsgId = crypto.randomUUID();
+        genMsgIdRef.current = genMsgId;
+        setMessages((prev) => [
+          ...prev,
+          { id: genMsgId, role: "ai" as const, type: "generating" as const },
+        ]);
+        if (appId) clearDraftMessages(appId);
+        lastStartParamsRef.current = { appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: updatedIntent };
+        await start({ appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: updatedIntent });
+      },
+    });
+  }, [selectedAppId, apps, tenantId, start, queryClient, clearDraftMessages, setAnalyzePhase, setAnalyzeHistory]);
+
+  const handleConfirmChangeRequest = useCallback((msgId: string) => {
+    setMessages((prev) => prev.map((m) =>
+      m.id === msgId ? { ...m, confirmData: undefined } : m,
+    ));
+    setAnalyzePhase("idle");
+    setAnalyzeHistory([]);
+    confirmingRef.current = false;
+  }, [setAnalyzePhase, setAnalyzeHistory]);
+
   // ── Analyze ──────────────────────────────────────────────────────────────────
 
   const runAnalyze = useCallback(async (history: AnalyzeMessage[], appIdForGen: string | null) => {
+    confirmingRef.current = false;
     setAnalyzePhase("thinking");
     let result;
     try {
@@ -435,66 +634,9 @@ export function NewAppPage() {
       const summary = result.summary ?? "I understand your request. Ready to generate.";
       const intent  = result.intent ?? {};
       const confirmMsgId = crypto.randomUUID();
+      const originalPrompt = history[0]?.content ?? "New App";
+      const confirmData = { intent, originalPrompt };
       setAnalyzePhase("awaiting_confirm");
-
-      const handleConfirm = () => {
-        const originalPrompt = history[0]?.content ?? "New App";
-        const suggestedName  = appIdForGen
-          ? (apps.find((a) => a.id === appIdForGen)?.name ?? nameFromPrompt(originalPrompt))
-          : nameFromPrompt(originalPrompt);
-
-        setNameModal({
-          suggestedName,
-          onConfirm: async (chosenName: string) => {
-            setNameModal(null);
-            setMessages((prev) =>
-              prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m))
-            );
-
-            let appId = appIdForGen;
-            if (!appId) {
-              const slug = slugFromName(chosenName);
-              try {
-                const newApp = await api.apps.create(tenantId!, { slug, name: chosenName });
-                appId = newApp.id;
-                setSelectedAppId(newApp.id);
-                await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
-              } catch (err) {
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: crypto.randomUUID(),
-                    role: "ai",
-                    text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}`,
-                  },
-                ]);
-                setAnalyzePhase("idle");
-                return;
-              }
-            } else {
-              const existing = apps.find((a) => a.id === appId);
-              if (existing && existing.name !== chosenName) {
-                await api.apps.rename(tenantId!, appId, chosenName).catch(() => null);
-                await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
-                await queryClient.invalidateQueries({ queryKey: ["app", tenantId, appId] });
-              }
-            }
-
-            setAnalyzePhase("idle");
-
-            const genMsgId = crypto.randomUUID();
-            genMsgIdRef.current = genMsgId;
-            setMessages((prev) => [
-              ...prev,
-              { id: genMsgId, role: "ai", type: "generating" },
-            ]);
-            // Clear draft messages — generation now takes over persistence
-            if (appId) clearDraftMessages(appId);
-            lastStartParamsRef.current = { appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: intent };
-            await start({ appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: intent });
-          },
-        });
-      };
 
       setMessages((prev) => [
         ...prev,
@@ -502,24 +644,13 @@ export function NewAppPage() {
           id: confirmMsgId,
           role: "ai",
           text: summary,
-          actions: [
-            { label: "Generate →", onClick: handleConfirm },
-            {
-              label: "Change request",
-              variant: "ghost" as const,
-              onClick: () => {
-                setMessages((prev) => prev.map((m) =>
-                  m.id === confirmMsgId ? { ...m, actions: [] } : m
-                ));
-                setAnalyzePhase("idle");
-                setAnalyzeHistory([]);
-              },
-            },
-          ],
+          type: "confirm" as const,
+          confirmData,
+          actions: buildConfirmActions(confirmMsgId, confirmData, appIdForGen),
         },
       ]);
     }
-  }, [tenantId, appsQuery, start]);
+  }, [tenantId, appsQuery, start, buildConfirmActions, setAnalyzePhase, setAnalyzeHistory]);
 
   // ── Send ─────────────────────────────────────────────────────────────────────
 
@@ -547,21 +678,21 @@ export function NewAppPage() {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", text: prompt }]);
     const newHistory: AnalyzeMessage[] = [...analyzeHistory, { role: "user", content: prompt }];
     setAnalyzeHistory(newHistory);
-    if (analyzePhase === "awaiting_confirm") {
-      setAnalyzeHistory(newHistory);
-    }
 
     // First message with no app yet → create a draft immediately so it appears in the sidebar
     let appIdForAnalyze = selectedAppId;
-    if (!selectedAppId && analyzeHistory.length === 0 && tenantId) {
+    if (!selectedAppId && !draftCreatedRef.current && tenantId) {
+      draftCreatedRef.current = true;
       try {
         // Use "..." as placeholder — real name is set after the name modal confirms
         const newApp = await api.apps.create(tenantId, { slug: slugFromName("draft-" + Date.now()), name: "..." });
         appIdForAnalyze = newApp.id;
         setSelectedAppId(newApp.id);
+        // Immediately prepend to cache so the sidebar updates synchronously, then refetch.
+        queryClient.setQueryData<App[]>(["apps", tenantId], (old) => [newApp as App, ...(old ?? [])]);
         void queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
       } catch {
-        // non-fatal — continue without pre-created app
+        draftCreatedRef.current = false; // allow retry if creation failed
       }
     }
 
@@ -599,11 +730,15 @@ export function NewAppPage() {
     ? "Generating your app…"
     : gen.status === "completed"
       ? "Ask for a change to generate a new version..."
-      : analyzePhase === "awaiting_confirm"
-        ? "Or type here to change your request..."
-        : messages.length > 1
-          ? "What would you like to build?"
-          : undefined;
+      : gen.status === "failed"
+        ? "Describe what you'd like to build..."
+        : analyzePhase === "awaiting_confirm"
+          ? "Or type here to change your request..."
+          : analyzePhase === "thinking"
+            ? "Analyzing your request…"
+            : messages.length > 1
+              ? "What would you like to build?"
+              : undefined;
 
   return (
     <>
@@ -611,13 +746,17 @@ export function NewAppPage() {
         <NameAppModal
           initialName={nameModal.suggestedName}
           onConfirm={nameModal.onConfirm}
-          onCancel={() => setNameModal(null)}
+          onCancel={() => { setNameModal(null); confirmingRef.current = false; }}
         />
       )}
       <TopBar
         title={activeApp ? activeApp.name : "New App"}
         subtitle={
-          activeApp && (gen.status === "completed" || latestSessionQuery.data?.status === "completed")
+          activeApp && (
+            gen.status === "completed" ||
+            latestSessionQuery.data?.status === "completed" ||
+            (gen.status === "running" && activeApp.status !== "draft")
+          )
             ? "Revision"
             : "New app"
         }
@@ -630,7 +769,10 @@ export function NewAppPage() {
           isAnalyzing={isAnalyzing}
           liveGenEvents={gen.events}
           generationCompleted={gen.status === "completed"}
+          stuckWarning={stuckWarning}
           onClarifyAnswer={handleClarifyAnswer}
+          onConfirmGenerate={handleConfirmGenerate}
+          onConfirmChangeRequest={handleConfirmChangeRequest}
         />
         <ChatInput
           value={input}

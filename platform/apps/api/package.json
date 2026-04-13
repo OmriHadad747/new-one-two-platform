@@ -18,10 +18,12 @@
     "@new-one-two/crypto": "workspace:*",
     "@new-one-two/db": "workspace:*",
     "@new-one-two/deployer": "workspace:*",
+    "@new-one-two/harness": "workspace:*",
     "@new-one-two/logger": "workspace:*",
     "@new-one-two/pubsub-client": "workspace:*",
     "@new-one-two/types": "workspace:*",
-    "fastify": "^4.28.0"
+    "fastify": "^4.28.0",
+    "resend": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

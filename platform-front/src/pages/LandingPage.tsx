@@ -47,7 +47,7 @@ export function LandingPage() {
     <div className="min-h-screen bg-base text-ink overflow-x-hidden">
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <header className="fixed top-0 inset-x-0 z-50 flex items-center justify-between px-8 h-16 bg-base/80 backdrop-blur-xl border-b border-white/[0.06]">
+      <header className="fixed top-0 inset-x-0 z-50 flex items-center justify-between px-8 h-16 bg-base/80 backdrop-blur-xl border-b border-white/[0.04]">
         <div className="flex items-center gap-6">
           <span className="text-xl font-bold tracking-tighter text-accent">New One Two</span>
           {isConnected && shopDomain && (
@@ -61,7 +61,7 @@ export function LandingPage() {
             type="button"
             onClick={toggle}
             aria-label="Toggle theme"
-            className="w-8 h-8 rounded-lg bg-white/[0.05] border border-white/[0.07] flex items-center justify-center text-faint hover:text-ink hover:bg-white/[0.09] transition-colors cursor-pointer"
+            className="w-8 h-8 rounded-lg bg-white/[0.05] flex items-center justify-center text-faint hover:text-ink hover:bg-white/[0.09] transition-colors cursor-pointer"
           >
             <span className="material-symbols-outlined text-[16px]">
               {theme === "dark" ? "light_mode" : "dark_mode"}
@@ -96,7 +96,7 @@ export function LandingPage() {
 
           {/* Left */}
           <div className="w-full lg:w-1/2 space-y-7 z-10">
-            <span className="inline-flex items-center gap-2 px-3 py-1 bg-accent/10 border border-accent/20 rounded-full text-[11px] font-semibold text-teal tracking-widest uppercase">
+            <span className="inline-flex items-center gap-2 px-3 py-1 bg-accent/10 rounded-full text-[11px] font-semibold text-teal tracking-widest uppercase">
               <span className="w-1.5 h-1.5 rounded-full bg-teal animate-pulse-subtle" />
               Ton-Powered Shopify Apps
             </span>
@@ -128,7 +128,7 @@ export function LandingPage() {
           <div className="w-full lg:w-1/2 z-10">
             <div className="glass-card rounded-xl shadow-2xl overflow-hidden">
               {/* Window chrome */}
-              <div className="flex items-center justify-between px-4 py-3 bg-elevated/60 border-b border-white/[0.06]">
+              <div className="flex items-center justify-between px-4 py-3 bg-elevated/60 border-b border-white/[0.04]">
                 <div className="flex items-center gap-2">
                   <div className="w-2.5 h-2.5 rounded-full bg-danger/60" />
                   <div className="w-2.5 h-2.5 rounded-full bg-amber/60" />
@@ -141,7 +141,7 @@ export function LandingPage() {
               {/* Chat */}
               <div className="p-5 space-y-4 bg-base/60">
                 <div className="flex justify-end">
-                  <div className="bg-accent/15 border border-accent/20 rounded-lg rounded-tr-sm px-4 py-3 max-w-[80%]">
+                  <div className="bg-accent/15 rounded-lg rounded-tr-sm px-4 py-3 max-w-[80%]">
                     <p className="text-sm text-ink leading-relaxed">
                       "Build a back-in-stock notifier with email capture for my luxury apparel store."
                     </p>
@@ -152,7 +152,7 @@ export function LandingPage() {
                   <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-teal flex items-center justify-center text-[11px] font-extrabold text-white shrink-0">
                     N
                   </div>
-                  <div className="bg-surface/80 border border-white/[0.06] rounded-lg rounded-tl-sm px-4 py-3 flex-1">
+                  <div className="bg-surface/80 rounded-lg rounded-tl-sm px-4 py-3 flex-1">
                     <p className="text-sm text-ink mb-3">On it — generating your widget...</p>
                     <div className="bg-base rounded-lg p-3 font-mono text-[10px] space-y-1.5">
                       {LOG_LINES.map((line) => (
@@ -172,8 +172,8 @@ export function LandingPage() {
               </div>
 
               {/* Input */}
-              <div className="px-4 py-3 bg-surface/60 border-t border-white/[0.06] flex items-center gap-3">
-                <div className="flex-1 bg-base/80 border border-white/10 rounded-lg px-3 py-2 text-[12px] text-faint font-mono">
+              <div className="px-4 py-3 bg-surface/60 border-t border-white/[0.04] flex items-center gap-3">
+                <div className="flex-1 bg-base/80 rounded-lg px-3 py-2 text-[12px] text-faint font-mono">
                   Describe your next feature...
                 </div>
                 <div className="w-8 h-8 rounded-lg bg-accent/15 flex items-center justify-center text-accent shrink-0">
@@ -185,12 +185,12 @@ export function LandingPage() {
         </section>
 
         {/* ── Features ─────────────────────────────────────────────────────── */}
-        <section className="py-16 border-t border-white/[0.06]">
+        <section className="py-16 border-t border-white/[0.04]">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {FEATURES.map((f) => (
               <div
                 key={f.title}
-                className="bg-surface relative overflow-hidden group rounded-xl p-7 flex flex-col gap-5 border border-white/[0.06] hover:border-white/[0.12] transition-colors"
+                className="bg-surface relative overflow-hidden group rounded-xl p-7 flex flex-col gap-5 hover:bg-white/[0.04] transition-colors"
               >
                 <div className={`absolute left-0 top-0 w-[3px] h-full ${f.accentBar} opacity-50 group-hover:opacity-100 transition-opacity`} />
                 <div className={`w-10 h-10 rounded-lg ${f.iconBg} flex items-center justify-center ${f.iconColor}`}>
@@ -206,12 +206,12 @@ export function LandingPage() {
         </section>
 
         {/* ── Meet Ton ─────────────────────────────────────────────────────── */}
-        <section className="py-16 border-t border-white/[0.06]">
+        <section className="py-16 border-t border-white/[0.04]">
           <div className="flex flex-col lg:flex-row gap-12 items-start">
 
             {/* Left — headline */}
             <div className="lg:w-2/5 space-y-4 lg:sticky lg:top-24">
-              <span className="inline-flex items-center gap-2 px-3 py-1 bg-accent/10 border border-accent/20 rounded-full text-[10px] font-bold text-accent tracking-widest uppercase">
+              <span className="inline-flex items-center gap-2 px-3 py-1 bg-accent/10 rounded-full text-[10px] font-bold text-accent tracking-widest uppercase">
                 <span className="w-1 h-1 rounded-full bg-accent" />
                 The engine inside
               </span>
@@ -255,7 +255,7 @@ export function LandingPage() {
                   desc: "When something is beyond the platform's current scope, Ton says so upfront instead of generating code that won't work.",
                 },
               ].map(({ icon, color, bg, title, desc }) => (
-                <div key={title} className="bg-surface border border-white/[0.06] rounded-xl p-5 flex flex-col gap-3 hover:border-white/[0.12] transition-colors">
+                <div key={title} className="bg-surface rounded-xl p-5 flex flex-col gap-3 hover:bg-white/[0.04] transition-colors">
                   <div className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center ${color} shrink-0`}>
                     <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>{icon}</span>
                   </div>
@@ -270,7 +270,7 @@ export function LandingPage() {
         </section>
 
         {/* ── Artifacts ────────────────────────────────────────────────────── */}
-        <section className="py-16 border-t border-white/[0.06]">
+        <section className="py-16 border-t border-white/[0.04]">
           <div className="text-center mb-10 space-y-3">
             <p className="text-[10px] font-bold tracking-widest uppercase text-faint">Generated output</p>
             <h2 className="text-3xl font-bold text-ink leading-tight">
@@ -284,7 +284,7 @@ export function LandingPage() {
           </div>
           <div className="glass-card rounded-xl overflow-hidden">
             {/* File tree header */}
-            <div className="flex items-center gap-2 px-5 py-3 border-b border-white/[0.06] bg-elevated/40">
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-white/[0.04] bg-elevated/40">
               <span className="material-symbols-outlined text-faint text-[15px]">folder_open</span>
               <span className="text-[11px] font-mono text-faint">your-app/</span>
             </div>
@@ -313,27 +313,24 @@ export function LandingPage() {
             </div>
 
             {/* Conditional */}
-            <div className="px-5 pt-3 pb-1 border-t border-white/[0.06] mt-1">
+            <div className="px-5 pt-3 pb-1 border-t border-white/[0.04] mt-1">
               <span className="text-[9px] font-bold uppercase tracking-widest text-faint/60">Added when your feature calls for it</span>
             </div>
             <div className="divide-y divide-white/[0.04]">
               {[
-                { file: "widget.js",   icon: "widgets",              color: theme === "light" ? "text-sky-700"    : "text-sky-300",    bg: theme === "light" ? "bg-sky-600/[.08]"    : "bg-sky-400/[.12]",    tagCls: theme === "light" ? "text-sky-700 bg-sky-600/[.08] border-sky-600/[.18]"       : "text-sky-300 bg-sky-400/[.12] border-sky-400/[.2]",    label: "Storefront Widget", tag: "Storefront", desc: "Rendered inside your Shopify theme — no iframe." },
-                { file: "admin_ui.js", icon: "admin_panel_settings", color: theme === "light" ? "text-orange-700" : "text-orange-300", bg: theme === "light" ? "bg-orange-600/[.08]" : "bg-orange-400/[.12]", tagCls: theme === "light" ? "text-orange-700 bg-orange-600/[.08] border-orange-600/[.18]" : "text-orange-300 bg-orange-400/[.12] border-orange-400/[.2]", label: "Admin UI",          tag: "Admin",      desc: "Merchant controls embedded in Shopify Admin." },
-              ].map(({ file, icon, color, bg, tagCls, label, tag, desc }) => (
-                <div key={file} className="flex items-center gap-4 px-5 py-3.5 opacity-70 hover:opacity-100 transition-opacity">
-                  <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
+                { file: "widget.js",   icon: "widgets",              color: theme === "light" ? "text-sky-700"    : "text-sky-300",    bg: theme === "light" ? "bg-sky-600/[.08]"    : "bg-sky-400/[.12]",    label: "Storefront Widget", desc: "Rendered inside your Shopify theme — no iframe." },
+                { file: "admin_ui.js", icon: "admin_panel_settings", color: theme === "light" ? "text-orange-700" : "text-orange-300", bg: theme === "light" ? "bg-orange-600/[.08]" : "bg-orange-400/[.12]", label: "Admin UI",          desc: "Merchant controls embedded in Shopify Admin." },
+              ].map(({ file, icon, color, bg, label, desc }) => (
+                <div key={file} className="flex items-center gap-4 px-5 py-3.5">
+                  <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0 opacity-60`}>
                     <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>{icon}</span>
                   </div>
-                  <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0`}>{file}</span>
+                  <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0 opacity-60`}>{file}</span>
                   <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[12px] font-semibold text-ink">{label}</span>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${tagCls}`}>{tag}</span>
-                    </div>
+                    <span className="text-[12px] font-semibold text-ink">{label}</span>
                     <span className="text-[11px] text-faint">{desc}</span>
                   </div>
-                  <span className="material-symbols-outlined text-faint/20 text-[14px] shrink-0">radio_button_unchecked</span>
+                  <span className="material-symbols-outlined text-faint/20 text-[14px] shrink-0 opacity-60">radio_button_unchecked</span>
                 </div>
               ))}
             </div>
@@ -355,7 +352,7 @@ export function LandingPage() {
       </main>
 
       {/* ── Footer ────────────────────────────────────────────────────────── */}
-      <footer className="border-t border-white/[0.06] py-8 px-8">
+      <footer className="border-t border-white/[0.04] py-8 px-8">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <span className="text-sm font-bold text-accent">New One Two</span>
           <div className="flex gap-6">

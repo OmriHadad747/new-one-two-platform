@@ -11,6 +11,7 @@ import type {
 import { getPlanLimits } from "@new-one-two/types";
 import { checkUsageQuota, incrementUsage } from "@new-one-two/db";
 import { buildShopifyAdminClient, buildShopifyStorefrontClient } from "./shopify-client.js";
+import { createEmailService } from "./email-service.js";
 
 const SHOPIFY_CLIENT_ID = process.env["SHOPIFY_CLIENT_ID"] ?? null;
 const SHOPIFY_CLIENT_SECRET_NAME = process.env["SHOPIFY_CLIENT_SECRET_NAME"] ?? null;
@@ -85,21 +86,36 @@ export async function createBaseContext(options: CreateBaseContextOptions): Prom
     },
   };
 
-  const email: ServicesClient["email"] = {
-    async send(params) {
-      const emailLimit = getPlanLimits(plan).maxEmailsPerMonth;
-      const quota = await checkUsageQuota(tenantId, "emails_sent", emailLimit);
-      if (!quota.allowed) {
-        logger.warn({ tenantId, current: quota.current, limit: quota.limit }, "Email quota exceeded");
-        throw new Error(`Monthly email limit (${quota.limit.toLocaleString()}) reached.`);
-      }
-      await incrementUsage(tenantId, "emails_sent");
-      logger.info(
-        { event: "EMAIL_SENT", tenantId, ...params },
-        "email stub — provider not yet wired"
-      );
-    },
-  };
+  // Real email service — the handler only sees `ctx.email.send({ to, data })`.
+  // All template, brand, rendering, and delivery work is owned by the platform
+  // inside `createEmailService`. If `appId` is not set (e.g. system-level
+  // invocation), `ctx.email.send` becomes a no-op that logs a warning — the
+  // service needs per-app context to load the merchant's template.
+  //
+  // The "storeName" used in the From field is derived from the shop domain —
+  // "acme.myshopify.com" becomes "acme". MVP tradeoff: avoids a per-send DB
+  // lookup to fetch tenants.name. A future iteration can thread the real
+  // tenant name through ctx creation if merchants complain.
+  const storeNameFromDomain = APP_SHOP_DOMAIN
+    ? APP_SHOP_DOMAIN.replace(/\.myshopify\.com$/i, "").replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+    : "Your Store";
+
+  const email: ServicesClient["email"] = appId
+    ? createEmailService({
+        tenantId,
+        appId,
+        storeName: storeNameFromDomain,
+        plan,
+        logger,
+      })
+    : {
+        async send(params) {
+          logger.warn(
+            { event: "EMAIL_NO_APP_CONTEXT", tenantId, ...params },
+            "ctx.email.send called without appId — cannot load merchant config"
+          );
+        },
+      };
 
   const services: ServicesClient = { email, sms, files };
 

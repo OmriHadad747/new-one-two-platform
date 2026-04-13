@@ -9,10 +9,12 @@ import { useLatestSession, useLatestCompletedSession, useGeneration, useAppSessi
 import type { SessionSummary } from "@/types/dashboard";
 import type { WebhookInvocationLogEntry, InvocationLogEntry, App, SessionBundle, ThemeTemplate, InjectionTarget } from "@/types/dashboard";
 import { ArchetypePills } from "@/components/ui/ArchetypePills";
+import { Tag } from "@/components/ui/Badge";
 import { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useThemeStore } from "@/stores/theme";
+import { EmailTab } from "@/components/features/email/EmailTab";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -53,18 +55,32 @@ function humanizeCron(expr: string): string | null {
 
 // ─── Status configs ───────────────────────────────────────────────────────────
 
-const LOG_STATUS_CFG = {
-  success: { dot: "bg-teal",                     label: "success", cls: "text-teal"    },
-  failed:  { dot: "bg-danger",                   label: "failed",  cls: "text-danger"  },
-  running: { dot: "bg-accent animate-pulse",     label: "running", cls: "text-accent"  },
-  queued:  { dot: "bg-faint",                    label: "queued",  cls: "text-faint"   },
-  timeout: { dot: "bg-amber-400",                label: "timeout", cls: "text-amber-400"},
+const LOG_STATUS_CFG_DARK = {
+  success: { dot: "bg-emerald-500",              label: "success", cls: "text-emerald-400" },
+  failed:  { dot: "bg-danger",                   label: "failed",  cls: "text-danger"      },
+  running: { dot: "bg-accent animate-pulse",     label: "running", cls: "text-accent"      },
+  queued:  { dot: "bg-faint",                    label: "queued",  cls: "text-faint"       },
+  timeout: { dot: "bg-amber-400",                label: "timeout", cls: "text-amber-300"   },
 } satisfies Record<WebhookInvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
 
-const INVOCATION_STATUS_CFG = {
-  success: { dot: "bg-teal",                 label: "success", cls: "text-teal"   },
-  failed:  { dot: "bg-danger",               label: "failed",  cls: "text-danger" },
-  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent" },
+const LOG_STATUS_CFG_LIGHT = {
+  success: { dot: "bg-emerald-600",              label: "success", cls: "text-emerald-700" },
+  failed:  { dot: "bg-danger",                   label: "failed",  cls: "text-danger"      },
+  running: { dot: "bg-accent animate-pulse",     label: "running", cls: "text-accent"      },
+  queued:  { dot: "bg-faint",                    label: "queued",  cls: "text-faint"       },
+  timeout: { dot: "bg-amber-600",                label: "timeout", cls: "text-amber-700"   },
+} satisfies Record<WebhookInvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
+
+const INVOCATION_STATUS_CFG_DARK = {
+  success: { dot: "bg-emerald-500",          label: "success", cls: "text-emerald-400" },
+  failed:  { dot: "bg-danger",               label: "failed",  cls: "text-danger"      },
+  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent"      },
+} satisfies Record<InvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
+
+const INVOCATION_STATUS_CFG_LIGHT = {
+  success: { dot: "bg-emerald-600",          label: "success", cls: "text-emerald-700" },
+  failed:  { dot: "bg-danger",               label: "failed",  cls: "text-danger"      },
+  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent"      },
 } satisfies Record<InvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
 
 // ─── Syntax highlighting ──────────────────────────────────────────────────────
@@ -227,9 +243,11 @@ function CodeBlock({ code, lang }: { code: string; lang: "js" | "sql" }) {
 
 const AVATAR_GRADIENTS = [
   "from-violet-500 to-indigo-600",
+  "from-blue-500 to-cyan-600",
   "from-teal-500 to-emerald-600",
-  "from-amber-500 to-orange-500",
+  "from-amber-500 to-orange-600",
   "from-rose-500 to-pink-600",
+  "from-fuchsia-500 to-purple-600",
   "from-sky-500 to-blue-600",
   "from-lime-500 to-green-600",
 ];
@@ -245,7 +263,7 @@ function AppHeader({
   const gradient = AVATAR_GRADIENTS[seed % AVATAR_GRADIENTS.length];
 
   return (
-    <div className="px-7 py-5 border-b border-white/[0.07] shrink-0">
+    <div className="px-7 py-5 border-b border-white/[0.04] shrink-0">
       <div className="flex items-start gap-4">
         <div className={cn("w-12 h-12 rounded-2xl bg-gradient-to-br flex items-center justify-center shrink-0 shadow-lg", gradient)}>
           <span className="text-[14px] font-black text-white tracking-tight">{initials}</span>
@@ -254,7 +272,7 @@ function AppHeader({
           <div className="flex items-center gap-2.5 flex-wrap mb-1.5">
             <h2 className="text-[18px] font-bold text-ink">{app.name}</h2>
             {isGenerating && (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent border border-accent/20 animate-pulse">Building…</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent animate-pulse">Building…</span>
             )}
           </div>
           <div className="flex items-center gap-3 text-[11px] text-faint mb-1.5">
@@ -283,7 +301,7 @@ function AppHeader({
 function EmptyLogs({ label, sub }: { label: string; sub: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
-      <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
+      <div className="w-10 h-10 rounded-xl bg-white/[0.04] flex items-center justify-center">
         <span className="material-symbols-outlined text-faint text-[20px]">receipt_long</span>
       </div>
       <p className="text-sm text-faint">{label}</p>
@@ -294,8 +312,8 @@ function EmptyLogs({ label, sub }: { label: string; sub: string }) {
 
 function LogTable({ pathHeader = "Event / Error", children }: { pathHeader?: string; children: React.ReactNode }) {
   return (
-    <div className="bg-surface border border-white/[0.07] rounded-xl overflow-hidden">
-      <div className="grid grid-cols-[16px_1fr_100px] gap-4 px-5 py-2.5 border-b border-white/[0.07] bg-white/[0.02]">
+    <div className="bg-surface rounded-xl overflow-hidden">
+      <div className="grid grid-cols-[16px_1fr_100px] gap-4 px-5 py-2.5 border-b border-white/[0.04] bg-white/[0.02]">
         <span />
         <span className="text-[10px] font-bold text-faint uppercase tracking-wider">{pathHeader}</span>
         <span className="text-[10px] font-bold text-faint uppercase tracking-wider text-right">Duration</span>
@@ -306,14 +324,15 @@ function LogTable({ pathHeader = "Event / Error", children }: { pathHeader?: str
 }
 
 function LogRow({ entry, last, showSource }: { entry: WebhookInvocationLogEntry; last: boolean; showSource?: boolean }) {
-  const cfg = LOG_STATUS_CFG[entry.status];
+  const theme = useThemeStore((s) => s.theme);
+  const cfg = (theme === "light" ? LOG_STATUS_CFG_LIGHT : LOG_STATUS_CFG_DARK)[entry.status];
   return (
     <div className={cn("flex items-start gap-4 px-5 py-3", !last && "border-b border-white/[0.05]")}>
       <div className="pt-1.5 shrink-0"><span className={cn("w-2 h-2 rounded-full block", cfg.dot)} /></div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12px] font-mono text-ink truncate">{entry.topic}</span>
-          {showSource && <span className="text-[9.5px] font-bold uppercase tracking-wide text-faint border border-white/15 px-1 py-0.5 rounded">webhook</span>}
+          {showSource && <Tag variant="source">webhook</Tag>}
           <span className={cn("text-[10px] font-bold uppercase tracking-wide", cfg.cls)}>{cfg.label}</span>
         </div>
         {entry.errorMessage && <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>}
@@ -327,14 +346,15 @@ function LogRow({ entry, last, showSource }: { entry: WebhookInvocationLogEntry;
 }
 
 function InvocationLogRow({ entry, last, source }: { entry: InvocationLogEntry; last: boolean; source?: "widget" | "admin" }) {
-  const cfg = INVOCATION_STATUS_CFG[entry.status];
+  const theme = useThemeStore((s) => s.theme);
+  const cfg = (theme === "light" ? INVOCATION_STATUS_CFG_LIGHT : INVOCATION_STATUS_CFG_DARK)[entry.status];
   return (
     <div className={cn("flex items-start gap-4 px-5 py-3", !last && "border-b border-white/[0.05]")}>
       <div className="pt-1.5 shrink-0"><span className={cn("w-2 h-2 rounded-full block", cfg.dot)} /></div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12px] font-mono text-ink truncate">{entry.path}</span>
-          {source && <span className="text-[9.5px] font-bold uppercase tracking-wide text-faint border border-white/15 px-1 py-0.5 rounded">{source}</span>}
+          {source && <Tag variant="source">{source}</Tag>}
           <span className={cn("text-[10px] font-bold uppercase tracking-wide", cfg.cls)}>{cfg.label}</span>
         </div>
         {entry.errorMessage && <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>}
@@ -359,7 +379,7 @@ function TabBar<T extends string>({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-1 border-b border-white/[0.07] pb-0">
+    <div className="flex items-center gap-1 border-b border-white/[0.04] pb-0">
       {tabs.map((t) => (
         <button key={t.id} type="button" onClick={() => onChange(t.id)}
           className={cn(
@@ -400,7 +420,7 @@ function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
   if (!files.length) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-        <div className="w-12 h-12 rounded-xl bg-white/[0.04] border border-white/[0.07] flex items-center justify-center">
+        <div className="w-12 h-12 rounded-xl bg-white/[0.04] flex items-center justify-center">
           <span className="material-symbols-outlined text-faint text-[22px]">code_blocks</span>
         </div>
         <p className="text-sm text-faint">No generated code yet</p>
@@ -419,7 +439,7 @@ function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Tab bar */}
-      <div className="flex items-center gap-1 border-b border-white/[0.07] shrink-0 bg-surface">
+      <div className="flex items-center gap-1 border-b border-white/[0.04] shrink-0 bg-surface">
         {files.map((f) => (
           <button key={f.id} type="button" onClick={() => setActiveFile(f.id)}
             className={cn(
@@ -446,10 +466,16 @@ function CodeViewer({ bundle }: { bundle: SessionBundle | null | undefined }) {
 
 // ─── Versions tab ─────────────────────────────────────────────────────────────
 
-const SESSION_STATUS_CFG = {
-  completed: { dot: "bg-teal",                     label: "Generated",  cls: "text-teal"   },
-  failed:    { dot: "bg-danger",                   label: "Failed",     cls: "text-danger" },
-  running:   { dot: "bg-accent animate-pulse",     label: "Running",    cls: "text-accent" },
+const SESSION_STATUS_CFG_DARK = {
+  completed: { dot: "bg-emerald-500",              label: "Generated",  cls: "text-emerald-400" },
+  failed:    { dot: "bg-danger",                   label: "Failed",     cls: "text-danger"      },
+  running:   { dot: "bg-accent animate-pulse",     label: "Running",    cls: "text-accent"      },
+} satisfies Record<string, { dot: string; label: string; cls: string }>;
+
+const SESSION_STATUS_CFG_LIGHT = {
+  completed: { dot: "bg-emerald-600",              label: "Generated",  cls: "text-emerald-700" },
+  failed:    { dot: "bg-danger",                   label: "Failed",     cls: "text-danger"      },
+  running:   { dot: "bg-accent animate-pulse",     label: "Running",    cls: "text-accent"      },
 } satisfies Record<string, { dot: string; label: string; cls: string }>;
 
 function VersionsTab({
@@ -460,6 +486,8 @@ function VersionsTab({
   latestSession: { status: string; bundle?: import("@/types/dashboard").SessionBundle | null } | null;
   app: App;
 }) {
+  const theme = useThemeStore((s) => s.theme);
+  const SESSION_STATUS_CFG = theme === "light" ? SESSION_STATUS_CFG_LIGHT : SESSION_STATUS_CFG_DARK;
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Default selection: latest session
@@ -479,14 +507,14 @@ function VersionsTab({
     <div className="flex-1 overflow-hidden flex gap-0">
 
       {/* ── Left: session list ── */}
-      <div className="w-[260px] shrink-0 border-r border-white/[0.07] flex flex-col overflow-hidden">
-        <div className="px-4 py-3 border-b border-white/[0.07] bg-white/[0.02] shrink-0">
+      <div className="w-[260px] shrink-0 border-r border-white/[0.04] flex flex-col overflow-hidden">
+        <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.02] shrink-0">
           <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Generation history</h3>
         </div>
         <div className="flex-1 overflow-y-auto">
           {sessionsLoading ? (
             <div className="p-3 space-y-2">
-              {[1,2,3].map((i) => <div key={i} className="h-14 bg-white/[0.03] rounded-lg animate-pulse-subtle border border-white/[0.06]" />)}
+              {[1,2,3].map((i) => <div key={i} className="h-14 bg-white/[0.03] rounded-lg animate-pulse-subtle" />)}
             </div>
           ) : sessions.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-[11px] text-faint">No versions yet</div>
@@ -515,8 +543,10 @@ function VersionsTab({
                         <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cfg.dot)} />
                         <span className={cn("text-[10px] font-semibold", cfg.cls)}>{cfg.label}</span>
                         {isLive && (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-teal/15 border border-teal/25 text-[9px] font-bold text-teal uppercase tracking-wide leading-none">
-                            <span className="w-1 h-1 rounded-full bg-teal animate-pulse inline-block" />
+                          <span className={cn("inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide leading-none",
+                            theme === "light" ? "bg-emerald-600/[.08] text-emerald-700" : "bg-emerald-500/[.12] text-emerald-400"
+                          )}>
+                            <span className={cn("w-1 h-1 rounded-full animate-pulse inline-block", theme === "light" ? "bg-emerald-600" : "bg-emerald-500")} />
                             Live
                           </span>
                         )}
@@ -686,8 +716,8 @@ function HowItWorksCard({ text }: { text: string }) {
   const hasMore  = sentences.length > PREVIEW;
 
   return (
-    <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
-      <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04] flex items-center gap-2">
+    <section className="bg-white/[0.04] rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.03] flex items-center gap-2">
         <span className="material-symbols-outlined text-accent text-[13px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>info</span>
         <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How it works</h3>
       </div>
@@ -733,7 +763,7 @@ function buildStatusPill(
   onRedeploy: () => void,
   onDeactivate: () => void,
 ) {
-  const sessionFailed = latestSession?.status === "failed";
+  const sessionFailed = latestSession?.status === "failed" || latestSession?.status === "cancelled";
   const isReady    = app.status === "ready" && !sessionFailed;
   const isReadyFallback = app.status === "ready" && sessionFailed && hasFallback;
   const isReadyBlocked  = app.status === "ready" && sessionFailed && !hasFallback;
@@ -764,6 +794,13 @@ function buildStatusPill(
     pillBorder: "border-danger/20", pillBg: "bg-danger/[0.04]",
     action: null,
     note: "No successful version to deploy — generate a new version first",
+  };
+  if (isActive && sessionFailed) return {
+    statusDot: "bg-teal", statusText: "Active",
+    pillBorder: "border-teal/20", pillBg: "bg-teal/[0.05]",
+    action: { icon: "pause_circle", label: deploying ? "Deactivating…" : "Deactivate", onClick: onDeactivate,
+      cls: "text-danger hover:bg-danger/[0.10]" },
+    note: "Latest revision failed — running previous version",
   };
   if (isActive) return {
     statusDot: "bg-teal", statusText: "Active",
@@ -798,7 +835,7 @@ function AppInfoBand({
   const pill = buildStatusPill(app, latestSession, deploying, isBuilding, hasFallback, onDeploy, onRedeploy, onDeactivate);
 
   return (
-    <div className="flex flex-col shrink-0 border-b border-white/[0.06]">
+    <div className="flex flex-col shrink-0 border-b border-white/[0.04]">
       <div className="flex items-center justify-between">
 
         {/* ── App type ── */}
@@ -807,7 +844,7 @@ function AppInfoBand({
           <div className="flex items-center gap-2 flex-wrap">
             <ArchetypePills archetype={app.appArchetype} />
             {app.currentSemver && (
-              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.10] text-faint/70">
+              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-white/[0.06] text-faint/70">
                 v{app.currentSemver}
               </span>
             )}
@@ -893,7 +930,7 @@ function MiniStats({
   return (
     <div className="grid grid-cols-4 gap-2">
       {stats.map((s) => (
-        <div key={s.label} className="bg-white/[0.06] border border-white/[0.10] rounded-xl px-3.5 py-3">
+        <div key={s.label} className="bg-white/[0.04] rounded-xl px-3.5 py-3">
           <div className="flex items-center gap-1 text-faint mb-1.5">
             <span className="material-symbols-outlined text-[12px]">{s.icon}</span>
             <span className="text-[9.5px] font-bold uppercase tracking-wider">{s.label}</span>
@@ -908,7 +945,7 @@ function MiniStats({
 // ─── Overview tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({
-  app, latestSession, recentLogs, recentWidgetLogs, recentAdminLogs, recentLogsLoading, shopDomain, onLogsTab,
+  app, latestSession, isBuilding, recentLogs, recentWidgetLogs, recentAdminLogs, recentLogsLoading, shopDomain, onLogsTab,
   injectingWidget, injectError, onInjectWidget, onDeleteInjectedTheme,
 }: {
   app: App;
@@ -916,6 +953,7 @@ function OverviewTab({
     status: string; webhookTopics?: string[]; cronSchedule?: string | null;
     prompt?: string | null; bundle?: SessionBundle | null;
   } | null;
+  isBuilding: boolean;
   recentLogs: WebhookInvocationLogEntry[];
   recentWidgetLogs: InvocationLogEntry[];
   recentAdminLogs: InvocationLogEntry[];
@@ -966,6 +1004,69 @@ function OverviewTab({
     ts: e.ts,
   }));
 
+  // Draft apps have no left-column content — render a single centered card instead of a two-column grid.
+  if (app.status === "draft") {
+    return (
+      <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center p-7">
+        <div className="w-full max-w-[360px]">
+          {/* How to test / Revise CTA */}
+          {(latestSession === null || app.status === "draft") ? (
+            <section className="bg-white/[0.04] rounded-xl overflow-hidden">
+              <div className="px-4 py-5 space-y-3 text-center">
+                {isBuilding ? (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-accent text-[20px] animate-pulse-subtle" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Generating your app…</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Ton is building your app. Head to the chat to follow along.</p>
+                    </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-white/[0.06] text-muted text-[13px] font-semibold transition-all hover:bg-white/[0.09] cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                      Watch progress
+                    </button>
+                  </>
+                ) : latestSession?.status === "failed" ? (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-danger text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>error</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Generation failed</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Something went wrong. Adjust your prompt and try again.</p>
+                    </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      Try again
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
+                    </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      Start building with Ton
+                    </button>
+                  </>
+                )}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 overflow-y-auto flex flex-col">
 
@@ -983,8 +1084,8 @@ function OverviewTab({
 
           {/* Triggers */}
           {(webhookTopics.length > 0 || cronSchedule) && (
-            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
+            <section className="bg-white/[0.04] rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Triggers</h3>
               </div>
               <div className="divide-y divide-white/[0.05]">
@@ -993,7 +1094,7 @@ function OverviewTab({
                     <p className="text-[11px] font-semibold text-faint mb-2">Active webhooks</p>
                     <div className="flex flex-wrap gap-1.5">
                       {webhookTopics.map((t) => (
-                        <span key={t} className="text-[11px] font-mono px-2 py-0.5 bg-white/[0.05] border border-white/[0.07] rounded-md text-ink">
+                        <span key={t} className="text-[11px] font-mono px-2 py-0.5 bg-white/[0.05] rounded-md text-ink">
                           {t}
                         </span>
                       ))}
@@ -1004,7 +1105,7 @@ function OverviewTab({
                   <div className="px-5 py-3.5">
                     <p className="text-[11px] font-semibold text-faint mb-1.5">Cron schedule</p>
                     <div className="flex items-center gap-3">
-                      <code className="text-[12px] font-mono text-ink bg-white/[0.04] px-2.5 py-1 rounded-lg border border-white/[0.07]">
+                      <code className="text-[12px] font-mono text-ink bg-white/[0.04] px-2.5 py-1 rounded-lg">
                         {cronSchedule}
                       </code>
                       {humanizeCron(cronSchedule) && (
@@ -1019,8 +1120,8 @@ function OverviewTab({
 
           {/* Recent activity */}
           {latestSession !== null && (
-            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04] flex items-center justify-between">
+            <section className="bg-white/[0.04] rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.04] flex items-center justify-between">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Recent Activity</h3>
                 <button type="button" onClick={onLogsTab}
                   className="text-[10px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer">
@@ -1053,8 +1154,8 @@ function OverviewTab({
         {/* ── RIGHT COLUMN ─────────────────────────────────────────────── */}
         <div className="space-y-4">
 
-          {/* Shopify — only for generated apps (above How to test) */}
-          {latestSession !== null && (storeFrontUrl || adminUrl) && (() => {
+          {/* Shopify — only for built apps with matching archetype */}
+          {latestSession !== null && ((hasAdminUI && adminUrl) || (hasWidget && storeFrontUrl)) && (() => {
             const isInjected = hasWidget && app.themeInjectionStatus === "injected" && app.themeInjectionThemeId;
             // Editor URL works reliably (no password wall) — use it as the primary "open" action
             const editorUrl = isInjected && effectiveShop
@@ -1068,16 +1169,16 @@ function OverviewTab({
               : storeFrontUrl;
 
             return (
-              <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+              <section className="bg-white/[0.04] rounded-xl overflow-hidden">
                 {/* Section header */}
-                <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
                   <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Open in Shopify</h3>
                 </div>
 
                 <div>
 
                   {/* ── Admin ── */}
-                  {adminUrl && (
+                  {hasAdminUI && adminUrl && (
                     <a href={adminUrl} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
                     >
@@ -1085,19 +1186,15 @@ function OverviewTab({
                         <span className={cn("material-symbols-outlined text-[15px]", theme === "light" ? "text-orange-700" : "text-orange-300")} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>admin_panel_settings</span>
                       </span>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[12px] font-medium text-ink leading-tight">
-                          {hasAdminUI ? "Admin panel" : "Shopify Admin"}
-                        </div>
-                        <div className="text-[10px] text-faint mt-0.5">
-                          {hasAdminUI ? "Open your app's admin UI" : "Open Shopify store dashboard"}
-                        </div>
+                        <div className="text-[12px] font-medium text-ink leading-tight">Admin panel</div>
+                        <div className="text-[10px] text-faint mt-0.5">Open your app's admin UI</div>
                       </div>
                       <span className="material-symbols-outlined text-[13px] text-faint/40 group-hover:text-faint transition-colors">arrow_outward</span>
                     </a>
                   )}
 
                   {/* ── Storefront ── */}
-                  {storefrontPreviewUrl && (
+                  {hasWidget && storefrontPreviewUrl && (
                     <a href={storefrontPreviewUrl} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
                     >
@@ -1119,7 +1216,7 @@ function OverviewTab({
                   {/* ── new-one-two App Block (widget apps only) ── */}
                   {hasWidget && (
                     <div className={cn(isInjected && "bg-accent/[0.03]")}>
-                      <div className={cn("mx-4 mt-3 mb-1 border-t", theme === "light" ? "border-black/[0.10]" : "border-white/[0.08]")} />
+                      <div className={cn("mx-4 mt-3 mb-1 border-t", theme === "light" ? "border-black/[0.06]" : "border-white/[0.04]")} />
                       {/* Block header row */}
                       <div className="flex items-center gap-3 px-4 py-3">
                         <span className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", theme === "light" ? "bg-sky-600/[.08]" : "bg-sky-400/[.12]")}>
@@ -1201,27 +1298,61 @@ function OverviewTab({
             );
           })()}
 
-          {/* How to test / Revise CTA */}
-          {latestSession === null ? (
-            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
+          {/* How to test / Revise CTA — hidden during revision (isBuilding) like "How it works" */}
+          {(latestSession === null || isBuilding) ? (
+            <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-5 space-y-3 text-center">
-                <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
-                  <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
-                </div>
-                <div>
-                  <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
-                  <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
-                </div>
-                <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
-                  <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
-                  Start building with Ton
-                </button>
+                {isBuilding ? (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-accent text-[20px] animate-pulse-subtle" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Generating your app…</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Ton is building your app. Head to the chat to follow along.</p>
+                    </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-white/[0.06] text-muted text-[13px] font-semibold transition-all hover:bg-white/[0.09] cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                      Watch progress
+                    </button>
+                  </>
+                ) : latestSession?.status === "failed" ? (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-danger text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>error</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Generation failed</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Something went wrong. Adjust your prompt and try again.</p>
+                    </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      Try again
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
+                      <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    </div>
+                    <div>
+                      <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
+                    </div>
+                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
+                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      Start building with Ton
+                    </button>
+                  </>
+                )}
               </div>
             </section>
           ) : (
-            <section className="bg-white/[0.06] border border-white/[0.10] rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-white/[0.08] bg-white/[0.04]">
+            <section className="bg-white/[0.04] rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How to test</h3>
               </div>
               <div className="mx-4 mt-4 mb-3 px-3.5 py-3 bg-accent/5 border border-accent/[0.12] rounded-xl space-y-2.5 flex flex-col">
@@ -1306,7 +1437,7 @@ function SettingsPanel({
 
       <section>
         <h2 className="text-[11px] font-bold text-faint uppercase tracking-wider mb-4">Identity</h2>
-        <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl divide-y divide-white/[0.05]">
+        <div className="bg-white/[0.03] rounded-xl divide-y divide-white/[0.04]">
           <div className="flex items-center justify-between gap-4 px-5 py-4">
             <div>
               <p className="text-[13px] font-medium text-ink">Name</p>
@@ -1335,7 +1466,7 @@ function SettingsPanel({
       {app.status !== "deleted" && (
         <section>
           <h2 className="text-[11px] font-bold text-danger uppercase tracking-wider mb-4">Danger Zone</h2>
-          <div className="bg-danger/5 border border-danger/20 rounded-xl divide-y divide-danger/10">
+          <div className="bg-danger/5 rounded-xl divide-y divide-danger/10">
 
             {/* Soft delete */}
             <div className="px-5 py-4 flex items-center justify-between gap-4">
@@ -1480,9 +1611,9 @@ function InjectWizard({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-surface border border-white/[0.09] rounded-2xl shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto">
+      <div className="bg-surface rounded-xl shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.07]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.04]">
           <div>
             <h2 className="text-[14px] font-bold text-ink">Inject app block</h2>
             <p className="text-[11px] text-faint mt-0.5">Duplicates your active theme and adds the app block to a section</p>
@@ -1619,7 +1750,7 @@ function InjectWizard({
                     <label className="text-[11px] font-medium text-faint">
                       Click a slot to choose where the widget is inserted
                     </label>
-                    <div className="p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl space-y-0.5">
+                    <div className="p-3 bg-white/[0.03] rounded-xl space-y-0.5">
                       {blocks.length === 0 ? (
                         <>
                           {widgetSlot}
@@ -1631,7 +1762,7 @@ function InjectWizard({
                           {blocks.map((id, idx) => (
                             <div key={id}>
                               {clampedInsert === idx ? widgetSlot : null}
-                              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+                              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03]">
                                 <span className="material-symbols-outlined text-[13px] text-faint/40">widgets</span>
                                 <span className="text-[11px] text-faint">{blockNames[id] ?? "Block"}</span>
                               </div>
@@ -1651,10 +1782,10 @@ function InjectWizard({
 
         {/* Footer */}
         {!loading && (
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.07]">
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.04]">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-[12px] font-medium text-muted hover:text-ink bg-transparent border border-white/[0.08] rounded-lg transition-colors cursor-pointer"
+              className="px-4 py-2 text-[12px] font-medium text-muted hover:text-ink bg-white/[0.04] hover:bg-white/[0.08] rounded-lg transition-colors cursor-pointer"
             >
               Cancel
             </button>
@@ -1686,13 +1817,13 @@ export function AppDetailPage() {
   const { approve }       = useGeneration();
   const queryClient       = useQueryClient();
 
-  const [mainTab, setMainTab]         = useState<"overview" | "logs" | "versions" | "settings">("overview");
-  const [activeLogTab, setActiveLogTab] = useState<"webhook" | "widget" | "admin">("webhook");
+  const [mainTab, setMainTab]         = useState<"overview" | "logs" | "versions" | "email" | "settings">("overview");
+  const [logFilter, setLogFilter]     = useState<"all" | "webhook" | "widget" | "admin">("all");
   const [deploying, setDeploying]     = useState(false);
 
-  const logsEnabled       = (mainTab === "logs" && activeLogTab === "webhook") || mainTab === "overview";
-  const widgetLogsEnabled = (mainTab === "logs" && activeLogTab === "widget")  || mainTab === "overview";
-  const adminLogsEnabled  = (mainTab === "logs" && activeLogTab === "admin")   || mainTab === "overview";
+  const logsEnabled       = mainTab === "logs" || mainTab === "overview";
+  const widgetLogsEnabled = mainTab === "logs" || mainTab === "overview";
+  const adminLogsEnabled  = mainTab === "logs" || mainTab === "overview";
 
   const logsQuery       = useWebhookAppLogs(tenantId, appId ?? null, logsEnabled);
   const widgetLogsQuery = useWidgetLogs(tenantId, appId ?? null, widgetLogsEnabled);
@@ -1703,12 +1834,20 @@ export function AppDetailPage() {
   const latestCompletedSession = latestCompletedSessionQuery.data ?? null;
   const sessions               = sessionsQuery.data ?? [];
   // True when the latest session failed but a prior completed session exists to fall back to.
-  const hasFallback   = latestSession?.status === "failed"
-    && sessions.some((s) => s.status === "completed");
-  // When the latest failed, use the last completed session for display data (triggers, explanation).
-  const displaySession = (latestSession?.status === "failed" ? latestCompletedSession : latestSession) ?? latestSession;
+  const sessionFailed = latestSession?.status === "failed" || latestSession?.status === "cancelled";
+  // True when the latest session failed/cancelled but a prior completed session exists to fall back to.
+  const hasFallback   = sessionFailed && latestCompletedSession !== null;
+  // When the latest failed/cancelled, use the last completed session for display data (triggers, explanation).
+  const displaySession = (sessionFailed ? latestCompletedSession : latestSession) ?? latestSession;
   const activeGen     = useGenerationStore((s) => s.active);
-  const isGenerating  = activeGen?.appId === appId && activeGen?.status === "running";
+  const isGenerating  = (activeGen?.appId === appId && activeGen?.status === "running") || latestSession?.status === "running";
+
+  // Archetype-derived flags — used by Logs filter buttons + Shopify links
+  const hasWidget     = !!(displaySession?.bundle?.widgetModule  ?? (app?.appArchetype === "storefront_backend" || app?.appArchetype === "storefront_backend_admin"));
+  const hasAdminUI    = !!(displaySession?.bundle?.adminUiModule ?? (app?.appArchetype === "backend_admin"      || app?.appArchetype === "storefront_backend_admin"));
+  const webhookTopics = displaySession?.webhookTopics ?? [];
+  const cronSchedule  = displaySession?.cronSchedule ?? null;
+  const hasWebhook    = webhookTopics.length > 0 || !!cronSchedule;
 
   const invalidateAppCache = () =>
     queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
@@ -1716,9 +1855,22 @@ export function AppDetailPage() {
   const handleDeployDraft = async () => {
     if (!latestSession?.jobId) return;
     setDeploying(true);
-    try { await approve(latestSession.jobId); await appQuery.refetch(); void invalidateAppCache(); }
-    catch (err) { alert(err instanceof Error ? err.message : "Deployment failed"); }
-    finally { setDeploying(false); }
+    try {
+      await approve(latestSession.jobId);
+      await appQuery.refetch();
+      void invalidateAppCache();
+    } catch (err) {
+      // Intercept the platform's email_not_confirmed 409 and jump to the Email tab.
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("email_not_confirmed")) {
+        setMainTab("email");
+        alert("This app sends emails. Review and save the email content before deploying.");
+      } else {
+        alert(message || "Deployment failed");
+      }
+    } finally {
+      setDeploying(false);
+    }
   };
 
   const handleRedeploy = async () => {
@@ -1729,12 +1881,30 @@ export function AppDetailPage() {
     finally { setDeploying(false); }
   };
 
+  const [deactivateConfirm, setDeactivateConfirm] = useState(false);
+
   const handleDeactivate = async () => {
     if (!tenantId || !appId) return;
+    // If a test theme is injected, confirm before proceeding — deactivation will also remove it.
+    if (app?.themeInjectionStatus === "injected" && !deactivateConfirm) {
+      setDeactivateConfirm(true);
+      return;
+    }
+    setDeactivateConfirm(false);
     setDeploying(true);
-    try { await api.apps.setStatus(tenantId, appId, "inactive"); await appQuery.refetch(); void invalidateAppCache(); }
-    catch (err) { alert(err instanceof Error ? err.message : "Deactivation failed"); }
-    finally { setDeploying(false); }
+    try {
+      // Remove injected test theme first so the store isn't left with a broken widget.
+      if (app?.themeInjectionStatus === "injected") {
+        await api.apps.deleteInjectedTheme(tenantId, appId);
+      }
+      await api.apps.setStatus(tenantId, appId, "inactive");
+      await appQuery.refetch();
+      void invalidateAppCache();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Deactivation failed");
+    } finally {
+      setDeploying(false);
+    }
   };
 
   // ─── Draft delete ────────────────────────────────────────────────────────────
@@ -1774,11 +1944,6 @@ export function AppDetailPage() {
     }
   };
 
-  const activeLogsQuery =
-    activeLogTab === "webhook" ? logsQuery
-    : activeLogTab === "widget" ? widgetLogsQuery
-    : adminLogsQuery;
-
   return (
     <>
       <TopBar
@@ -1802,14 +1967,14 @@ export function AppDetailPage() {
       {appQuery.isLoading ? (
         <main className="flex-1 overflow-y-auto p-7">
           <div className="space-y-3">
-            <div className="flex items-center gap-4 pb-5 border-b border-white/[0.07]">
+            <div className="flex items-center gap-4 pb-5 border-b border-white/[0.04]">
               <div className="w-12 h-12 rounded-2xl bg-white/[0.05] animate-pulse-subtle" />
               <div className="space-y-2 flex-1">
                 <div className="h-5 w-48 bg-white/[0.05] rounded-lg animate-pulse-subtle" />
                 <div className="h-3 w-64 bg-white/[0.03] rounded-lg animate-pulse-subtle" />
               </div>
             </div>
-            {[1,2,3,4,5].map((i) => <div key={i} className="h-12 bg-white/[0.03] rounded-xl animate-pulse-subtle border border-white/[0.06]" />)}
+            {[1,2,3,4,5].map((i) => <div key={i} className="h-12 bg-white/[0.03] rounded-xl animate-pulse-subtle" />)}
           </div>
         </main>
       ) : !app ? (
@@ -1821,7 +1986,7 @@ export function AppDetailPage() {
         <main className="flex-1 flex flex-col items-center justify-center gap-8 px-6">
           <div className="flex flex-col items-center gap-5 max-w-[400px] text-center">
             {/* Icon */}
-            <div className="w-16 h-16 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+            <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center">
               <span className="material-symbols-outlined text-accent text-[32px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
             </div>
 
@@ -1858,7 +2023,7 @@ export function AppDetailPage() {
                   key={hint}
                   type="button"
                   onClick={() => navigate(`/app/apps/${app.id}/revise?prompt=${encodeURIComponent(hint)}`)}
-                  className="text-left text-[12px] text-faint px-4 py-2.5 rounded-xl border border-white/[0.07] bg-white/[0.02] hover:border-accent/30 hover:text-ink hover:bg-accent/[0.04] transition-all cursor-pointer"
+                  className="text-left text-[12px] text-faint px-4 py-2.5 rounded-xl bg-white/[0.03] hover:text-ink hover:bg-accent/[0.06] transition-all cursor-pointer"
                 >
                   {hint}
                 </button>
@@ -1919,13 +2084,40 @@ export function AppDetailPage() {
             isBuilding={isGenerating}
           />
 
+          {/* Deactivation confirm — shown when app has an injected test theme */}
+          {deactivateConfirm && (
+            <div className="px-7 py-3 bg-amber/[0.06] border-b border-amber/20 flex items-center gap-3">
+              <span className="material-symbols-outlined text-amber text-[16px]">warning</span>
+              <span className="text-[12px] text-muted flex-1">
+                This app has an injected test theme. Deactivating will also delete the test theme from your Shopify store.
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleDeactivate()}
+                className="text-[12px] px-3 py-1 rounded-lg bg-danger/15 text-danger hover:bg-danger/25 transition-colors cursor-pointer border-0 font-medium"
+              >
+                Deactivate &amp; remove theme
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeactivateConfirm(false)}
+                className="text-[12px] text-faint hover:text-ink transition-colors bg-transparent border-0 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
           {/* Tab bar */}
-          <div className="border-b border-white/[0.07] px-7 shrink-0">
+          <div className="border-b border-white/[0.04] px-7 shrink-0">
             <TabBar
               tabs={[
                 { id: "overview" as const, label: "Dashboard" },
                 { id: "logs"     as const, label: "Logs"     },
                 { id: "versions" as const, label: "Versions"  },
+                ...(app.usesEmail
+                  ? [{ id: "email" as const, label: "Email" }]
+                  : []),
                 { id: "settings" as const, label: "Settings" },
               ]}
               active={mainTab}
@@ -1948,6 +2140,7 @@ export function AppDetailPage() {
             <OverviewTab
               app={app}
               latestSession={displaySession}
+              isBuilding={isGenerating}
               recentLogs={logsQuery.data ?? []}
               recentWidgetLogs={widgetLogsQuery.data ?? []}
               recentAdminLogs={adminLogsQuery.data ?? []}
@@ -1964,53 +2157,74 @@ export function AppDetailPage() {
           {/* LOGS */}
           {mainTab === "logs" && (
             <main className="flex-1 overflow-y-auto p-7">
-              <div className="mb-5">
-                <TabBar
-                  tabs={[
-                    { id: "webhook" as const, label: "Webhook" },
-                    { id: "widget"  as const, label: "Widget"  },
-                    { id: "admin"   as const, label: "Admin"   },
-                  ]}
-                  active={activeLogTab}
-                  onChange={setActiveLogTab}
-                  end={
-                    <>
-                      {activeLogsQuery.isFetching && <span className="text-[10px] text-faint">Refreshing…</span>}
-                      <button type="button" onClick={() => void activeLogsQuery.refetch()}
-                        className="text-[11px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer underline"
-                      >Refresh</button>
-                    </>
-                  }
-                />
+              {/* Filter buttons — only render filters relevant to this app's archetype */}
+              <div className="flex items-center gap-2 mb-5 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-1 flex-wrap">
+                  {(
+                    [
+                      { id: "all",     label: "All",               show: true          },
+                      { id: "webhook", label: "Shopify Webhooks",  show: hasWebhook    },
+                      { id: "widget",  label: "Storefront Widget", show: hasWidget     },
+                      { id: "admin",   label: "Admin UI",          show: hasAdminUI    },
+                    ] as const
+                  ).filter((f) => f.show).map((f) => (
+                    <button key={f.id} type="button"
+                      onClick={() => setLogFilter(f.id)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer",
+                        logFilter === f.id
+                          ? "bg-accent/15 text-accent border-accent/25"
+                          : "bg-white/[0.05] text-faint border-white/[0.08] hover:text-ink hover:bg-white/[0.08]"
+                      )}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                {(logsQuery.isFetching || widgetLogsQuery.isFetching || adminLogsQuery.isFetching) && (
+                  <span className="text-[10px] text-faint">Refreshing…</span>
+                )}
+                <button type="button"
+                  onClick={() => { void logsQuery.refetch(); void widgetLogsQuery.refetch(); void adminLogsQuery.refetch(); }}
+                  className="text-[11px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer underline"
+                >Refresh</button>
               </div>
 
-              {activeLogTab === "webhook" && (
-                <>
-                  {logsQuery.isError && <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>}
-                  {!logsQuery.isError && (logsQuery.data ?? []).length === 0 && <EmptyLogs label="No webhook executions yet" sub="Logs appear here once Shopify sends events to your app." />}
-                  {(logsQuery.data ?? []).length > 0 && (
-                    <LogTable>{(logsQuery.data ?? []).map((e, i, a) => <LogRow key={e.id} entry={e} last={i === a.length - 1} />)}</LogTable>
-                  )}
-                </>
-              )}
-              {activeLogTab === "widget" && (
-                <>
-                  {widgetLogsQuery.isError && <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>}
-                  {!widgetLogsQuery.isError && (widgetLogsQuery.data ?? []).length === 0 && <EmptyLogs label="No widget calls yet" sub="Logs appear once the storefront widget calls your backend." />}
-                  {(widgetLogsQuery.data ?? []).length > 0 && (
-                    <LogTable pathHeader="Path">{(widgetLogsQuery.data ?? []).map((e, i, a) => <InvocationLogRow key={e.id} entry={e} last={i === a.length - 1} />)}</LogTable>
-                  )}
-                </>
-              )}
-              {activeLogTab === "admin" && (
-                <>
-                  {adminLogsQuery.isError && <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>}
-                  {!adminLogsQuery.isError && (adminLogsQuery.data ?? []).length === 0 && <EmptyLogs label="No admin calls yet" sub="Logs appear once the Admin UI panel calls your backend." />}
-                  {(adminLogsQuery.data ?? []).length > 0 && (
-                    <LogTable pathHeader="Path">{(adminLogsQuery.data ?? []).map((e, i, a) => <InvocationLogRow key={e.id} entry={e} last={i === a.length - 1} />)}</LogTable>
-                  )}
-                </>
-              )}
+              {/* Unified log list */}
+              {(() => {
+                type AnyLogEntry =
+                  | { kind: "webhook"; data: WebhookInvocationLogEntry; ts: string }
+                  | { kind: "widget" | "admin"; data: InvocationLogEntry; ts: string };
+
+                const webhookEntries = (logFilter === "all" || logFilter === "webhook") ? (logsQuery.data ?? []) : [];
+                const widgetEntries  = (logFilter === "all" || logFilter === "widget")  ? (widgetLogsQuery.data ?? []) : [];
+                const adminEntries   = (logFilter === "all" || logFilter === "admin")   ? (adminLogsQuery.data ?? []) : [];
+
+                const merged: AnyLogEntry[] = [
+                  ...webhookEntries.map((d) => ({ kind: "webhook" as const, data: d, ts: d.queuedAt })),
+                  ...widgetEntries.map((d)  => ({ kind: "widget"  as const, data: d, ts: d.invokedAt })),
+                  ...adminEntries.map((d)   => ({ kind: "admin"   as const, data: d, ts: d.invokedAt })),
+                ].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+
+                if (logsQuery.isError || widgetLogsQuery.isError || adminLogsQuery.isError) {
+                  return <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>;
+                }
+                if (logsQuery.isLoading || widgetLogsQuery.isLoading || adminLogsQuery.isLoading) {
+                  return null;
+                }
+                if (merged.length === 0) {
+                  return <EmptyLogs label="No handler executions yet" sub="Logs appear here once your app's handlers are invoked." />;
+                }
+                return (
+                  <LogTable pathHeader="Event / Path">
+                    {merged.map((entry, i, arr) =>
+                      entry.kind === "webhook"
+                        ? <LogRow key={entry.data.id} entry={entry.data} last={i === arr.length - 1} showSource />
+                        : <InvocationLogRow key={entry.data.id} entry={entry.data} source={entry.kind} last={i === arr.length - 1} />
+                    )}
+                  </LogTable>
+                );
+              })()}
             </main>
           )}
 
@@ -2023,6 +2237,9 @@ export function AppDetailPage() {
               app={app}
             />
           )}
+
+          {/* EMAIL — only shown when the app sends emails */}
+          {mainTab === "email" && app.usesEmail && <EmailTab appId={app.id} />}
 
           {/* SETTINGS */}
           {mainTab === "settings" && (

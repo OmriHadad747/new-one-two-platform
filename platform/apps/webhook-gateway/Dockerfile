@@ -1,5 +1,6 @@
-FROM node:20-alpine AS base
-RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
+FROM node:22-alpine AS base
+RUN apk update && apk upgrade --no-cache && \
+    corepack enable && corepack prepare pnpm@9.0.0 --activate
 
 FROM base AS deps
 WORKDIR /app
@@ -15,14 +16,16 @@ FROM base AS builder
 WORKDIR /app
 COPY . .
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/webhook-gateway/node_modules ./apps/webhook-gateway/node_modules
 COPY --from=deps /app/packages/crypto/node_modules ./packages/crypto/node_modules
 COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=deps /app/packages/logger/node_modules ./packages/logger/node_modules
 COPY --from=deps /app/packages/types/node_modules ./packages/types/node_modules
 RUN pnpm --filter @new-one-two/webhook-gateway... build
 
-FROM node:20-alpine AS runner
-RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
+FROM node:22-alpine AS runner
+RUN apk update && apk upgrade --no-cache && \
+    corepack enable && corepack prepare pnpm@9.0.0 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/webhook-gateway/package.json ./apps/webhook-gateway/

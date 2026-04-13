@@ -24,7 +24,6 @@ export {
   createGenerationSession,
   updateGenerationSession,
   cancelGenerationSession,
-  insertGenerationEvent,
   createDraftAppVersion,
   getLatestSessionForApp,
   getSessionsForApp,
@@ -83,3 +82,19 @@ export {
   getUsageHistory,
   getBillingEvents,
 } from "./billing.js";
+
+export {
+  getTenantBrand,
+  upsertTenantBrand,
+  getAppEmailConfig,
+  createAppEmailConfigFromStarter,
+  updateAppEmailConfig,
+  insertEmailDelivery,
+  updateEmailDeliveryStatus,
+  updateEmailDeliveryByProviderId,
+  getAppEmailStats,
+  isEmailSuppressed,
+  insertEmailSuppression,
+  setAppUsesEmail,
+  isAppEmailConfigured,
+} from "./email.js";

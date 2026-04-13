@@ -78,29 +78,6 @@ export async function cancelGenerationSession(jobId: string): Promise<void> {
   `;
 }
 
-export async function insertGenerationEvent(params: {
-  sessionId: string;
-  agentName: string;
-  provider: string;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  latencyMs: number;
-  status: "success" | "failed";
-  error?: string;
-}): Promise<void> {
-  await sql`
-    INSERT INTO generation_events (
-      session_id, agent_name, provider, model,
-      input_tokens, output_tokens, latency_ms, status, error
-    ) VALUES (
-      ${params.sessionId}, ${params.agentName}, ${params.provider}, ${params.model},
-      ${params.inputTokens}, ${params.outputTokens}, ${params.latencyMs},
-      ${params.status}, ${params.error ?? null}
-    )
-  `;
-}
-
 /**
  * Creates a draft app_version from generated code.
  * Uses the next sequential patch version for the app.

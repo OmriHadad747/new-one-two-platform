@@ -55,6 +55,7 @@
 /* Invert white-opacity borders → black-opacity borders in light mode */
 [data-theme="light"] .border-white\/7,
 [data-theme="light"] [class*="border-white/7"]      { border-color: rgba(0,0,0,0.09) !important; }
+[data-theme="light"] [class~="border-white/[0.04]"] { border-color: rgba(0,0,0,0.06) !important; }
 [data-theme="light"] [class~="border-white/[0.05]"] { border-color: rgba(0,0,0,0.07) !important; }
 [data-theme="light"] [class~="border-white/[0.06]"] { border-color: rgba(0,0,0,0.08) !important; }
 [data-theme="light"] [class~="border-white/[0.07]"] { border-color: rgba(0,0,0,0.09) !important; }
@@ -101,7 +102,6 @@
 /* glass-card adapts to theme */
 [data-theme="light"] .glass-card {
   background: rgba(255, 255, 255, 0.85);
-  border-color: rgba(0, 0, 0, 0.08);
 }
 
 /* divide-white-opacity → divide-black-opacity in light mode */
@@ -154,7 +154,6 @@
   .glass-card {
     background: rgba(31, 31, 36, 0.6);
     backdrop-filter: blur(24px);
-    border: 1px solid rgba(149, 142, 160, 0.15);
   }
 
   /* Kinetic button lift */

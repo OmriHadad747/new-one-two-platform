@@ -1,14 +1,26 @@
 import { cn } from "@/lib/cn";
+import { useThemeStore } from "@/stores/theme";
 
-export type BadgeVariant = "live" | "draft" | "building" | "failed" | "purple" | "teal";
+export type BadgeVariant = "live" | "draft" | "building" | "failed" | "purple" | "teal" | "source";
 
-const variants: Record<BadgeVariant, string> = {
-  live: "bg-green-500/10 text-green-500 border border-green-500/25",
-  draft: "bg-white/[0.05] text-faint border border-white/15",
-  building: "bg-accent/10 text-accent border border-accent/20",
-  failed: "bg-danger/10 text-danger border border-danger/20",
-  purple: "bg-accent/15 text-accent",
-  teal: "bg-teal/15 text-teal",
+const VARIANTS_DARK: Record<BadgeVariant, string> = {
+  live:     "bg-emerald-500/[.12] text-emerald-400",
+  draft:    "bg-white/[0.05] text-faint",
+  building: "bg-accent/10 text-accent",
+  failed:   "bg-danger/10 text-danger",
+  purple:   "bg-accent/15 text-accent",
+  teal:     "bg-teal/15 text-teal",
+  source:   "bg-white/[0.05] text-faint",
+};
+
+const VARIANTS_LIGHT: Record<BadgeVariant, string> = {
+  live:     "bg-emerald-600/[.08] text-emerald-700",
+  draft:    "bg-black/[0.04] text-faint",
+  building: "bg-accent/10 text-accent",
+  failed:   "bg-danger/10 text-danger",
+  purple:   "bg-accent/15 text-accent",
+  teal:     "bg-teal/15 text-teal",
+  source:   "bg-black/[0.04] text-faint",
 };
 
 interface BadgeProps {
@@ -18,6 +30,8 @@ interface BadgeProps {
 }
 
 export function Badge({ variant, children, className }: BadgeProps) {
+  const theme = useThemeStore((s) => s.theme);
+  const variants = theme === "light" ? VARIANTS_LIGHT : VARIANTS_DARK;
   return (
     <span
       className={cn(
@@ -32,6 +46,8 @@ export function Badge({ variant, children, className }: BadgeProps) {
 }
 
 export function Tag({ variant, children, className }: BadgeProps) {
+  const theme = useThemeStore((s) => s.theme);
+  const variants = theme === "light" ? VARIANTS_LIGHT : VARIANTS_DARK;
   return (
     <span
       className={cn(

@@ -11,8 +11,8 @@ build/
 
 # Environment variables
 .env
-.env.local
-.env.*.local
+.env.*
+platform/envs/
 
 # macOS
 .DS_Store
@@ -46,4 +46,4 @@ scripts/
 
 handler.js
 
-shopify_mcp/cache/
+generator/shopify_mcp/cache/

@@ -149,18 +149,17 @@ let _storefrontTokenPromise: Promise<string> | null = null;
 
 function resolveStorefrontToken(): Promise<string> {
   if (!_storefrontTokenPromise) {
-    if (!STOREFRONT_TOKEN_SECRET_NAME) {
-      _storefrontTokenPromise = Promise.reject(
-        new Error(
-          "Storefront API not available — no storefront token was provisioned during merchant install. " +
-          "Re-install the app to provision one."
-        )
-      );
-    } else {
-      _storefrontTokenPromise = getSecret(STOREFRONT_TOKEN_SECRET_NAME);
-    }
+    const p: Promise<string> = STOREFRONT_TOKEN_SECRET_NAME
+      ? getSecret(STOREFRONT_TOKEN_SECRET_NAME)
+      : Promise.reject(
+          new Error(
+            "Storefront API not available — no storefront token was provisioned during merchant install. " +
+            "Re-install the app to provision one."
+          )
+        );
     // Suppress unhandled-rejection until first actual call.
-    _storefrontTokenPromise.catch(() => undefined);
+    p.catch(() => undefined);
+    _storefrontTokenPromise = p;
   }
   return _storefrontTokenPromise;
 }

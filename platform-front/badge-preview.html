@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Badge &amp; UI Color Preview — New One Two</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Space Grotesk', sans-serif; background: #0e0e12; color: #e4e1e9; }
+  .material-symbols-outlined { font-variation-settings: 'FILL' 1, 'wght' 200; font-size: 12px; vertical-align: middle; }
+
+  .page { max-width: 1200px; margin: 0 auto; padding: 40px 32px; }
+  h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: #a78bfa; }
+  .subtitle { font-size: 14px; color: #958ea0; margin-bottom: 48px; }
+  h2 { font-size: 18px; font-weight: 700; margin-bottom: 24px; color: #cbc3d7; }
+
+  .themes { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 56px; }
+  .theme-card { border-radius: 16px; padding: 32px; }
+  .dark-card { background: #1b1b20; }
+  .light-card { background: #ffffff; }
+  .light-card h3 { color: #3d3558; }
+
+  h3 { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 16px; color: #958ea0; }
+  .section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: #958ea0; margin-bottom: 14px; }
+  .light-card .section-label { color: #6b6080; }
+
+  .badge-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+  .badge-row:last-child { margin-bottom: 0; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; padding: 3px 10px; border-radius: 999px;
+  }
+  .tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; padding: 3px 10px; border-radius: 4px;
+  }
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; padding: 3px 10px; border-radius: 999px;
+  }
+  .status-badge .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .status-badge-lg {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 600; padding: 6px 14px; border-radius: 999px;
+  }
+  .status-badge-lg .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
+    white-space: nowrap;
+  }
+  .pill .material-symbols-outlined { font-size: 12px; }
+
+  .dark-text { color: #e4e1e9; }
+  .light-text { color: #16131f; }
+  .dark-faint { color: #958ea0; }
+  .light-faint { color: #6b6080; }
+
+  .log-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; font-size: 12px; }
+  .log-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .log-topic { font-family: monospace; font-size: 12px; }
+
+  .app-card { border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .app-card-dark { background: rgba(255,255,255,0.03); }
+  .app-card-light { background: rgba(0,0,0,0.03); }
+  .app-card-header { display: flex; align-items: center; gap: 12px; }
+  .avatar { width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: white; flex-shrink: 0; }
+  .app-name { font-size: 14px; font-weight: 600; }
+  .app-slug { font-size: 11px; font-family: monospace; margin-top: 2px; }
+  .app-card-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 12px; font-size: 11px; }
+
+  .btn { font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; }
+  .toast { padding: 8px 12px; border-radius: 8px; font-size: 12px; }
+  .input { width: 100%; padding: 8px 12px; border-radius: 8px; font-size: 13px; font-family: inherit; outline: none; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>UI Component <span>Color Preview</span></h1>
+  <p class="subtitle">Side-by-side dark vs light. All badges borderless. No "deleted" status.</p>
+
+  <!-- ═══════════════════════ 1. GENERIC BADGES ═══════════════════════ -->
+  <h2>1. Generic Badges</h2>
+  <div class="themes">
+    <div class="theme-card dark-card">
+      <h3 style="color:#958ea0">Dark Theme</h3>
+      <div class="badge-row">
+        <span class="badge" style="background:rgba(16,185,129,0.12); color:#34d399;">Live</span>
+        <span class="badge" style="background:rgba(255,255,255,0.05); color:#958ea0;">Draft</span>
+        <span class="badge" style="background:rgba(167,139,250,0.10); color:#a78bfa;">Building</span>
+        <span class="badge" style="background:rgba(255,180,171,0.10); color:#ffb4ab;">Failed</span>
+        <span class="badge" style="background:rgba(167,139,250,0.15); color:#a78bfa;">Purple</span>
+        <span class="badge" style="background:rgba(93,230,255,0.15); color:#5de6ff;">Teal</span>
+        <span class="tag" style="background:rgba(255,255,255,0.05); color:#958ea0;">Source</span>
+      </div>
+    </div>
+    <div class="theme-card light-card">
+      <h3>Light Theme</h3>
+      <div class="badge-row">
+        <span class="badge" style="background:rgba(5,150,105,0.08); color:#047857;">Live</span>
+        <span class="badge" style="background:rgba(0,0,0,0.04); color:#6b6080;">Draft</span>
+        <span class="badge" style="background:rgba(124,58,237,0.10); color:#7c3aed;">Building</span>
+        <span class="badge" style="background:rgba(220,38,38,0.10); color:#dc2626;">Failed</span>
+        <span class="badge" style="background:rgba(124,58,237,0.15); color:#7c3aed;">Purple</span>
+        <span class="badge" style="background:rgba(8,145,178,0.15); color:#0891b2;">Teal</span>
+        <span class="tag" style="background:rgba(0,0,0,0.04); color:#6b6080;">Source</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ 2. APP STATUS BADGES ═══════════════════════ -->
+  <h2>2. App Status Badges (with dot)</h2>
+  <div class="themes">
+    <div class="theme-card dark-card">
+      <h3 style="color:#958ea0">Dark Theme</h3>
+      <div class="section-label">Small (card / table)</div>
+      <div class="badge-row">
+        <span class="status-badge" style="background:rgba(16,185,129,0.12); color:#34d399;">
+          <span class="dot" style="background:#10b981;"></span>Live
+        </span>
+        <span class="status-badge" style="background:rgba(251,191,36,0.12); color:#fcd34d;">
+          <span class="dot" style="background:#fbbf24;"></span>Ready
+        </span>
+        <span class="status-badge" style="background:rgba(167,139,250,0.10); color:#a78bfa;">
+          <span class="dot" style="background:#a78bfa;"></span>Building
+        </span>
+        <span class="status-badge" style="background:rgba(255,255,255,0.05); color:#958ea0;">
+          <span class="dot" style="background:#958ea0;"></span>Draft
+        </span>
+        <span class="status-badge" style="background:rgba(255,180,171,0.10); color:#ffb4ab;">
+          <span class="dot" style="background:#ffb4ab;"></span>Inactive
+        </span>
+      </div>
+      <div class="section-label" style="margin-top:16px;">Large (detail page)</div>
+      <div class="badge-row">
+        <span class="status-badge-lg" style="background:rgba(16,185,129,0.12); color:#34d399;">
+          <span class="dot" style="background:#10b981;"></span>Live
+        </span>
+        <span class="status-badge-lg" style="background:rgba(251,191,36,0.12); color:#fcd34d;">
+          <span class="dot" style="background:#fbbf24;"></span>Ready
+        </span>
+        <span class="status-badge-lg" style="background:rgba(167,139,250,0.10); color:#a78bfa;">
+          <span class="dot" style="background:#a78bfa;"></span>Building
+        </span>
+      </div>
+    </div>
+    <div class="theme-card light-card">
+      <h3>Light Theme</h3>
+      <div class="section-label">Small (card / table)</div>
+      <div class="badge-row">
+        <span class="status-badge" style="background:rgba(5,150,105,0.08); color:#047857;">
+          <span class="dot" style="background:#059669;"></span>Live
+        </span>
+        <span class="status-badge" style="background:rgba(217,119,6,0.08); color:#b45309;">
+          <span class="dot" style="background:#d97706;"></span>Ready
+        </span>
+        <span class="status-badge" style="background:rgba(124,58,237,0.10); color:#7c3aed;">
+          <span class="dot" style="background:#7c3aed;"></span>Building
+        </span>
+        <span class="status-badge" style="background:rgba(0,0,0,0.04); color:#6b6080;">
+          <span class="dot" style="background:#6b6080;"></span>Draft
+        </span>
+        <span class="status-badge" style="background:rgba(220,38,38,0.10); color:#dc2626;">
+          <span class="dot" style="background:#dc2626;"></span>Inactive
+        </span>
+      </div>
+      <div class="section-label" style="margin-top:16px;">Large (detail page)</div>
+      <div class="badge-row">
+        <span class="status-badge-lg" style="background:rgba(5,150,105,0.08); color:#047857;">
+          <span class="dot" style="background:#059669;"></span>Live
+        </span>
+        <span class="status-badge-lg" style="background:rgba(217,119,6,0.08); color:#b45309;">
+          <span class="dot" style="background:#d97706;"></span>Ready
+        </span>
+        <span class="status-badge-lg" style="background:rgba(124,58,237,0.10); color:#7c3aed;">
+          <span class="dot" style="background:#7c3aed;"></span>Building
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ 3. ARCHETYPE PILLS ═══════════════════════ -->
+  <h2>3. Archetype Pills (App Type)</h2>
+  <div class="themes">
+    <div class="theme-card dark-card">
+      <h3 style="color:#958ea0">Dark Theme</h3>
+      <div class="badge-row">
+        <span class="pill" style="background:rgba(52,211,153,0.12); color:#6ee7b7;">
+          <span class="material-symbols-outlined">bolt</span> Backend
+        </span>
+        <span class="pill" style="background:rgba(56,189,248,0.12); color:#7dd3fc;">
+          <span class="material-symbols-outlined">widgets</span> Storefront Widget
+        </span>
+        <span class="pill" style="background:rgba(251,146,60,0.12); color:#fdba74;">
+          <span class="material-symbols-outlined">admin_panel_settings</span> Admin UI
+        </span>
+      </div>
+    </div>
+    <div class="theme-card light-card">
+      <h3>Light Theme</h3>
+      <div class="badge-row">
+        <span class="pill" style="background:rgba(5,150,105,0.08); color:#047857;">
+          <span class="material-symbols-outlined">bolt</span> Backend
+        </span>
+        <span class="pill" style="background:rgba(2,132,199,0.08); color:#0369a1;">
+          <span class="material-symbols-outlined">widgets</span> Storefront Widget
+        </span>
+        <span class="pill" style="background:rgba(234,88,12,0.08); color:#c2410c;">
+          <span class="material-symbols-outlined">admin_panel_settings</span> Admin UI
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ 4. LOG STATUS ═══════════════════════ -->
+  <h2>4. Log Status Labels</h2>
+  <div class="themes">
+    <div class="theme-card dark-card">
+      <h3 style="color:#958ea0">Dark Theme</h3>
+      <div class="log-row">
+        <span class="log-dot" style="background:#10b981;"></span>
+        <span class="log-topic dark-text">orders/create</span>
+        <span class="tag" style="background:rgba(255,255,255,0.05); color:#958ea0;">webhook</span>
+        <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#34d399;">success</span>
+      </div>
+      <div class="log-row" style="border-top:1px solid rgba(255,255,255,0.04);">
+        <span class="log-dot" style="background:#ffb4ab;"></span>
+        <span class="log-topic dark-text">products/update</span>
+        <span class="tag" style="background:rgba(255,255,255,0.05); color:#958ea0;">webhook</span>
+        <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#ffb4ab;">failed</span>
+      </div>
+      <div class="log-row" style="border-top:1px solid rgba(255,255,255,0.04);">
+        <span class="log-dot" style="background:#a78bfa;"></span>
+        <span class="log-topic dark-text">carts/create</span>
+        <span class="tag" style="background:rgba(255,255,255,0.05); color:#958ea0;">widget</span>
+        <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#a78bfa;">running</span>
+      </div>
+      <div class="log-row" style="border-top:1px solid rgba(255,255,255,0.04);">
+        <span class="log-dot" style="background:#fbbf24;"></span>
+        <span class="log-topic dark-text">inventory/check</span>
+        <span class="tag" style="background:rgba(255,255,255,0.05); color:#958ea0;">admin</span>
+        <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#fcd34d;">timeout</span>
+      </div>
+    </div>
+    <div class="theme-card light-card">
+      <h3>Light Theme</h3>
+      <div class="log-row">
+        <span class="log-dot" style="background:#059669;"></span>
+        <span class="log-topic light-text">orders/create</span>
+        <span class="tag" style="background:rgba(0,0,0,0.04); color:#6b6080;">webhook</span>
+        <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#047857;">success</span>
+      </div>
+      <div class="log-row" style="border-top:1px solid rgba(0,0,0,0.06);">
+        <span class="log-dot" style="background:#dc2626;"></span>
+        <span class="log-topic light-text">products/update</span>
+        <span class="tag" style="background:rgba(0,0,0,0.04); color:#6b6080;">webhook</span>
+        <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#dc2626;">failed</span>
+      </div>
+      <div class="log-row" style="border-top:1px solid rgba(0,0,0,0.06);">
+        <span class="log-dot" style="background:#7c3aed;"></span>
+        <span class="log-topic light-text">carts/create</span>
+        <span class="tag" style="background:rgba(0,0,0,0.04); color:#6b6080;">widget</span>
+        <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#7c3aed;">running</span>
+      </div>
+      <div class="log-row" style="border-top:1px solid rgba(0,0,0,0.06);">
+        <span class="log-dot" style="background:#d97706;"></span>
+        <span class="log-topic light-text">inventory/check</span>
+        <span class="tag" style="background:rgba(0,0,0,0.04); color:#6b6080;">admin</span>
+        <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#b45309;">timeout</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ 5. BUTTONS ═══════════════════════ -->
+  <h2>5. Buttons</h2>
+  <div class="themes">
+    <div class="theme-card dark-card">
+      <h3 style="color:#958ea0">Dark Theme</h3>
+      <div class="badge-row">
+        <button class="btn" style="background:#a78bfa; color:white;">Primary</button>
+        <button class="btn" style="background:rgba(255,255,255,0.04); color:#cbc3d7;">Ghost</button>
+        <button class="btn" style="background:rgba(255,180,171,0.10); color:#ffb4ab;">Danger</button>
+      </div>
+    </div>
+    <div class="theme-card light-card">
+      <h3>Light Theme</h3>
+      <div class="badge-row">
+        <button class="btn" style="background:#7c3aed; color:white;">Primary</button>
+        <button class="btn" style="background:rgba(0,0,0,0.04); color:#3d3558;">Ghost</button>
+        <button class="btn" style="background:rgba(220,38,38,0.10); color:#dc2626;">Danger</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ 6. TOASTS ═══════════════════════ -->
+  <h2>6. Toast Messages</h2>
+  <div class="themes">
+    <div class="theme-card dark-card">
+      <h3 style="color:#958ea0">Dark Theme</h3>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div class="toast" style="background:rgba(93,230,255,0.10); color:#5de6ff;">Email template saved.</div>
+        <div class="toast" style="background:rgba(255,180,171,0.10); color:#ffb4ab;">Save failed. Please try again.</div>
+      </div>
+    </div>
+    <div class="theme-card light-card">
+      <h3>Light Theme</h3>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div class="toast" style="background:rgba(8,145,178,0.10); color:#0891b2;">Email template saved.</div>
+        <div class="toast" style="background:rgba(220,38,38,0.10); color:#dc2626;">Save failed. Please try again.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ 7. APP CARD ═══════════════════════ -->
+  <h2>7. App Card (borderless)</h2>
+  <div class="themes">
+    <div class="theme-card dark-card">
+      <h3 style="color:#958ea0">Dark Theme</h3>
+      <div class="app-card app-card-dark">
+        <div class="app-card-header">
+          <div class="avatar" style="background:linear-gradient(135deg, #8b5cf6, #4f46e5);">BN</div>
+          <div style="flex:1; min-width:0;">
+            <div class="app-name dark-text">Back In Stock Notifier</div>
+            <div class="app-slug dark-faint">back-in-stock-ax3f</div>
+          </div>
+          <span class="status-badge" style="background:rgba(16,185,129,0.12); color:#34d399;">
+            <span class="dot" style="background:#10b981;"></span>Live
+          </span>
+        </div>
+        <div class="badge-row">
+          <span class="pill" style="background:rgba(52,211,153,0.12); color:#6ee7b7;">
+            <span class="material-symbols-outlined">bolt</span> Backend
+          </span>
+          <span class="pill" style="background:rgba(56,189,248,0.12); color:#7dd3fc;">
+            <span class="material-symbols-outlined">widgets</span> Storefront Widget
+          </span>
+        </div>
+        <div class="app-card-footer" style="border-top:1px solid rgba(255,255,255,0.04);">
+          <span class="dark-faint" style="opacity:0.7;">3h ago</span>
+          <div style="display:flex; gap:8px;">
+            <span style="font-size:11px; font-weight:500; color:#a78bfa; display:flex; align-items:center; gap:4px;"><span class="material-symbols-outlined" style="font-size:12px;">auto_awesome</span> Revise</span>
+            <span style="font-size:11px; font-weight:500; color:#958ea0; display:flex; align-items:center; gap:4px;">Open <span class="material-symbols-outlined" style="font-size:12px;">arrow_forward</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="theme-card light-card">
+      <h3>Light Theme</h3>
+      <div class="app-card app-card-light">
+        <div class="app-card-header">
+          <div class="avatar" style="background:linear-gradient(135deg, #8b5cf6, #4f46e5);">BN</div>
+          <div style="flex:1; min-width:0;">
+            <div class="app-name light-text">Back In Stock Notifier</div>
+            <div class="app-slug light-faint">back-in-stock-ax3f</div>
+          </div>
+          <span class="status-badge" style="background:rgba(5,150,105,0.08); color:#047857;">
+            <span class="dot" style="background:#059669;"></span>Live
+          </span>
+        </div>
+        <div class="badge-row">
+          <span class="pill" style="background:rgba(5,150,105,0.08); color:#047857;">
+            <span class="material-symbols-outlined">bolt</span> Backend
+          </span>
+          <span class="pill" style="background:rgba(2,132,199,0.08); color:#0369a1;">
+            <span class="material-symbols-outlined">widgets</span> Storefront Widget
+          </span>
+        </div>
+        <div class="app-card-footer" style="border-top:1px solid rgba(0,0,0,0.04);">
+          <span class="light-faint" style="opacity:0.7;">3h ago</span>
+          <div style="display:flex; gap:8px;">
+            <span style="font-size:11px; font-weight:500; color:#7c3aed; display:flex; align-items:center; gap:4px;"><span class="material-symbols-outlined" style="font-size:12px;">auto_awesome</span> Revise</span>
+            <span style="font-size:11px; font-weight:500; color:#6b6080; display:flex; align-items:center; gap:4px;">Open <span class="material-symbols-outlined" style="font-size:12px;">arrow_forward</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ 8. FORM INPUTS ═══════════════════════ -->
+  <h2>8. Form Inputs</h2>
+  <div class="themes">
+    <div class="theme-card dark-card">
+      <h3 style="color:#958ea0">Dark Theme</h3>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <input class="input" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); color:#e4e1e9;" value="cool-apparel.myshopify.com">
+        <input class="input" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); color:#958ea0;" placeholder="Subject line...">
+      </div>
+    </div>
+    <div class="theme-card light-card">
+      <h3>Light Theme</h3>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <input class="input" style="background:rgba(0,0,0,0.03); border:1px solid rgba(0,0,0,0.08); color:#16131f;" value="cool-apparel.myshopify.com">
+        <input class="input" style="background:rgba(0,0,0,0.03); border:1px solid rgba(0,0,0,0.08); color:#6b6080;" placeholder="Subject line...">
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

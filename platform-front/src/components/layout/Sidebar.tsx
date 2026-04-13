@@ -2,7 +2,7 @@ import { NavLink, useNavigate, useParams } from "react-router";
 import { cn } from "@/lib/cn";
 import { useSessionStore } from "@/stores/session";
 import { useGenerationStore } from "@/stores/generation";
-import { useApps } from "@/hooks/useApps";
+import { useApps, useTenant } from "@/hooks/useApps";
 import type { App } from "@/types/dashboard";
 
 // ─── Status dot ───────────────────────────────────────────────────────────────
@@ -12,7 +12,7 @@ function AppStatusDot({ app, isGenerating }: { app: App; isGenerating: boolean }
     return <span className="w-2 h-2 rounded-full bg-accent animate-pulse shrink-0" title="Generating…" />;
   }
   if (app.status === "active")
-    return <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0" title="Live" />;
+    return <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" title="Live" />;
   if (app.status === "draft")
     return <span className="w-2 h-2 rounded-full bg-faint opacity-50 shrink-0" title="Draft" />;
   if (app.status === "inactive")
@@ -23,8 +23,9 @@ function AppStatusDot({ app, isGenerating }: { app: App; isGenerating: boolean }
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
-  const { shopDomain, plan, clear } = useSessionStore();
-  const { tenantId } = useSessionStore();
+  const { shopDomain, clear, tenantId } = useSessionStore();
+  const tenantQuery = useTenant(tenantId);
+  const plan = tenantQuery.data?.billingPlan ?? "free";
   const navigate = useNavigate();
   const { appId: activeAppId } = useParams<{ appId?: string }>();
   const activeGen = useGenerationStore((s) => s.active);
@@ -38,10 +39,10 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="w-[220px] min-w-[220px] bg-surface border-r border-white/7 flex flex-col z-10 select-none">
+    <aside className="w-[220px] min-w-[220px] bg-surface border-r border-white/[0.04] flex flex-col z-10 select-none">
 
       {/* Logo */}
-      <div className="flex items-center gap-2.5 px-4 py-[18px] border-b border-white/7">
+      <div className="flex items-center gap-2.5 px-4 py-[18px] border-b border-white/[0.04]">
         <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-teal flex items-center justify-center text-[13px] font-extrabold text-white leading-none">
           N
         </div>
@@ -55,7 +56,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={() => navigate("/app/new")}
-          className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.07] border border-white/[0.08] text-[13px] font-medium text-ink transition-colors cursor-pointer"
+          className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.07] text-[13px] font-medium text-ink transition-colors cursor-pointer"
         >
           <div className="flex items-center gap-2.5">
             <span className="text-accent text-[14px] leading-none">✦</span>
@@ -66,7 +67,7 @@ export function Sidebar() {
       </div>
 
       {/* Divider */}
-      <div className="mx-3 border-t border-white/[0.06]" />
+      <div className="mx-3 border-t border-white/[0.04]" />
 
       {/* Section label — clickable to go to full apps list */}
       <div className="px-3 pt-2.5 pb-1">
@@ -139,7 +140,7 @@ export function Sidebar() {
       </nav>
 
       {/* Bottom: store info + disconnect */}
-      <div className="px-2.5 py-3 border-t border-white/7 space-y-1">
+      <div className="px-2.5 py-3 border-t border-white/[0.04] space-y-1">
         <NavLink
           to="/app/settings"
           className={({ isActive }) =>
@@ -153,7 +154,7 @@ export function Sidebar() {
           Settings
         </NavLink>
 
-        <div className="flex items-center gap-2 px-2.5 py-2 bg-white/[0.03] rounded-lg border border-white/7 mt-1">
+        <div className="flex items-center gap-2 px-2.5 py-2 bg-white/[0.03] rounded-lg mt-1">
           <span className={`w-2 h-2 rounded-full shrink-0 ${shopDomain ? "bg-teal" : "bg-faint"}`} />
           <div className="min-w-0 flex-1">
             <div className="text-[11px] font-semibold text-ink truncate">

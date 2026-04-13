@@ -23,7 +23,7 @@ export function NameAppModal({ initialName, onConfirm, onCancel }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-surface border border-white/10 rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-6">
+      <div className="bg-surface rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6">
         <h2 className="text-[15px] font-bold text-ink mb-1">Name your app</h2>
         <p className="text-[12px] text-faint mb-5">You can change this later from the app detail page.</p>
 
@@ -35,7 +35,7 @@ export function NameAppModal({ initialName, onConfirm, onCancel }: Props) {
             onChange={(e) => setName(e.target.value)}
             maxLength={60}
             placeholder="e.g. Back In Stock Notifier"
-            className="w-full bg-raised border border-white/13 rounded-xl px-4 py-2.5 text-[13px] text-ink placeholder:text-faint outline-none focus:border-accent transition-colors"
+            className="w-full bg-raised border border-white/[0.08] rounded-lg px-4 py-2.5 text-[13px] text-ink placeholder:text-faint outline-none focus:border-accent transition-colors"
           />
 
           <div className="flex gap-2 justify-end">
