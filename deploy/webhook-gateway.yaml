@@ -1,0 +1,77 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: webhook-gateway
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "10"
+        run.googleapis.com/vpc-access-connector: platform-connector
+        run.googleapis.com/vpc-access-egress: private-ranges-only
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - image: IMAGE_PLACEHOLDER
+          ports:
+            - containerPort: 3001
+          resources:
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          env:
+            # ── Non-sensitive config ──────────────────────────────────────
+            - name: NODE_ENV
+              value: production
+            - name: GOOGLE_CLOUD_PROJECT
+              value: newonetwo-493019
+            - name: REDIS_HOST
+              value: "10.43.65.123"
+            - name: REDIS_PORT
+              value: "6378"
+            - name: REDIS_TLS
+              value: "true"
+            - name: NODE_EXTRA_CA_CERTS
+              value: /secrets/redis-ca/cert.pem
+            # ── Secrets (from Secret Manager) ─────────────────────────────
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database-url
+                  key: latest
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-password
+                  key: latest
+            - name: SHOPIFY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: shopify-client-id
+                  key: latest
+            - name: SHOPIFY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: shopify-client-secret
+                  key: latest
+            - name: RESEND_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: resend-webhook-secret
+                  key: latest
+          volumeMounts:
+            - name: redis-ca
+              mountPath: /secrets/redis-ca
+              readOnly: true
+      volumes:
+        - name: redis-ca
+          secret:
+            secretName: redis-ca-cert
+            items:
+              - key: latest
+                path: cert.pem

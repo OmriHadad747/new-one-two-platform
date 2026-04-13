@@ -1,0 +1,113 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: api
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "10"
+        run.googleapis.com/vpc-access-connector: platform-connector
+        run.googleapis.com/vpc-access-egress: private-ranges-only
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - image: IMAGE_PLACEHOLDER
+          ports:
+            - containerPort: 3002
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            # ── Non-sensitive config ──────────────────────────────────────
+            - name: NODE_ENV
+              value: production
+            - name: DEPLOY_MODE
+              value: cloudrun
+            - name: GOOGLE_CLOUD_PROJECT
+              value: newonetwo-493019
+            - name: GCP_REGION
+              value: us-central1
+            - name: DOCKER_REGISTRY
+              value: us-central1-docker.pkg.dev/newonetwo-493019/new-one-two
+            - name: REDIS_HOST
+              value: "10.43.65.123"
+            - name: REDIS_PORT
+              value: "6378"
+            - name: REDIS_TLS
+              value: "true"
+            - name: NODE_EXTRA_CA_CERTS
+              value: /secrets/redis-ca/cert.pem
+            - name: ALLOWED_ORIGINS
+              value: "https://dashboard.newonetwo.com,https://admin.newonetwo.com,https://admin.shopify.com"
+            - name: GENERATOR_URL
+              value: https://generator-wofefyatrq-uc.a.run.app
+            - name: PLATFORM_URL
+              value: https://api.newonetwo.com
+            - name: DASHBOARD_URL
+              value: https://dashboard.newonetwo.com
+            - name: WEBHOOK_BASE_URL
+              value: https://webhook-gateway-wofefyatrq-uc.a.run.app
+            - name: GCS_BUNDLES_BUCKET
+              value: new-one-two-bundles
+            - name: SHOPIFY_BILLING_MODE
+              value: test
+            - name: SHOPIFY_SECRET_NAME
+              value: projects/newonetwo-493019/secrets/shopify-webhook-secret/versions/latest
+            - name: SHOPIFY_WIDGET_EXTENSION_UID
+              value: 6beb6400-1f55-4552-3fe5-52a4eef85f5ea635a73e
+            - name: RESEND_FROM_TRANSACTIONAL
+              value: notifications@mail.newonetwo.com
+            # ── Secrets (from Secret Manager) ─────────────────────────────
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: database-url
+                  key: latest
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-password
+                  key: latest
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-secret
+                  key: latest
+            - name: SHOPIFY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: shopify-client-id
+                  key: latest
+            - name: SHOPIFY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: shopify-client-secret
+                  key: latest
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: anthropic-api-key
+                  key: latest
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: resend-api-key
+                  key: latest
+          volumeMounts:
+            - name: redis-ca
+              mountPath: /secrets/redis-ca
+              readOnly: true
+      volumes:
+        - name: redis-ca
+          secret:
+            secretName: redis-ca-cert
+            items:
+              - key: latest
+                path: cert.pem
