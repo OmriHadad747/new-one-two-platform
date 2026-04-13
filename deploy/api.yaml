@@ -32,6 +32,8 @@ spec:
               value: cloudrun
             - name: GOOGLE_CLOUD_PROJECT
               value: newonetwo-493019
+            - name: GCP_PROJECT_ID
+              value: newonetwo-493019
             - name: GCP_REGION
               value: us-central1
             - name: DOCKER_REGISTRY

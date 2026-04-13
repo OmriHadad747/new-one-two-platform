@@ -39,16 +39,18 @@ export function InstallPage() {
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <header className="flex items-center justify-between px-8 h-16 border-b border-white/[0.06]">
-        <button
-          type="button"
-          onClick={() => navigate("/")}
-          className="flex items-center gap-2 text-faint hover:text-ink transition-colors bg-transparent border-0 cursor-pointer text-sm"
-        >
-          <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-          Back
-        </button>
-        <span className="text-base font-bold text-accent">New One Two</span>
-        <div className="w-16" /> {/* spacer */}
+        <div className="flex items-center gap-6">
+          <span className="text-xl font-bold tracking-tighter text-accent">New One Two</span>
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="flex items-center gap-1.5 text-faint hover:text-ink transition-colors bg-transparent border-0 cursor-pointer text-sm border-l border-white/[0.1] pl-6"
+          >
+            <span className="material-symbols-outlined text-[16px]">arrow_back</span>
+            Back
+          </button>
+        </div>
+        <div className="w-16" />
       </header>
 
       {/* ── Install card ──────────────────────────────────────────────────── */}
