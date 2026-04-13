@@ -46,6 +46,16 @@ const JWT_SECRET =
 const AUTH_REQUIRED = process.env["API_AUTH_REQUIRED"] === "true";
 const TOKEN_EXPIRY_SEC = 60 * 60 * 24 * 7; // 7 days
 
+// Fail fast: if auth is required but no signing secret exists, the service
+// cannot safely issue or verify tokens. Crash at startup rather than silently
+// allowing unauthenticated traffic.
+if (AUTH_REQUIRED && !JWT_SECRET) {
+  throw new Error(
+    "FATAL: API_AUTH_REQUIRED=true but neither JWT_SECRET nor SHOPIFY_CLIENT_SECRET is set. " +
+    "Cannot start — all requests would bypass authentication."
+  );
+}
+
 // ─── JWT Helpers (HS256 — no external dependency) ──────────────────────────────
 
 function base64url(buf: Buffer): string {
@@ -181,4 +191,36 @@ export async function authHook(
   }
 
   // Dev mode: allow through without token
+}
+
+// ─── Tenant Authorization Guard ──────────────────────────────────────────────
+// Call from route handlers to verify the authenticated user owns the tenantId
+// in the URL or request body. In dev mode (no auth required), this is a no-op
+// so local development without tokens keeps working.
+
+/**
+ * Verifies the tenantId from the route matches the authenticated tenant.
+ * Returns the validated tenantId, or sends 403 and returns null.
+ *
+ * Usage:
+ *   const tenantId = requireTenant(req, reply, req.params.tenantId);
+ *   if (!tenantId) return; // reply already sent
+ */
+export function requireTenant(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  tenantId: string
+): string | null {
+  // Dev mode without auth: trust the tenantId as-is
+  if (!req.tenantAuth) return tenantId;
+
+  if (req.tenantAuth.tenantId !== tenantId) {
+    logger.warn(
+      { authenticated: req.tenantAuth.tenantId, requested: tenantId },
+      "Tenant authorization denied"
+    );
+    void reply.code(403).send({ error: "Access denied" });
+    return null;
+  }
+  return tenantId;
 }
