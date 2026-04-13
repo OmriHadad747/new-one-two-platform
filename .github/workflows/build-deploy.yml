@@ -6,14 +6,28 @@
 #   - Push to staging → deploy to staging
 #   - Manual dispatch for any branch
 #
-# Required GitHub Secrets:
-#   GCP_PROJECT_ID          — GCP project ID
-#   GCP_REGION              — e.g. us-central1
-#   GCP_SA_KEY              — Service account key JSON (or use Workload Identity Federation)
-#   DOCKER_REGISTRY         — e.g. us-central1-docker.pkg.dev/PROJECT/REPO
+# ── GitHub Secrets (sensitive) ────────────────────────────────────────────────
+#   GCP_SA_KEY              — Service account key JSON
+#   DATABASE_URL            — Postgres connection string (includes password)
+#   REDIS_PASSWORD          — Redis AUTH password
+#   JWT_SECRET              — JWT signing key
+#   SHOPIFY_CLIENT_ID       — Shopify OAuth app ID
+#   SHOPIFY_CLIENT_SECRET   — Shopify OAuth app secret
+#   ANTHROPIC_API_KEY       — Anthropic API key
+#   DB_PASSWORD             — Postgres password (for migrations)
+#   DB_USER                 — Postgres user (for migrations)
+#   DB_NAME                 — Postgres DB name (for migrations)
 #
-# Required GitHub Variables (non-secret):
-#   CLOUD_SQL_CONNECTION    — Cloud SQL instance connection name (for migrations)
+# ── GitHub Variables (non-sensitive config) ───────────────────────────────────
+#   GCP_REGION              — e.g. us-central1
+#   GCP_PROJECT_ID          — e.g. newonetwo-493019
+#   DOCKER_REGISTRY         — e.g. us-central1-docker.pkg.dev/PROJECT/REPO
+#   REDIS_HOST              — Redis private IP or hostname
+#   ALLOWED_ORIGINS         — CORS origins (comma-separated URLs)
+#   VPC_CONNECTOR           — Cloud Run VPC connector name
+#   CLOUD_SQL_CONNECTION    — Cloud SQL instance connection name
+#   API_URL                 — Public API URL (for frontend build)
+#   FRONTEND_BUCKET         — GCS bucket for frontend assets
 
 name: Build & Deploy
 
@@ -64,8 +78,8 @@ jobs:
     needs: setup
     environment: ${{ needs.setup.outputs.environment }}
     env:
-      GCP_REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
-      REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      REGISTRY: ${{ vars.DOCKER_REGISTRY }}
     strategy:
       matrix:
         service:
@@ -187,8 +201,8 @@ jobs:
     needs: [setup, build, migrate]
     environment: ${{ needs.setup.outputs.environment }}
     env:
-      GCP_REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
-      REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      REGISTRY: ${{ vars.DOCKER_REGISTRY }}
     strategy:
       matrix:
         service:
@@ -230,14 +244,14 @@ jobs:
           image: ${{ env.REGISTRY }}/${{ matrix.service.name }}:${{ needs.setup.outputs.image_tag }}
           env_vars: |
             DATABASE_URL=${{ secrets.DATABASE_URL }}
-            REDIS_HOST=${{ secrets.REDIS_HOST }}
+            REDIS_HOST=${{ vars.REDIS_HOST }}
             REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             SHOPIFY_CLIENT_ID=${{ secrets.SHOPIFY_CLIENT_ID }}
             SHOPIFY_CLIENT_SECRET=${{ secrets.SHOPIFY_CLIENT_SECRET }}
-            ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
+            ALLOWED_ORIGINS=${{ vars.ALLOWED_ORIGINS }}
             ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
-            GOOGLE_CLOUD_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+            GOOGLE_CLOUD_PROJECT=${{ vars.GCP_PROJECT_ID }}
             NODE_ENV=production
           flags: >-
             --port=${{ matrix.service.port }}
@@ -246,7 +260,7 @@ jobs:
             --min-instances=${{ matrix.service.min_instances }}
             --max-instances=10
             --timeout=300
-            --vpc-connector=${{ secrets.VPC_CONNECTOR }}
+            --vpc-connector=${{ vars.VPC_CONNECTOR }}
             ${{ matrix.service.allow_unauthenticated && '--allow-unauthenticated' || '--no-allow-unauthenticated' }}
 
   # ─── Build & Deploy Frontend ────────────────────────────────────────────────
@@ -277,7 +291,7 @@ jobs:
         working-directory: platform-front
         run: pnpm build
         env:
-          VITE_API_URL: ${{ secrets.API_URL }}
+          VITE_API_URL: ${{ vars.API_URL }}
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -286,8 +300,8 @@ jobs:
 
       - name: Deploy frontend to GCS
         run: |
-          gsutil -m rsync -r -d platform-front/dist gs://${{ secrets.FRONTEND_BUCKET }}/
+          gsutil -m rsync -r -d platform-front/dist gs://${{ vars.FRONTEND_BUCKET }}/
           gsutil -m setmeta -h "Cache-Control:public, max-age=3600" \
-            "gs://${{ secrets.FRONTEND_BUCKET }}/assets/**"
+            "gs://${{ vars.FRONTEND_BUCKET }}/assets/**"
           gsutil -m setmeta -h "Cache-Control:no-cache" \
-            "gs://${{ secrets.FRONTEND_BUCKET }}/index.html"
+            "gs://${{ vars.FRONTEND_BUCKET }}/index.html"
