@@ -129,10 +129,16 @@ jobs:
       - name: Run migrations
         run: |
           # Start Cloud SQL Proxy in background
-          # NOTE: Cloud SQL instance must have public IP enabled:
-          #   gcloud sql instances patch new-one-two-db --assign-ip
-          cloud-sql-proxy ${{ vars.CLOUD_SQL_CONNECTION }} --port 5432 --ip-address-types=PUBLIC &
-          sleep 3
+          # Requires public IP on the Cloud SQL instance (already enabled).
+          cloud-sql-proxy ${{ vars.CLOUD_SQL_CONNECTION }} --port 5432 &
+          PROXY_PID=$!
+          # Wait up to 15 seconds for the proxy to be ready
+          for i in $(seq 1 15); do
+            if nc -z 127.0.0.1 5432 2>/dev/null; then break; fi
+            echo "Waiting for proxy... ($i/15)"
+            sleep 1
+          done
+          nc -z 127.0.0.1 5432 || { echo "Cloud SQL Proxy failed to start"; kill $PROXY_PID 2>/dev/null; exit 1; }
 
           export PGPASSWORD="${{ secrets.DB_PASSWORD }}"
           PSQL_ARGS=(-h 127.0.0.1 -p 5432 -U "${{ secrets.DB_USER }}" -d "${{ secrets.DB_NAME }}")
