@@ -107,6 +107,7 @@ gcloud redis instances create new-one-two-redis \
 | `REDIS_PORT` | `6378` |
 | `REDIS_TLS` | `true` |
 | `REDIS_PASSWORD` | in Secret Manager (`redis-password`) |
+| TLS CA cert | Mounted via Secret Manager (`redis-ca-cert`) → `NODE_EXTRA_CA_CERTS` |
 
 ---
 

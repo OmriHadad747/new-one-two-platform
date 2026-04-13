@@ -1,0 +1,28 @@
+# Dependencies — copied explicitly from deps stage
+node_modules/
+**/node_modules/
+
+# Build output — built fresh inside Docker
+**/dist/
+**/*.tsbuildinfo
+
+# Git
+.git/
+.gitignore
+
+# Environment files
+**/.env
+**/.env.*
+envs/
+
+# Tests
+**/coverage/
+**/__tests__/
+**/*.test.ts
+**/*.spec.ts
+
+# Logs / IDE / OS
+**/*.log
+.vscode/
+.idea/
+**/.DS_Store

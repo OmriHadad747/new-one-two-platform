@@ -14,6 +14,8 @@
 #   SHOPIFY_CLIENT_ID       — Shopify OAuth app ID
 #   SHOPIFY_CLIENT_SECRET   — Shopify OAuth app secret
 #   ANTHROPIC_API_KEY       — Anthropic API key
+#   RESEND_API_KEY          — Resend email API key
+#   RESEND_WEBHOOK_SECRET   — Resend delivery webhook signing secret
 #   DB_PASSWORD             — Postgres password (for migrations)
 #   DB_USER                 — Postgres user (for migrations)
 #   DB_NAME                 — Postgres DB name (for migrations)
@@ -23,11 +25,21 @@
 #   GCP_PROJECT_ID          — e.g. newonetwo-493019
 #   DOCKER_REGISTRY         — e.g. us-central1-docker.pkg.dev/PROJECT/REPO
 #   REDIS_HOST              — Redis private IP or hostname
+#   REDIS_PORT              — Redis port (6378 for Memorystore)
 #   ALLOWED_ORIGINS         — CORS origins (comma-separated URLs)
 #   VPC_CONNECTOR           — Cloud Run VPC connector name
 #   CLOUD_SQL_CONNECTION    — Cloud SQL instance connection name
 #   API_URL                 — Public API URL (for frontend build)
 #   FRONTEND_BUCKET         — GCS bucket for frontend assets
+#   GENERATOR_URL           — Cloud Run URL for generator service
+#   PLATFORM_URL            — Public API URL (OAuth callbacks, billing)
+#   DASHBOARD_URL           — Public dashboard URL (post-install redirect)
+#   WEBHOOK_BASE_URL        — Public webhook gateway URL
+#   SHOPIFY_BILLING_MODE    — disabled | test | live
+#   SHOPIFY_SECRET_NAME     — Secret Manager resource for webhook HMAC key
+#   SHOPIFY_WIDGET_EXTENSION_UID — Shopify theme extension UID
+#   GCS_BUNDLES_BUCKET      — GCS bucket for widget/admin bundles
+#   RESEND_FROM_TRANSACTIONAL — Sender address for transactional emails
 
 name: Build & Deploy
 
@@ -212,24 +224,28 @@ jobs:
             min_instances: 1
             memory: 512Mi
             cpu: "1"
+            uses_redis: true
           - name: webhook-gateway
             port: 3001
             allow_unauthenticated: true
             min_instances: 1
             memory: 256Mi
             cpu: "1"
+            uses_redis: true
           - name: worker
             port: 8080
             allow_unauthenticated: false
             min_instances: 1
             memory: 512Mi
             cpu: "1"
+            uses_redis: true
           - name: generator
             port: 8001
             allow_unauthenticated: false
             min_instances: 1
             memory: 1Gi
             cpu: "2"
+            uses_redis: false
     steps:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -243,6 +259,11 @@ jobs:
           region: ${{ env.GCP_REGION }}
           image: ${{ env.REGISTRY }}/${{ matrix.service.name }}:${{ needs.setup.outputs.image_tag }}
           env_vars: |
+            NODE_ENV=production
+            DEPLOY_MODE=cloudrun
+            GOOGLE_CLOUD_PROJECT=${{ vars.GCP_PROJECT_ID }}
+            GCP_REGION=${{ vars.GCP_REGION }}
+            DOCKER_REGISTRY=${{ vars.DOCKER_REGISTRY }}
             DATABASE_URL=${{ secrets.DATABASE_URL }}
             REDIS_HOST=${{ vars.REDIS_HOST }}
             REDIS_PORT=${{ vars.REDIS_PORT }}
@@ -251,10 +272,21 @@ jobs:
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             SHOPIFY_CLIENT_ID=${{ secrets.SHOPIFY_CLIENT_ID }}
             SHOPIFY_CLIENT_SECRET=${{ secrets.SHOPIFY_CLIENT_SECRET }}
+            SHOPIFY_BILLING_MODE=${{ vars.SHOPIFY_BILLING_MODE }}
+            SHOPIFY_SECRET_NAME=${{ vars.SHOPIFY_SECRET_NAME }}
+            SHOPIFY_WIDGET_EXTENSION_UID=${{ vars.SHOPIFY_WIDGET_EXTENSION_UID }}
             ALLOWED_ORIGINS=${{ vars.ALLOWED_ORIGINS }}
             ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
-            GOOGLE_CLOUD_PROJECT=${{ vars.GCP_PROJECT_ID }}
-            NODE_ENV=production
+            GENERATOR_URL=${{ vars.GENERATOR_URL }}
+            PLATFORM_URL=${{ vars.PLATFORM_URL }}
+            DASHBOARD_URL=${{ vars.DASHBOARD_URL }}
+            WEBHOOK_BASE_URL=${{ vars.WEBHOOK_BASE_URL }}
+            GCS_BUNDLES_BUCKET=${{ vars.GCS_BUNDLES_BUCKET }}
+            RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
+            RESEND_FROM_TRANSACTIONAL=${{ vars.RESEND_FROM_TRANSACTIONAL }}
+            RESEND_WEBHOOK_SECRET=${{ secrets.RESEND_WEBHOOK_SECRET }}
+            ${{ matrix.service.uses_redis && 'NODE_EXTRA_CA_CERTS=/secrets/redis-ca/cert.pem' || '' }}
+          secrets: ${{ matrix.service.uses_redis && '/secrets/redis-ca/cert.pem=redis-ca-cert:latest' || '' }}
           flags: >-
             --port=${{ matrix.service.port }}
             --memory=${{ matrix.service.memory }}

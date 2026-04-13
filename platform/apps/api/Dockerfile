@@ -1,7 +1,7 @@
 FROM node:22-alpine AS base
-RUN apk update && apk upgrade --no-cache && \
-    corepack enable && corepack prepare pnpm@9.0.0 --activate
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
+# ── Install all dependencies (cached unless lockfile changes) ─────────────────
 FROM base AS deps
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -15,6 +15,7 @@ COPY packages/pubsub-client/package.json ./packages/pubsub-client/
 COPY packages/types/package.json ./packages/types/
 RUN pnpm install --frozen-lockfile
 
+# ── Build & create production bundle ─────────────────────────────────────────
 FROM base AS builder
 WORKDIR /app
 COPY . .
@@ -28,30 +29,16 @@ COPY --from=deps /app/packages/logger/node_modules ./packages/logger/node_module
 COPY --from=deps /app/packages/pubsub-client/node_modules ./packages/pubsub-client/node_modules
 COPY --from=deps /app/packages/types/node_modules ./packages/types/node_modules
 RUN pnpm --filter @new-one-two/api... build
+RUN pnpm --filter @new-one-two/api deploy --prod /deploy
 
+# ── Minimal runtime image ─────────────────────────────────────────────────────
 FROM node:22-alpine AS runner
-RUN apk update && apk upgrade --no-cache && \
-    corepack enable && corepack prepare pnpm@9.0.0 --activate
+# Upgrade Alpine packages in the shipped image only — keeps build layers cached
+# while ensuring the deployed container has current security patches.
+RUN apk upgrade --no-cache
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/api/package.json ./apps/api/
-COPY packages/crypto/package.json ./packages/crypto/
-COPY packages/db/package.json ./packages/db/
-COPY packages/deployer/package.json ./packages/deployer/
-COPY packages/harness/package.json ./packages/harness/
-COPY packages/logger/package.json ./packages/logger/
-COPY packages/pubsub-client/package.json ./packages/pubsub-client/
-COPY packages/types/package.json ./packages/types/
-RUN pnpm install --frozen-lockfile --prod
-COPY --from=builder /app/apps/api/dist ./apps/api/dist
-COPY --from=builder /app/packages/crypto/dist ./packages/crypto/dist
-COPY --from=builder /app/packages/db/dist ./packages/db/dist
-COPY --from=builder /app/packages/deployer/dist ./packages/deployer/dist
-COPY --from=builder /app/packages/harness/dist ./packages/harness/dist
-COPY --from=builder /app/packages/logger/dist ./packages/logger/dist
-COPY --from=builder /app/packages/pubsub-client/dist ./packages/pubsub-client/dist
-COPY --from=builder /app/packages/types/dist ./packages/types/dist
+COPY --from=builder /deploy .
 
 ENV NODE_ENV=production
 EXPOSE 3002
-CMD ["node", "apps/api/dist/server.js"]
+CMD ["node", "dist/server.js"]
