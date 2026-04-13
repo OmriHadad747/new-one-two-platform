@@ -228,6 +228,17 @@ jobs:
           service: ${{ matrix.service.name }}
           region: ${{ env.GCP_REGION }}
           image: ${{ env.REGISTRY }}/${{ matrix.service.name }}:${{ needs.setup.outputs.image_tag }}
+          env_vars: |
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            REDIS_HOST=${{ secrets.REDIS_HOST }}
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            SHOPIFY_CLIENT_ID=${{ secrets.SHOPIFY_CLIENT_ID }}
+            SHOPIFY_CLIENT_SECRET=${{ secrets.SHOPIFY_CLIENT_SECRET }}
+            ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}
+            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+            GOOGLE_CLOUD_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+            NODE_ENV=production
           flags: >-
             --port=${{ matrix.service.port }}
             --memory=${{ matrix.service.memory }}
