@@ -35,6 +35,7 @@ import {
   verifyUnsubscribeToken,
 } from "@new-one-two/harness";
 import { Resend } from "resend";
+import { requireTenant } from "../plugins/auth.js";
 
 const RESEND_API_KEY = process.env["RESEND_API_KEY"] ?? "";
 const RESEND_FROM_TRANSACTIONAL =
@@ -248,7 +249,9 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { tenantId: string } }>(
     "/tenants/:tenantId/brand",
     async (req, reply) => {
-      const brand = await getTenantBrand(req.params.tenantId);
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
+      const brand = await getTenantBrand(tenantId);
       return reply.send({ brand });
     }
   );
@@ -266,7 +269,8 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
   }>(
     "/tenants/:tenantId/brand",
     async (req, reply) => {
-      const { tenantId } = req.params;
+      const tenantId = requireTenant(req, reply, req.params.tenantId);
+      if (!tenantId) return;
       const brand = await upsertTenantBrand({ tenantId, ...req.body });
       return reply.send({ brand });
     }
