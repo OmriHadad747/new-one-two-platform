@@ -5,7 +5,7 @@ declare module "fastify" {
     rawBody?: boolean;
   }
 }
-import { resolveWebhookContext, createWebhookInvocationLog, checkUsageQuota, incrementUsage } from "@new-one-two/db";
+import { resolveWebhookContext, createWebhookInvocationLog, checkUsageQuota, trackAppExecution } from "@new-one-two/db";
 import { getSecret, validateShopifyHmac, hashPayload } from "@new-one-two/crypto";
 import { createRequestLogger } from "@new-one-two/logger";
 import { enqueueWebhook } from "../queue/webhook-queue.js";
@@ -154,7 +154,7 @@ async function webhookHandler(
   }
 
   // Track the execution
-  await incrementUsage(ctx.tenant.id, "app_executions");
+  await trackAppExecution(ctx.tenant.id);
 
   // ── 6. Enqueue for async execution ────────────────────────────────────────
   const job = await enqueueWebhook({

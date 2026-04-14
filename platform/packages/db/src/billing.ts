@@ -1,74 +1,13 @@
-// ─── Billing & Usage Queries ─────────────────────────────────────────────────
+// ─── Billing Queries ──────────────────────────────────────────────────────────
 
 import type {
   BillingPlan,
   BillingInterval,
   SubscriptionStatus,
-  UsageRecord,
-  UsagePeriodSummary,
   BillingEvent,
   RevisionClassification,
 } from "@new-one-two/types";
 import { sql } from "./connection.js";
-
-/**
- * Compute the current billing period start date for a tenant.
- * Uses billing_cycle_anchor (the day the subscription was activated) to align
- * usage resets with Shopify's billing cycle, not the calendar month.
- */
-async function getBillingPeriodStart(tenantId: string): Promise<string> {
-  const rows = await sql<{ billingCycleAnchor: Date }[]>`
-    SELECT billing_cycle_anchor FROM tenants WHERE id = ${tenantId}
-  `;
-  const anchor = rows[0]?.billingCycleAnchor ?? new Date();
-  const anchorDay = anchor.getDate();
-
-  const now = new Date();
-  const periodStart = new Date(now.getFullYear(), now.getMonth(), anchorDay);
-  // If we haven't reached the anchor day this month, the period started last month
-  if (now < periodStart) {
-    periodStart.setMonth(periodStart.getMonth() - 1);
-  }
-  return periodStart.toISOString().slice(0, 10);
-}
-
-/**
- * Get or create the usage record for the current billing period.
- * Period aligns with billing_cycle_anchor (subscription start date).
- * Uses ON CONFLICT DO UPDATE to avoid the race condition of DO NOTHING + SELECT.
- */
-export async function getOrCreateUsageRecord(tenantId: string): Promise<UsageRecord> {
-  const periodStr = await getBillingPeriodStart(tenantId);
-
-  const rows = await sql<UsageRecord[]>`
-    INSERT INTO usage_records (tenant_id, period_start)
-    VALUES (${tenantId}, ${periodStr})
-    ON CONFLICT (tenant_id, period_start)
-    DO UPDATE SET updated_at = NOW()
-    RETURNING *
-  `;
-
-  return rows[0]!;
-}
-
-/**
- * Atomically increment a usage counter for the current billing period.
- */
-export async function incrementUsage(
-  tenantId: string,
-  column: "generations" | "revisions" | "app_executions" | "emails_sent" | "sms_sent" | "files_uploaded"
-): Promise<void> {
-  const periodStr = await getBillingPeriodStart(tenantId);
-
-  // Upsert + increment in one statement
-  await sql`
-    INSERT INTO usage_records (tenant_id, period_start, ${sql(column)})
-    VALUES (${tenantId}, ${periodStr}, 1)
-    ON CONFLICT (tenant_id, period_start)
-    DO UPDATE SET ${sql(column)} = usage_records.${sql(column)} + 1,
-                  updated_at = NOW()
-  `;
-}
 
 /**
  * Count active (non-deleted) apps for a tenant.
@@ -109,29 +48,6 @@ export async function updateTenantBilling(
 }
 
 /**
- * Store a revision classification record for analytics.
- */
-export async function storeRevisionClassification(params: {
-  tenantId: string;
-  appId: string;
-  sessionId?: string;
-  jobId?: string;
-  classification: RevisionClassification;
-  confidence: string;
-  merchantPrompt: string;
-}): Promise<void> {
-  await sql`
-    INSERT INTO revision_classifications (
-      tenant_id, app_id, session_id, job_id,
-      classification, confidence, merchant_prompt
-    ) VALUES (
-      ${params.tenantId}, ${params.appId}, ${params.sessionId ?? null}, ${params.jobId ?? null},
-      ${params.classification}, ${params.confidence}, ${params.merchantPrompt}
-    )
-  `;
-}
-
-/**
  * Log a billing event for audit trail.
  */
 export async function logBillingEvent(params: {
@@ -151,6 +67,54 @@ export async function logBillingEvent(params: {
       ${params.fromPlan ?? null}, ${params.toPlan ?? null},
       ${params.shopifySubscriptionId ?? null},
       ${params.metadata ? JSON.stringify(params.metadata) : null}
+    )
+  `;
+}
+
+/**
+ * Get billing event audit trail for a tenant, newest-first.
+ */
+export async function getBillingEvents(
+  tenantId: string,
+  limit: number = 50
+): Promise<BillingEvent[]> {
+  const rows = await sql<BillingEvent[]>`
+    SELECT
+      id,
+      tenant_id       AS "tenantId",
+      event_type      AS "eventType",
+      from_plan       AS "fromPlan",
+      to_plan         AS "toPlan",
+      shopify_subscription_id AS "shopifySubscriptionId",
+      metadata,
+      created_at      AS "createdAt"
+    FROM billing_events
+    WHERE tenant_id = ${tenantId}
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return rows;
+}
+
+/**
+ * Store a revision classification record for analytics.
+ */
+export async function storeRevisionClassification(params: {
+  tenantId: string;
+  appId: string;
+  sessionId?: string;
+  jobId?: string;
+  classification: RevisionClassification;
+  confidence: string;
+  merchantPrompt: string;
+}): Promise<void> {
+  await sql`
+    INSERT INTO revision_classifications (
+      tenant_id, app_id, session_id, job_id,
+      classification, confidence, merchant_prompt
+    ) VALUES (
+      ${params.tenantId}, ${params.appId}, ${params.sessionId ?? null}, ${params.jobId ?? null},
+      ${params.classification}, ${params.confidence}, ${params.merchantPrompt}
     )
   `;
 }
@@ -182,77 +146,4 @@ export async function getRevisionAnalytics(tenantId: string): Promise<{
     featureModifications: counts["feature_modification"] ?? 0,
     newCapabilities: counts["new_capability"] ?? 0,
   };
-}
-
-/**
- * Check whether a specific usage counter is within the plan limit.
- * Returns { allowed, current, limit } — caller decides what to do on rejection.
- * Usable from any service that imports @new-one-two/db.
- */
-export async function checkUsageQuota(
-  tenantId: string,
-  counter: "app_executions" | "emails_sent" | "sms_sent",
-  planLimit: number
-): Promise<{ allowed: boolean; current: number; limit: number }> {
-  const usage = await getOrCreateUsageRecord(tenantId);
-  // Map DB snake_case column names to camelCase UsageRecord keys
-  const keyMap: Record<string, keyof typeof usage> = {
-    app_executions: "appExecutions",
-    emails_sent: "emailsSent",
-    sms_sent: "smsSent",
-  };
-  const current = (usage[keyMap[counter]!] as number) ?? 0;
-  return { allowed: current < planLimit, current, limit: planLimit };
-}
-
-// ─── Dashboard Queries ───────────────────────────────────────────────────────
-
-/**
- * Get usage history for the last N billing periods.
- * Returns one summary per period, ordered newest-first.
- */
-export async function getUsageHistory(
-  tenantId: string,
-  periodCount: number = 6
-): Promise<UsagePeriodSummary[]> {
-  const rows = await sql<UsagePeriodSummary[]>`
-    SELECT
-      period_start   AS "periodStart",
-      generations,
-      revisions,
-      app_executions AS "appExecutions",
-      emails_sent    AS "emailsSent",
-      sms_sent       AS "smsSent"
-    FROM usage_records
-    WHERE tenant_id = ${tenantId}
-    ORDER BY period_start DESC
-    LIMIT ${periodCount}
-  `;
-  return rows;
-}
-
-/**
- * Get billing event audit trail for a tenant.
- * Returns the most recent N events, ordered newest-first.
- */
-export async function getBillingEvents(
-  tenantId: string,
-  limit: number = 50
-): Promise<BillingEvent[]> {
-  const rows = await sql<BillingEvent[]>`
-    SELECT
-      id,
-      tenant_id       AS "tenantId",
-      event_type      AS "eventType",
-      from_plan       AS "fromPlan",
-      to_plan         AS "toPlan",
-      shopify_subscription_id AS "shopifySubscriptionId",
-      metadata,
-      created_at      AS "createdAt"
-    FROM billing_events
-    WHERE tenant_id = ${tenantId}
-    ORDER BY created_at DESC
-    LIMIT ${limit}
-  `;
-  return rows;
 }

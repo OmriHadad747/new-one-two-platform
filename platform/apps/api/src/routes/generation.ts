@@ -42,7 +42,7 @@ import type {
   AppArchetype,
 } from "@new-one-two/types";
 import { canStartGeneration, isCategoryAllowed } from "../lib/plan-enforcement.js";
-import { trackGeneration, trackRevision, trackRevisionClassification } from "../lib/usage-tracking.js";
+import { trackGeneration, trackRevision, storeRevisionClassification } from "@new-one-two/db";
 import { requireTenant } from "../plugins/auth.js";
 
 /** Derive AppArchetype from a raw bundle object. */
@@ -625,7 +625,7 @@ async function classifyRevisionAsync(
     confidence: string;
   };
 
-  await trackRevisionClassification({
+  await storeRevisionClassification({
     tenantId,
     appId,
     jobId,

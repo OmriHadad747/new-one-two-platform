@@ -1318,12 +1318,26 @@ function OverviewTab({
           {appExplanation && <HowItWorksCard text={appExplanation} />}
 
           {/* Triggers */}
-          {(webhookTopics.length > 0 || cronSchedule) && (
+          {(webhookTopics.length > 0 || cronSchedule || hasAdminUI) && (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
                 <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Triggers</h3>
               </div>
               <div className="divide-y divide-white/[0.05]">
+                {hasAdminUI && (
+                  <div className="px-5 py-3.5 flex items-center gap-3">
+                    <span
+                      className="material-symbols-outlined text-[16px] text-faint shrink-0"
+                      style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                    >
+                      admin_panel_settings
+                    </span>
+                    <div>
+                      <p className="text-[12px] font-semibold text-ink">Admin-triggered</p>
+                      <p className="text-[11px] text-faint mt-0.5">Triggered manually from the Shopify Admin panel.</p>
+                    </div>
+                  </div>
+                )}
                 {webhookTopics.length > 0 && (
                   <div className="px-5 py-3.5">
                     <p className="text-[11px] font-semibold text-faint mb-2">Active webhooks</p>
@@ -1629,6 +1643,14 @@ function SettingsPanel({
   onAppChange: () => void;
   onDelete: () => void;
 }) {
+  const [copiedId, setCopiedId] = useState(false);
+  const copyAppId = () => {
+    navigator.clipboard.writeText(app.id).then(() => {
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 1500);
+    });
+  };
+
   const [renaming, setRenaming]       = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
@@ -1673,6 +1695,27 @@ function SettingsPanel({
       <section>
         <h2 className="text-[11px] font-bold text-faint uppercase tracking-wider mb-4">Identity</h2>
         <div className="bg-white/[0.03] rounded-xl divide-y divide-white/[0.04]">
+          {/* App ID */}
+          <div className="flex items-center justify-between gap-4 px-5 py-4">
+            <div>
+              <p className="text-[13px] font-medium text-ink">App ID</p>
+              <p className="text-[11px] text-faint mt-0.5">Unique identifier for this app.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[12px] text-faint select-all">{app.id}</span>
+              <button
+                type="button"
+                onClick={copyAppId}
+                className="w-6 h-6 flex items-center justify-center rounded text-faint hover:text-ink hover:bg-white/[0.06] transition-colors bg-transparent border-0 cursor-pointer shrink-0"
+                title="Copy App ID"
+              >
+                <span className="material-symbols-outlined text-[14px]">
+                  {copiedId ? "check" : "content_copy"}
+                </span>
+              </button>
+            </div>
+          </div>
+          {/* Name */}
           <div className="flex items-center justify-between gap-4 px-5 py-4">
             <div>
               <p className="text-[13px] font-medium text-ink">Name</p>

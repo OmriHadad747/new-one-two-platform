@@ -4,7 +4,7 @@ export function buildDockerfile(npmPackages: string[] = []): string {
       ? `RUN npm install --omit=dev ${npmPackages.join(" ")}\n\n`
       : "";
 
-  return `FROM node:20-alpine AS runner
+  return `FROM node:20-slim AS runner
 WORKDIR /app
 
 # Harness bundle (esbuild CJS output, inlines all non-GCP deps)

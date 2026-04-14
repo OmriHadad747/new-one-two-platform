@@ -73,13 +73,22 @@ export {
 export {
   getOrCreateUsageRecord,
   incrementUsage,
+  trackGeneration,
+  trackRevision,
+  trackAppExecution,
+  trackEmailSent,
+  trackSmsSent,
+  trackFileUploaded,
+  checkUsageQuota,
+  getUsageHistory,
+} from "./usage.js";
+
+export {
   getActiveAppCount,
   updateTenantBilling,
   storeRevisionClassification,
   logBillingEvent,
   getRevisionAnalytics,
-  checkUsageQuota,
-  getUsageHistory,
   getBillingEvents,
 } from "./billing.js";
 

@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { resolveAdminUiJs, resolveAppFunctionUrl, getAdminUiAppsByShop } from "@new-one-two/db";
 import { createRequestLogger } from "@new-one-two/logger";
+import { trackAppExecution } from "@new-one-two/db";
 
 const SHOPIFY_CLIENT_ID = process.env["SHOPIFY_CLIENT_ID"] ?? "";
 const SHOPIFY_CLIENT_SECRET = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
@@ -193,6 +194,8 @@ async function adminProxyHandler(
 
     if (!res.ok) {
       log.error({ shop, appId, path, status: res.status, data }, "Admin proxy: harness returned error");
+    } else {
+      void trackAppExecution(tenantId);
     }
 
     return reply

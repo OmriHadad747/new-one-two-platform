@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { resolveWidgetJs, resolveAppFunctionUrl } from "@new-one-two/db";
 import { createRequestLogger } from "@new-one-two/logger";
+import { trackAppExecution } from "@new-one-two/db";
 
 // ─── GCS Config ───────────────────────────────────────────────────────────────
 // In production (DEPLOY_MODE=cloudrun), widget JS is uploaded to GCS by the
@@ -157,6 +158,8 @@ async function widgetProxyHandler(
 
     if (!res.ok) {
       log.error({ shop, appId, path, status: res.status, data }, "Widget proxy: harness returned error");
+    } else {
+      void trackAppExecution(tenantId);
     }
 
     return reply
