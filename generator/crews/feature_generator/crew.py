@@ -60,6 +60,14 @@ log = logging.getLogger(__name__)
 _MAX_RETRIES = 3        # total codegen attempts (1 initial + 2 retries)
 _MAX_ARCH_ATTEMPTS = 2  # architect: 1 initial + 1 retry
 
+# Pipeline-level deadline. A healthy run finishes well inside 5 minutes; we give
+# a generous 15-minute ceiling so that legitimate long runs (3 codegen attempts
+# × 4 parallel generators + validator + revision) still succeed, but a stuck
+# pipeline surfaces a failure event rather than leaking the subscriber thread.
+# Individual LLM calls have their own timeout in adapter.py — this catches the
+# aggregate.
+_PIPELINE_DEADLINE_S = 900
+
 
 # ── Pipeline control ───────────────────────────────────────────────────────────
 
@@ -70,6 +78,25 @@ class _PipelineAbort(Exception):
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _check_deadline(request: "GenerationRequest", start_ms: int) -> None:
+    """
+    Fail fast if we've already exceeded the pipeline deadline.
+
+    Called at phase boundaries — won't interrupt an in-flight LLM call, but
+    prevents spending more time on a run that's already over budget. Combines
+    with per-call timeouts in models/adapter.py to bound total duration.
+    """
+    elapsed_s = (_now_ms() - start_ms) / 1000
+    if elapsed_s > _PIPELINE_DEADLINE_S:
+        _fail_and_abort(
+            request,
+            "validation",
+            f"Generation exceeded {_PIPELINE_DEADLINE_S}s deadline",
+            f"Pipeline deadline exceeded after {elapsed_s:.0f}s "
+            f"(budget: {_PIPELINE_DEADLINE_S}s).",
+        )
 
 
 def _emit(request: GenerationRequest, agent: str, status: str, message: str) -> None:
@@ -119,6 +146,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
 
     try:
         intent = _phase_product(request, agent_trace)
+        _check_deadline(request, start_ms)
 
         archetype = intent["appCategory"]
         is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
@@ -132,6 +160,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
         )
 
         plan, api_context = _phase_architect(request, intent, agent_trace)
+        _check_deadline(request, start_ms)
 
         prior_bundle = request.priorBundle or {}
         base_ctx = CodegenContext(
@@ -155,9 +184,13 @@ def run_feature_generation(request: GenerationRequest) -> None:
         artifacts = _phase_codegen(
             request, base_ctx, is_storefront, is_admin_ui, agent_trace
         )
+        _check_deadline(request, start_ms)
+
         artifacts = _phase_validator(
             request, base_ctx, artifacts, is_storefront, is_admin_ui, agent_trace
         )
+        _check_deadline(request, start_ms)
+
         explanation = _phase_explanation(
             request, intent, plan, artifacts, is_storefront, agent_trace
         )
@@ -206,17 +239,17 @@ def _phase_product(
 
     _emit(request, "product", "running", "Understanding your request…")
     t0 = _now_ms()
-    intent = run_product_agent(request.prompt)
+    intent, in_tok, out_tok = run_product_agent(request.prompt)
     agent_trace.append(
         AgentTraceEntry(
             agent="product",
             latencyMs=_now_ms() - t0,
-            inputTokens=0,
-            outputTokens=0,
+            inputTokens=in_tok,
+            outputTokens=out_tok,
         )
     )
     _emit(request, "product", "completed", "Feature spec ready")
-    log.info("job=%s intent=%s", request.jobId, intent)
+    log.info("job=%s intent=%s tokens=(%d,%d)", request.jobId, intent, in_tok, out_tok)
     return intent
 
 
@@ -241,15 +274,19 @@ def _phase_architect(
 
     plan: Optional[Dict] = None
     arch_errors: List[str] = []
+    arch_in = 0
+    arch_out = 0
 
     for attempt in range(1, _MAX_ARCH_ATTEMPTS + 1):
-        plan = run_architect_agent(
+        plan, attempt_in, attempt_out = run_architect_agent(
             prompt=request.prompt,
             intent=intent,
             app_archetype=archetype,
             api_context=api_context,
             validation_errors=arch_errors if attempt > 1 else None,
         )
+        arch_in += attempt_in
+        arch_out += attempt_out
         arch_errors = validate_architect_plan(plan, app_archetype=archetype)
 
         if not arch_errors:
@@ -296,8 +333,8 @@ def _phase_architect(
         AgentTraceEntry(
             agent="architect",
             latencyMs=_now_ms() - t0,
-            inputTokens=0,
-            outputTokens=0,
+            inputTokens=arch_in,
+            outputTokens=arch_out,
         )
     )
     _emit(request, "architect", "completed", "Structural plan ready")
@@ -335,19 +372,27 @@ def _phase_codegen(
 
     artifacts: Dict[str, str] = {}
     error_map: Dict[str, List[str]] = {}
+    # per-agent token totals accumulated across all attempts (handler, migration,
+    # widget_js, admin_ui, revision). Each value is (input_tokens, output_tokens).
+    token_totals: Dict[str, Tuple[int, int]] = {}
     t0 = _now_ms()
 
     for attempt in range(1, _MAX_RETRIES + 1):
         if attempt > 1:
+            # Flip only the generators that actually need re-running back to
+            # "running". Generators whose previous output is being preserved
+            # stay at whatever status they had (typically still "running" from
+            # the initial emit above — they flip to "completed" once the whole
+            # attempt passes validation).
             for name in error_map:
                 _emit(
                     request,
                     name,
-                    "running",  # type: ignore[arg-type]
-                    f"Retrying (attempt {attempt}/{_MAX_RETRIES})…",
+                    "retrying",  # type: ignore[arg-type]
+                    f"Fixing issues (attempt {attempt}/{_MAX_RETRIES})…",
                 )
 
-        artifacts = _generate_artifacts(
+        artifacts, attempt_tokens = _generate_artifacts(
             request,
             base_ctx,
             is_storefront,
@@ -356,25 +401,9 @@ def _phase_codegen(
             artifacts,
             attempt,
         )
-
-        if attempt == 1:
-            agent_trace.append(
-                AgentTraceEntry(
-                    agent="codegen",
-                    latencyMs=_now_ms() - t0,
-                    inputTokens=0,
-                    outputTokens=0,
-                )
-            )
-            _emit(request, "handler", "completed", "Handler complete")
-            _emit(request, "migration", "completed", "Migration complete")
-            if is_storefront:
-                _emit(request, "widget_js", "completed", "Widget complete")
-            if is_admin_ui:
-                _emit(request, "admin_ui", "completed", "Admin UI complete")
-        else:
-            for name in list(error_map.keys()):
-                _emit(request, name, "completed", f"Retry {attempt} complete")  # type: ignore[arg-type]
+        for name, (in_tok, out_tok) in attempt_tokens.items():
+            prev_in, prev_out = token_totals.get(name, (0, 0))
+            token_totals[name] = (prev_in + in_tok, prev_out + out_tok)
 
         _emit(request, "validation", "running", "Validating generated artifacts…")
         error_map = validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
@@ -406,6 +435,28 @@ def _phase_codegen(
             f"Fixing {', '.join(error_map.keys())} (attempt {attempt + 1}/{_MAX_RETRIES})…",
         )
 
+    # Only emit per-generator "completed" events AFTER validation passes —
+    # emitting them before validation caused "Handler complete" → "Retrying"
+    # flicker in the UI when validation forced a retry.
+    codegen_latency = _now_ms() - t0
+    for name, (in_tok, out_tok) in token_totals.items():
+        agent_trace.append(
+            AgentTraceEntry(
+                agent=name,
+                # Latency for the whole codegen phase is recorded once against
+                # each participating generator; running times are parallel within
+                # an attempt, so per-generator latency isn't meaningful here.
+                latencyMs=codegen_latency,
+                inputTokens=in_tok,
+                outputTokens=out_tok,
+            )
+        )
+    _emit(request, "handler", "completed", "Handler complete")
+    _emit(request, "migration", "completed", "Migration complete")
+    if is_storefront:
+        _emit(request, "widget_js", "completed", "Widget complete")
+    if is_admin_ui:
+        _emit(request, "admin_ui", "completed", "Admin UI complete")
     _emit(request, "validation", "completed", "All artifacts validated")
     return artifacts
 
@@ -418,29 +469,46 @@ def _generate_artifacts(
     error_map: Dict[str, List[str]],
     artifacts: Dict[str, str],
     attempt: int,
-) -> Dict[str, str]:
+) -> Tuple[Dict[str, str], Dict[str, Tuple[int, int]]]:
     """
     Produce artifacts for one codegen attempt.
 
     Attempt 1 on a revision run uses the holistic revision agent (single LLM call,
     reasons across all artifacts simultaneously). All other attempts use the standard
     parallel individual generators.
+
+    Returns (artifacts, per_agent_tokens) where per_agent_tokens maps agent name
+    (handler / migration / widget_js / admin_ui / revision) to (in_tokens, out_tokens).
     """
     is_revision_first_attempt = attempt == 1 and base_ctx.prior_handler_code is not None
 
     if is_revision_first_attempt:
         _emit(request, "revision", "running", "Applying merchant changes…")
-        revision = run_revision_agent(
+        revision, in_tok, out_tok = run_revision_agent(
             base_ctx, is_storefront=is_storefront, is_admin_ui=is_admin_ui
         )
         if revision.get("handler") and revision.get("migration"):
             log.info("revision_agent produced all artifacts")
             _emit(request, "revision", "completed", "Revision complete")
-            return revision
+            return revision, {"revision": (in_tok, out_tok)}
         log.warning(
             "revision_agent returned incomplete output — falling back to parallel codegen"
         )
         _emit(request, "revision", "completed", "Revision incomplete — regenerating")
+        # Fall through to parallel codegen; fold the revision tokens into the
+        # result so they aren't lost.
+        parallel_artifacts, parallel_tokens = run_codegen_parallel(
+            base_ctx,
+            is_storefront=is_storefront,
+            is_admin_ui=is_admin_ui,
+            error_map=error_map,
+            artifacts=artifacts,
+        )
+        parallel_tokens["revision"] = (
+            parallel_tokens.get("revision", (0, 0))[0] + in_tok,
+            parallel_tokens.get("revision", (0, 0))[1] + out_tok,
+        )
+        return parallel_artifacts, parallel_tokens
 
     return run_codegen_parallel(
         base_ctx,
@@ -473,13 +541,15 @@ def _phase_validator(
 
     _emit(request, "validator", "running", "Checking semantic alignment…")
     t0 = _now_ms()
-    issues = run_validator_agent(artifacts, base_ctx, is_storefront, is_admin_ui)
+    issues, val_in, val_out = run_validator_agent(
+        artifacts, base_ctx, is_storefront, is_admin_ui
+    )
     agent_trace.append(
         AgentTraceEntry(
             agent="validator",
             latencyMs=_now_ms() - t0,
-            inputTokens=0,
-            outputTokens=0,
+            inputTokens=val_in,
+            outputTokens=val_out,
         )
     )
 
@@ -502,11 +572,20 @@ def _phase_validator(
     )
 
     _emit(request, "revision", "running", f"Fixing {len(issues)} semantic issue(s)…")
-    revised = run_revision_agent(
+    rev_t0 = _now_ms()
+    revised, rev_in, rev_out = run_revision_agent(
         base_ctx,
         is_storefront=is_storefront,
         is_admin_ui=is_admin_ui,
         validation_issues=issues,
+    )
+    agent_trace.append(
+        AgentTraceEntry(
+            agent="revision",
+            latencyMs=_now_ms() - rev_t0,
+            inputTokens=rev_in,
+            outputTokens=rev_out,
+        )
     )
     if revised.get("handler") and revised.get("migration"):
         _emit(request, "revision", "completed", "Semantic issues resolved")
@@ -531,19 +610,18 @@ def _phase_explanation(
     """Agent 5: write the merchant-facing feature summary."""
     _emit(request, "explanation", "running", "Writing feature summary…")
     t0 = _now_ms()
-    explanation = run_explanation_agent(
+    explanation, exp_in, exp_out = run_explanation_agent(
         intent=intent,
         plan=plan,
         widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
-        handler_code=artifacts.get("handler", ""),
         migration_sql=artifacts.get("migration", ""),
     )
     agent_trace.append(
         AgentTraceEntry(
             agent="explanation",
             latencyMs=_now_ms() - t0,
-            inputTokens=0,
-            outputTokens=0,
+            inputTokens=exp_in,
+            outputTokens=exp_out,
         )
     )
     _emit(request, "explanation", "completed", "Summary complete")
@@ -612,20 +690,28 @@ def _publish_success(
     )
 
     total_ms = _now_ms() - start_ms
+    total_in = sum(e.inputTokens for e in agent_trace)
+    total_out = sum(e.outputTokens for e in agent_trace)
     _contract_publisher.publish_completed(
         FeatureBundleMessage(
             jobId=request.jobId,
             status="success",
             bundle=bundle,
             meta=GenerationMeta(
-                totalInputTokens=0,
-                totalOutputTokens=0,
+                totalInputTokens=total_in,
+                totalOutputTokens=total_out,
                 generationMs=total_ms,
                 agentTrace=agent_trace,
             ),
         )
     )
-    log.info("job=%s completed in %dms", request.jobId, total_ms)
+    log.info(
+        "job=%s completed in %dms tokens=(in=%d, out=%d)",
+        request.jobId,
+        total_ms,
+        total_in,
+        total_out,
+    )
 
 
 # ── Parallel CodeGen ───────────────────────────────────────────────────────────
@@ -638,7 +724,7 @@ def run_codegen_parallel(
     is_admin_ui: bool,
     error_map: Dict[str, List[str]],
     artifacts: Dict[str, str],
-) -> Dict[str, str]:
+) -> Tuple[Dict[str, str], Dict[str, Tuple[int, int]]]:
     """
     Run generators in parallel via ThreadPoolExecutor.
 
@@ -648,6 +734,9 @@ def run_codegen_parallel(
 
     Each generator receives its own CodegenContext with previous_errors populated
     from error_map so the retry prompt is generator-specific.
+
+    Returns (artifacts, per_agent_tokens) — tokens dict only contains keys for
+    generators that actually ran on this invocation.
     """
     to_run: List[Generator] = []
     for name, gen in GENERATORS.items():
@@ -658,15 +747,34 @@ def run_codegen_parallel(
         if name in error_map or name not in artifacts:
             to_run.append(gen)
 
-    # Coupled retries: any generator that shares a field contract with the handler
-    # must be retried alongside it. If the handler regenerates for ANY reason it may
-    # silently change ctx.widgetBody / ctx.adminBody destructuring, breaking the
-    # contract with the other side. Coupling ensures both sides re-align together.
+    # Coupled retries: if the handler is regenerating AND its errors indicate a
+    # field-contract break, widget_js / admin_ui must be regenerated alongside
+    # so both sides realign. We used to couple unconditionally, but a handler
+    # retry caused by an unrelated issue (missing npmPackages, forbidden
+    # setInterval, etc.) doesn't touch ctx.widgetBody/adminBody — re-running
+    # the widget/admin UI in that case burned Sonnet tokens with no benefit.
     #
     # Pairs enforced:
     #   handler ↔ widget_js   (storefront_backend, storefront_backend_admin)
     #   handler ↔ admin_ui    (backend_admin, storefront_backend_admin)
+    _CONTRACT_ERROR_MARKERS = (
+        "widget route",
+        "admin route",
+        "widget sends",
+        "admin UI sends",
+        "ctx.widgetBody",
+        "ctx.adminBody",
+        "destructures",
+        "requestShape",
+        "responseShape",
+        "field name",
+    )
     if artifacts:  # non-empty = this is a retry, not the first run
+        handler_errs = error_map.get("handler", [])
+        handler_contract_broken = any(
+            any(marker in err for marker in _CONTRACT_ERROR_MARKERS)
+            for err in handler_errs
+        )
         to_run_names = {gen.name for gen in to_run}
         coupled_pairs: List[tuple] = []
         if is_storefront:
@@ -689,16 +797,31 @@ def run_codegen_parallel(
             )
         for a, b, hint in coupled_pairs:
             pair = {a, b}
-            if pair & to_run_names:  # at least one of the pair is already running
-                for name in pair - to_run_names:
-                    if name in GENERATORS and name in artifacts:
-                        error_map.setdefault(name, [hint])
-                        to_run.append(GENERATORS[name])
-                        to_run_names.add(name)
+            if not (pair & to_run_names):
+                continue  # neither side is running — nothing to couple
+            # When the partner side is ALREADY in to_run (its own validator
+            # flagged a mismatch), include it — that's its own error path.
+            # Otherwise only pull it in if the handler's issues are contract-shaped.
+            partner_already_running = bool(pair - {a} & to_run_names) and bool(
+                pair - {b} & to_run_names
+            )
+            should_couple = partner_already_running or handler_contract_broken
+            if not should_couple:
+                log.info(
+                    "codegen: skipping coupled retry of %s — handler errors are not contract-related",
+                    ", ".join(sorted(pair - to_run_names)),
+                )
+                continue
+            for name in pair - to_run_names:
+                if name in GENERATORS and name in artifacts:
+                    error_map.setdefault(name, [hint])
+                    to_run.append(GENERATORS[name])
+                    to_run_names.add(name)
 
     if not to_run:
-        return artifacts
+        return artifacts, {}
 
+    per_agent_tokens: Dict[str, Tuple[int, int]] = {}
     with ThreadPoolExecutor(max_workers=len(to_run)) as pool:
         futures = {
             gen.name: pool.submit(
@@ -718,9 +841,12 @@ def run_codegen_parallel(
             for gen in to_run
         }
         for name, future in futures.items():
-            artifacts[name] = future.result()  # raises on sub-agent exception
+            # Generator.generate() now returns (artifact, in_tokens, out_tokens)
+            artifact, in_tok, out_tok = future.result()  # raises on sub-agent exception
+            artifacts[name] = artifact
+            per_agent_tokens[name] = (in_tok, out_tok)
 
-    return artifacts
+    return artifacts, per_agent_tokens
 
 
 # ── Validation ─────────────────────────────────────────────────────────────────

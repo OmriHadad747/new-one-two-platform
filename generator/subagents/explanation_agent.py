@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 from models.adapter import get_llm, invoke, extract_json
 from models.agent_models import get_agent_model
@@ -74,10 +74,12 @@ def run_explanation_agent(
     intent: Dict[str, Any],
     plan: Dict[str, Any],
     widget_js_code: str,
-    handler_code: str,
     migration_sql: str,
-) -> Dict[str, Any]:
-    """Agent 6: Generate merchant explanation + technical summary."""
+) -> Tuple[Dict[str, Any], int, int]:
+    """
+    Agent 6: Generate merchant explanation + technical summary.
+    Returns (explanation_dict, input_tokens, output_tokens).
+    """
     shopify_plan = plan.get("shopifyPlan", {})
     impl_spec = plan.get("appContracts", {})
 
@@ -118,11 +120,15 @@ def run_explanation_agent(
     )
 
     llm = get_llm(model=get_agent_model("explanation"), max_tokens=2048)
+    total_in = 0
+    total_out = 0
     for attempt in range(2):
         result = invoke(llm, EXPLANATION_SYSTEM, user)
+        total_in += result.input_tokens
+        total_out += result.output_tokens
         raw = extract_json(result.content)
         try:
-            return json.loads(raw)
+            return json.loads(raw), total_in, total_out
         except json.JSONDecodeError:
             if attempt == 1:
                 raise

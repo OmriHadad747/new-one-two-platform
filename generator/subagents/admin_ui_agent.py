@@ -101,48 +101,19 @@ DESIGN PRINCIPLES:
     Shadow:
       --p-shadow-100  --p-shadow-200  --p-shadow-300
 
-  Example card:
-    .card {
-      background: var(--p-color-bg-surface);
-      border: 1px solid var(--p-color-border);
-      border-radius: var(--p-border-radius-200);
-      padding: var(--p-space-400);
-      box-shadow: var(--p-shadow-100);
-      font-family: var(--p-font-family-sans);
-      color: var(--p-color-text);
-    }
-  Example primary button:
-    .btn-primary {
-      background: #008060;   /* Shopify brand green — safe to hardcode */
-      color: #fff;
-      border: none;
-      border-radius: var(--p-border-radius-100);
-      padding: var(--p-space-200) var(--p-space-400);
-      font-size: var(--p-font-size-350);
-      font-weight: var(--p-font-weight-medium);
-      cursor: pointer;
-    }
-  Example secondary button:
-    .btn-secondary {
-      background: var(--p-color-bg-surface);
-      color: var(--p-color-text);
-      border: 1px solid var(--p-color-border-emphasis);
-      border-radius: var(--p-border-radius-100);
-      padding: var(--p-space-200) var(--p-space-400);
-      font-size: var(--p-font-size-350);
-      font-weight: var(--p-font-weight-medium);
-      cursor: pointer;
-    }
-  Example badge:
-    .badge {
-      display: inline-flex; align-items: center;
-      padding: 2px var(--p-space-200);
-      border-radius: var(--p-border-radius-full);
-      font-size: var(--p-font-size-300);
-      font-weight: var(--p-font-weight-semibold);
-    }
-    .badge-success { background: var(--p-color-bg-fill-success); color: var(--p-color-text-success); }
-    .badge-error   { background: var(--p-color-bg-fill-critical); color: var(--p-color-text-critical); }
+  The shell-* / btn-* / badge / badge-success / badge-error / badge-warning /
+  badge-neutral classes are already defined by the shell stylesheet listed above
+  — DO NOT redeclare them. Use them directly in your HTML:
+    <div class="shell-card">...</div>
+    <button class="btn-primary">Save</button>
+    <span class="badge badge-success">Active</span>
+
+  If you need a genuinely new CSS class (a custom layout, app-specific chip,
+  extra variant), keep it short and reference Polaris tokens (--p-color-*,
+  --p-space-*, --p-border-radius-*, --p-shadow-*, --p-font-*) for every value.
+  Hardcoded hex colors are forbidden — they break the merchant's theme. The
+  single exception is Shopify brand green (#008060), which is safe to hardcode
+  if you explicitly need it.
 
 - Components: tables for list data, stat cards for metrics, action buttons, forms for config.
 - Show loading states (spinner or skeleton) while bridge.call() is in progress.

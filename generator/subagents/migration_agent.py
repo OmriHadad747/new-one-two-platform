@@ -156,7 +156,11 @@ def _format_db_contracts(plan: Dict[str, Any]) -> str:
         for col in columns:
             parts.append(f"  {col['name']}  {col['type']}  {col.get('constraints', '')}")
         if unique:
-            parts.append(f"  UNIQUE ({', '.join(unique)})")
+            # Architect emits { "columns": ["col_a", "col_b"] }; tolerate a bare
+            # list too in case an older plan shape sneaks through.
+            cols = unique.get("columns", []) if isinstance(unique, dict) else unique
+            if cols:
+                parts.append(f"  UNIQUE ({', '.join(cols)})")
         if indexes:
             parts.append(f"  Indexes: {', '.join(indexes)}")
 
