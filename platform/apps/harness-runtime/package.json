@@ -14,11 +14,13 @@
     "@new-one-two/db": "workspace:*",
     "@new-one-two/crypto": "workspace:*",
     "@new-one-two/logger": "workspace:*",
-    "@new-one-two/types": "workspace:*"
+    "@new-one-two/types": "workspace:*",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "esbuild": "^0.21.0",
     "tsx": "^4.7.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
   }
 }

@@ -1,8 +1,12 @@
 import Fastify from "fastify";
-import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import { Redis } from "ioredis";
 import { logger } from "@new-one-two/logger";
+import {
+  assertProductionCorsConfig,
+  installCors,
+  parseAllowedOrigins,
+} from "./plugins/cors.js";
 import {
   startSubscriptions,
   stopSubscriptions,
@@ -32,19 +36,15 @@ export async function buildServer() {
   // The SSE fan-out and bundle persistence both depend on these being active.
   await startSubscriptions();
 
-  // CORS: in production, restrict to ALLOWED_ORIGINS; in dev, allow all origins
-  // so ngrok, localhost, and Shopify test stores keep working.
-  const allowedOrigins = process.env["ALLOWED_ORIGINS"]
-    ? process.env["ALLOWED_ORIGINS"].split(",").map((o) => o.trim())
-    : undefined;
-
-  await app.register(cors, {
-    origin: process.env["NODE_ENV"] === "production" && allowedOrigins
-      ? allowedOrigins
-      : true,
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
-  });
+  // CORS policy — see apps/api/src/plugins/cors.ts for the full contract.
+  // Routes under `/widgets/` reflect any origin (storefront custom domains);
+  // every other route is locked to the ALLOWED_ORIGINS allowlist. The
+  // previous @fastify/cors config silently fell through to `origin: true`
+  // when NODE_ENV=production and ALLOWED_ORIGINS was unset — the assertion
+  // below refuses to start in that case.
+  const allowedOrigins = parseAllowedOrigins(process.env["ALLOWED_ORIGINS"]);
+  assertProductionCorsConfig(process.env["NODE_ENV"], allowedOrigins);
+  installCors(app, { allowedOrigins });
 
   // Rate limiting: 100 req/min per tenant (authenticated) or per IP (anonymous).
   // Uses Redis for distributed counting across Cloud Run instances.

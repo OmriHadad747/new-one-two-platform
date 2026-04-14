@@ -1,33 +1,31 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { z } from "zod";
 import { resolveAdminUiJs, resolveAppFunctionUrl, getAdminUiAppsByShop } from "@new-one-two/db";
 import { createRequestLogger } from "@new-one-two/logger";
 import { trackAppExecution } from "@new-one-two/db";
+import { parseBody } from "../lib/validate-body.js";
 
 const SHOPIFY_CLIENT_ID = process.env["SHOPIFY_CLIENT_ID"] ?? "";
 const SHOPIFY_CLIENT_SECRET = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
 
+// Proxy body must be a JSON object. We can't know the merchant-specific
+// admin handler's expected shape here — that's the handler's contract with
+// its frontend — but we CAN require the top-level to be an object, which
+// rules out strings/numbers/nulls that would otherwise be forwarded verbatim
+// to the harness and confuse its router. Size is capped by Fastify's global
+// bodyLimit.
+const AdminProxyBodySchema = z.record(z.unknown()).default({});
+
 // ─── Route Registration ────────────────────────────────────────────────────────
 
 export async function adminUiRoutes(app: FastifyInstance) {
-  // ── CORS preflight ────────────────────────────────────────────────────────
-
-  app.options("/:shop/:appId.js", async (_request, reply) => {
-    return reply
-      .header("Access-Control-Allow-Origin", "*")
-      .header("Access-Control-Allow-Methods", "GET, OPTIONS")
-      .header("Access-Control-Allow-Headers", "*")
-      .code(204)
-      .send();
-  });
-
-  app.options("/:shop/:appId/admin/*", async (_request, reply) => {
-    return reply
-      .header("Access-Control-Allow-Origin", "*")
-      .header("Access-Control-Allow-Methods", "POST, OPTIONS")
-      .header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-      .code(204)
-      .send();
-  });
+  // CORS preflights for this whole route tree are handled by the centralized
+  // middleware in plugins/cors.ts (onRequest hook). `admin.shopify.com` and
+  // `https://*.myshopify.com` must be in ALLOWED_ORIGINS for the Shopify
+  // admin iframe to reach these endpoints; with `credentials: true` on the
+  // allowlisted branch, the previous wide-open `Access-Control-Allow-Origin:
+  // *` headers were incompatible (spec forbids `*` + credentials) and have
+  // been removed throughout this file.
 
   // ── GET /admin-ui/apps/:shop ──────────────────────────────────────────────
   // Returns metadata for all apps with an admin UI module for this shop.
@@ -55,7 +53,6 @@ export async function adminUiRoutes(app: FastifyInstance) {
 
       // Return only the metadata the sidebar needs — never expose JS code here
       return reply
-        .header("Access-Control-Allow-Origin", "*")
         .send(apps.map((a) => ({ id: a.id, name: a.name, slug: a.slug })));
     }
   );
@@ -105,7 +102,6 @@ async function adminUiJsHandler(
   if (!result) {
     log.debug({ shop, appId }, "No admin UI JS found");
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .code(404)
       .send("// Admin UI not found");
   }
@@ -114,7 +110,6 @@ async function adminUiJsHandler(
 
   return reply
     .header("Content-Type", "application/javascript; charset=utf-8")
-    .header("Access-Control-Allow-Origin", "*")
     .header("Cache-Control", "public, max-age=5")
     .code(200)
     .send(result.adminUiJs);
@@ -138,7 +133,6 @@ async function adminProxyHandler(
   if (!authHeader?.startsWith("Bearer ")) {
     log.warn({ shop, appId }, "Admin proxy: missing Authorization header");
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .code(401)
       .send({ error: "missing_token" });
   }
@@ -149,7 +143,6 @@ async function adminProxyHandler(
   if (!verified) {
     log.warn({ shop, appId }, "Admin proxy: invalid or expired session token");
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .code(401)
       .send({ error: "invalid_token" });
   }
@@ -158,7 +151,6 @@ async function adminProxyHandler(
   if (verified.shop !== shop) {
     log.warn({ shop, appId, tokenShop: verified.shop }, "Admin proxy: token shop mismatch");
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .code(403)
       .send({ error: "shop_mismatch" });
   }
@@ -169,7 +161,6 @@ async function adminProxyHandler(
   if (!resolved) {
     log.debug({ shop, appId }, "Admin proxy: no deployed function");
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .code(503)
       .send({ error: "backend_not_deployed" });
   }
@@ -177,6 +168,12 @@ async function adminProxyHandler(
   const { functionUrl, tenantId } = resolved;
   const targetUrl = `${functionUrl}/admin/${path}`;
   log.debug({ shop, appId, path, targetUrl }, "Admin proxy forwarding");
+
+  // Validate body shape before forwarding — was previously `request.body ?? {}`
+  // cast blind. A Zod failure returns 400 to the browser; the harness never
+  // sees a malformed body.
+  const body = parseBody(AdminProxyBodySchema, request, reply);
+  if (body === null) return;
 
   try {
     const res = await fetch(targetUrl, {
@@ -187,7 +184,7 @@ async function adminProxyHandler(
         "X-App-Id": appId,
         "X-Tenant-Id": tenantId,
       },
-      body: JSON.stringify(request.body ?? {}),
+      body: JSON.stringify(body),
     });
 
     const data = await res.json().catch(() => ({}));
@@ -199,7 +196,6 @@ async function adminProxyHandler(
     }
 
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .header("Content-Type", res.headers.get("content-type") || "application/json")
       .code(res.status)
       .send(data);
@@ -209,7 +205,6 @@ async function adminProxyHandler(
     log.error({ message, shop, appId, path, targetUrl }, "Admin proxy: fetch failed");
 
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .code(502)
       .send({ error: "bad_gateway" });
   }

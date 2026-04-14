@@ -13,6 +13,8 @@
  * GET    /tenants/:tenantId/logs                               — Recent execution logs (all apps)
  */
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
+import { z } from "zod";
+import { parseBody } from "../lib/validate-body.js";
 import {
   createTenant,
   getTenantById,
@@ -38,22 +40,65 @@ import {
   themePreviewUrl,
   themeEditorUrl,
 } from "../lib/theme-injector.js";
-import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
-import type { InjectionTarget } from "../lib/theme-injector.js";
+// CreateTenantRequest / CreateAppRequest are now inferred from the Zod
+// schemas below — the ambient TS types from @new-one-two/types are kept as
+// the wire contract owner for consumers that still import them directly.
+// InjectionTarget is defined in ../lib/theme-injector.js; its shape is
+// mirrored in InjectionTargetSchema below.
 import { canActivateApp } from "../lib/plan-enforcement.js";
 import { requireTenant } from "../plugins/auth.js";
+
+// ─── Request schemas ──────────────────────────────────────────────────────────
+
+// Reserved lowercase alphanumerics + hyphens for slugs — matches the DB
+// constraints on tenants.slug (`^[a-z0-9-]+$`) and apps.slug (same grammar).
+const SlugSchema = z
+  .string()
+  .min(1)
+  .max(63)
+  .regex(/^[a-z0-9][a-z0-9-]*$/, "slug must be lowercase alphanumerics + hyphens");
+
+const CreateTenantBodySchema = z.object({
+  id: z.string().uuid().optional(),
+  slug: SlugSchema,
+  name: z.string().min(1).max(200),
+});
+
+const CreateAppBodySchema = z.object({
+  id: z.string().uuid().optional(),
+  slug: SlugSchema,
+  name: z.string().min(1).max(200),
+});
+
+const UpdateAppBodySchema = z
+  .object({
+    name: z.string().min(1).max(200).optional(),
+    status: z.enum(["active", "inactive", "deleted"]).optional(),
+  })
+  .refine(
+    (v) => v.name !== undefined || v.status !== undefined,
+    { message: "name or status is required" }
+  );
+
+const InjectionTargetSchema = z.object({
+  templateKey: z.string().min(1).max(200),
+  sectionId: z.string().min(1).max(200),
+  position: z.number().int().min(0),
+});
+
+const InjectThemeBodySchema = z.object({
+  targets: z.array(InjectionTargetSchema).min(1),
+});
 
 export const tenantsRoute: FastifyPluginAsync = async (app) => {
   // ─── POST /tenants ──────────────────────────────────────────────────────────
 
-  app.post<{ Body: CreateTenantRequest }>(
+  app.post(
     "/",
-    async (req: FastifyRequest<{ Body: CreateTenantRequest }>, reply: FastifyReply) => {
-      const { id, slug, name } = req.body;
-
-      if (!slug || !name) {
-        return reply.status(400).send({ error: "slug and name are required" });
-      }
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const body = parseBody(CreateTenantBodySchema, req, reply);
+      if (!body) return;
+      const { id, slug, name } = body;
 
       const { id: tenantId } = await createTenant({
         ...(id !== undefined && { id }),
@@ -114,19 +159,17 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
   // ─── POST /tenants/:tenantId/apps ───────────────────────────────────────────
 
-  app.post<{ Params: { tenantId: string }; Body: CreateAppRequest }>(
+  app.post<{ Params: { tenantId: string } }>(
     "/:tenantId/apps",
     async (
-      req: FastifyRequest<{ Params: { tenantId: string }; Body: CreateAppRequest }>,
+      req: FastifyRequest<{ Params: { tenantId: string } }>,
       reply: FastifyReply
     ) => {
       const tenantId = requireTenant(req, reply, req.params.tenantId);
       if (!tenantId) return;
-      const { id, slug, name } = req.body;
-
-      if (!slug || !name) {
-        return reply.status(400).send({ error: "slug and name are required" });
-      }
+      const body = parseBody(CreateAppBodySchema, req, reply);
+      if (!body) return;
+      const { id, slug, name } = body;
 
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
@@ -176,20 +219,18 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
   // ─── PATCH /tenants/:tenantId/apps/:appId ──────────────────────────────────
 
-  app.patch<{ Params: { tenantId: string; appId: string }; Body: { name?: string; status?: string } }>(
+  app.patch<{ Params: { tenantId: string; appId: string } }>(
     "/:tenantId/apps/:appId",
     async (
-      req: FastifyRequest<{ Params: { tenantId: string; appId: string }; Body: { name?: string; status?: string } }>,
+      req: FastifyRequest<{ Params: { tenantId: string; appId: string } }>,
       reply: FastifyReply
     ) => {
       const tenantId = requireTenant(req, reply, req.params.tenantId);
       if (!tenantId) return;
       const { appId } = req.params;
-      const { name, status } = req.body;
-
-      if (!name?.trim() && !status) {
-        return reply.status(400).send({ error: "name or status is required" });
-      }
+      const body = parseBody(UpdateAppBodySchema, req, reply);
+      if (!body) return;
+      const { name, status } = body;
 
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) {
@@ -313,18 +354,15 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
   app.post<{
     Params: { tenantId: string; appId: string };
-    Body: { targets: InjectionTarget[] };
   }>(
     "/:tenantId/apps/:appId/inject-theme",
     async (req, reply) => {
       const tenantId = requireTenant(req, reply, req.params.tenantId);
       if (!tenantId) return;
       const { appId } = req.params;
-      const { targets } = req.body;
-
-      if (!targets?.length) {
-        return reply.status(400).send({ error: "targets array is required" });
-      }
+      const body = parseBody(InjectThemeBodySchema, req, reply);
+      if (!body) return;
+      const { targets } = body;
 
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) return reply.status(404).send({ error: "App not found" });

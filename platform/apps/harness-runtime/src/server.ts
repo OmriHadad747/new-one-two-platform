@@ -1,12 +1,39 @@
 import Fastify from "fastify";
+import { z } from "zod";
 import { logger } from "@new-one-two/logger";
-import type { HarnessInvokeRequest } from "@new-one-two/types";
 import { loadModule } from "@new-one-two/harness";
 import { handleWebhookInvoke } from "./webhook-handler.js";
 import { handleWidgetInvoke } from "./widget-handler.js";
 import { handleAdminInvoke } from "./admin-handler.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "8080", 10);
+
+// ─── Request schemas ──────────────────────────────────────────────────────────
+//
+// The harness is reachable by other services inside the VPC (worker, API
+// proxies). Validating inbound shape at this boundary prevents a malformed
+// caller from reaching the LLM-generated handler code with arbitrary junk,
+// and gives the caller a deterministic 400 instead of a stray exception.
+//
+// InvokeRequest mirrors HarnessInvokeRequest from @new-one-two/types; the
+// interface there remains the wire contract owner for callers — this Zod
+// schema is the validator for this specific endpoint.
+
+const InvokeRequestSchema = z.object({
+  executionLogId: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  appId: z.string().uuid(),
+  topic: z.string().min(1),
+  shopifyWebhookId: z.string().min(1),
+  rawBodyBase64: z.string(),
+  headers: z.record(z.string()),
+  receivedAt: z.string(),
+});
+
+// Admin + widget proxies forward whatever JSON object the upstream proxy
+// sent. We gate on "is a JSON object" at the boundary; the merchant-written
+// handler owns deeper shape validation against its own contract.
+const ProxyBodySchema = z.record(z.unknown()).default({});
 
 const app = Fastify({
   logger: false, // use our own pino instance
@@ -15,7 +42,7 @@ const app = Fastify({
 
 app.get("/health", async () => ({ status: "ok" }));
 
-app.post<{ Params: { "*": string }; Body: Record<string, unknown> }>(
+app.post<{ Params: { "*": string } }>(
   "/admin/*",
   async (request, reply) => {
     const adminPath = "/" + request.params["*"];
@@ -25,16 +52,24 @@ app.post<{ Params: { "*": string }; Body: Record<string, unknown> }>(
       return reply.status(400).send({ error: "missing_tenant_id" });
     }
 
+    const parsed = ProxyBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: "invalid body",
+        issues: parsed.error.issues,
+      });
+    }
+
     const { status, data } = await handleAdminInvoke(
       tenantId,
       adminPath,
-      (request.body ?? {}) as Record<string, unknown>
+      parsed.data
     );
     return reply.status(status).send(data);
   }
 );
 
-app.post<{ Params: { "*": string }; Body: Record<string, unknown> }>(
+app.post<{ Params: { "*": string } }>(
   "/widget/*",
   async (request, reply) => {
     const widgetPath = "/" + request.params["*"];
@@ -44,21 +79,32 @@ app.post<{ Params: { "*": string }; Body: Record<string, unknown> }>(
       return reply.status(400).send({ error: "missing_tenant_id" });
     }
 
+    const parsed = ProxyBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: "invalid body",
+        issues: parsed.error.issues,
+      });
+    }
+
     const { status, data } = await handleWidgetInvoke(
       tenantId,
       widgetPath,
-      (request.body ?? {}) as Record<string, unknown>
+      parsed.data
     );
     return reply.status(status).send(data);
   }
 );
 
-app.post<{ Body: HarnessInvokeRequest }>("/invoke", async (request, reply) => {
-  const body = request.body;
-
-  if (!body || typeof body !== "object") {
-    return reply.status(400).send({ error: "missing body" });
+app.post("/invoke", async (request, reply) => {
+  const parsed = InvokeRequestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.status(400).send({
+      error: "invalid invoke request",
+      issues: parsed.error.issues,
+    });
   }
+  const body = parsed.data;
 
   logger.info(
     { executionLogId: body.executionLogId, topic: body.topic },

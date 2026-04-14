@@ -1,7 +1,14 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { z } from "zod";
 import { resolveWidgetJs, resolveAppFunctionUrl } from "@new-one-two/db";
 import { createRequestLogger } from "@new-one-two/logger";
 import { trackAppExecution } from "@new-one-two/db";
+import { parseBody } from "../lib/validate-body.js";
+
+// Same loose-object shape as the admin proxy (admin-ui.ts): the merchant
+// handler's body contract is its own, but the top-level must be an object
+// or the harness router breaks.
+const WidgetProxyBodySchema = z.record(z.unknown()).default({});
 
 // ─── GCS Config ───────────────────────────────────────────────────────────────
 // In production (DEPLOY_MODE=cloudrun), widget JS is uploaded to GCS by the
@@ -19,23 +26,12 @@ function gcsWidgetUrl(appId: string): string {
 // ─── Route Registration ────────────────────────────────────────────────────────
 
 export async function widgetJsRoutes(app: FastifyInstance) {
-  app.options("/:shop/:appId.js", async (_request, reply) => {
-    return reply
-      .header("Access-Control-Allow-Origin", "*")
-      .header("Access-Control-Allow-Methods", "GET, OPTIONS")
-      .header("Access-Control-Allow-Headers", "*")
-      .code(204)
-      .send();
-  });
-
-  app.options("/:shop/:appId/widget/*", async (_request, reply) => {
-    return reply
-      .header("Access-Control-Allow-Origin", "*")
-      .header("Access-Control-Allow-Methods", "POST, OPTIONS")
-      .header("Access-Control-Allow-Headers", "*")
-      .code(204)
-      .send();
-  });
+  // CORS preflights are handled by the centralized middleware in
+  // plugins/cors.ts. Because the widget path prefix is `/widgets/`, the
+  // middleware reflects any origin (credentials off) — storefronts on
+  // merchant custom domains are supported without an explicit allowlist
+  // entry. Per-route manual `Access-Control-Allow-Origin: *` headers are
+  // therefore redundant and have been removed from this file.
 
   app.get<{
     Params: { shop: string; appId: string };
@@ -80,13 +76,11 @@ async function widgetJsHandler(
     if (!result) {
       log.debug({ shop, appId }, "No widget JS found");
       return reply
-        .header("Access-Control-Allow-Origin", "*")
         .code(404)
         .send("// Widget not found");
     }
 
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .header("Cache-Control", "public, max-age=300")
       .redirect(302, gcsWidgetUrl(appId));
   }
@@ -97,7 +91,6 @@ async function widgetJsHandler(
   if (!result) {
     log.debug({ shop, appId }, "No widget JS found");
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .code(404)
       .send("// Widget not found");
   }
@@ -106,7 +99,6 @@ async function widgetJsHandler(
 
   return reply
     .header("Content-Type", "application/javascript; charset=utf-8")
-    .header("Access-Control-Allow-Origin", "*")
     .header("Cache-Control", "public, max-age=5")
     .code(200)
     .send(result.widgetJs);
@@ -132,7 +124,6 @@ async function widgetProxyHandler(
   if (!resolved) {
     log.debug({ shop, appId }, "Widget proxy: no deployed function");
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .code(503)
       .send({ error: "backend_not_deployed" });
   }
@@ -140,6 +131,11 @@ async function widgetProxyHandler(
   const { functionUrl, tenantId } = resolved;
   const targetUrl = `${functionUrl}/widget/${path}`;
   log.debug({ shop, appId, path, targetUrl }, "Widget proxy forwarding");
+
+  // Validate body shape at the proxy so the harness never sees a malformed
+  // payload. See admin-ui.ts for the same pattern and rationale.
+  const body = parseBody(WidgetProxyBodySchema, request, reply);
+  if (body === null) return;
 
   try {
     const res = await fetch(targetUrl, {
@@ -150,8 +146,7 @@ async function widgetProxyHandler(
         "X-App-Id": appId,
         "X-Tenant-Id": tenantId,
       },
-      // Ensure body is sent as string; default to empty object string if null
-      body: JSON.stringify(request.body ?? {}),
+      body: JSON.stringify(body),
     });
 
     const data = await res.json().catch(() => ({}));
@@ -163,7 +158,6 @@ async function widgetProxyHandler(
     }
 
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .header("Content-Type", res.headers.get("content-type") || "application/json")
       .code(res.status)
       .send(data);
@@ -173,7 +167,6 @@ async function widgetProxyHandler(
     log.error({ message, shop, appId, path, targetUrl }, "Widget proxy: fetch failed");
 
     return reply
-      .header("Access-Control-Allow-Origin", "*")
       .code(502)
       .send({ error: "bad_gateway" });
   }
