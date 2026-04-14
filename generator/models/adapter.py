@@ -41,6 +41,20 @@ class LLMResponse:
     input_tokens: int
     output_tokens: int
     latency_ms: int
+    # Prompt-caching telemetry. cache_read_input_tokens are billed at ~10% of the
+    # normal input rate, cache_creation_input_tokens at ~125%. Totals both land
+    # on the server side; they are exposed here so callers can log hit ratios.
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+
+
+# Minimum prompt size for caching to be worthwhile. Anthropic's cache has a
+# 1024-token floor; shorter prompts aren't cacheable and trying to mark them
+# wastes a content block. System prompts for the large agents (handler,
+# architect, revision) easily clear this; the small ones (product classifier)
+# do not.
+# 4096 chars ≈ 1024 tokens at ~4 chars/token — a safe margin above the floor.
+_CACHE_MIN_CHARS = 4096
 
 
 def get_llm(max_tokens: int = 2048, model: Optional[str] = None) -> ChatAnthropic:
@@ -86,13 +100,69 @@ def _invoke_with_retry(llm: ChatAnthropic, messages: list) -> object:
             log.warning("Anthropic overloaded/rate-limited (%s) — retrying in %ds (attempt %d)…", exc.status_code, _RETRY_DELAYS[attempt - 1], attempt)
 
 
+def _system_message(system: str) -> SystemMessage:
+    """
+    Build a SystemMessage with prompt caching marked when the system prompt is
+    large enough to benefit.
+
+    We mark exactly one cache breakpoint at the end of the system content block —
+    every identical system prompt sent within the 5-minute TTL will be served
+    from the cache at ~10% of the normal input-token price.
+
+    Short system prompts (below _CACHE_MIN_CHARS) are sent as plain strings;
+    Anthropic's cache has a ~1024-token floor and marking a short prompt just
+    wastes a content-block slot.
+    """
+    if len(system) < _CACHE_MIN_CHARS:
+        return SystemMessage(content=system)
+    return SystemMessage(
+        content=[
+            {
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+    )
+
+
+def _extract_cache_metrics(usage: dict) -> tuple[int, int]:
+    """
+    Pull cache telemetry out of LangChain's usage_metadata.
+
+    langchain-anthropic exposes cache fields in two places depending on version:
+    top-level (input_token_details) or nested under `input_tokens`. We tolerate
+    both shapes and default to 0 when absent.
+    """
+    if not usage:
+        return 0, 0
+    details = usage.get("input_token_details") or {}
+    cache_read = (
+        details.get("cache_read")
+        or usage.get("cache_read_input_tokens")
+        or 0
+    )
+    cache_create = (
+        details.get("cache_creation")
+        or usage.get("cache_creation_input_tokens")
+        or 0
+    )
+    return int(cache_read), int(cache_create)
+
+
 def invoke(llm: ChatAnthropic, system: str, user: str) -> LLMResponse:
     """
     Calls the LLM with a system + user message pair.
     Returns content + token usage + latency.
+
+    The system prompt is automatically cached (Anthropic ephemeral cache) when
+    it exceeds _CACHE_MIN_CHARS — all stable large prompts (handler, architect,
+    revision, migration) qualify; the small product/classifier prompts do not.
     """
     start = time.monotonic()
-    response = _invoke_with_retry(llm, [SystemMessage(content=system), HumanMessage(content=user)])
+    response = _invoke_with_retry(
+        llm, [_system_message(system), HumanMessage(content=user)]
+    )
     latency_ms = int((time.monotonic() - start) * 1000)
 
     content = response.content
@@ -104,11 +174,14 @@ def invoke(llm: ChatAnthropic, system: str, user: str) -> LLMResponse:
         )
 
     usage = getattr(response, "usage_metadata", None) or {}
+    cache_read, cache_create = _extract_cache_metrics(usage)
     return LLMResponse(
         content=content,
         input_tokens=usage.get("input_tokens", 0) if usage else 0,
         output_tokens=usage.get("output_tokens", 0) if usage else 0,
         latency_ms=latency_ms,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_create,
     )
 
 
@@ -120,7 +193,7 @@ def invoke_conversation(
     messages: list of {"role": "user"|"assistant", "content": str}
     """
     start = time.monotonic()
-    lc_messages: list = [SystemMessage(content=system)]
+    lc_messages: list = [_system_message(system)]
     for msg in messages:
         if msg["role"] == "user":
             lc_messages.append(HumanMessage(content=msg["content"]))
@@ -138,11 +211,14 @@ def invoke_conversation(
         )
 
     usage = getattr(response, "usage_metadata", None) or {}
+    cache_read, cache_create = _extract_cache_metrics(usage)
     return LLMResponse(
         content=content,
         input_tokens=usage.get("input_tokens", 0) if usage else 0,
         output_tokens=usage.get("output_tokens", 0) if usage else 0,
         latency_ms=latency_ms,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_create,
     )
 
 

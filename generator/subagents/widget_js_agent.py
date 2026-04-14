@@ -77,7 +77,11 @@ RULES:
      style.textContent = `.my-widget { color: red; }`;
      container.appendChild(style);
    EXCEPTION: location.pathname and location.search are allowed for reading the current page URL.
-5. Never use eval(), Function(), setTimeout, setInterval
+5. Never use eval(), Function(), setInterval.
+   setTimeout is allowed ONLY for short debounce/throttle delays with a literal
+   numeric argument ≤500ms (e.g. setTimeout(() => search(q), 300)). Longer
+   delays or computed delays are rejected — the widget runs inside the shopper's
+   page and must not hold resources open.
 6. Never hardcode tenant IDs, shop domains, or entity IDs.
    Read shop and customerId from host.context. Read all other page/entity context from the
    URL (location.pathname / location.search) and resolve via host.storefront().
@@ -123,7 +127,8 @@ class WidgetJsGenerator(Generator):
             f"{prior_block}"
             "\nCRITICAL (validation rejects violations):\n"
             "- NEVER document.head / document.body — append styles and elements to `container`\n"
-            "- NEVER setTimeout / setInterval — use event-driven patterns only\n\n"
+            "- NEVER setInterval — use event-driven patterns only\n"
+            "- setTimeout only for debounce (literal ms ≤500). Never a polling loop.\n\n"
             "Generate the widget ES module. Output ONLY the raw JavaScript."
         )
 

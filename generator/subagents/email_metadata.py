@@ -137,14 +137,12 @@ def build_starter_content(
     until configured_by_merchant = TRUE).
     """
     desired = intent.get("desiredOutcome") or "A message from your store"
-    app_name = intent.get("appName") or ""
     if not isinstance(desired, str):
         desired = str(desired)
-    if not isinstance(app_name, str):
-        app_name = str(app_name)
 
-    # Subject — use app name as the default (merchants usually want to customize).
-    subject = app_name if app_name else _title_case(desired[:60])
+    # Subject — derive a short title from the desired outcome. The product agent
+    # never emits an `appName` field, so there's no point probing for one.
+    subject = _title_case(desired[:60])
 
     # Heading — conversational.
     if "customerName" in variables:

@@ -183,7 +183,7 @@ def _phase_architect(intent: Dict[str, Any], prompt: str) -> tuple[Dict[str, Any
     for attempt in range(1, _MAX_ARCH_ATTEMPTS + 1):
         _spinner("Architect")
         t0 = time.monotonic()
-        plan = run_architect_agent(
+        plan, _arch_in, _arch_out = run_architect_agent(
             prompt=prompt,
             intent=intent,
             app_archetype=archetype,
@@ -253,7 +253,7 @@ def _phase_codegen(
             _spinner(_CODEGEN_LABELS.get(name, name))
 
         t0 = time.monotonic()
-        artifacts = run_codegen_parallel(
+        artifacts, _codegen_tokens = run_codegen_parallel(
             base_ctx,
             is_storefront=is_storefront,
             is_admin_ui=is_admin_ui,
@@ -312,7 +312,9 @@ def _phase_validator(
 
     _spinner("Validator")
     t0 = time.monotonic()
-    issues = run_validator_agent(artifacts, base_ctx, is_storefront, is_admin_ui)
+    issues, _val_in, _val_out = run_validator_agent(
+        artifacts, base_ctx, is_storefront, is_admin_ui
+    )
     ms = int((time.monotonic() - t0) * 1000)
 
     if not issues:
@@ -324,7 +326,7 @@ def _phase_validator(
 
     _spinner("Revision")
     t0 = time.monotonic()
-    revised = run_revision_agent(
+    revised, _rev_in, _rev_out = run_revision_agent(
         base_ctx,
         is_storefront=is_storefront,
         is_admin_ui=is_admin_ui,
@@ -540,11 +542,10 @@ def main() -> None:
     # ── Phase: Explanation ────────────────────────────────────────────────────
     _spinner("Explanation")
     t0 = time.monotonic()
-    explanation = run_explanation_agent(
+    explanation, _exp_in, _exp_out = run_explanation_agent(
         intent=intent,
         plan=plan,
         widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
-        handler_code=artifacts.get("handler", ""),
         migration_sql=artifacts.get("migration", ""),
     )
     ms = int((time.monotonic() - t0) * 1000)

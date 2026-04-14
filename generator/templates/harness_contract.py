@@ -327,9 +327,32 @@ Use ctx.shopify.graphql (GraphQL) when:
        { id: `gid://shopify/Order/${orderId}`, tags: ['VIP', 'high-value'] }
      )
 
+GraphQL cursor-based pagination — use this pattern when a query can return more
+than a page of results (typical first: 50, max first: 250). Loop on
+pageInfo.hasNextPage / endCursor until there are no more pages:
+
+  ✅ const PAGE_SIZE = 250
+     const collected = []
+     let cursor = null
+     do {
+       const result = await ctx.shopify.graphql(
+         `query OrdersByTag($cursor: String, $pageSize: Int!) {
+            orders(first: $pageSize, after: $cursor, query: "tag:backorder") {
+              pageInfo { hasNextPage endCursor }
+              nodes { id name createdAt }
+            }
+          }`,
+         { cursor, pageSize: PAGE_SIZE }
+       )
+       collected.push(...result.orders.nodes)
+       cursor = result.orders.pageInfo.hasNextPage ? result.orders.pageInfo.endCursor : null
+     } while (cursor)
+  ❌ Running one query with first: 50 and assuming the response is complete —
+     stores with many matches will silently miss records beyond the first page.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REQUIRED OUTPUT FORMAT — exactly this CommonJS module shape:
-F
+
 module.exports = {
   webhookTopics: ['orders/create'],  // array of strings, empty [] for cron-only
   cronSchedule: null,                // cron string e.g. '0 9 * * *' or null
@@ -383,6 +406,60 @@ and local logic — zero Shopify calls inside loops.
   ✅ Pre-fetch → build map → loop reads map
   ❌ for (const item of items) { await ctx.shopify.get(...) }
 """
+
+# ── Compact API surface ───────────────────────────────────────────────────────
+#
+# Used by the revision agent: revisions see the prior handler code (which already
+# embodies the full patterns from HARNESS_BASE), so the model only needs a crisp
+# reminder of what APIs are available and the handful of rules that matter most
+# when editing code. Shipping all of HARNESS_BASE to the revision agent wastes
+# tokens without improving output quality.
+
+HARNESS_API_SURFACE = """
+HARNESS API SURFACE — the only APIs available inside handler():
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Shopify:
+  ctx.shopify.get(path) / ctx.shopify.post(path, body) / ctx.shopify.delete(path)
+    — REST at /admin/api/2026-01. Path is relative.
+  ctx.shopify.graphql(query, variables?)
+    — Admin GraphQL. IDs use GID format: `gid://shopify/TypeName/${numericId}`.
+  ctx.storefront.graphql(query, variables?)
+    — public Storefront API (server-side).
+
+Database (postgres.js tagged template, RLS-scoped to ctx.tenantId):
+  await ctx.db`SELECT ... WHERE tenant_id = ${ctx.tenantId} AND ...`
+  Always pass ctx.tenantId in every INSERT; never String()-wrap IDs.
+
+Trigger routing:
+  ctx.trigger           — 'webhook' | 'cron' | 'widget' | 'admin'
+  ctx.payload           — Shopify webhook body (object)
+  ctx.widgetPath / ctx.widgetBody   — when trigger === 'widget'
+  ctx.adminPath  / ctx.adminBody    — when trigger === 'admin'
+  ctx.shop.domain       — myshopify.com domain
+  ctx.logger.info / warn / error
+
+Services (available on every ctx):
+  ctx.services.email.send({ to, data? })    — merchant-configured template
+  ctx.services.sms.send({ to, body })
+  ctx.services.files.upload(name, content, mimeType?) → signed URL
+  ctx.http.call(url, options?)              — https:// to third parties
+
+Required module shape (CommonJS):
+  module.exports = {
+    webhookTopics: [...], cronSchedule: null | '...',
+    npmPackages: [...], handler: async function(ctx) { ... }
+  }
+
+Core rules:
+  - No fetch(), eval(), Function, setInterval, setImmediate, process.env.
+    setTimeout allowed only for small rate-limit pauses (≤500 ms).
+  - require() only packages declared in npmPackages (+ Node built-ins).
+  - Every INSERT into a tenant table must include tenant_id: ctx.tenantId.
+  - Widget/admin routes: route on ctx.widgetPath / ctx.adminPath, return JSON.
+  - GraphQL IDs MUST be GID-formatted — never raw numeric.
+"""
+
 
 # ── Conditional sections ───────────────────────────────────────────────────────
 
@@ -465,86 +542,77 @@ count before acting — the webhook path may have already processed the same tra
 
 HARNESS_SECTION_CRON_BATCHING = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CRON RATE LIMIT SAFETY — this handler calls Shopify APIs inside a cron loop:
+CRON RATE LIMIT SAFETY — this handler iterates over a set of items and touches Shopify:
 
-Shopify rate limit: ~2 req/s on Basic, ~4 req/s on Advanced.
-Per-item Shopify calls inside a loop = guaranteed throttle errors at any meaningful scale.
+Shopify rate limit: ~2 req/s on Basic, ~4 req/s on Advanced. Per-item Shopify calls
+inside a loop cause throttle errors at any meaningful scale — fan them out in advance.
 
-Rule: Pre-fetch ALL Shopify data in batches before the loop. The loop body must contain
-only DB reads/writes and local logic — zero Shopify API calls inside the loop:
-  ✅ // Pre-fetch phase — outside the loop
-     const ids = rows.map(r => r.entity_id)
-     const chunks = []
-     for (let i = 0; i < ids.length; i += BATCH_SIZE) chunks.push(ids.slice(i, i + BATCH_SIZE))
-     const dataMap = new Map()
-     for (const chunk of chunks) {
-       const data = await ctx.shopify.get(`/endpoint.json?ids=${chunk.join(',')}`)
-       for (const item of data.items) dataMap.set(item.id, item)
+── Rule 1: Bulk-prefetch reads BEFORE the loop ───────────────────────────────
+Pre-fetch every piece of Shopify data the loop needs in a handful of batched calls,
+then loop over the results with zero Shopify calls in the body. Works for ANY resource
+(orders, products, variants, customers, inventory, fulfillments, metafields, etc.).
+
+  ✅ GENERIC PATTERN — replace <resource>/<field> with the Shopify resource you need:
+     // 1. Collect distinct Shopify IDs the loop will need (from DB or another source)
+     const ids = [...new Set(rows.map(r => r.<shopify_id_field>))]
+
+     // 2. Batch-fetch in chunks (Shopify's typical cap is 250 per call)
+     const BATCH = 250
+     const dataMap = new Map()  // key = String(shopify_id) → value = the entity
+     for (let i = 0; i < ids.length; i += BATCH) {
+       const chunk = ids.slice(i, i + BATCH)
+       const resp = await ctx.shopify.get(
+         `/<resource>.json?ids=${chunk.join(',')}&fields=id,<other_fields>`
+       )
+       for (const item of (resp.<resource> || [])) {
+         dataMap.set(String(item.id), item)
+       }
      }
-     // Process phase — zero Shopify calls
+
+     // 3. Loop body — pure local logic + DB writes, ZERO Shopify calls
      for (const row of rows) {
-       const item = dataMap.get(row.entity_id)
+       const item = dataMap.get(String(row.<shopify_id_field>))
        if (!item) continue
-       // DB writes and local logic only
+       // DB writes, local decisions, email sends, etc.
      }
-  ❌ for (const row of rows) { await ctx.shopify.get(...) }  // N sequential calls
 
-Variant/product batch pattern — Shopify has NO batch variant-by-IDs endpoint:
-  ❌ for (const variantId of ids) { await ctx.shopify.get(`/variants/${variantId}.json`) }
-     // 1–2 calls per variant = rate-limit failure at scale
-  ✅ // Batch via products.json, then extract variants (max 250 product IDs per call)
-     const productIds = [...new Set(rows.map(r => r.product_id))]
-     const variantMap = new Map()  // Map<variant_id, { variant, product }>
-     const PRODUCT_BATCH = 250
-     for (let i = 0; i < productIds.length; i += PRODUCT_BATCH) {
-       const chunk = productIds.slice(i, i + PRODUCT_BATCH)
-       const { products } = await ctx.shopify.get(
-         `/products.json?ids=${chunk.join(',')}&fields=id,title,variants`
-       )
-       for (const p of products) {
-         for (const v of p.variants) {
-           variantMap.set(String(v.id), { variant: v, product: { id: p.id, title: p.title } })
-         }
-       }
-     }
-     // Loop body uses variantMap — zero Shopify calls
-     // KEY TYPE NOTE: Shopify API returns variant_id as a number; postgres.js returns BIGINT
-     // columns as strings. Always use String() on both sides of Map.set/get to avoid misses.
-     for (const row of rows) {
-       const entry = variantMap.get(String(row.variant_id))
-       if (!entry) continue
-       // use entry.variant and entry.product
-     }
-  NOTE: product_id must be stored in the DB table — it is the key for this batch approach.
+  ❌ for (const row of rows) { await ctx.shopify.get(...) }   // N sequential calls
 
-Inventory level batch pattern — use this when checking stock in a cron path.
-inventory_quantity from /products.json is unreliable for multi-location stores:
-  ❌ if (variantData.inventory_quantity <= 0) continue  // stale for multi-location
-  ✅ // Pre-fetch inventory levels — always accurate; sums across all locations
-     const inventoryItemIds = [...new Set(rows.map(r => r.inventory_item_id))]
-     const inventoryMap = new Map()  // Map<inventory_item_id, storeWideTotal>
-     const INV_BATCH = 50
-     for (let i = 0; i < inventoryItemIds.length; i += INV_BATCH) {
-       const chunk = inventoryItemIds.slice(i, i + INV_BATCH)
-       const { inventory_levels } = await ctx.shopify.get(
-         `/inventory_levels.json?inventory_item_ids=${chunk.join(',')}`
-       )
-       for (const level of (inventory_levels || [])) {
-         const prev = inventoryMap.get(level.inventory_item_id) || 0
-         inventoryMap.set(level.inventory_item_id, prev + (level.available || 0))
-       }
+── Rule 2: Map key normalization ─────────────────────────────────────────────
+Shopify API returns numeric IDs; postgres.js returns BIGINT columns as strings.
+ALWAYS wrap both sides of Map.set/Map.get with String() so lookups match:
+  ✅ dataMap.set(String(item.id), item)          // Shopify → Map
+     dataMap.get(String(row.shopify_entity_id))  // DB row → Map lookup
+  ❌ Mixing numeric + string keys → silent misses at runtime.
+
+── Rule 3: Required IDs must live in the DB ──────────────────────────────────
+Whatever ID you use to look up Shopify data (product_id, inventory_item_id,
+customer_id, order_id, …) MUST be stored on the DB row. SELECT it alongside
+the primary entity ID; don't try to resolve it from Shopify inside the loop.
+
+── Rule 4: Per-item WRITES — unavoidable, so throttle them ───────────────────
+Some resources have no batch write API (e.g. tag updates, metafield writes on
+per-entity basis, image replacement). When the loop must issue a per-item
+Shopify write, add a small pause between iterations to stay under the rate limit:
+
+  ✅ for (const row of rows) {
+       await ctx.shopify.post(`/<resource>/${row.id}.json`, { ... })
+       await new Promise(r => setTimeout(r, 200))   // 200 ms ≈ 5 req/s ceiling
      }
-     // Loop body checks inventoryMap — zero inventory API calls inside the loop
-     // KEY TYPE NOTE: Shopify API returns inventory_item_id as a number; postgres.js returns
-     // BIGINT columns as strings. Use String() on both sides to ensure Map.get() matches:
-     //   inventoryMap.set(String(level.inventory_item_id), ...)
-     //   inventoryMap.get(String(row.inventory_item_id))
-     for (const row of rows) {
-       const storeWideTotal = inventoryMap.get(row.inventory_item_id) || 0
-       if (storeWideTotal <= 0) continue
-       // proceed with notification
-     }
-  NOTE: inventory_item_id must be stored in the DB table — it is the key for this batch approach.
+  ❌ Tight write loop with no delay → 429 throttle errors at scale.
+
+  When per-item writes are unavoidable, the architect plan records this as a
+  platformGaps entry — mention the reason in your implementation comment.
+
+── Rule 5: Resource-specific notes ───────────────────────────────────────────
+  • Variants: there is NO batch variant-by-IDs endpoint. Batch via
+    /products.json?ids=... and extract variants from each product — one call
+    returns up to 250 products and all their variants.
+  • Inventory level: /products.json#inventory_quantity is STALE for multi-location
+    stores. For accurate stock use /inventory_levels.json?inventory_item_ids=...
+    (max 50 per call) and sum `available` across locations per inventory_item_id.
+  • Customers/Orders: support /customers.json?ids=... and /orders.json?ids=...
+    with limit=250 and since_id for full-catalog scans.
 """
 
 HARNESS_SECTION_WIDGET = """

@@ -18,7 +18,7 @@ Model: claude-sonnet-4-6
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from models.adapter import get_llm, invoke, extract_json
 from models.agent_models import get_agent_model
@@ -349,7 +349,7 @@ def run_architect_agent(
     app_archetype: str,
     api_context: str,
     validation_errors: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], int, int]:
     """
     Architect Agent: produces shopifyPlan + appContracts with typed contracts.
 
@@ -424,11 +424,15 @@ def run_architect_agent(
 
     llm = get_llm(model=get_agent_model("architect"), max_tokens=4000)
     current_user = user
+    total_in = 0
+    total_out = 0
     for attempt in range(2):
         result = invoke(llm, ARCHITECT_SYSTEM, current_user)
+        total_in += result.input_tokens
+        total_out += result.output_tokens
         raw = extract_json(result.content)
         try:
-            return json.loads(raw)
+            return json.loads(raw), total_in, total_out
         except json.JSONDecodeError as e:
             if attempt == 1:
                 raise

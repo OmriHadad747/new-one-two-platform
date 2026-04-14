@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from models.adapter import extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
@@ -221,28 +221,33 @@ def run_validator_agent(
     ctx: CodegenContext,
     is_storefront: bool,
     is_admin_ui: bool,
-) -> List[Dict]:
+) -> Tuple[List[Dict], int, int]:
     """
     Run targeted semantic questions against the generated artifacts.
 
     Only questions relevant to this app (storefront, admin, cronBatching, stateMachine)
-    are included. Returns a list of HIGH-confidence issue dicts:
+    are included. Returns (issues, input_tokens, output_tokens).
+    issues is a list of HIGH-confidence issue dicts:
         [{"question": "q5_cron_bulk_fetch", "issue": "...", "confidence": "high"}, ...]
 
     MEDIUM-confidence issues are logged but not returned (false positive mitigation).
-    Returns [] on parse failure or when all checks pass (fail-open).
+    Returns ([], in, out) on parse failure or when all checks pass (fail-open).
     """
     model = get_agent_model("validator")
     llm = get_llm(model=model, max_tokens=1200)
     user = _build_prompt(artifacts, ctx, is_storefront, is_admin_ui)
 
+    in_tok = 0
+    out_tok = 0
     try:
         response = invoke(llm, VALIDATOR_SYSTEM, user)
+        in_tok = response.input_tokens
+        out_tok = response.output_tokens
         raw = extract_json(response.content)
         result = json.loads(raw)
     except Exception as exc:
         log.warning("validator_agent: failed to get/parse response (%s) — fail-open", exc)
-        return []
+        return [], in_tok, out_tok
 
     # Phrases that indicate the LLM contradicted itself by flagging a non-issue.
     _SELF_CONTRADICTING = (
@@ -287,4 +292,4 @@ def run_validator_agent(
                     "validator_agent: %s medium confidence (skipped) — %s", q_key, issue_text
                 )
 
-    return issues
+    return issues, in_tok, out_tok

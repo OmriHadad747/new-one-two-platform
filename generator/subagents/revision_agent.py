@@ -22,23 +22,28 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from models.adapter import extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
 from subagents.base import CodegenContext
-from templates.harness_contract import HARNESS_BASE
+from templates.harness_contract import HARNESS_API_SURFACE
 
 log = logging.getLogger(__name__)
 
 # ── System prompt ──────────────────────────────────────────────────────────────
+#
+# The revision agent uses the compact HARNESS_API_SURFACE rather than the full
+# HARNESS_BASE. Revisions see the prior handler code in the user prompt, which
+# already embodies the handler patterns; re-sending the full harness contract
+# wastes tokens without improving edits.
 
 REVISION_SYSTEM = f"""You are an expert Shopify applications code revision specialist.
 
 You receive existing working handler code (and optionally widget + admin UI code)
 along with a revised architect plan. Apply MINIMUM targeted changes.
 
-{HARNESS_BASE}
+{HARNESS_API_SURFACE}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REVISION RULES — read before editing
@@ -73,7 +78,7 @@ WIDGET (widget_js, if applicable):
 ADMIN UI (admin_ui, if applicable):
 - Use EXACTLY the requestShape fields shown in adminApiCatalog for each bridge.call() body
 - Use EXACTLY the responseShape field names when reading results
-- Keep the same bridge.call() / bridge.subscribe() pattern
+- Keep the same bridge.call() pattern
 - Set to null (JSON null) if this app has no admin panel
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -168,7 +173,7 @@ def run_revision_agent(
     is_storefront: bool,
     is_admin_ui: bool,
     validation_issues: Optional[list] = None,
-) -> Dict[str, str]:
+) -> Tuple[Dict[str, str], int, int]:
     """
     Holistic code revision agent. Produces all artifacts in one LLM call.
 
@@ -187,9 +192,10 @@ def run_revision_agent(
 
     Returns
     -------
-    Dict with keys matching generator names: "handler", "migration",
-    and optionally "widget_js" and/or "admin_ui".
-    Returns {} on parse failure — caller should fall back to run_codegen_parallel.
+    Tuple of (artifacts_dict, input_tokens, output_tokens).
+    artifacts_dict keys match generator names: "handler", "migration", and
+    optionally "widget_js" and/or "admin_ui".
+    Returns ({}, in, out) on parse failure — caller falls back to run_codegen_parallel.
     """
     user = _build_user_prompt(
         ctx,
@@ -199,13 +205,15 @@ def run_revision_agent(
     )
     llm = get_llm(model=get_agent_model("revision"), max_tokens=16000)
     result = invoke(llm, REVISION_SYSTEM, user)
+    in_tok = result.input_tokens
+    out_tok = result.output_tokens
     raw = extract_json(result.content)
 
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:
         log.warning("revision_agent: JSON parse error %s — snippet: %s", e, raw[:300])
-        return {}
+        return {}, in_tok, out_tok
 
     artifacts: Dict[str, str] = {}
 
@@ -239,4 +247,4 @@ def run_revision_agent(
             code = re.sub(r"```\s*$", "", code.strip(), flags=re.MULTILINE)
             artifacts["admin_ui"] = code.strip()
 
-    return artifacts
+    return artifacts, in_tok, out_tok

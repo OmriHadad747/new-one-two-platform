@@ -12,7 +12,7 @@ Model: claude-haiku (fast; purely classification + JSON extraction, no code gene
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from models.adapter import get_llm, invoke, invoke_conversation, extract_json
 from models.agent_models import get_agent_model
@@ -90,12 +90,15 @@ Never list communication channels (email, SMS) as resources — they are deliver
 cronSchedule — standard 5-field cron string if "cron" is in triggerTypes, otherwise null."""
 
 
-def run_product_agent(prompt: str) -> Dict[str, Any]:
-    """Agent 1: Parse merchant prompt into a product feature specification."""
+def run_product_agent(prompt: str) -> Tuple[Dict[str, Any], int, int]:
+    """
+    Agent 1: Parse merchant prompt into a product feature specification.
+    Returns (intent_dict, input_tokens, output_tokens).
+    """
     llm = get_llm(model=get_agent_model("product"), max_tokens=512)
     result = invoke(llm, PRODUCT_SYSTEM, f"Merchant request: {prompt}")
     raw = extract_json(result.content)
-    return json.loads(raw)
+    return json.loads(raw), result.input_tokens, result.output_tokens
 
 
 # ─── Interactive analyze mode ─────────────────────────────────────────────────

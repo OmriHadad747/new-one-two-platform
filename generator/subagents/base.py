@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -144,9 +144,12 @@ class Generator(ABC):
             f"Fix ALL listed errors in this new attempt.\n\n"
         )
 
-    def generate(self, ctx: CodegenContext) -> str:
+    def generate(self, ctx: CodegenContext) -> Tuple[str, int, int]:
         """
         Full generation cycle: build prompts → invoke LLM → parse output.
+
+        Returns (parsed_artifact, input_tokens, output_tokens).
+        The token counts let the orchestrator build an accurate AgentTraceEntry.
 
         This is the only entry point the orchestrator needs to call.
         It must not be overridden — customise system_prompt, user_prompt, and parse.
@@ -156,4 +159,4 @@ class Generator(ABC):
 
         llm = get_llm(model=get_agent_model(self.name), max_tokens=self.max_tokens)
         result = invoke(llm, self.system_prompt(), self.user_prompt(ctx))
-        return self.parse(result.content)
+        return self.parse(result.content), result.input_tokens, result.output_tokens

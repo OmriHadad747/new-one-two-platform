@@ -312,7 +312,28 @@ def validate_architect_plan(
                         "logic in webhookContract.handlerMustProduce instead."
                     )
 
-    # 14. Each dbContracts entry must include a tenant_id column
+    # 14. Each dbContracts entry must include a tenant_id column + typed column checks.
+    #     Catching bogus types here (e.g. "STRING" instead of "TEXT") saves a Sonnet
+    #     round-trip when the migration agent tries to generate DDL.
+    _VALID_PG_TYPES = {
+        "UUID", "BIGINT", "BIGSERIAL", "INTEGER", "INT", "SMALLINT", "SERIAL",
+        "TEXT", "VARCHAR", "CHAR", "CITEXT",
+        "BOOLEAN", "BOOL",
+        "TIMESTAMPTZ", "TIMESTAMP", "DATE", "TIME", "INTERVAL",
+        "JSONB", "JSON",
+        "NUMERIC", "DECIMAL", "REAL", "DOUBLE", "DOUBLE PRECISION",
+        "BYTEA",
+    }
+    _SHOPIFY_ID_COLS = {
+        "variant_id", "product_id", "order_id", "customer_id",
+        "inventory_item_id", "location_id", "fulfillment_id",
+        "draft_order_id", "discount_id",
+    }
+
+    def _base_type(type_str: str) -> str:
+        # Strip parameterisation (VARCHAR(255) → VARCHAR, NUMERIC(10,2) → NUMERIC).
+        return type_str.upper().split("(")[0].strip()
+
     for contract in impl.get("dbContracts") or []:
         table = contract.get("table", "?")
         columns = contract.get("columns") or []
@@ -322,6 +343,27 @@ def validate_architect_plan(
                 f"dbContracts table '{table}' is missing tenant_id column — "
                 "every table must include tenant_id UUID NOT NULL for RLS tenant isolation"
             )
+        for col in columns:
+            name = (col.get("name") or "").lower()
+            type_str = col.get("type") or ""
+            if not type_str:
+                errors.append(
+                    f"dbContracts table '{table}' column '{name}' is missing a type — "
+                    "every column must declare a PostgreSQL type"
+                )
+                continue
+            base = _base_type(type_str)
+            if base not in _VALID_PG_TYPES:
+                errors.append(
+                    f"dbContracts table '{table}' column '{name}' has invalid PostgreSQL type "
+                    f"{type_str!r} — valid types: {sorted(_VALID_PG_TYPES)}"
+                )
+            if name in _SHOPIFY_ID_COLS and base == "UUID":
+                errors.append(
+                    f"dbContracts table '{table}' column '{name}' is a Shopify entity ID — "
+                    f"use BIGINT (or TEXT), NEVER UUID. Only tenant_id and internal primary "
+                    f"keys use UUID."
+                )
 
     # 15. storefront apps must declare widgetTargetTemplates
     _VALID_TEMPLATES = {"product", "collection", "index", "cart", "page", "blog", "article", "search"}
@@ -402,6 +444,100 @@ FORBIDDEN_HANDLER_PATTERNS = [
     (r"\bsetInterval\s*\(", "setInterval is not allowed — handlers are short-lived invocations, not long-running processes"),
     (r"\bsetImmediate\s*\(", "setImmediate is not allowed"),
 ]
+
+# Fields the old email API used to accept — all of them have moved into the
+# merchant-configured template, so a handler passing any of them is calling a
+# deprecated shape that will be silently ignored (or worse, break when the
+# merchant does configure their template and the handler's values override it).
+# Only { to, data } are allowed.
+_DEPRECATED_EMAIL_FIELDS = frozenset(
+    {"subject", "templateId", "template_id", "html", "body", "from"}
+)
+
+
+def _top_level_keys_of(code: str, start_idx: int) -> set:
+    """
+    Scan the object literal starting at the `{` at start_idx and return the set
+    of property names declared at its top level (depth 0 of braces/brackets/parens).
+
+    Handles strings and backticks so `{ key: "ignore: me" }` doesn't confuse us.
+    Returns the empty set on malformed input rather than raising — this is a
+    soft-check helper.
+    """
+    i = start_idx
+    n = len(code)
+    if i >= n or code[i] != "{":
+        return set()
+    depth = 0
+    keys: set = set()
+    in_string: Optional[str] = None
+    at_key_position = True
+    key_start = -1
+    while i < n:
+        c = code[i]
+        if in_string:
+            if c == "\\":
+                i += 2
+                continue
+            if c == in_string:
+                in_string = None
+            i += 1
+            continue
+        if c in ('"', "'", "`"):
+            in_string = c
+            at_key_position = False
+            i += 1
+            continue
+        if c == "{" or c == "[" or c == "(":
+            depth += 1
+            at_key_position = False
+            i += 1
+            continue
+        if c == "}" or c == "]" or c == ")":
+            depth -= 1
+            if depth == 0 and c == "}":
+                # End of our top-level object.
+                # A trailing shorthand key right before the close also counts.
+                if key_start >= 0 and at_key_position and depth == 0:
+                    keys.add(code[key_start:i].strip())
+                return keys
+            i += 1
+            continue
+        if depth == 1:
+            # Top-level of the object we're interested in.
+            if c == "," and at_key_position and key_start >= 0:
+                keys.add(code[key_start:i].strip())
+                key_start = -1
+            elif c == ":" and at_key_position and key_start >= 0:
+                keys.add(code[key_start:i].strip())
+                key_start = -1
+                at_key_position = False
+            elif c == ",":
+                at_key_position = True
+            elif at_key_position and (c.isalnum() or c == "_" or c == "$"):
+                if key_start == -1:
+                    key_start = i
+        i += 1
+    return keys
+
+
+def _find_email_send_violations(code: str) -> List[str]:
+    """Flag ctx.services.email.send() calls that pass deprecated fields."""
+    errs: List[str] = []
+    pattern = re.compile(r"ctx\.(?:services\.)?email\.send\s*\(\s*")
+    for match in pattern.finditer(code):
+        obj_start = match.end()
+        if obj_start >= len(code) or code[obj_start] != "{":
+            continue  # non-object-literal argument (e.g. a variable) — skip
+        keys = _top_level_keys_of(code, obj_start)
+        bad = sorted(keys & _DEPRECATED_EMAIL_FIELDS)
+        if bad:
+            errs.append(
+                f"ctx.services.email.send() passes forbidden field(s) {bad} — "
+                "the platform owns subject/body/html/templateId/from. "
+                "Only { to, data } is accepted; put dynamic values inside data."
+            )
+    return errs
 
 
 def _js_is_syntactically_complete(code: str) -> bool:
@@ -685,6 +821,9 @@ def validate_handler_artifact(
                 "to the incoming event and writing the new state"
             )
 
+    # 9. ctx.services.email.send() must use the { to, data } shape only.
+    errors.extend(_find_email_send_violations(code))
+
     return errors
 
 
@@ -821,13 +960,92 @@ FORBIDDEN_WIDGET_JS_PATTERNS = [
         "direct document.* access is not allowed — use container.querySelector() and container.appendChild() instead. "
         "For styles: const s = document.createElement('style'); s.textContent = '...'; container.appendChild(s) — never document.head.",
     ),
-    (r"\bsetTimeout\s*\(", "setTimeout is not allowed"),
     (r"\bsetInterval\s*\(", "setInterval is not allowed"),
     (
         r"https?://",
         "hardcoded URLs are not allowed — use host.call() with catalog paths",
     ),
 ]
+
+
+# setTimeout allowance — debounce / throttle only. Accept calls whose SECOND
+# argument is a numeric literal ≤ _MAX_DEBOUNCE_MS. Reject everything else:
+#   - Computed delays (setTimeout(fn, computedMs)) — can't verify the bound.
+#   - Long delays (setTimeout(fn, 5000))          — effectively a timer.
+#   - No explicit delay (setTimeout(fn))          — defaults to 0 but opens the door to
+#                                                   patterns the validator can't inspect.
+_MAX_DEBOUNCE_MS = 500
+
+
+def _extract_settimeout_delays(js: str) -> List[Optional[str]]:
+    """
+    For each setTimeout( call in js, return the delay (second top-level argument)
+    as a stripped string, or None when no second argument is present.
+
+    Uses a character scanner instead of a regex so that callbacks containing
+    commas (arrow functions, multi-param functions, block bodies) are handled
+    correctly.  Example: setTimeout(() => search(q, page), 300) → "300".
+    """
+    delays: List[Optional[str]] = []
+    for m in re.finditer(r"\bsetTimeout\s*\(", js):
+        i = m.end()           # index just past the opening '('
+        n = len(js)
+        depth = 1             # we're inside the outer '('
+        in_string: Optional[str] = None
+        first_top_comma: Optional[int] = None
+
+        while i < n and depth > 0:
+            c = js[i]
+            if in_string:
+                if c == "\\":
+                    i += 2
+                    continue
+                if c == in_string:
+                    in_string = None
+            elif c in ('"', "'", "`"):
+                in_string = c
+            elif c in ("(", "[", "{"):
+                depth += 1
+            elif c in (")", "]", "}"):
+                depth -= 1
+            elif c == "," and depth == 1 and first_top_comma is None:
+                # Only the FIRST top-level comma separates callback from delay.
+                first_top_comma = i
+            i += 1
+
+        if first_top_comma is None:
+            delays.append(None)   # no second argument
+            continue
+
+        # i now points one past the closing ')'; js[i-1] == ')'
+        delay_str = js[first_top_comma + 1 : i - 1].strip()
+        delays.append(delay_str)
+
+    return delays
+
+
+def _find_setTimeout_violations(js: str) -> List[str]:
+    """Return error strings for each disallowed setTimeout usage."""
+    errs: List[str] = []
+    delays = _extract_settimeout_delays(js)
+
+    for delay_str in delays:
+        if delay_str is None:
+            errs.append(
+                "setTimeout call missing an explicit numeric delay argument — "
+                "only setTimeout(fn, <literal ms ≤ 500>) is allowed"
+            )
+        elif not delay_str.isdigit():
+            errs.append(
+                f"setTimeout delay '{delay_str}' is not a numeric literal — "
+                "only literal millisecond values ≤ 500 are allowed (debounce / throttle only)"
+            )
+        elif int(delay_str) > _MAX_DEBOUNCE_MS:
+            errs.append(
+                f"setTimeout delay {delay_str}ms exceeds {_MAX_DEBOUNCE_MS}ms — "
+                "use event-driven patterns, not timers"
+            )
+    return errs
 
 
 def validate_widget_artifact(
@@ -851,6 +1069,9 @@ def validate_widget_artifact(
     for pattern, message in FORBIDDEN_WIDGET_JS_PATTERNS:
         if re.search(pattern, widget_js):
             errors.append(message)
+
+    # setTimeout is allowed only as a bounded debounce — check delays.
+    errors.extend(_find_setTimeout_violations(widget_js))
 
     # host.storefront() must use relative paths
     storefront_calls = re.findall(
@@ -955,6 +1176,9 @@ def validate_admin_ui_artifact(
     for pattern, message in FORBIDDEN_ADMIN_UI_PATTERNS:
         if re.search(pattern, admin_ui_js):
             errors.append(message)
+
+    # setTimeout is allowed only as a bounded debounce — check delays.
+    errors.extend(_find_setTimeout_violations(admin_ui_js))
 
     # bridge.call() paths must be in the admin catalog
     if admin_api_catalog:
@@ -1122,7 +1346,7 @@ def validate_admin_handler_contract(
 ) -> Dict[str, List[str]]:
     """
     Check that field names the admin UI sends via bridge.call() match what the handler
-    destructures from ctx.widgetBody inside the admin trigger block.
+    destructures from ctx.adminBody inside the admin trigger block.
 
     Returns {generator_name: [errors]} attributed to both sides. Route existence
     is pre-checked by validate_handler_artifact.

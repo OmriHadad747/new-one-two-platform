@@ -275,7 +275,7 @@ def run_arch_only(prompt: str) -> None:
     # Product agent
     _spinner(_LABELS["product"])
     t0 = time.monotonic()
-    intent = run_product_agent(prompt)
+    intent, _prod_in, _prod_out = run_product_agent(prompt)
     ms = int((time.monotonic() - t0) * 1000)
     _agent_line(_LABELS["product"], ok=True, ms=ms, notes=intent.get("appCategory", ""))
 
@@ -292,7 +292,7 @@ def run_arch_only(prompt: str) -> None:
     for attempt in range(1, _MAX_ARCH_ATTEMPTS + 1):
         _spinner(_LABELS["architect"])
         t0 = time.monotonic()
-        plan = run_architect_agent(
+        plan, _arch_in, _arch_out = run_architect_agent(
             prompt=prompt,
             intent=intent,
             app_archetype=archetype,
