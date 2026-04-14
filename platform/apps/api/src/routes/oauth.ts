@@ -291,11 +291,14 @@ async function storeAccessToken(shop: string, accessToken: string): Promise<stri
   // that getSecret() can resolve it (needed for webhook registration during deploy).
   if (process.env["NODE_ENV"] !== "production") {
     const secretName = `projects/local/secrets/${shop.replace(".myshopify.com", "")}-access-token/versions/latest`;
+    // Never log the token itself — even in dev it is a real Shopify Admin API
+    // token that grants full shop access. Log a paste-in template instead and
+    // let the operator copy the value from their browser / shopify CLI.
     logger.info(
-      { shop, secretName },
+      { shop, secretName, tokenLength: accessToken.length },
       "[dev] Access token not persisted to Secret Manager. " +
       `To enable Shopify webhook registration, add to SM_DEV_SECRETS in platform/.env: ` +
-      `"${secretName}":"${accessToken}"`
+      `"${secretName}":"<paste-access-token-here>"`
     );
     return secretName;
   }
@@ -348,10 +351,11 @@ async function createStorefrontToken(shop: string, adminAccessToken: string): Pr
 async function storeStorefrontToken(shop: string, token: string): Promise<string> {
   if (process.env["NODE_ENV"] !== "production") {
     const secretName = `projects/local/secrets/${shop.replace(".myshopify.com", "")}-storefront-token/versions/latest`;
+    // Never log the token itself — see storeAccessToken above for context.
     logger.info(
-      { shop, secretName },
+      { shop, secretName, tokenLength: token.length },
       "[dev] Storefront token not persisted to Secret Manager. " +
-      `Add to SM_DEV_SECRETS in platform/.env: "${secretName}":"${token}"`
+      `Add to SM_DEV_SECRETS in platform/.env: "${secretName}":"<paste-storefront-token-here>"`
     );
     return secretName;
   }

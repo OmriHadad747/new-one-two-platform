@@ -212,22 +212,22 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
         }
         await updateAppStatus(appId, "active");
         // Fire-and-forget — restart container + re-register webhooks without blocking response
-        reactivateApp(appId).catch((err: unknown) => {
-          app.log.error({ err, appId }, "Background reactivation failed");
+        reactivateApp(tenantId, appId).catch((err: unknown) => {
+          app.log.error({ err, tenantId, appId }, "Background reactivation failed");
         });
       }
       if (status === "inactive") {
         await updateAppStatus(appId, "inactive");
         // Fire-and-forget — stop container + unregister webhooks without blocking response
-        teardownApp(appId).catch((err: unknown) => {
-          app.log.error({ err, appId }, "Background teardown on deactivation failed");
+        teardownApp(tenantId, appId).catch((err: unknown) => {
+          app.log.error({ err, tenantId, appId }, "Background teardown on deactivation failed");
         });
       }
       if (status === "deleted") {
         await updateAppStatus(appId, "deleted");
         // Fire-and-forget teardown — don't block the response
-        teardownApp(appId).catch((err: unknown) => {
-          app.log.error({ err, appId }, "Background teardown failed");
+        teardownApp(tenantId, appId).catch((err: unknown) => {
+          app.log.error({ err, tenantId, appId }, "Background teardown failed");
         });
       }
 
@@ -246,7 +246,7 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) return reply.status(404).send({ error: "App not found" });
-      await permanentDeleteApp(appId);
+      await permanentDeleteApp(tenantId, appId);
       return reply.status(200).send({ deleted: true });
     }
   );

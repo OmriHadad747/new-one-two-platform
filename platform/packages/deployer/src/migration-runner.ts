@@ -129,9 +129,19 @@ export async function rollbackTenantMigration(
   tenantId: string,
   migrationSql: string
 ): Promise<void> {
-  const tableNames = [...migrationSql.matchAll(/CREATE\s+TABLE\s+(\w+)/gi)].map(
-    (m) => m[1]
-  );
+  // Match CREATE TABLE [IF NOT EXISTS] <identifier> where <identifier> is
+  // either a bare word or a double-quoted name. Without the IF NOT EXISTS
+  // group the older regex captured the literal word "IF" as a table name
+  // whenever the LLM emitted `CREATE TABLE IF NOT EXISTS ...`, producing
+  // `DROP TABLE IF EXISTS IF CASCADE` — a syntax error that aborted the
+  // whole rollback transaction.
+  const CREATE_TABLE_RE =
+    /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?("[^"]+"|\w+)/gi;
+  const tableNames = [...migrationSql.matchAll(CREATE_TABLE_RE)]
+    .map((m) => m[1])
+    .filter((name): name is string => Boolean(name))
+    // Strip surrounding quotes so we can re-quote consistently below.
+    .map((name) => (name.startsWith('"') ? name.slice(1, -1) : name));
 
   if (tableNames.length === 0) return;
 
@@ -139,7 +149,11 @@ export async function rollbackTenantMigration(
     await withTenantContext(tenantId, async (tx) => {
       for (const tableName of tableNames) {
         logger.warn({ tenantId, tableName }, "Rolling back migration table");
-        await tx.unsafe(`DROP TABLE IF EXISTS ${tableName} CASCADE`);
+        // Always quote the identifier so reserved words and mixed-case names
+        // round-trip safely. The capture group above only allows a bare word
+        // or a double-quoted name, so interpolating it into the quoted form
+        // cannot produce a SQL-injection vector.
+        await tx.unsafe(`DROP TABLE IF EXISTS "${tableName}" CASCADE`);
       }
     });
   } catch (err) {

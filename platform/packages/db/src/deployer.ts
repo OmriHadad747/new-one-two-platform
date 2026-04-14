@@ -141,8 +141,22 @@ export async function getAppVersionWithCode(appVersionId: string): Promise<{
   };
 }
 
-/** Fetch an app by id alone — used during teardown when tenantId is not in scope. */
-export async function getAppByIdOnly(appId: string): Promise<App | null> {
+/**
+ * Fetch an app by id with NO tenant scoping.
+ *
+ * ⚠️ UNSAFE: this query deliberately omits `AND tenant_id = ...` so callers
+ * that genuinely don't know the tenant yet (e.g. OAuth-style "fetch then
+ * authorize" flows in routes/email.ts and routes/generation.ts) can look up
+ * an app's owning tenant.
+ *
+ * Every caller MUST, before acting on the result, verify that the returned
+ * `app.tenantId` matches the authenticated caller — typically by passing it
+ * to `requireTenant(req, reply, app.tenantId)`.
+ *
+ * When the caller already knows the tenant (the common case), prefer the
+ * scoped `getAppById(tenantId, appId)` from `./tenants.ts` instead.
+ */
+export async function getAppByIdUnsafe(appId: string): Promise<App | null> {
   const rows = await sql<Array<{
     id: string; tenantId: string; slug: string; name: string; status: string;
     appArchetype: string; widgetJs: string | null; adminUiJs: string | null;

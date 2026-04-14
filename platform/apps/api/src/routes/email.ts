@@ -26,7 +26,7 @@ import {
   insertEmailDelivery,
   updateEmailDeliveryStatus,
   getTenantById,
-  getAppByIdOnly,
+  getAppByIdUnsafe,
   sql,
 } from "@new-one-two/db";
 import type { EmailType } from "@new-one-two/types";
@@ -117,7 +117,7 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
 
       // Authorize: verify caller owns this app's tenant
-      const appRecord = await getAppByIdOnly(appId);
+      const appRecord = await getAppByIdUnsafe(appId);
       if (!appRecord) return reply.status(404).send({ error: "App not found" });
       if (!requireTenant(req, reply, appRecord.tenantId)) return;
 
@@ -249,7 +249,7 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
     "/apps/:appId/stats",
     async (req, reply) => {
       const { appId } = req.params;
-      const appRecord = await getAppByIdOnly(appId);
+      const appRecord = await getAppByIdUnsafe(appId);
       if (!appRecord) return reply.status(404).send({ error: "App not found" });
       if (!requireTenant(req, reply, appRecord.tenantId)) return;
 

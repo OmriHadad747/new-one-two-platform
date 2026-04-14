@@ -127,7 +127,12 @@ export const worker = new Worker<WebhookJobPayload>(
   {
     connection: redisConnection,
     concurrency: CONCURRENCY,
-    // Lock timeout must be longer than max Cloud Run timeout (3600s) + buffer
+    // Lock timeout must outlive the harness's Cloud Run per-request timeout so
+    // a long but healthy invocation never has its job lock stolen by another
+    // worker. Today `deployToCloudRun` (packages/deployer/src/cloud-run-ops.ts)
+    // hardcodes the service timeout to 30s, so 60s lock + 15s renew leaves
+    // ~30s headroom. If the Cloud Run timeout is ever raised (e.g. to the
+    // Cloud Run max of 3600s), `lockDuration` must be raised to match.
     lockDuration: 60_000,
     lockRenewTime: 15_000,
   }

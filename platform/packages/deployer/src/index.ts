@@ -22,7 +22,7 @@ import {
   getActiveWebhookSubscriptionsForApp,
   deactivateAppInfrastructure,
   getTenantById,
-  getAppByIdOnly,
+  getAppById,
   getAppVersionSemvers,
   getLatestMigrationSqlForApp,
   hardDeleteApp,
@@ -309,10 +309,12 @@ export async function deployFeatureBundle(params: {
  *   3. Re-activates deployed_functions + webhook_subscriptions in DB
  *   4. Marks app as active
  */
-export async function reactivateApp(appId: string): Promise<void> {
-  const app = await getAppByIdOnly(appId);
+export async function reactivateApp(tenantId: string, appId: string): Promise<void> {
+  // Tenant-scoped lookup: a mismatched (tenantId, appId) pair returns null
+  // here instead of deactivating another tenant's infra.
+  const app = await getAppById(tenantId, appId);
   if (!app) {
-    throw new Error(`reactivateApp: app ${appId} not found`);
+    throw new Error(`reactivateApp: app ${appId} not found for tenant ${tenantId}`);
   }
 
   const tenant = await getTenantById(app.tenantId);
@@ -387,10 +389,12 @@ export async function reactivateApp(appId: string): Promise<void> {
  * Non-fatal per step — logs warnings and continues so partial failures
  * don't leave the app stuck in a non-deleted state.
  */
-export async function teardownApp(appId: string): Promise<void> {
-  const app = await getAppByIdOnly(appId);
+export async function teardownApp(tenantId: string, appId: string): Promise<void> {
+  // Tenant-scoped lookup: a mismatched (tenantId, appId) pair returns null
+  // here instead of tearing down another tenant's infra.
+  const app = await getAppById(tenantId, appId);
   if (!app) {
-    logger.warn({ appId }, "teardownApp: app not found, skipping");
+    logger.warn({ tenantId, appId }, "teardownApp: app not found for tenant, skipping");
     return;
   }
 
@@ -442,10 +446,12 @@ export async function teardownApp(appId: string): Promise<void> {
  * Steps 1–4 are non-fatal — failures are logged and execution continues.
  * Step 5 (DB delete) is the authoritative cleanup and will throw on failure.
  */
-export async function permanentDeleteApp(appId: string): Promise<void> {
-  const app = await getAppByIdOnly(appId);
+export async function permanentDeleteApp(tenantId: string, appId: string): Promise<void> {
+  // Tenant-scoped lookup: a mismatched (tenantId, appId) pair returns null
+  // here instead of deleting another tenant's app.
+  const app = await getAppById(tenantId, appId);
   if (!app) {
-    logger.warn({ appId }, "permanentDeleteApp: app not found, skipping");
+    logger.warn({ tenantId, appId }, "permanentDeleteApp: app not found for tenant, skipping");
     return;
   }
 

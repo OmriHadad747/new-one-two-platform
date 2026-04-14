@@ -13,7 +13,7 @@ export {
 
 export {
   getAppVersionWithCode,
-  getAppByIdOnly,
+  getAppByIdUnsafe,
   getActiveWebhookTopicsForTenant,
   updateVersionStatus,
   upsertDeployedFunction,
