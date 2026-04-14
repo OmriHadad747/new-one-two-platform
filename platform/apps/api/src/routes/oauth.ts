@@ -291,6 +291,12 @@ async function storeAccessToken(shop: string, accessToken: string): Promise<stri
   // that getSecret() can resolve it (needed for webhook registration during deploy).
   if (process.env["NODE_ENV"] !== "production") {
     const secretName = `projects/local/secrets/${shop.replace(".myshopify.com", "")}-access-token/versions/latest`;
+    // DEV-ONLY: the whole point of this log line is to give the operator the
+    // copy-pasteable SM_DEV_SECRETS entry for their local .env. Secret Manager
+    // isn't reachable in dev, so the token value has to be surfaced somewhere
+    // human-accessible — this is that place. Guarded by NODE_ENV !== "production"
+    // so the token value cannot reach production log aggregators. Do NOT ship
+    // dev logs to any shared destination.
     logger.info(
       { shop, secretName },
       "[dev] Access token not persisted to Secret Manager. " +
@@ -348,6 +354,8 @@ async function createStorefrontToken(shop: string, adminAccessToken: string): Pr
 async function storeStorefrontToken(shop: string, token: string): Promise<string> {
   if (process.env["NODE_ENV"] !== "production") {
     const secretName = `projects/local/secrets/${shop.replace(".myshopify.com", "")}-storefront-token/versions/latest`;
+    // DEV-ONLY: see storeAccessToken above — the log line is the operator's
+    // only path to the token value in local setups without Secret Manager.
     logger.info(
       { shop, secretName },
       "[dev] Storefront token not persisted to Secret Manager. " +

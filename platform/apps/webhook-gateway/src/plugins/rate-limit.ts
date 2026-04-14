@@ -20,11 +20,14 @@ export const rateLimitPlugin = fp(async (app: FastifyInstance) => {
     redis,
     max: 200,
     timeWindow: "1 minute",
-    // Key by tenantId + appId so each app gets its own bucket
+    // Key by tenantSlug + appSlug so each app gets its own bucket.
+    // The webhook route is registered as /:tenantSlug/:appSlug — earlier
+    // versions read tenantId/appId which never existed, causing every
+    // request to silently fall back to the shared request.ip bucket.
     keyGenerator: (request) => {
-      const { tenantId, appId } = (request.params as any) ?? {};
-      return tenantId && appId
-        ? `rl:${tenantId}:${appId}`
+      const { tenantSlug, appSlug } = (request.params as Record<string, string | undefined>) ?? {};
+      return tenantSlug && appSlug
+        ? `rl:${tenantSlug}:${appSlug}`
         : request.ip;
     },
     errorResponseBuilder: () => ({

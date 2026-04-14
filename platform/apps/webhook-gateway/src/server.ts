@@ -33,7 +33,20 @@ export async function buildServer() {
   await app.register(webhookRoutes, { prefix: "/webhook" });
   await app.register(resendWebhookRoutes, { prefix: "/webhook" });
 
-  // ── Graceful Shutdown ──────────────────────────────────────────────────────
+  return app;
+}
+
+// Start server unless imported as a module (for testing).
+//
+// Signal handlers are registered here — not inside buildServer() — so that
+// tests (or any other in-process consumer) that call buildServer() multiple
+// times don't attach duplicate SIGTERM/SIGINT listeners on the Node process
+// and trip MaxListenersExceededWarning.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const app = await buildServer();
+  await app.listen({ port: PORT, host: HOST });
+  logger.info({ port: PORT, host: HOST }, "Webhook gateway listening");
+
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "Shutting down gracefully...");
     await app.close();
@@ -44,13 +57,4 @@ export async function buildServer() {
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
-
-  return app;
-}
-
-// Start server unless imported as a module (for testing)
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const app = await buildServer();
-  await app.listen({ port: PORT, host: HOST });
-  logger.info({ port: PORT, host: HOST }, "Webhook gateway listening");
 }

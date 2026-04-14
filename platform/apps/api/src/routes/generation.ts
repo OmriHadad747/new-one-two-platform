@@ -27,7 +27,7 @@ import {
   saveChatMessages,
   updateAppStatus,
   updateAppArchetype,
-  getAppByIdOnly,
+  getAppByIdUnsafe,
   setAppUsesEmail,
   createAppEmailConfigFromStarter,
   isAppEmailConfigured,
@@ -388,7 +388,7 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       // Verify the app is in "ready" state.
       if (session.appId) {
-        const appRecord = await getAppByIdOnly(session.appId);
+        const appRecord = await getAppByIdUnsafe(session.appId);
         if (!appRecord || appRecord.status !== "ready") {
           return reply.status(409).send({
             error: `App must be in 'ready' state to deploy (current: ${appRecord?.status ?? "unknown"})`,
