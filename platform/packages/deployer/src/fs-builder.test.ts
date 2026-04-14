@@ -131,6 +131,19 @@ describeFs("createBuildContext — stricter input shape", () => {
     ).rejects.toThrow(/appId.*not a UUID/);
   });
 
+  it("rejects an uppercase-hex UUID — npm package names are lowercase-only", async () => {
+    // Postgres uuid_generate_v4() always returns lowercase hex, but the
+    // deployer no longer relies on that by coincidence: APP_ID_RE is
+    // case-sensitive so any upstream code that normalises a UUID to
+    // uppercase fails loud here instead of deep inside `npm install`.
+    // NB: pick a UUID with actual hex letters (a–f) so .toUpperCase()
+    // changes something — the all-zero APP_ID fixture is case-invariant.
+    const upper = "ABCDEF12-ABCD-4AB1-8AB1-ABCDEF123456";
+    await expect(
+      createBuildContext(upper, SEMVER, { "handler.js": HANDLER_STUB })
+    ).rejects.toThrow(/appId.*not a UUID/);
+  });
+
   it("rejects a non-semver version", async () => {
     await expect(
       createBuildContext(APP_ID, "latest", { "handler.js": HANDLER_STUB })

@@ -19,7 +19,10 @@ const HARNESS_RUNTIME_LOCKFILE = path.resolve(__dirname, "../../../apps/harness-
 // opaque npm validation diagnostic.
 //
 // appId is a uuid_generate_v4() result: 8-4-4-4-12 lowercase hex + hyphens.
-const APP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// No /i flag — Postgres always returns lowercase, and npm's package-name
+// grammar is lowercase-only, so tightening here catches any path that
+// somehow produces uppercase hex before it reaches `npm install`.
+const APP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // semver matches the DB CHECK constraint in 0001_core_schema.sql — major.minor.patch
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 

@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   ALLOWED_NPM_PACKAGES,
@@ -145,5 +148,117 @@ describe("toDependenciesMap", () => {
 
   it("returns an empty object for an empty list", () => {
     expect(toDependenciesMap([])).toEqual({});
+  });
+});
+
+// ─── Harness transitive overlap guard ─────────────────────────────────────────
+//
+// Node's module resolver walks `node_modules` from the caller's directory
+// upward BEFORE consulting NODE_PATH. Handler deps are installed into
+// `/app/handler_modules/node_modules` (exposed via NODE_PATH) but the harness
+// tree at `/app/node_modules/` wins the resolution race for any package that
+// appears in both.
+//
+// That silently shadows the handler's pinned-semver version for every
+// overlapping package — defeating the core C1 win (pinned-semver enforcement)
+// for those packages specifically.
+//
+// This guard reads the committed harness lockfile and fails CI the moment
+// any allowlisted package shows up in the harness's transitive closure
+// without being explicitly acknowledged in ACCEPTED_OVERLAPS below. The goal
+// is NOT to forbid overlaps outright — the GCP deps have a large transitive
+// footprint and the allowlist will keep growing — but to force a conscious
+// decision every time a new overlap appears:
+//
+//   (a) drop the package from ALLOWED_NPM_PACKAGES and document that
+//       handlers get the harness-pinned version, or
+//   (b) add it to ACCEPTED_OVERLAPS with a short rationale.
+//
+// Follow-up: file an issue to drop `uuid` from the allowlist (on both sides
+// — the TS set here AND generator/subagents/static_validation.py), and note
+// in handler-writing docs that require("uuid") is always available via the
+// harness at the version pinned by runtime-package-lock.json. Deferred out
+// of this PR to avoid a cross-repo / generator-regeneration change.
+const ACCEPTED_OVERLAPS: ReadonlySet<string> = new Set([
+  // uuid@9.0.1 is transitively pulled by @google-cloud/* and
+  // google-auth-library. The allowlist declares uuid at a version that
+  // matches what the lockfile pins today, so the overlap is benign —
+  // require("uuid") from a handler resolves through /app/node_modules to
+  // 9.0.1 either way. To be removed in a follow-up PR that also drops it
+  // from the Python side of the allowlist.
+  "uuid",
+]);
+
+describe("harness transitive overlap guard", () => {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const LOCKFILE = path.resolve(
+    __dirname,
+    "../../../apps/harness-runtime/runtime-package-lock.json"
+  );
+
+  interface NpmLockfile {
+    packages?: Record<string, { version?: string }>;
+  }
+
+  async function readHarnessPackages(): Promise<Map<string, string>> {
+    const raw = await fs.readFile(LOCKFILE, "utf8");
+    const parsed = JSON.parse(raw) as NpmLockfile;
+    const present = new Map<string, string>();
+    for (const [key, value] of Object.entries(parsed.packages ?? {})) {
+      if (!key) continue;
+      // Keys look like "node_modules/<name>" or
+      // "node_modules/<name>/node_modules/<transitive>" for nested installs.
+      // We want the LAST segment that comes after "node_modules/".
+      const match = [...key.matchAll(/node_modules\/((?:@[^/]+\/)?[^/]+)/g)].pop();
+      if (!match) continue;
+      const name = match[1];
+      if (name !== undefined && value.version) {
+        present.set(name, value.version);
+      }
+    }
+    return present;
+  }
+
+  it("the lockfile is parseable and non-empty", async () => {
+    const harnessPackages = await readHarnessPackages();
+    expect(harnessPackages.size).toBeGreaterThan(0);
+  });
+
+  it("every overlap between the allowlist and the harness lockfile is acknowledged in ACCEPTED_OVERLAPS", async () => {
+    const harnessPackages = await readHarnessPackages();
+    const overlap = [...ALLOWED_NPM_PACKAGES].filter((pkg) =>
+      harnessPackages.has(pkg)
+    );
+    const unacknowledged = overlap.filter((pkg) => !ACCEPTED_OVERLAPS.has(pkg));
+
+    if (unacknowledged.length > 0) {
+      const details = unacknowledged
+        .map((p) => `  - ${p} (harness pins ${harnessPackages.get(p)})`)
+        .join("\n");
+      throw new Error(
+        `New unacknowledged overlap between ALLOWED_NPM_PACKAGES and the harness ` +
+          `lockfile at apps/harness-runtime/runtime-package-lock.json:\n${details}\n\n` +
+          `A handler declaring any of these packages will silently receive the ` +
+          `harness-pinned version (resolved via /app/node_modules, which takes ` +
+          `priority over NODE_PATH).\n\n` +
+          `Decide one of:\n` +
+          `  (a) drop the package from ALLOWED_NPM_PACKAGES and document that ` +
+          `handlers get the harness-pinned version via /app/node_modules, or\n` +
+          `  (b) add the package to ACCEPTED_OVERLAPS in this test file with a ` +
+          `short rationale, when the version-match is intentional and stable.`
+      );
+    }
+    expect(unacknowledged).toEqual([]);
+  });
+
+  it("every entry in ACCEPTED_OVERLAPS is still present in the allowlist and the lockfile", async () => {
+    // Housekeeping: if a harness dep is dropped or the allowlist changes,
+    // stale entries in ACCEPTED_OVERLAPS become dead weight. Fail so the
+    // maintainer prunes them.
+    const harnessPackages = await readHarnessPackages();
+    const stale = [...ACCEPTED_OVERLAPS].filter(
+      (pkg) => !ALLOWED_NPM_PACKAGES.has(pkg) || !harnessPackages.has(pkg)
+    );
+    expect(stale).toEqual([]);
   });
 });

@@ -16,6 +16,16 @@
 //
 // Keep the list tight. Each entry is runtime code we ship to tenants; every
 // new dependency expands the audit surface for every merchant.
+//
+// ⚠️ Handler deps are installed into /app/handler_modules/node_modules via
+// NODE_PATH, but Node's resolver walks /app/node_modules FIRST. Any package
+// in this allowlist that is ALSO a transitive of the harness GCP deps will
+// silently resolve to the harness-pinned version in handlers — defeating the
+// whole point of pinning it here. The CI guard in npm-allowlist.test.ts
+// reads apps/harness-runtime/runtime-package-lock.json and fails on any new
+// overlap; see the ACCEPTED_OVERLAPS block there for the currently-known
+// cases. Today only `uuid` overlaps (the harness pulls it in via
+// google-auth-library at the same version we declare here).
 
 export const ALLOWED_NPM_PACKAGES: ReadonlySet<string> = new Set([
   "qrcode",
