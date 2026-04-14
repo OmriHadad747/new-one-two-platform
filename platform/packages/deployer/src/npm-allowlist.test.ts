@@ -21,6 +21,18 @@ describe("packageBaseName", () => {
     expect(packageBaseName("uuid")).toBe("uuid");
     expect(packageBaseName("@xmldom/xmldom")).toBe("@xmldom/xmldom");
   });
+
+  // The following edge cases can only arise if a caller bypasses
+  // validateNpmPackages. We pin the observable behaviour so callers that
+  // forward unknown input into packageBaseName get a deterministic answer
+  // rather than a surprise.
+  it("handles '@scope' with no trailing name or version", () => {
+    expect(packageBaseName("@scope")).toBe("@scope");
+  });
+
+  it("handles '@scope/name' with no @version", () => {
+    expect(packageBaseName("@scope/name")).toBe("@scope/name");
+  });
 });
 
 describe("packageVersion", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateMigrationSql } from "./migration-runner.js";
+import { makeIdempotent, validateMigrationSql } from "./migration-runner.js";
 
 // Minimal legitimate template with tenant_id — used as a base for "allow" cases.
 const BASE_TABLE = `
@@ -158,5 +158,35 @@ describe("validateMigrationSql — structural rules", () => {
   it("rejects CREATE TABLE missing tenant_id", () => {
     const sql = `CREATE TABLE IF NOT EXISTS subscribers (id UUID PRIMARY KEY, email TEXT);`;
     expect(() => validateMigrationSql(sql)).toThrow(/missing tenant_id/);
+  });
+});
+
+describe("validate → makeIdempotent order contract", () => {
+  // These tests pin the order that runTenantMigration runs today:
+  //   1. validateMigrationSql(sql)        — runs on RAW LLM input
+  //   2. makeIdempotent(sql)              — produces DO $migration$ blocks
+  // If a future refactor reverses these, or runs validation a second time on
+  // the idempotent output "for safety", every migration with a policy will
+  // start failing. These tests lock the contract so the failure surfaces in
+  // CI rather than in a production deploy.
+
+  const validPolicySql =
+    `CREATE POLICY p ON foo USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID);`;
+
+  it("validateMigrationSql accepts a CREATE POLICY statement", () => {
+    expect(() => validateMigrationSql(validPolicySql)).not.toThrow();
+  });
+
+  it("makeIdempotent wraps CREATE POLICY in a DO $migration$ block", () => {
+    const out = makeIdempotent(validPolicySql);
+    expect(out).toMatch(/DO \$migration\$/);
+    expect(out).toMatch(/EXCEPTION WHEN duplicate_object/);
+  });
+
+  it("validateMigrationSql REJECTS the output of makeIdempotent — order contract", () => {
+    // If validation ever runs on the rewritten SQL, it will reject the
+    // DO $migration$ block as a PL/pgSQL escape hatch.
+    const out = makeIdempotent(validPolicySql);
+    expect(() => validateMigrationSql(out)).toThrow(/DO \$/);
   });
 });

@@ -24,6 +24,13 @@
  * pg-query-emscripten rather than a regex denylist. This module's tests
  * pin the current behaviour so that refactor can land without regressing
  * any of the rejections below.
+ *
+ * Caveat: the regexes run against raw SQL — they match inside comments and
+ * string literals too. A line like `-- will DELETE FROM old` or
+ * `COMMENT ON TABLE t IS 'TRUNCATE reminder'` will be rejected. This is
+ * intentional conservatism (fail closed); operators should rewrite such
+ * comments to use different wording. The AST-based allowlist in H10 will
+ * make this precise.
  */
 import { withTenantContext } from "@new-one-two/db";
 import { logger } from "@new-one-two/logger";
@@ -138,8 +145,15 @@ export function validateMigrationSql(migrationSql: string): void {
  * This eliminates the entire class of 42P07 (relation already exists) and
  * 42710 (duplicate_object) errors on revision re-deploys without any prompt
  * engineering — the runner just guarantees idempotency at the infrastructure level.
+ *
+ * ⚠️ Must run AFTER `validateMigrationSql`. The CREATE POLICY rewrite emits a
+ * `DO $migration$` block, which the validator denies as an escape hatch
+ * (see FORBIDDEN_PATTERNS). Exported so the test suite can pin this order
+ * contract both ways: the validator accepts the input, then rejects this
+ * function's output. If any future refactor runs validation on the idempotent
+ * SQL, every migration with a policy will start failing.
  */
-function makeIdempotent(sql: string): string {
+export function makeIdempotent(sql: string): string {
   return sql
     // CREATE TABLE foo → CREATE TABLE IF NOT EXISTS foo (skip if already has IF NOT EXISTS)
     .replace(

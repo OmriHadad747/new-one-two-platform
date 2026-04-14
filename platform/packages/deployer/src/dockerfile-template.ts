@@ -1,29 +1,51 @@
 /**
- * Builds the tenant-container Dockerfile. The npmPackages argument is only a
- * HINT for whether to include the handler-deps install step — the actual
- * package list is written to a separate `handler-deps.json` file by the
- * build-context builder and COPY'd into the image. This sidesteps shell-arg
- * expansion entirely: nothing from the LLM ever reaches `npm install` as a
- * command-line argument.
+ * Builds the tenant-container Dockerfile.
  *
- * Two install steps:
- *   1. Harness runtime (GCP deps) — reproducible via `npm ci` against a
- *      committed lockfile.
- *   2. Handler deps (LLM-authored, allowlisted + pinned-semver upstream) —
- *      `npm install --ignore-scripts` so a compromised package cannot run
- *      preinstall/postinstall scripts during the build.
+ * The image contains TWO isolated dependency trees:
+ *
+ *   /app/node_modules/                        ← harness GCP deps
+ *     @google-cloud/kms, @google-cloud/secret-manager, google-auth-library
+ *     Installed via `npm ci` against the committed runtime-package-lock.json
+ *     so M7 reproducibility holds.
+ *
+ *   /app/handler_modules/node_modules/         ← handler deps (LLM-authored)
+ *     The packages declared in the bundle's _metadata.json, validated against
+ *     the allowlist in npm-allowlist.ts and installed with --ignore-scripts.
+ *
+ * They are kept separate — not merged into a single `/app/package.json` — to
+ * prevent `npm install` for the handler step from pruning the harness deps
+ * (earlier revision of this template did exactly that: `npm install` against
+ * a freshly-written package.json with just the handler deps deleted the
+ * harness's /app/node_modules entries, and server.cjs then failed with
+ * MODULE_NOT_FOUND on the `@google-cloud/*` externals at startup).
+ *
+ * Resolution at runtime:
+ *   - server.cjs is a Node process started from /app, so `require("@google-cloud/kms")`
+ *     resolves via /app/node_modules — the harness tree.
+ *   - handler.js is loaded via require(HANDLER_PATH = /app/handler.js). A bare
+ *     `require("uuid")` from handler.js walks up from /app/node_modules (not
+ *     there) to the ancestor /node_modules (not there) and then falls through
+ *     to NODE_PATH, which we set to /app/handler_modules/node_modules.
+ *
+ * Nothing from the LLM ever reaches npm as a command-line argument — the
+ * package list is COPY'd in as handler-deps.json (a package.json-shaped
+ * document pre-validated by npm-allowlist.ts) and renamed at build time.
  */
 export function buildDockerfile(npmPackages: string[] = []): string {
-  // Handler deps step is emitted only when the bundle declared any.
+  // Handler deps step is emitted only when the bundle declared any. Installed
+  // into /app/handler_modules/ so the step cannot prune /app/node_modules.
   const handlerDepsStep =
     npmPackages.length > 0
-      ? `# Handler dependencies (allowlisted + pinned by the deployer validator).
-# --ignore-scripts: a compromised/typosquatted package cannot execute its
-# preinstall/postinstall during the build. --no-audit/--no-fund: quiet.
-COPY handler-deps.json ./handler-deps.json
-RUN mv handler-deps.json package.json \\
- && npm install --omit=dev --ignore-scripts --no-audit --no-fund \\
- && rm package.json
+      ? `# Handler dependencies (allowlisted + pinned-semver by the deployer
+# validator). Installed into a separate directory so this step can never
+# prune /app/node_modules (where the harness GCP deps live). --ignore-scripts:
+# a compromised/typosquatted package cannot execute its preinstall/postinstall
+# during the build. --no-audit/--no-fund: quiet the irrelevant npm nags.
+COPY handler-deps.json ./handler_modules/package.json
+RUN cd handler_modules \\
+ && npm install --omit=dev --ignore-scripts --no-audit --no-fund
+ENV NODE_PATH=/app/handler_modules/node_modules
+
 `
       : "";
 

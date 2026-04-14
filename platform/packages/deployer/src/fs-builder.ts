@@ -12,12 +12,30 @@ const HARNESS_BUNDLE = path.resolve(__dirname, "../../../apps/harness-runtime/di
 const HARNESS_RUNTIME_PACKAGE = path.resolve(__dirname, "../../../apps/harness-runtime/runtime-package.json");
 const HARNESS_RUNTIME_LOCKFILE = path.resolve(__dirname, "../../../apps/harness-runtime/runtime-package-lock.json");
 
+// npm's package.json grammar is stricter than UUIDs / our semver column: names
+// must be lowercase, 214 chars max, [a-z0-9._-] with optional @scope/. We pin
+// the shapes the deployer actually produces so a malformed input fails at the
+// deployer boundary with a clear error rather than mid-Docker-build with an
+// opaque npm validation diagnostic.
+//
+// appId is a uuid_generate_v4() result: 8-4-4-4-12 lowercase hex + hyphens.
+const APP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// semver matches the DB CHECK constraint in 0001_core_schema.sql — major.minor.patch
+const SEMVER_RE = /^\d+\.\d+\.\d+$/;
+
 export async function createBuildContext(
   appId: string,
   semver: string,
   generatedCode: Record<string, string>,
   npmPackages: string[] = []
 ): Promise<string> {
+  if (!APP_ID_RE.test(appId)) {
+    throw new Error(`createBuildContext: appId '${appId}' is not a UUID`);
+  }
+  if (!SEMVER_RE.test(semver)) {
+    throw new Error(`createBuildContext: semver '${semver}' is not major.minor.patch`);
+  }
+
   // Defense in depth: parseMetadata has already validated npmPackages, but
   // re-check here so a future caller that skips the metadata path cannot
   // smuggle a bad list past the allowlist.
