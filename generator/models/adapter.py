@@ -53,7 +53,8 @@ class LLMResponse:
 # wastes a content block. System prompts for the large agents (handler,
 # architect, revision) easily clear this; the small ones (product classifier)
 # do not.
-_CACHE_MIN_CHARS = 3500
+# 4096 chars ≈ 1024 tokens at ~4 chars/token — a safe margin above the floor.
+_CACHE_MIN_CHARS = 4096
 
 
 def get_llm(max_tokens: int = 2048, model: Optional[str] = None) -> ChatAnthropic:

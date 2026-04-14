@@ -514,7 +514,7 @@ def _top_level_keys_of(code: str, start_idx: int) -> set:
                 at_key_position = False
             elif c == ",":
                 at_key_position = True
-            elif at_key_position and c.isalnum() or c == "_" or c == "$":
+            elif at_key_position and (c.isalnum() or c == "_" or c == "$"):
                 if key_start == -1:
                     key_start = i
         i += 1
@@ -975,32 +975,74 @@ FORBIDDEN_WIDGET_JS_PATTERNS = [
 #   - No explicit delay (setTimeout(fn))          — defaults to 0 but opens the door to
 #                                                   patterns the validator can't inspect.
 _MAX_DEBOUNCE_MS = 500
-_SETTIMEOUT_CALL_RE = re.compile(
-    r"\bsetTimeout\s*\(\s*[^,]+,\s*(\d+|\w[\w\.]*)\s*\)"
-)
+
+
+def _extract_settimeout_delays(js: str) -> List[Optional[str]]:
+    """
+    For each setTimeout( call in js, return the delay (second top-level argument)
+    as a stripped string, or None when no second argument is present.
+
+    Uses a character scanner instead of a regex so that callbacks containing
+    commas (arrow functions, multi-param functions, block bodies) are handled
+    correctly.  Example: setTimeout(() => search(q, page), 300) → "300".
+    """
+    delays: List[Optional[str]] = []
+    for m in re.finditer(r"\bsetTimeout\s*\(", js):
+        i = m.end()           # index just past the opening '('
+        n = len(js)
+        depth = 1             # we're inside the outer '('
+        in_string: Optional[str] = None
+        first_top_comma: Optional[int] = None
+
+        while i < n and depth > 0:
+            c = js[i]
+            if in_string:
+                if c == "\\":
+                    i += 2
+                    continue
+                if c == in_string:
+                    in_string = None
+            elif c in ('"', "'", "`"):
+                in_string = c
+            elif c in ("(", "[", "{"):
+                depth += 1
+            elif c in (")", "]", "}"):
+                depth -= 1
+            elif c == "," and depth == 1 and first_top_comma is None:
+                # Only the FIRST top-level comma separates callback from delay.
+                first_top_comma = i
+            i += 1
+
+        if first_top_comma is None:
+            delays.append(None)   # no second argument
+            continue
+
+        # i now points one past the closing ')'; js[i-1] == ')'
+        delay_str = js[first_top_comma + 1 : i - 1].strip()
+        delays.append(delay_str)
+
+    return delays
 
 
 def _find_setTimeout_violations(js: str) -> List[str]:
     """Return error strings for each disallowed setTimeout usage."""
     errs: List[str] = []
-    # First flag calls that don't match the literal-numeric pattern at all.
-    simple_calls = re.findall(r"\bsetTimeout\s*\(", js)
-    matched = _SETTIMEOUT_CALL_RE.findall(js)
-    if len(simple_calls) > len(matched):
-        errs.append(
-            "setTimeout call missing an explicit numeric delay argument — "
-            "only setTimeout(fn, <literal ms ≤ 500>) is allowed"
-        )
-    for delay_tok in matched:
-        if not delay_tok.isdigit():
+    delays = _extract_settimeout_delays(js)
+
+    for delay_str in delays:
+        if delay_str is None:
             errs.append(
-                f"setTimeout delay '{delay_tok}' is not a numeric literal — "
+                "setTimeout call missing an explicit numeric delay argument — "
+                "only setTimeout(fn, <literal ms ≤ 500>) is allowed"
+            )
+        elif not delay_str.isdigit():
+            errs.append(
+                f"setTimeout delay '{delay_str}' is not a numeric literal — "
                 "only literal millisecond values ≤ 500 are allowed (debounce / throttle only)"
             )
-            continue
-        if int(delay_tok) > _MAX_DEBOUNCE_MS:
+        elif int(delay_str) > _MAX_DEBOUNCE_MS:
             errs.append(
-                f"setTimeout delay {delay_tok}ms exceeds {_MAX_DEBOUNCE_MS}ms — "
+                f"setTimeout delay {delay_str}ms exceeds {_MAX_DEBOUNCE_MS}ms — "
                 "use event-driven patterns, not timers"
             )
     return errs

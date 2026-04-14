@@ -80,19 +80,22 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _check_deadline(request: "GenerationRequest", start_ms: int) -> None:
+def _check_deadline(request: "GenerationRequest", start_ms: int, phase: str) -> None:
     """
     Fail fast if we've already exceeded the pipeline deadline.
 
     Called at phase boundaries — won't interrupt an in-flight LLM call, but
     prevents spending more time on a run that's already over budget. Combines
     with per-call timeouts in models/adapter.py to bound total duration.
+
+    `phase` is the name of the phase that just completed (e.g. "product",
+    "architect") and is used as the agent label on the failure event.
     """
     elapsed_s = (_now_ms() - start_ms) / 1000
     if elapsed_s > _PIPELINE_DEADLINE_S:
         _fail_and_abort(
             request,
-            "validation",
+            phase,
             f"Generation exceeded {_PIPELINE_DEADLINE_S}s deadline",
             f"Pipeline deadline exceeded after {elapsed_s:.0f}s "
             f"(budget: {_PIPELINE_DEADLINE_S}s).",
@@ -146,7 +149,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
 
     try:
         intent = _phase_product(request, agent_trace)
-        _check_deadline(request, start_ms)
+        _check_deadline(request, start_ms, "product")
 
         archetype = intent["appCategory"]
         is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
@@ -160,7 +163,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
         )
 
         plan, api_context = _phase_architect(request, intent, agent_trace)
-        _check_deadline(request, start_ms)
+        _check_deadline(request, start_ms, "architect")
 
         prior_bundle = request.priorBundle or {}
         base_ctx = CodegenContext(
@@ -184,12 +187,12 @@ def run_feature_generation(request: GenerationRequest) -> None:
         artifacts = _phase_codegen(
             request, base_ctx, is_storefront, is_admin_ui, agent_trace
         )
-        _check_deadline(request, start_ms)
+        _check_deadline(request, start_ms, "codegen")
 
         artifacts = _phase_validator(
             request, base_ctx, artifacts, is_storefront, is_admin_ui, agent_trace
         )
-        _check_deadline(request, start_ms)
+        _check_deadline(request, start_ms, "validator")
 
         explanation = _phase_explanation(
             request, intent, plan, artifacts, is_storefront, agent_trace
@@ -799,14 +802,11 @@ def run_codegen_parallel(
             pair = {a, b}
             if not (pair & to_run_names):
                 continue  # neither side is running — nothing to couple
-            # When the partner side is ALREADY in to_run (its own validator
-            # flagged a mismatch), include it — that's its own error path.
-            # Otherwise only pull it in if the handler's issues are contract-shaped.
-            partner_already_running = bool(pair - {a} & to_run_names) and bool(
-                pair - {b} & to_run_names
-            )
-            should_couple = partner_already_running or handler_contract_broken
-            if not should_couple:
+            # Only drag the partner in when the handler's errors are contract-shaped.
+            # Non-contract handler errors (missing npmPackages, forbidden setInterval,
+            # etc.) don't touch ctx.widgetBody / ctx.adminBody, so re-running the
+            # partner burns tokens with no benefit.
+            if not handler_contract_broken:
                 log.info(
                     "codegen: skipping coupled retry of %s — handler errors are not contract-related",
                     ", ".join(sorted(pair - to_run_names)),
