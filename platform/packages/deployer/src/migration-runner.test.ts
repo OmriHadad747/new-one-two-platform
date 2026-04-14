@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeIdempotent, validateMigrationSql } from "./migration-runner.js";
+import { formatDropIdentifier, makeIdempotent, validateMigrationSql } from "./migration-runner.js";
 
 // Minimal legitimate template with tenant_id — used as a base for "allow" cases.
 const BASE_TABLE = `
@@ -188,5 +188,75 @@ describe("validate → makeIdempotent order contract", () => {
     // DO $migration$ block as a PL/pgSQL escape hatch.
     const out = makeIdempotent(validPolicySql);
     expect(() => validateMigrationSql(out)).toThrow(/DO \$/);
+  });
+});
+
+describe("formatDropIdentifier — rollback identifier shapes", () => {
+  // Regression tests for the rollback regex. An earlier version captured
+  // only `\w+|"[^"]+"`, so `CREATE TABLE public.foo (...)` captured just
+  // `public` and rollback issued `DROP TABLE IF EXISTS "public" CASCADE` —
+  // wrong object, and dangerous if a public-qualified relation existed in
+  // the tenant's search_path. This suite pins the correct DROP shape for
+  // every identifier form the validator permits.
+
+  it("wraps a bare word in double quotes (safe for reserved words)", () => {
+    expect(formatDropIdentifier("subscribers")).toBe(`"subscribers"`);
+    expect(formatDropIdentifier("order")).toBe(`"order"`);
+  });
+
+  it("leaves a pre-quoted identifier verbatim", () => {
+    expect(formatDropIdentifier(`"My Table"`)).toBe(`"My Table"`);
+  });
+
+  it("leaves a schema-qualified identifier verbatim — not wrapped as one string", () => {
+    expect(formatDropIdentifier("public.foo")).toBe("public.foo");
+  });
+
+  it("leaves a schema.\"quoted\" identifier verbatim", () => {
+    expect(formatDropIdentifier(`public."My Table"`)).toBe(`public."My Table"`);
+  });
+});
+
+describe("rollback regex — schema-qualified capture", () => {
+  // Re-derive the regex from the module's behaviour — the test exercises
+  // the actual shape in migration-runner.ts's rollbackTenantMigration.
+  // Keeping this literal inline as the source of truth for what captures.
+  const IDENT = `(?:"[^"]+"|\\w+)`;
+  const CREATE_TABLE_RE = new RegExp(
+    `CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?((?:${IDENT}\\.)?${IDENT})`,
+    "gi"
+  );
+
+  function captureTables(sql: string): string[] {
+    return [...sql.matchAll(CREATE_TABLE_RE)].map((m) => m[1] ?? "");
+  }
+
+  it("captures a bare table name", () => {
+    expect(captureTables("CREATE TABLE foo (tenant_id UUID);")).toEqual(["foo"]);
+  });
+
+  it("captures a schema-qualified name as the full identifier", () => {
+    // Regression: the previous regex captured only `public` here.
+    expect(captureTables("CREATE TABLE public.foo (tenant_id UUID);")).toEqual([
+      "public.foo",
+    ]);
+  });
+
+  it("captures a quoted table name", () => {
+    expect(captureTables(`CREATE TABLE "My Table" (tenant_id UUID);`)).toEqual([
+      `"My Table"`,
+    ]);
+  });
+
+  it("captures a schema-qualified quoted name", () => {
+    expect(
+      captureTables(`CREATE TABLE public."My Table" (tenant_id UUID);`)
+    ).toEqual([`public."My Table"`]);
+  });
+
+  it("captures across IF NOT EXISTS without eating `IF`", () => {
+    expect(
+      captureTables("CREATE TABLE IF NOT EXISTS public.foo (tenant_id UUID);")
+    ).toEqual(["public.foo"]);
   });
 });

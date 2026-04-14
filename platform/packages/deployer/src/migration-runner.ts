@@ -203,42 +203,73 @@ export async function runTenantMigration(
  *
  * Extracts table names from CREATE TABLE statements and issues DROP TABLE IF EXISTS.
  * This is best-effort: if the DROP fails, the migration is left in place.
+ *
+ * Identifier forms supported (the forms the validator in validateMigrationSql
+ * already accepts via its permissive [\\w."]+ matcher):
+ *
+ *   CREATE TABLE foo                      → DROP TABLE IF EXISTS "foo"
+ *   CREATE TABLE IF NOT EXISTS foo        → DROP TABLE IF EXISTS "foo"
+ *   CREATE TABLE "My Table"               → DROP TABLE IF EXISTS "My Table"
+ *   CREATE TABLE public.foo               → DROP TABLE IF EXISTS public.foo
+ *   CREATE TABLE public."My Table"        → DROP TABLE IF EXISTS public."My Table"
+ *
+ * An earlier version of the regex captured only `[\\w"]+|"[^"]+"`, so
+ * `CREATE TABLE public.foo` captured just `public`, and rollback issued
+ * `DROP TABLE IF EXISTS "public" CASCADE` — wrong object, and dangerous if a
+ * public.-prefixed relation existed in the tenant's search_path.
  */
 export async function rollbackTenantMigration(
   tenantId: string,
   migrationSql: string
 ): Promise<void> {
-  // Match CREATE TABLE [IF NOT EXISTS] <identifier> where <identifier> is
-  // either a bare word or a double-quoted name. Without the IF NOT EXISTS
-  // group the older regex captured the literal word "IF" as a table name
-  // whenever the LLM emitted `CREATE TABLE IF NOT EXISTS ...`, producing
-  // `DROP TABLE IF EXISTS IF CASCADE` — a syntax error that aborted the
-  // whole rollback transaction.
-  const CREATE_TABLE_RE =
-    /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?("[^"]+"|\w+)/gi;
-  const tableNames = [...migrationSql.matchAll(CREATE_TABLE_RE)]
-    .map((m) => m[1])
-    .filter((name): name is string => Boolean(name))
-    // Strip surrounding quotes so we can re-quote consistently below.
-    .map((name) => (name.startsWith('"') ? name.slice(1, -1) : name));
+  // One identifier part: either a bare word or a double-quoted name.
+  const IDENT = `(?:"[^"]+"|\\w+)`;
+  // A full identifier: optionally schema-qualified.
+  const CREATE_TABLE_RE = new RegExp(
+    `CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?((?:${IDENT}\\.)?${IDENT})`,
+    "gi"
+  );
 
-  if (tableNames.length === 0) return;
+  const tableIdentifiers = [...migrationSql.matchAll(CREATE_TABLE_RE)]
+    .map((m) => m[1])
+    .filter((name): name is string => Boolean(name));
+
+  if (tableIdentifiers.length === 0) return;
 
   try {
     await withTenantContext(tenantId, async (tx) => {
-      for (const tableName of tableNames) {
-        logger.warn({ tenantId, tableName }, "Rolling back migration table");
-        // Always quote the identifier so reserved words and mixed-case names
-        // round-trip safely. The capture group above only allows a bare word
-        // or a double-quoted name, so interpolating it into the quoted form
-        // cannot produce a SQL-injection vector.
-        await tx.unsafe(`DROP TABLE IF EXISTS "${tableName}" CASCADE`);
+      for (const ident of tableIdentifiers) {
+        logger.warn({ tenantId, ident }, "Rolling back migration table");
+        // Safe interpolation: the capture group above only accepts a
+        // schema-qualified identifier whose parts are each either `\\w+` or
+        // `"[^"]+"` — nothing in either branch can contain a SQL-breaking
+        // character. We emit:
+        //   - schema-qualified (contains a `.` outside of quotes) verbatim
+        //   - quoted identifier verbatim
+        //   - bare word wrapped in double quotes so reserved words
+        //     round-trip safely
+        const dropTarget = formatDropIdentifier(ident);
+        await tx.unsafe(`DROP TABLE IF EXISTS ${dropTarget} CASCADE`);
       }
     });
   } catch (err) {
     logger.error(
-      { err, tenantId, tableNames },
+      { err, tenantId, tableIdentifiers },
       "Migration rollback failed — tables may remain"
     );
   }
+}
+
+/**
+ * Formats an identifier captured by `CREATE_TABLE_RE` for use in a
+ * `DROP TABLE IF EXISTS <target> CASCADE` statement. Exported for tests so the
+ * behaviour is pinned for every shape the validator permits.
+ */
+export function formatDropIdentifier(captured: string): string {
+  // Schema-qualified or quoted forms parse correctly as-is.
+  if (captured.includes(".") || captured.includes('"')) {
+    return captured;
+  }
+  // Bare word: quote for safety (reserved words like `ORDER`, `USER`).
+  return `"${captured}"`;
 }
