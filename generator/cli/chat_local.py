@@ -2,7 +2,8 @@
 """
 Interactive chat CLI — mirrors the platform's chat page experience.
 
-Runs the multi-turn product agent clarification loop, then runs the generation
+Runs the multi-turn product agent clarification loop, then shows the
+component picker (Backend / Widget / Admin UI), then runs the generation
 pipeline phase by phase. Use --stop-after to halt at a specific phase.
 
 USAGE
@@ -14,7 +15,7 @@ USAGE
 
 OUTPUT
 ------
-  Console: live per-agent progress lines
+  Console: live per-agent progress lines with token counts
   File (stop-after=arch):     test_results/<ts>_<slug>_arch.json
   File (stop-after=codegen/validator or full): test_results/<ts>_<slug>.md
 """
@@ -28,16 +29,28 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 _HERE = Path(__file__).resolve().parent
 _GENERATOR_ROOT = _HERE.parent
 os.chdir(_GENERATOR_ROOT)
 sys.path.insert(0, str(_GENERATOR_ROOT))
+sys.path.insert(0, str(_HERE))  # allow importing cli/db_local
+
+# Redirect all generator logs to file — keeps the terminal output clean
+import logging as _log
+(_HERE / "test_results").mkdir(exist_ok=True)
+_log.basicConfig(
+    handlers=[_log.FileHandler(_HERE / "test_results" / "generation.log")],
+    level=_log.DEBUG,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    force=True,
+)
 
 from shopify_mcp.client import prefetch_for_run
 from subagents.architect_agent import run_architect_agent, _ARCHITECT_USER_TEMPLATE
 from subagents.base import CodegenContext
+from subagents.email_metadata import extract_email_metadata
 from subagents.explanation_agent import run_explanation_agent
 from subagents.product_agent import run_product_agent_analyze
 from subagents.revision_agent import run_revision_agent
@@ -54,13 +67,13 @@ StopAfter = Literal["arch", "codegen", "validator", "full"]
 # ── Display helpers ────────────────────────────────────────────────────────────
 
 _W = 80
-_RESET = "\033[0m"
-_BOLD = "\033[1m"
-_DIM = "\033[2m"
-_CYAN = "\033[36m"
-_GREEN = "\033[32m"
+_RESET  = "\033[0m"
+_BOLD   = "\033[1m"
+_DIM    = "\033[2m"
+_CYAN   = "\033[36m"
+_GREEN  = "\033[32m"
 _YELLOW = "\033[33m"
-_RED = "\033[31m"
+_RED    = "\033[31m"
 
 
 def _hr(char: str = "─") -> None:
@@ -76,9 +89,9 @@ def _info(text: str) -> None:
 
 
 def _agent_line(name: str, ok: bool, ms: Optional[int], notes: str = "") -> None:
-    icon = f"{_GREEN}✓{_RESET}" if ok else f"{_RED}✗{_RESET}"
+    icon   = f"{_GREEN}✓{_RESET}" if ok else f"{_RED}✗{_RESET}"
     timing = f"{ms}ms" if ms is not None else "—"
-    line = f"  {name:<14} {icon}  {_DIM}{timing:<8}{_RESET}  {notes}".rstrip()
+    line   = f"  {name:<14} {icon}  {_DIM}{timing:<8}{_RESET}  {notes}".rstrip()
     print(f"\r{line:<{_W}}")
 
 
@@ -89,6 +102,17 @@ def _spinner(name: str) -> None:
 def _retry_line(name: str, notes: str) -> None:
     line = f"  {name:<14} {_YELLOW}↻{_RESET}  {'':8}  {_DIM}{notes[:60]}{_RESET}".rstrip()
     print(f"\r{line:<{_W}}")
+
+
+def _ktok(n: int) -> str:
+    """Format token count as e.g. '2.4k' or '850'."""
+    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+
+def _tok_note(in_tok: int, out_tok: int, extra: str = "") -> str:
+    """'in=2.4k out=0.8k' — append extra if provided."""
+    base = f"in={_ktok(in_tok)} out={_ktok(out_tok)}"
+    return f"{base}  {extra}" if extra else base
 
 
 # ── Clarification loop ─────────────────────────────────────────────────────────
@@ -102,7 +126,7 @@ def _ask_user(prompt_text: str) -> str:
         sys.exit(0)
 
 
-def _clarify(history: List[Dict[str, str]]) -> tuple[Dict[str, Any], List[Dict[str, str]]]:
+def _clarify(history: List[Dict[str, str]]) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
     """
     Drive the multi-turn product agent until it returns status='ready'.
     Accepts an existing history (so clarification can be resumed after a 'ready' response).
@@ -116,12 +140,11 @@ def _clarify(history: List[Dict[str, str]]) -> tuple[Dict[str, Any], List[Dict[s
         if status == "ready":
             summary = response.get("summary", "")
             _bot(summary)
-            # Append the ready turn so history stays complete if we need to resume
             history = history + [{"role": "assistant", "content": json.dumps(response)}]
             return response.get("intent") or {}, history
 
         if status == "needs_clarification":
-            question = response.get("question", "")
+            question    = response.get("question", "")
             suggestions = response.get("suggestions") or []
             _bot(question)
             if suggestions:
@@ -145,45 +168,183 @@ def _clarify(history: List[Dict[str, str]]) -> tuple[Dict[str, Any], List[Dict[s
 
         history = history + [
             {"role": "assistant", "content": json.dumps(response)},
-            {"role": "user", "content": user_input},
+            {"role": "user",      "content": user_input},
         ]
+
+
+# ── Component picker ───────────────────────────────────────────────────────────
+#
+# Mirrors the ConfirmCard component in ChatMessages.tsx:
+#   - Backend is always locked/on
+#   - Widget and Admin UI can be toggled
+#   - If merchant adds a component the AI didn't suggest, a description is required
+#   - "Change request" returns None → caller loops back to clarification
+
+
+def _pick_components(intent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Terminal equivalent of the web ConfirmCard component picker.
+    Returns updated intent dict, or None if user chose "Change request".
+    """
+    archetype      = intent.get("appCategory", "backend")
+    ai_has_widget  = archetype in ("storefront_backend",       "storefront_backend_admin")
+    ai_has_admin   = archetype in ("storefront_backend_admin", "backend_admin")
+
+    has_widget  = ai_has_widget
+    has_admin   = ai_has_admin
+    widget_desc = ""
+    admin_desc  = ""
+
+    def _render() -> None:
+        _hr()
+        print(f"\n  {_BOLD}COMPONENTS{_RESET}\n")
+
+        # Backend — always on, locked
+        print(f"  {_GREEN}[✓]{_RESET} Backend             {_DIM}(always included){_RESET}")
+
+        # Widget
+        if has_widget:
+            tag = f"{_DIM}AI suggested{_RESET}" if ai_has_widget else f"{_YELLOW}you added{_RESET}"
+            print(f"  {_GREEN}[✓]{_RESET} Storefront Widget   {tag}")
+            if has_widget and not ai_has_widget and widget_desc:
+                print(f"      {_DIM}└ {widget_desc}{_RESET}")
+        else:
+            print(f"  {_DIM}[ ]{_RESET} Storefront Widget")
+
+        # Admin UI
+        if has_admin:
+            tag = f"{_DIM}AI suggested{_RESET}" if ai_has_admin else f"{_YELLOW}you added{_RESET}"
+            print(f"  {_GREEN}[✓]{_RESET} Admin UI            {tag}")
+            if has_admin and not ai_has_admin and admin_desc:
+                print(f"      {_DIM}└ {admin_desc}{_RESET}")
+        else:
+            print(f"  {_DIM}[ ]{_RESET} Admin UI")
+
+        print()
+        print(f"  {_DIM}Backend is always included. Toggle optional components.{_RESET}")
+        print(
+            f"  {_DIM}w{_RESET} = Widget   "
+            f"{_DIM}a{_RESET} = Admin   "
+            f"{_DIM}↵{_RESET} = Generate   "
+            f"{_DIM}c{_RESET} = Change request"
+        )
+        print()
+
+    while True:
+        _render()
+        cmd = _ask_user(f"{_BOLD}Choice{_RESET}  ").strip().lower()
+
+        if cmd == "w":
+            has_widget = not has_widget
+            if not has_widget:
+                widget_desc = ""
+
+        elif cmd == "a":
+            has_admin = not has_admin
+            if not has_admin:
+                admin_desc = ""
+
+        elif cmd in ("c", "change", "change request"):
+            return None
+
+        elif cmd in ("", "g", "generate"):
+            # Mandatory description when merchant adds a component the AI didn't suggest
+            if has_widget and not ai_has_widget and not widget_desc:
+                _bot("You added Storefront Widget — what should it display?")
+                _info("e.g. show loyalty points balance on the product page")
+                desc = _ask_user(f"\n{_BOLD}You{_RESET}  ")
+                if not desc.strip():
+                    _info("Description required to add the Widget.")
+                    continue
+                widget_desc = desc.strip()
+
+            if has_admin and not ai_has_admin and not admin_desc:
+                _bot("You added Admin UI — what should it manage?")
+                _info("e.g. dashboard to configure reward tiers and view analytics")
+                desc = _ask_user(f"\n{_BOLD}You{_RESET}  ")
+                if not desc.strip():
+                    _info("Description required to add the Admin UI.")
+                    continue
+                admin_desc = desc.strip()
+
+            break
+
+    # Resolve updated appCategory
+    cat = (
+        "storefront_backend_admin" if has_widget and has_admin else
+        "storefront_backend"       if has_widget else
+        "backend_admin"            if has_admin  else
+        "backend"
+    )
+    updated: Dict[str, Any] = {**intent, "appCategory": cat}
+    if has_widget and not ai_has_widget and widget_desc:
+        updated["widgetDescription"] = widget_desc
+    if has_admin and not ai_has_admin and admin_desc:
+        updated["adminDescription"] = admin_desc
+    return updated
 
 
 # ── Phase runners ──────────────────────────────────────────────────────────────
 
 
-def _phase_architect(intent: Dict[str, Any], prompt: str) -> tuple[Dict[str, Any], str, str]:
-    """Run product prefetch + architect with validation retry. Returns (plan, api_context, arch_prompt)."""
+def _phase_architect(
+    intent: Dict[str, Any], prompt: str
+) -> Tuple[Dict[str, Any], str, str, int, int]:
+    """
+    Run product prefetch + architect with validation retry.
+    Returns (plan, api_context, arch_prompt, total_in_tokens, total_out_tokens).
+    """
     archetype = intent.get("appCategory", "")
 
     _spinner("Prefetch")
     t0 = time.monotonic()
     api_context = prefetch_for_run(intent.get("resources", []), intent.get("desiredOutcome", ""))
     ms = int((time.monotonic() - t0) * 1000)
-    docs_chars = len(api_context) if api_context else 0
+    docs_chars   = len(api_context) if api_context else 0
     prefetch_notes = f"docs: {docs_chars} chars" if docs_chars else "docs: empty (MCP miss)"
     _agent_line("Prefetch", ok=True, ms=ms, notes=prefetch_notes)
 
-    # Assemble the product→architect user prompt once (same logic as run_architect_agent)
     api_context_section = (
         f"\nShopify API context (webhook payload shapes, resource fields — use as ground truth):\n{api_context}\n"
         if api_context else ""
     )
+
+    quality_brief = intent.get("qualityBrief", "")
+    quality_brief_section = (
+        f"\nQuality brief (use this to inform edgeCases and uxExpectations):\n{quality_brief}\n"
+        if quality_brief else ""
+    )
+
+    comp_parts = []
+    if intent.get("widgetDescription"):
+        comp_parts.append(f"  Widget (merchant-added): {intent['widgetDescription']}")
+    if intent.get("adminDescription"):
+        comp_parts.append(f"  Admin panel (merchant-added): {intent['adminDescription']}")
+    component_descriptions_section = (
+        "\nMerchant-provided component descriptions (components added beyond the AI suggestion — "
+        "incorporate these requirements into the contracts):\n"
+        + "\n".join(comp_parts) + "\n"
+        if comp_parts else ""
+    )
+
     product_prompt = _ARCHITECT_USER_TEMPLATE.format(
         error_block="",
         prompt=prompt,
         intent_json=json.dumps(intent, indent=2),
         archetype=archetype,
+        quality_brief_section=quality_brief_section,
+        component_descriptions_section=component_descriptions_section,
         api_context_section=api_context_section,
     )
 
     plan: Dict[str, Any] = {}
     errors: List[str] = []
+    total_in = total_out = 0
 
     for attempt in range(1, _MAX_ARCH_ATTEMPTS + 1):
         _spinner("Architect")
         t0 = time.monotonic()
-        plan, _arch_in, _arch_out = run_architect_agent(
+        plan, arch_in, arch_out = run_architect_agent(
             prompt=prompt,
             intent=intent,
             app_archetype=archetype,
@@ -191,11 +352,14 @@ def _phase_architect(intent: Dict[str, Any], prompt: str) -> tuple[Dict[str, Any
             validation_errors=errors if attempt > 1 else None,
         )
         ms = int((time.monotonic() - t0) * 1000)
+        total_in  += arch_in
+        total_out += arch_out
         errors = validate_architect_plan(plan, app_archetype=archetype)
 
         if not errors:
-            _agent_line("Architect", ok=True, ms=ms, notes=f"attempt {attempt}")
-            # Feasibility gate — same as crew.py _phase_architect
+            attempt_note = f"attempt {attempt}  " if attempt > 1 else ""
+            _agent_line("Architect", ok=True, ms=ms,
+                        notes=attempt_note + _tok_note(total_in, total_out))
             contracts = plan.get("appContracts") or {}
             if contracts.get("feasibility") == "blocked":
                 blocked_reason = contracts.get(
@@ -204,13 +368,13 @@ def _phase_architect(intent: Dict[str, Any], prompt: str) -> tuple[Dict[str, Any
                 )
                 print(f"\n  {_RED}Platform limitation:{_RESET} {blocked_reason}")
                 sys.exit(1)
-            return plan, api_context, product_prompt
+            return plan, api_context, product_prompt, total_in, total_out
 
-        _agent_line("Architect", ok=False, ms=ms, notes=f"attempt {attempt} — {len(errors)} error(s)")
+        _agent_line("Architect", ok=False, ms=ms,
+                    notes=f"attempt {attempt} — {len(errors)} error(s)  " + _tok_note(arch_in, arch_out))
         if attempt < _MAX_ARCH_ATTEMPTS:
             _retry_line("Architect", notes="; ".join(errors[:2]))
 
-    # All attempts exhausted
     print(f"\n  {_RED}Architect failed after {_MAX_ARCH_ATTEMPTS} attempts:{_RESET}")
     for e in errors:
         print(f"    • {e}")
@@ -221,39 +385,43 @@ def _phase_codegen(
     base_ctx: CodegenContext,
     is_storefront: bool,
     is_admin_ui: bool,
-) -> tuple[Dict[str, str], List[Dict]]:
+) -> Tuple[Dict[str, str], List[Dict], Dict[str, Tuple[int, int]]]:
     """
     Run parallel codegen with static validation retries.
-    Returns (artifacts, retry_log) where retry_log is a list of
-    {attempt, errors} dicts for every round that failed.
+
+    Returns (artifacts, retry_log, token_totals) where:
+      retry_log    — list of {attempt, errors} dicts for every failed round
+      token_totals — {agent_name: (total_in, total_out)} accumulated across all attempts
     """
     artifacts: Dict[str, str] = {}
     error_map: Dict[str, List[str]] = {}
     retry_log: List[Dict] = []
+    token_totals: Dict[str, Tuple[int, int]] = {}
 
     _CODEGEN_LABELS = {
-        "handler": "Handler",
+        "handler":   "Handler",
         "migration": "Migration",
         "widget_js": "Widget JS",
-        "admin_ui": "Admin UI",
+        "admin_ui":  "Admin UI",
     }
 
     for attempt in range(1, _MAX_CODEGEN_RETRIES + 1):
-        retry_note = f"attempt {attempt}/{_MAX_CODEGEN_RETRIES}" if attempt > 1 else ""
-
         generators_this_round = (
             list(error_map.keys()) if attempt > 1 else
             ["handler", "migration"]
             + (["widget_js"] if is_storefront else [])
-            + (["admin_ui"] if is_admin_ui else [])
+            + (["admin_ui"]  if is_admin_ui   else [])
         )
+
         for name in generators_this_round:
+            label = _CODEGEN_LABELS.get(name, name)
             if attempt > 1:
-                _retry_line(_CODEGEN_LABELS.get(name, name), notes=retry_note)
-            _spinner(_CODEGEN_LABELS.get(name, name))
+                top_err = (error_map.get(name) or ["unknown error"])[0]
+                _retry_line(label, notes=top_err[:60])
+            _spinner(label)
 
         t0 = time.monotonic()
-        artifacts, _codegen_tokens = run_codegen_parallel(
+        artifacts, attempt_tokens = run_codegen_parallel(
             base_ctx,
             is_storefront=is_storefront,
             is_admin_ui=is_admin_ui,
@@ -262,37 +430,48 @@ def _phase_codegen(
         )
         ms = int((time.monotonic() - t0) * 1000)
 
-        for name in generators_this_round:
-            _agent_line(_CODEGEN_LABELS.get(name, name), ok=True, ms=ms if name == generators_this_round[0] else None, notes="")
+        # Accumulate token totals across retries
+        for name, (in_t, out_t) in attempt_tokens.items():
+            prev_in, prev_out = token_totals.get(name, (0, 0))
+            token_totals[name] = (prev_in + in_t, prev_out + out_t)
+
+        # Print a completed line for each generator that ran this round
+        for i, name in enumerate(generators_this_round):
+            label  = _CODEGEN_LABELS.get(name, name)
+            in_t, out_t = attempt_tokens.get(name, (0, 0))
+            retry_sfx   = f"  retry {attempt}" if attempt > 1 else ""
+            tok_str     = _tok_note(in_t, out_t, extra=retry_sfx) if (in_t or out_t) else retry_sfx.strip()
+            _agent_line(label, ok=True, ms=ms if i == 0 else None, notes=tok_str)
 
         _spinner("Validation")
         t0 = time.monotonic()
         error_map = validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
-        ms = int((time.monotonic() - t0) * 1000)
+        ms_val = int((time.monotonic() - t0) * 1000)
 
         if not error_map:
-            _agent_line("Validation", ok=True, ms=ms, notes="all artifacts pass")
-            return artifacts, retry_log
+            _agent_line("Validation", ok=True, ms=ms_val, notes="all artifacts pass")
+            return artifacts, retry_log, token_totals
 
-        # Record this failed attempt
         retry_log.append({
             "attempt": attempt,
-            "errors": {gen: list(errs) for gen, errs in error_map.items()},
+            "errors":  {gen: list(errs) for gen, errs in error_map.items()},
         })
 
-        _agent_line("Validation", ok=False, ms=ms, notes=f"{len(error_map)} artifact(s) failed")
+        failed_summary = ", ".join(error_map.keys())
+        _agent_line("Validation", ok=False, ms=ms_val,
+                    notes=f"{len(error_map)} artifact(s) failed: {failed_summary}")
         for gen_name, errs in error_map.items():
             for e in errs:
                 print(f"    {_DIM}• {gen_name}: {e}{_RESET}")
-        if attempt < _MAX_CODEGEN_RETRIES:
-            _retry_line("Validation", notes=", ".join(error_map.keys()))
 
-    # All retries exhausted
+        if attempt < _MAX_CODEGEN_RETRIES:
+            _retry_line("Validation", notes=f"fixing {failed_summary}")
+
     all_errors = [f"{n}: {e}" for n, errs in error_map.items() for e in errs]
     print(f"\n  {_RED}Codegen validation failed after {_MAX_CODEGEN_RETRIES} attempts:{_RESET}")
     for e in all_errors[:5]:
         print(f"    • {e}")
-    return artifacts, retry_log
+    sys.exit(1)
 
 
 def _phase_validator(
@@ -300,33 +479,37 @@ def _phase_validator(
     artifacts: Dict[str, str],
     is_storefront: bool,
     is_admin_ui: bool,
-) -> Dict[str, str]:
+) -> Tuple[Dict[str, str], int, int]:
     """
-    Run LLM validator + optional revision pass. Returns (possibly revised) artifacts.
-    Gated by LLM_VALIDATION_ENABLED — same as crew.py _phase_validator.
+    Run LLM validator + optional revision pass.
+    Returns (artifacts, total_in_tokens, total_out_tokens).
     """
     from config import get_settings
     if not get_settings().llm_validation_enabled:
         _info("Validator skipped (LLM_VALIDATION_ENABLED not set)")
-        return artifacts
+        return artifacts, 0, 0
 
     _spinner("Validator")
     t0 = time.monotonic()
-    issues, _val_in, _val_out = run_validator_agent(
+    issues, val_in, val_out = run_validator_agent(
         artifacts, base_ctx, is_storefront, is_admin_ui
     )
     ms = int((time.monotonic() - t0) * 1000)
 
     if not issues:
-        _agent_line("Validator", ok=True, ms=ms, notes="semantic check passed")
-        return artifacts
+        _agent_line("Validator", ok=True, ms=ms,
+                    notes=_tok_note(val_in, val_out, extra="semantic check passed"))
+        return artifacts, val_in, val_out
 
     issue_summary = ", ".join(i["question"] for i in issues)
-    _agent_line("Validator", ok=True, ms=ms, notes=f"{len(issues)} issue(s): {issue_summary}")
+    _agent_line("Validator", ok=True, ms=ms,
+                notes=_tok_note(val_in, val_out, extra=f"{len(issues)} issue(s): {issue_summary}"))
+    for iss in issues:
+        print(f"    {_DIM}• {iss.get('question', '?')}: {str(iss.get('issue', ''))[:80]}{_RESET}")
 
     _spinner("Revision")
     t0 = time.monotonic()
-    revised, _rev_in, _rev_out = run_revision_agent(
+    revised, rev_in, rev_out = run_revision_agent(
         base_ctx,
         is_storefront=is_storefront,
         is_admin_ui=is_admin_ui,
@@ -334,12 +517,17 @@ def _phase_validator(
     )
     ms = int((time.monotonic() - t0) * 1000)
 
-    if revised.get("handler") and revised.get("migration"):
-        _agent_line("Revision", ok=True, ms=ms, notes="semantic issues resolved")
-        return {**artifacts, **revised}
+    total_in  = val_in  + rev_in
+    total_out = val_out + rev_out
 
-    _agent_line("Revision", ok=False, ms=ms, notes="incomplete — keeping originals")
-    return artifacts
+    if revised.get("handler") and revised.get("migration"):
+        _agent_line("Revision", ok=True, ms=ms,
+                    notes=_tok_note(rev_in, rev_out, extra="semantic issues resolved"))
+        return {**artifacts, **revised}, total_in, total_out
+
+    _agent_line("Revision", ok=False, ms=ms,
+                notes=_tok_note(rev_in, rev_out, extra="incomplete — keeping originals"))
+    return artifacts, total_in, total_out
 
 
 # ── Output helpers ─────────────────────────────────────────────────────────────
@@ -352,7 +540,7 @@ def _slug(text: str, max_words: int = 6) -> str:
 
 def _save_arch_json(prompt: str, intent: Dict, plan: Dict, errors: List[str], product_prompt: str = "") -> Path:
     TEST_RESULTS_DIR.mkdir(exist_ok=True)
-    ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    ts   = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     path = TEST_RESULTS_DIR / f"{ts}_{_slug(prompt)}_arch.json"
     payload: Dict[str, Any] = {"prompt": prompt, "intent": intent, "plan": plan, "validation_errors": errors}
     if product_prompt:
@@ -372,7 +560,7 @@ def _save_artifacts_md(
     plan: Optional[Dict] = None,
 ) -> Path:
     TEST_RESULTS_DIR.mkdir(exist_ok=True)
-    ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    ts   = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     path = TEST_RESULTS_DIR / f"{ts}_{_slug(prompt)}_{stop_label}.md"
 
     lines = [
@@ -385,13 +573,12 @@ def _save_artifacts_md(
 
     if intent:
         lines += ["## Intent (Product Agent)", "", "```json", json.dumps(intent, indent=2), "```", ""]
-
     if plan:
-        lines += ["## Architect Plan", "", "```json", json.dumps(plan, indent=2), "```", ""]
+        lines += ["## Architect Plan",         "", "```json", json.dumps(plan,   indent=2), "```", ""]
 
     if retry_log:
         resolved = stop_label != "codegen" or not retry_log or all(
-            attempt["attempt"] < _MAX_CODEGEN_RETRIES for attempt in retry_log
+            entry["attempt"] < _MAX_CODEGEN_RETRIES for entry in retry_log
         )
         heading = "## Validation Retries" + (" (all resolved)" if resolved else " (UNRESOLVED — max retries hit)")
         lines += [heading, ""]
@@ -404,13 +591,13 @@ def _save_artifacts_md(
 
     lines += ["## Artifacts", ""]
     if artifacts.get("handler"):
-        lines += ["### handler.js", "", "```javascript", artifacts["handler"], "```", ""]
+        lines += ["### handler.js",    "", "```javascript", artifacts["handler"],    "```", ""]
     if artifacts.get("migration"):
-        lines += ["### migration.sql", "", "```sql", artifacts["migration"], "```", ""]
+        lines += ["### migration.sql", "", "```sql",        artifacts["migration"],  "```", ""]
     if is_storefront and artifacts.get("widget_js"):
-        lines += ["### widget.js", "", "```javascript", artifacts["widget_js"], "```", ""]
+        lines += ["### widget.js",     "", "```javascript", artifacts["widget_js"],  "```", ""]
     if is_admin_ui and artifacts.get("admin_ui"):
-        lines += ["### admin_ui.js", "", "```javascript", artifacts["admin_ui"], "```", ""]
+        lines += ["### admin_ui.js",   "", "```javascript", artifacts["admin_ui"],   "```", ""]
 
     path.write_text("\n".join(lines) + "\n")
     return path
@@ -424,7 +611,6 @@ def _print_arch(intent: Dict, plan: Dict) -> None:
 
 
 def _print_artifacts(artifacts: Dict[str, str]) -> None:
-    """Print artifact line counts to console (no code preview)."""
     print()
     _hr()
     for key, code in artifacts.items():
@@ -434,7 +620,83 @@ def _print_artifacts(artifacts: Dict[str, str]) -> None:
     _hr()
 
 
+def _print_token_summary(token_map: Dict[str, Tuple[int, int]]) -> None:
+    """Print a per-agent token breakdown and grand total."""
+    if not token_map:
+        return
+    total_in  = sum(v[0] for v in token_map.values())
+    total_out = sum(v[1] for v in token_map.values())
+    parts = "  ".join(
+        f"{_DIM}{name}({_ktok(in_t)}+{_ktok(out_t)}){_RESET}"
+        for name, (in_t, out_t) in token_map.items()
+        if in_t or out_t
+    )
+    print(
+        f"\n  {_DIM}Tokens{_RESET}  "
+        f"in={_ktok(total_in)}  out={_ktok(total_out)}  "
+        f"total={_ktok(total_in + total_out)}"
+    )
+    if parts:
+        print(f"  {_DIM}Agents{_RESET}  {parts}")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
+
+
+def _build_bundle(
+    artifacts: Dict[str, Any],
+    intent: Dict[str, Any],
+    plan: Dict[str, Any],
+    explanation: Dict[str, Any],
+    is_storefront: bool,
+    is_admin_ui: bool,
+) -> Dict[str, Any]:
+    """
+    Assemble the FeatureBundle dict from generation outputs.
+    Mirrors _publish_success in crew.py so the DB bundle is identical to what
+    the production generator publishes via Pub/Sub.
+    """
+    handler_code = artifacts.get("handler", "")
+    shopify_plan = plan.get("shopifyPlan", {})
+    technical    = explanation.get("technical", {})
+    app_contracts = plan.get("appContracts") or {}
+
+    # Parse npmPackages from the handler's module.exports
+    def _parse_npm(code: str) -> List[str]:
+        m = re.search(r"npmPackages\s*:\s*\[([^\]]*)\]", code)
+        if not m:
+            return []
+        return re.findall(r"""['"]([^'"]+)['"]""", m.group(1))
+
+    email_meta = extract_email_metadata(handler_code, intent, plan)
+
+    return {
+        "widgetModule":          artifacts.get("widget_js") if is_storefront else None,
+        "adminUiModule":         artifacts.get("admin_ui")  if is_admin_ui   else None,
+        "widgetTargetTemplates": (app_contracts.get("widgetTargetTemplates") or None) if is_storefront else None,
+        "handlerModule": {
+            "code":          handler_code,
+            "webhookTopics": shopify_plan.get("webhookTopics", []),
+            "cronSchedule":  shopify_plan.get("cronSchedule"),
+            "npmPackages":   _parse_npm(handler_code),
+        },
+        "dbMigration": {
+            "sql": artifacts.get("migration", ""),
+        },
+        "explanation": {
+            "merchantFacing": explanation.get("merchantFacing", ""),
+            "technical": {
+                "webhookTopics":                technical.get("webhookTopics", []),
+                "dbTables":                     technical.get("dbTables", []),
+                "estimatedMonthlyExecutions":   technical.get("estimatedMonthlyExecutions", 0),
+                "estimatedMonthlyCost":         technical.get("estimatedMonthlyCost", "$0"),
+            },
+        },
+        "usesEmail":          bool(email_meta.get("usesEmail")),
+        "emailVariables":     email_meta.get("emailVariables", []) or [],
+        "emailTypeSuggestion": email_meta.get("emailTypeSuggestion"),
+        "emailStarterContent": email_meta.get("emailStarterContent"),
+    }
 
 
 def main() -> None:
@@ -455,8 +717,15 @@ def main() -> None:
             "Omit to run the full pipeline."
         ),
     )
+    parser.add_argument(
+        "--no-db",
+        action="store_true",
+        default=False,
+        help="Skip writing the bundle to the local postgres DB.",
+    )
     args = parser.parse_args()
     stop_after: StopAfter = args.stop_after or "full"
+    save_to_db = not args.no_db and stop_after == "full"
 
     _hr("━")
     print(f"\n{_BOLD}  Ton — Shopify App Builder{_RESET}")
@@ -475,7 +744,7 @@ def main() -> None:
     prompt = intent.get("desiredOutcome") or first_message
 
     # ── Step 2: Confirm or keep refining ───────────────────────────────────────
-    _info(f"Press Enter to generate  |  type more to refine  |  'n' to cancel")
+    _info("Press Enter to continue to components  |  type more to refine  |  'n' to cancel")
     while True:
         user_input = _ask_user(f"\n{_BOLD}You{_RESET}  ")
         if not user_input or user_input.lower() in ("y", "yes"):
@@ -483,11 +752,40 @@ def main() -> None:
         if user_input.lower() in ("n", "no"):
             print("\nAborted.")
             return
-        # User added more — continue clarification from current history
         history = history + [{"role": "user", "content": user_input}]
         intent, history = _clarify(history)
         prompt = intent.get("desiredOutcome") or first_message
-        _info(f"Press Enter to generate  |  type more to refine  |  'n' to cancel")
+        _info("Press Enter to continue to components  |  type more to refine  |  'n' to cancel")
+
+    # ── Step 3: Component picker (mirrors ConfirmCard) ─────────────────────────
+    while True:
+        updated_intent = _pick_components(intent)
+        if updated_intent is not None:
+            intent = updated_intent
+            break
+        # "Change request" — resume clarification from current history
+        _bot("Sure, what would you like to change?")
+        user_input = _ask_user(f"\n{_BOLD}You{_RESET}  ")
+        if not user_input:
+            continue
+        history = history + [{"role": "user", "content": user_input}]
+        intent, history = _clarify(history)
+        prompt = intent.get("desiredOutcome") or first_message
+
+    # ── DB: create app + session before pipeline starts ───────────────────────
+    app_name = (intent.get("desiredOutcome") or prompt)[:60]
+    app_id = job_id = session_id = slug = None
+    if save_to_db:
+        try:
+            import uuid
+            import db_local
+            app_id, slug = db_local.create_app(app_name)
+            job_id = str(uuid.uuid4())
+            session_id = db_local.create_session(app_id, prompt, job_id)
+            _info(f"DB: created app '{slug}'")
+        except Exception as exc:
+            _info(f"DB setup failed — continuing without DB: {exc}")
+            save_to_db = False
 
     print()
     _hr()
@@ -495,19 +793,34 @@ def main() -> None:
     _hr()
     print()
 
-    archetype = intent.get("appCategory", "")
-    is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
-    is_admin_ui = archetype in ("storefront_backend_admin", "backend_admin")
+    archetype    = intent.get("appCategory", "")
+    is_storefront = archetype in ("storefront_backend",       "storefront_backend_admin")
+    is_admin_ui   = archetype in ("storefront_backend_admin", "backend_admin")
 
     total_start = time.monotonic()
+    all_tokens: Dict[str, Tuple[int, int]] = {}
+
+    def _fail_db(reason: str) -> None:
+        """Mark the DB session+app as failed before exiting."""
+        if save_to_db and app_id and job_id:
+            try:
+                db_local.mark_session_failed(job_id, app_id, reason)
+            except Exception:
+                pass
 
     # ── Phase: Architect ───────────────────────────────────────────────────────
-    plan, api_context, product_prompt = _phase_architect(intent, prompt)
+    try:
+        plan, api_context, product_prompt, arch_in, arch_out = _phase_architect(intent, prompt)
+    except SystemExit:
+        _fail_db("Architect phase failed")
+        raise
+    all_tokens["architect"] = (arch_in, arch_out)
 
     if stop_after == "arch":
         total_ms = int((time.monotonic() - total_start) * 1000)
+        _print_token_summary(all_tokens)
         report = _save_arch_json(prompt, intent, plan, [], product_prompt)
-        print(f"  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
+        print(f"\n  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
         _hr("━")
         return
 
@@ -518,51 +831,76 @@ def main() -> None:
         platform_api_catalog=(plan.get("appContracts") or {}).get("widgetApiCatalog") or [],
         api_context=api_context,
     )
-    artifacts, retry_log = _phase_codegen(base_ctx, is_storefront, is_admin_ui)
+    try:
+        artifacts, retry_log, codegen_tokens = _phase_codegen(base_ctx, is_storefront, is_admin_ui)
+    except SystemExit:
+        _fail_db("Codegen validation failed after max retries")
+        raise
+    all_tokens.update(codegen_tokens)
 
     if stop_after == "codegen":
         total_ms = int((time.monotonic() - total_start) * 1000)
         _print_artifacts(artifacts)
-        report = _save_artifacts_md(prompt, artifacts, "codegen", is_storefront, is_admin_ui, retry_log or None, intent=intent, plan=plan)
-        print(f"  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
+        _print_token_summary(all_tokens)
+        report = _save_artifacts_md(prompt, artifacts, "codegen", is_storefront, is_admin_ui,
+                                    retry_log or None, intent=intent, plan=plan)
+        print(f"\n  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
         _hr("━")
         return
 
     # ── Phase: LLM Validator + Revision ───────────────────────────────────────
-    artifacts = _phase_validator(base_ctx, artifacts, is_storefront, is_admin_ui)
+    artifacts, val_in, val_out = _phase_validator(base_ctx, artifacts, is_storefront, is_admin_ui)
+    if val_in or val_out:
+        all_tokens["validator"] = (val_in, val_out)
 
     if stop_after == "validator":
         total_ms = int((time.monotonic() - total_start) * 1000)
         _print_artifacts(artifacts)
-        report = _save_artifacts_md(prompt, artifacts, "validator", is_storefront, is_admin_ui, retry_log or None, intent=intent, plan=plan)
-        print(f"  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
+        _print_token_summary(all_tokens)
+        report = _save_artifacts_md(prompt, artifacts, "validator", is_storefront, is_admin_ui,
+                                    retry_log or None, intent=intent, plan=plan)
+        print(f"\n  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
         _hr("━")
         return
 
     # ── Phase: Explanation ────────────────────────────────────────────────────
     _spinner("Explanation")
     t0 = time.monotonic()
-    explanation, _exp_in, _exp_out = run_explanation_agent(
+    explanation, exp_in, exp_out = run_explanation_agent(
         intent=intent,
         plan=plan,
         widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
         migration_sql=artifacts.get("migration", ""),
     )
     ms = int((time.monotonic() - t0) * 1000)
-    _agent_line("Explanation", ok=True, ms=ms, notes="")
+    _agent_line("Explanation", ok=True, ms=ms, notes=_tok_note(exp_in, exp_out))
+    all_tokens["explanation"] = (exp_in, exp_out)
+
+    # ── DB: store bundle ──────────────────────────────────────────────────────
+    if save_to_db and app_id and job_id:
+        try:
+            bundle = _build_bundle(artifacts, intent, plan, explanation, is_storefront, is_admin_ui)
+            db_local.store_bundle(job_id, app_id, bundle)
+        except Exception as exc:
+            _info(f"DB bundle save failed: {exc}")
 
     total_ms = int((time.monotonic() - total_start) * 1000)
 
-    # Save full report
+    # ── Save full report ───────────────────────────────────────────────────────
     TEST_RESULTS_DIR.mkdir(exist_ok=True)
-    ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    ts     = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     report = TEST_RESULTS_DIR / f"{ts}_{_slug(prompt)}.md"
+
+    total_in  = sum(v[0] for v in all_tokens.values())
+    total_out = sum(v[1] for v in all_tokens.values())
+
     lines = [
         "# Chat Local — Full Pipeline",
         "",
         f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
         f"**Status:** ✅ SUCCESS  ",
         f"**Total:** {total_ms}ms  ",
+        f"**Tokens:** in={total_in} out={total_out} total={total_in + total_out}  ",
         f"**Prompt:** {prompt}",
         "",
         "## Intent (Product Agent)",
@@ -588,20 +926,35 @@ def main() -> None:
             lines.append("")
     lines += ["## Artifacts", ""]
     if artifacts.get("handler"):
-        lines += ["### handler.js", "", "```javascript", artifacts["handler"], "```", ""]
+        lines += ["### handler.js",    "", "```javascript", artifacts["handler"],   "```", ""]
     if artifacts.get("migration"):
-        lines += ["### migration.sql", "", "```sql", artifacts["migration"], "```", ""]
+        lines += ["### migration.sql", "", "```sql",        artifacts["migration"], "```", ""]
     if is_storefront and artifacts.get("widget_js"):
-        lines += ["### widget.js", "", "```javascript", artifacts["widget_js"], "```", ""]
+        lines += ["### widget.js",     "", "```javascript", artifacts["widget_js"], "```", ""]
     if is_admin_ui and artifacts.get("admin_ui"):
-        lines += ["### admin_ui.js", "", "```javascript", artifacts["admin_ui"], "```", ""]
+        lines += ["### admin_ui.js",   "", "```javascript", artifacts["admin_ui"],  "```", ""]
     merchant_facing = explanation.get("merchantFacing", "")
     if merchant_facing:
         lines += ["", "## Explanation", "", merchant_facing]
     report.write_text("\n".join(lines) + "\n")
 
+    # ── Final summary ──────────────────────────────────────────────────────────
     _hr("━")
     print(f"  {_GREEN}SUCCESS{_RESET} — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
+
+    # Artifact line counts
+    artifact_parts = []
+    for key, label in [("handler", "handler.js"), ("migration", "migration.sql"),
+                       ("widget_js", "widget.js"), ("admin_ui", "admin_ui.js")]:
+        code = artifacts.get(key, "")
+        if code:
+            artifact_parts.append(f"{label} ({len(code.strip().splitlines())} lines)")
+    if artifact_parts:
+        print(f"  {_DIM}Files{_RESET}   " + "  ".join(artifact_parts))
+    if save_to_db and slug:
+        print(f"  {_DIM}App{_RESET}     http://localhost:3000  →  {app_name}")
+
+    _print_token_summary(all_tokens)
     _hr("━")
     print()
 
