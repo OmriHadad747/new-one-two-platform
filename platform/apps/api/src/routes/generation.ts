@@ -8,6 +8,7 @@
  * POST   /generation/:jobId/revise   — Append merchant feedback, start new generation
  */
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
+import { z } from "zod";
 import { logger } from "@new-one-two/logger";
 import {
   publishGenerationRequest,
@@ -15,6 +16,8 @@ import {
   registerCompletedListener,
   type FeatureBundleMessage,
 } from "@new-one-two/pubsub-client";
+import { ErrorCode, errorResponse } from "../lib/error-response.js";
+import { parseBody } from "../lib/validate-body.js";
 import {
   createGenerationSession,
   updateGenerationSession,
@@ -36,14 +39,72 @@ import {
 import { deployFeatureBundle, deployAppVersion } from "@new-one-two/deployer";
 import { getTenantById } from "@new-one-two/db";
 import type {
-  StartGenerationRequest,
-  ReviseGenerationRequest,
   FeatureBundle,
   AppArchetype,
 } from "@new-one-two/types";
 import { canStartGeneration, isCategoryAllowed } from "../lib/plan-enforcement.js";
 import { trackGeneration, trackRevision, storeRevisionClassification } from "@new-one-two/db";
 import { requireTenant } from "../plugins/auth.js";
+
+// ─── Request schemas ──────────────────────────────────────────────────────────
+//
+// preComputedIntent is the shape the Python product_agent emits (see
+// generator/subagents/product_agent.py). Until batch-3 it was forwarded to the
+// generator as an arbitrary `Record<string, unknown>` — which meant a client
+// could smuggle fields past the intent-agent's guardrails by pre-seeding a
+// shape the agent would never produce on its own.
+//
+// .strict() fails validation on any key the schema doesn't know about, so
+// additions on the Python side require a matching update here. That drift
+// pain is the point: silent drift was the bug we just closed.
+//
+// The six product_agent fields are always present. The two *Description
+// fields are merchant-authored extras from the component picker UI (see
+// platform-front/src/components/features/generation/ChatMessages.tsx:527)
+// and are read by the architect (generator/subagents/architect_agent.py:401).
+// They are optional from this endpoint's perspective — merchants who don't
+// touch the component picker don't send them.
+const PreComputedIntentSchema = z
+  .object({
+    triggerTypes: z.array(z.string()).optional(),
+    resources: z.array(z.string()).optional(),
+    desiredOutcome: z.string().optional(),
+    cronSchedule: z.string().nullable().optional(),
+    appCategory: z.string().optional(),
+    qualityBrief: z.string().optional(),
+    widgetDescription: z.string().max(2000).optional(),
+    adminDescription: z.string().max(2000).optional(),
+  })
+  .strict();
+
+const StartGenerationBodySchema = z.object({
+  appId: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  prompt: z.string().min(1).max(10_000),
+  preComputedIntent: PreComputedIntentSchema.nullable().optional(),
+});
+
+const ReviseGenerationBodySchema = z.object({
+  feedback: z.string().min(1).max(10_000),
+});
+
+// The chat-history persistence route stores whatever shape the frontend
+// sends — we only gate on "is it an array of objects" here. The full
+// ChatMessage shape is owned by the frontend and validating it at the
+// boundary would force a contract lock-step that isn't needed for the
+// stored-and-returned-as-is pattern this endpoint implements.
+const ChatHistoryBodySchema = z.object({
+  messages: z.array(z.record(z.unknown())),
+});
+
+const AnalyzeBodySchema = z.object({
+  history: z.array(
+    z.object({
+      role: z.string().min(1),
+      content: z.string(),
+    })
+  ),
+});
 
 /** Derive AppArchetype from a raw bundle object. */
 function archetypeFromBundle(bundle: Record<string, unknown>): AppArchetype {
@@ -127,17 +188,14 @@ const cancelCallbacks = new Map<string, (reason: string) => void>();
 export const generationRoute: FastifyPluginAsync = async (app) => {
   // ─── POST /generation ──────────────────────────────────────────────────────
 
-  app.post<{ Body: StartGenerationRequest }>(
+  app.post(
     "/",
-    async (req: FastifyRequest<{ Body: StartGenerationRequest }>, reply: FastifyReply) => {
-      const body = req.body as StartGenerationRequest & { preComputedIntent?: Record<string, unknown> };
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      // Zod-validated: rejects unknown keys on preComputedIntent so a client
+      // cannot smuggle fields past the Python intent agent's shape contract.
+      const body = parseBody(StartGenerationBodySchema, req, reply);
+      if (!body) return;
       const { appId, prompt, preComputedIntent } = body;
-
-      if (!appId || !body.tenantId || !prompt) {
-        return reply
-          .status(400)
-          .send({ error: "appId, tenantId, and prompt are required" });
-      }
 
       const tenantId = requireTenant(req, reply, body.tenantId);
       if (!tenantId) return;
@@ -145,28 +203,40 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       // ── Plan enforcement: check generation quota ──
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
       const check = await canStartGeneration(tenant);
       if (!check.allowed) {
-        return reply.status(403).send({
-          error: check.reason,
-          upgradeHint: check.upgradeHint,
-          code: "generation_limit_reached",
-        });
+        return reply
+          .status(403)
+          .send(
+            errorResponse(
+              ErrorCode.GenerationLimitReached,
+              check.reason ?? "Generation quota reached",
+              { upgradeHint: check.upgradeHint }
+            )
+          );
       }
 
       // ── Plan enforcement: check category allowed ──
-      // preComputedIntent contains appCategory from the analyze flow
-      const appCategory = (preComputedIntent as Record<string, unknown> | undefined)?.appCategory as string | undefined;
+      // preComputedIntent contains appCategory from the analyze flow.
+      // Zod narrowed this to a known-shape object or null/undefined so the
+      // old `as Record<string, unknown>` cast is gone.
+      const appCategory = preComputedIntent?.appCategory;
       if (appCategory) {
         const catCheck = isCategoryAllowed(tenant.billingPlan, appCategory);
         if (!catCheck.allowed) {
-          return reply.status(403).send({
-            error: catCheck.reason,
-            upgradeHint: catCheck.upgradeHint,
-            code: "category_not_allowed",
-          });
+          return reply
+            .status(403)
+            .send(
+              errorResponse(
+                ErrorCode.CategoryNotAllowed,
+                catCheck.reason ?? "This category is not available on your plan",
+                { upgradeHint: catCheck.upgradeHint }
+              )
+            );
         }
       }
 
@@ -293,7 +363,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const session = await getLatestSessionForApp(appId);
       if (!session) {
-        return reply.status(404).send({ error: "No session found for this app" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "No session found for this app"));
       }
       return reply.send(session);
     }
@@ -307,7 +379,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const session = await getLatestCompletedSessionForApp(appId);
       if (!session) {
-        return reply.status(404).send({ error: "No completed session found for this app" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "No completed session found for this app"));
       }
       return reply.send(session);
     }
@@ -333,7 +407,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       const session = await getSessionByJobId(jobId);
       if (!session) {
-        return reply.status(404).send({ error: "Job not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Job not found"));
       }
 
       if (session.status === "failed") {
@@ -360,7 +436,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       const requestedSession = await getSessionByJobId(jobId);
       if (!requestedSession) {
-        return reply.status(404).send({ error: "Job not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Job not found"));
       }
 
       // If the requested session failed, find the latest successful one for this app.
@@ -370,13 +448,20 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       let deployingFallback = false;
       if (session.status === "failed") {
         if (!session.appId) {
-          return reply.status(422).send({ error: "Cannot deploy a failed generation" });
+          return reply
+            .status(422)
+            .send(errorResponse(ErrorCode.Conflict, "Cannot deploy a failed generation"));
         }
         const fallback = await getLatestCompletedSessionForApp(session.appId);
         if (!fallback) {
-          return reply.status(422).send({
-            error: "Generation failed and no prior successful version exists to deploy.",
-          });
+          return reply
+            .status(422)
+            .send(
+              errorResponse(
+                ErrorCode.Conflict,
+                "Generation failed and no prior successful version exists to deploy."
+              )
+            );
         }
         session = fallback;
         deployingFallback = true;
@@ -390,9 +475,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       if (session.appId) {
         const appRecord = await getAppByIdUnsafe(session.appId);
         if (!appRecord || appRecord.status !== "ready") {
-          return reply.status(409).send({
-            error: `App must be in 'ready' state to deploy (current: ${appRecord?.status ?? "unknown"})`,
-          });
+          return reply
+            .status(409)
+            .send(
+              errorResponse(
+                ErrorCode.Conflict,
+                `App must be in 'ready' state to deploy (current: ${appRecord?.status ?? "unknown"})`
+              )
+            );
         }
 
         // Block deploy if the bundle sends emails but the merchant hasn't
@@ -402,10 +492,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         if (bundleUsesEmail) {
           const confirmed = await isAppEmailConfigured(session.appId);
           if (!confirmed) {
-            return reply.status(409).send({
-              error: "email_not_confirmed",
-              message: "This app sends emails. Please review and save the email content in the Email tab before deploying.",
-            });
+            return reply
+              .status(409)
+              .send(
+                errorResponse(
+                  ErrorCode.EmailNotConfirmed,
+                  "This app sends emails. Please review and save the email content in the Email tab before deploying."
+                )
+              );
           }
         }
       }
@@ -434,41 +528,40 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         return reply.send({ deployed: true, deployingFallback, deployedJobId: session.jobId, ...result });
       }
 
-      return reply.status(409).send({
-        error: "Session has no bundle or app version — generation may not be complete",
-      });
+      return reply
+        .status(409)
+        .send(
+          errorResponse(
+            ErrorCode.Conflict,
+            "Session has no bundle or app version — generation may not be complete"
+          )
+        );
     }
   );
 
   // ─── POST /generation/:jobId/revise ────────────────────────────────────────
 
-  app.post<{
-    Params: { jobId: string };
-    Body: ReviseGenerationRequest;
-  }>(
+  app.post<{ Params: { jobId: string } }>(
     "/:jobId/revise",
     async (
-      req: FastifyRequest<{
-        Params: { jobId: string };
-        Body: ReviseGenerationRequest;
-      }>,
+      req: FastifyRequest<{ Params: { jobId: string } }>,
       reply: FastifyReply
     ) => {
       const { jobId } = req.params;
-      const { feedback } = req.body;
-
-      if (!feedback) {
-        return reply.status(400).send({ error: "feedback is required" });
-      }
+      const body = parseBody(ReviseGenerationBodySchema, req, reply);
+      if (!body) return;
+      const { feedback } = body;
 
       const session = await getSessionByJobId(jobId);
       if (!session) {
-        return reply.status(404).send({ error: "Job not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Job not found"));
       }
       if (!session.appId || !session.tenantId) {
         return reply
           .status(409)
-          .send({ error: "Session has no appId or tenantId" });
+          .send(errorResponse(ErrorCode.Conflict, "Session has no appId or tenantId"));
       }
 
       const newJobId = crypto.randomUUID();
@@ -556,43 +649,43 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   // Called debounced from the UI after every message change.
   // Fire-and-forget: 204 on success, ignored on failure by the client.
 
-  app.patch<{
-    Params: { jobId: string };
-    Body: { messages: Array<Record<string, unknown>> };
-  }>(
+  app.patch<{ Params: { jobId: string } }>(
     "/:jobId/chat",
-    async (req: FastifyRequest<{ Params: { jobId: string }; Body: { messages: Array<Record<string, unknown>> } }>, reply: FastifyReply) => {
+    async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
       const { jobId } = req.params;
-      const { messages } = req.body;
-
-      if (!Array.isArray(messages)) {
-        return reply.status(400).send({ error: "messages must be an array" });
-      }
+      const body = parseBody(ChatHistoryBodySchema, req, reply);
+      if (!body) return;
 
       const session = await getSessionByJobId(jobId);
       if (!session) {
-        return reply.status(404).send({ error: "Job not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Job not found"));
       }
 
-      await saveChatMessages(jobId, messages);
+      await saveChatMessages(jobId, body.messages);
       return reply.status(204).send();
     }
   );
 
   // ─── POST /generation/analyze ──────────────────────────────────────────────
 
-  app.post<{ Body: { history: Array<{ role: string; content: string }> } }>(
+  app.post(
     "/analyze",
-    async (req: FastifyRequest<{ Body: { history: Array<{ role: string; content: string }> } }>, reply: FastifyReply) => {
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const body = parseBody(AnalyzeBodySchema, req, reply);
+      if (!body) return;
       const generatorUrl = process.env.GENERATOR_URL ?? "http://localhost:8001";
       const upstream = await fetch(`${generatorUrl}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(req.body),
+        body: JSON.stringify(body),
       });
       if (!upstream.ok) {
         logger.error({ status: upstream.status }, "Generator /analyze failed");
-        return reply.status(502).send({ error: "Analyze failed" });
+        return reply
+          .status(502)
+          .send(errorResponse(ErrorCode.UpstreamFailure, "Analyze failed"));
       }
       const data = await upstream.json();
       return reply.send(data);

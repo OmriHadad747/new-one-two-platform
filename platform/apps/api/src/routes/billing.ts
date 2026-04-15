@@ -36,6 +36,7 @@ import type {
 import { getAllPlans, getPlanLimits, PLANS } from "../lib/plans.js";
 import { createSubscription, cancelSubscription } from "../lib/shopify-billing.js";
 import { requireTenant } from "../plugins/auth.js";
+import { ErrorCode, errorResponse } from "../lib/error-response.js";
 
 const DASHBOARD_URL = process.env["DASHBOARD_URL"] ?? "http://localhost:3000";
 // SHOPIFY_BILLING_MODE: "disabled" | "test" | "live"
@@ -84,7 +85,9 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
       const usage = await getOrCreateUsageRecord(tenantId);
@@ -114,24 +117,37 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       const interval: BillingInterval = rawInterval === "annual" ? "annual" : "monthly";
 
       if (!rawTenantId || !plan) {
-        return reply.status(400).send({ error: "tenantId and plan are required" });
+        return reply
+          .status(400)
+          .send(errorResponse(ErrorCode.InvalidRequest, "tenantId and plan are required"));
       }
 
       const tenantId = requireTenant(req, reply, rawTenantId);
       if (!tenantId) return;
 
       if (!(plan in PLANS)) {
-        return reply.status(400).send({ error: `Invalid plan: ${plan}` });
+        return reply
+          .status(400)
+          .send(errorResponse(ErrorCode.InvalidRequest, `Invalid plan: ${plan}`));
       }
 
       // Annual billing not available for free plan
       if (plan === "free" && interval === "annual") {
-        return reply.status(400).send({ error: "Annual billing is not available for the free plan" });
+        return reply
+          .status(400)
+          .send(
+            errorResponse(
+              ErrorCode.InvalidRequest,
+              "Annual billing is not available for the free plan"
+            )
+          );
       }
 
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
       // Free plan — just update directly, no Shopify subscription needed
@@ -274,7 +290,9 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
       if (tenant.shopifySubscriptionId) {
@@ -317,7 +335,9 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       const shopifySecret = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
 
       if (!hmacHeader || !shopifySecret) {
-        return reply.status(401).send({ error: "Missing HMAC or secret" });
+        return reply
+          .status(401)
+          .send(errorResponse(ErrorCode.HmacInvalid, "Missing HMAC or secret"));
       }
 
       const rawBody = (req as any).rawBody ?? JSON.stringify(req.body);
@@ -327,10 +347,14 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
 
       try {
         if (!timingSafeEqual(Buffer.from(computed), Buffer.from(hmacHeader))) {
-          return reply.status(401).send({ error: "Invalid HMAC" });
+          return reply
+          .status(401)
+          .send(errorResponse(ErrorCode.HmacInvalid, "Invalid HMAC"));
         }
       } catch {
-        return reply.status(401).send({ error: "Invalid HMAC" });
+        return reply
+          .status(401)
+          .send(errorResponse(ErrorCode.HmacInvalid, "Invalid HMAC"));
       }
 
       const payload = req.body as Record<string, any>;
@@ -426,7 +450,9 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
       // Fetch all dashboard data in parallel
@@ -479,7 +505,9 @@ export const billingRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
       const analytics = await getRevisionAnalytics(tenantId);

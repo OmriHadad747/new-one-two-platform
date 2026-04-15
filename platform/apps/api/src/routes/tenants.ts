@@ -13,6 +13,9 @@
  * GET    /tenants/:tenantId/logs                               — Recent execution logs (all apps)
  */
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
+import { z } from "zod";
+import { parseBody } from "../lib/validate-body.js";
+import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import {
   createTenant,
   getTenantById,
@@ -38,22 +41,72 @@ import {
   themePreviewUrl,
   themeEditorUrl,
 } from "../lib/theme-injector.js";
-import type { CreateTenantRequest, CreateAppRequest } from "@new-one-two/types";
-import type { InjectionTarget } from "../lib/theme-injector.js";
+// CreateTenantRequest / CreateAppRequest are now inferred from the Zod
+// schemas below — the ambient TS types from @new-one-two/types are kept as
+// the wire contract owner for consumers that still import them directly.
+// InjectionTarget is defined in ../lib/theme-injector.js; its shape is
+// mirrored in InjectionTargetSchema below.
 import { canActivateApp } from "../lib/plan-enforcement.js";
 import { requireTenant } from "../plugins/auth.js";
+
+// ─── Request schemas ──────────────────────────────────────────────────────────
+
+// Lowercase alphanumerics + hyphens for slugs.
+//
+// Intentionally STRICTER than the DB CHECK constraints on tenants.slug /
+// apps.slug (`^[a-z0-9-]+$`) — the DB permits a leading hyphen, this
+// regex does not. Leading-hyphen slugs clash with DNS labels, npm package
+// names, URL segments after a `/`, and CLI arguments, so the platform
+// rejects them at the ingress even though the DB would accept them.
+// Tightening the DB check to match would be a separate migration and is
+// left to a follow-up.
+const SlugSchema = z
+  .string()
+  .min(1)
+  .max(63)
+  .regex(/^[a-z0-9][a-z0-9-]*$/, "slug must be lowercase alphanumerics + hyphens and cannot start with '-'");
+
+const CreateTenantBodySchema = z.object({
+  id: z.string().uuid().optional(),
+  slug: SlugSchema,
+  name: z.string().min(1).max(200),
+});
+
+const CreateAppBodySchema = z.object({
+  id: z.string().uuid().optional(),
+  slug: SlugSchema,
+  name: z.string().min(1).max(200),
+});
+
+const UpdateAppBodySchema = z
+  .object({
+    name: z.string().min(1).max(200).optional(),
+    status: z.enum(["active", "inactive", "deleted"]).optional(),
+  })
+  .refine(
+    (v) => v.name !== undefined || v.status !== undefined,
+    { message: "name or status is required" }
+  );
+
+const InjectionTargetSchema = z.object({
+  templateKey: z.string().min(1).max(200),
+  sectionId: z.string().min(1).max(200),
+  position: z.number().int().min(0),
+});
+
+const InjectThemeBodySchema = z.object({
+  targets: z.array(InjectionTargetSchema).min(1),
+});
 
 export const tenantsRoute: FastifyPluginAsync = async (app) => {
   // ─── POST /tenants ──────────────────────────────────────────────────────────
 
-  app.post<{ Body: CreateTenantRequest }>(
+  app.post(
     "/",
-    async (req: FastifyRequest<{ Body: CreateTenantRequest }>, reply: FastifyReply) => {
-      const { id, slug, name } = req.body;
-
-      if (!slug || !name) {
-        return reply.status(400).send({ error: "slug and name are required" });
-      }
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const body = parseBody(CreateTenantBodySchema, req, reply);
+      if (!body) return;
+      const { id, slug, name } = body;
 
       const { id: tenantId } = await createTenant({
         ...(id !== undefined && { id }),
@@ -74,7 +127,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
       return reply.send(tenant);
     }
@@ -89,7 +144,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
       const stats = await getTenantStats(tenantId);
       return reply.send(stats);
@@ -105,7 +162,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
       const apps = await getAppsByTenantId(tenantId);
       return reply.send(apps);
@@ -114,29 +173,34 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
   // ─── POST /tenants/:tenantId/apps ───────────────────────────────────────────
 
-  app.post<{ Params: { tenantId: string }; Body: CreateAppRequest }>(
+  app.post<{ Params: { tenantId: string } }>(
     "/:tenantId/apps",
     async (
-      req: FastifyRequest<{ Params: { tenantId: string }; Body: CreateAppRequest }>,
+      req: FastifyRequest<{ Params: { tenantId: string } }>,
       reply: FastifyReply
     ) => {
       const tenantId = requireTenant(req, reply, req.params.tenantId);
       if (!tenantId) return;
-      const { id, slug, name } = req.body;
-
-      if (!slug || !name) {
-        return reply.status(400).send({ error: "slug and name are required" });
-      }
+      const body = parseBody(CreateAppBodySchema, req, reply);
+      if (!body) return;
+      const { id, slug, name } = body;
 
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
       if (!tenant.shopDomain) {
         return reply
           .status(409)
-          .send({ error: "Tenant has no shop domain — complete OAuth installation first" });
+          .send(
+            errorResponse(
+              ErrorCode.Conflict,
+              "Tenant has no shop domain — complete OAuth installation first"
+            )
+          );
       }
 
       const shopifyClientId = process.env["SHOPIFY_CLIENT_ID"];
@@ -168,7 +232,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) {
-        return reply.status(404).send({ error: "App not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "App not found"));
       }
       return reply.send(foundApp);
     }
@@ -176,24 +242,24 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
   // ─── PATCH /tenants/:tenantId/apps/:appId ──────────────────────────────────
 
-  app.patch<{ Params: { tenantId: string; appId: string }; Body: { name?: string; status?: string } }>(
+  app.patch<{ Params: { tenantId: string; appId: string } }>(
     "/:tenantId/apps/:appId",
     async (
-      req: FastifyRequest<{ Params: { tenantId: string; appId: string }; Body: { name?: string; status?: string } }>,
+      req: FastifyRequest<{ Params: { tenantId: string; appId: string } }>,
       reply: FastifyReply
     ) => {
       const tenantId = requireTenant(req, reply, req.params.tenantId);
       if (!tenantId) return;
       const { appId } = req.params;
-      const { name, status } = req.body;
-
-      if (!name?.trim() && !status) {
-        return reply.status(400).send({ error: "name or status is required" });
-      }
+      const body = parseBody(UpdateAppBodySchema, req, reply);
+      if (!body) return;
+      const { name, status } = body;
 
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) {
-        return reply.status(404).send({ error: "App not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "App not found"));
       }
 
       if (name?.trim()) await updateAppName(tenantId, appId, name.trim());
@@ -203,11 +269,15 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
         if (tenant) {
           const activateCheck = await canActivateApp(tenant);
           if (!activateCheck.allowed) {
-            return reply.status(403).send({
-              error: activateCheck.reason,
-              upgradeHint: activateCheck.upgradeHint,
-              code: "app_limit_reached",
-            });
+            return reply
+              .status(403)
+              .send(
+                errorResponse(
+                  ErrorCode.AppLimitReached,
+                  activateCheck.reason ?? "App activation limit reached",
+                  { upgradeHint: activateCheck.upgradeHint }
+                )
+              );
           }
         }
         await updateAppStatus(appId, "active");
@@ -245,7 +315,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
       await permanentDeleteApp(tenantId, appId);
       return reply.status(200).send({ deleted: true });
     }
@@ -261,7 +333,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200);
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
       const logs = await getWidgetInvocationLogs(appId, limit);
       return reply.send(logs);
     }
@@ -277,7 +351,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200);
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
       const logs = await getAdminInvocationLogs(appId, limit);
       return reply.send(logs);
     }
@@ -293,11 +369,15 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
 
       const tenant = await getTenantById(tenantId);
       if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
-        return reply.status(409).send({ error: "Shop not connected" });
+        return reply
+          .status(409)
+          .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
       }
 
       const token = await getSecret(tenant.shopifyAccessTokenSecretName);
@@ -313,25 +393,26 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
   app.post<{
     Params: { tenantId: string; appId: string };
-    Body: { targets: InjectionTarget[] };
   }>(
     "/:tenantId/apps/:appId/inject-theme",
     async (req, reply) => {
       const tenantId = requireTenant(req, reply, req.params.tenantId);
       if (!tenantId) return;
       const { appId } = req.params;
-      const { targets } = req.body;
-
-      if (!targets?.length) {
-        return reply.status(400).send({ error: "targets array is required" });
-      }
+      const body = parseBody(InjectThemeBodySchema, req, reply);
+      if (!body) return;
+      const { targets } = body;
 
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
 
       const tenant = await getTenantById(tenantId);
       if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
-        return reply.status(409).send({ error: "Shop not connected" });
+        return reply
+          .status(409)
+          .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
       }
 
       const token = await getSecret(tenant.shopifyAccessTokenSecretName);
@@ -366,14 +447,20 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
       if (foundApp.themeInjectionStatus !== "injected" || !foundApp.themeInjectionThemeId) {
-        return reply.status(409).send({ error: "No injected theme to delete" });
+        return reply
+          .status(409)
+          .send(errorResponse(ErrorCode.Conflict, "No injected theme to delete"));
       }
 
       const tenant = await getTenantById(tenantId);
       if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
-        return reply.status(409).send({ error: "Shop not connected" });
+        return reply
+          .status(409)
+          .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
       }
 
       const token = await getSecret(tenant.shopifyAccessTokenSecretName);
@@ -404,7 +491,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
       const logs = await getRecentWebhookInvocationLogs(tenantId, limit);

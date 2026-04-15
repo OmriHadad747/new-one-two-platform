@@ -25,6 +25,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { logger } from "@new-one-two/logger";
+import { ErrorCode, errorResponse } from "../lib/error-response.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -183,14 +184,16 @@ export async function authHook(
     logger.warn({ url: request.url }, "Invalid or expired auth token");
     return reply
       .code(401)
-      .send({ error: "Invalid or expired authentication token" });
+      .send(
+        errorResponse(ErrorCode.TokenInvalid, "Invalid or expired authentication token")
+      );
   }
 
   // No token at all
   if (AUTH_REQUIRED) {
     return reply
       .code(401)
-      .send({ error: "Authentication required" });
+      .send(errorResponse(ErrorCode.AuthRequired, "Authentication required"));
   }
 
   // Dev mode: allow through without token
@@ -222,7 +225,7 @@ export function requireTenant(
       { authenticated: req.tenantAuth.tenantId, requested: tenantId },
       "Tenant authorization denied"
     );
-    void reply.code(403).send({ error: "Access denied" });
+    void reply.code(403).send(errorResponse(ErrorCode.AccessDenied, "Access denied"));
     return null;
   }
   return tenantId;
