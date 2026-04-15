@@ -31,9 +31,9 @@ import { sql, withTenantContext } from "./connection.js";
 // the first completed generation, not months later in a dashboard.
 const AgentTraceEntrySchema = z.object({
   agent: z.string(),
-  inputTokens: z.number().int(),
-  outputTokens: z.number().int(),
-  latencyMs: z.number().int(),
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  latencyMs: z.number().int().min(0),
 });
 
 const MetaSchema = z.object({

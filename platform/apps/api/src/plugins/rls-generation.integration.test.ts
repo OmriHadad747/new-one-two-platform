@@ -98,10 +98,13 @@ const describeRls = dockerAvailable ? describe : describe.skip;
 
 // ─── Suite ───────────────────────────────────────────────────────────────────
 //
-// Shared container + db + superuser handle across the suites below. The
-// first describe block owns the beforeAll that boots Postgres and seeds
-// the baseline; subsequent describes (TD-001/004) reuse them instead of
-// paying the ~5s container-startup cost again per suite.
+// Shared container + db + superuser handle across the two describe blocks
+// below. beforeAll/afterAll sit at file scope — previously they lived in
+// the first describe, which meant vitest ran afterAll (container.stop())
+// between the two describes and the TD-001/004 tests hit a dead postgres
+// socket (CONNECTION_ENDED). File-scope hooks apply to the whole file, so
+// the container lives from the first test in describe(1) through the last
+// test in describe(2).
 
 let container: import("testcontainers").StartedTestContainer;
 let db: DbModule;
@@ -110,7 +113,11 @@ let db: DbModule;
 // under test uses its own module-level sql bound to `app_owner`.
 let superSql: PostgresSql;
 
-describeRls("RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY", () => {
+// File-level beforeAll/afterAll — gated on dockerAvailable so the skip path
+// doesn't try to boot a container. When Docker isn't reachable, describeRls
+// becomes describe.skip, no tests run, and these hooks are no-ops (the
+// setup block is guarded by the same flag).
+if (dockerAvailable) {
   beforeAll(async () => {
     const { GenericContainer, Wait } = await import("testcontainers");
     container = await new GenericContainer("postgres:16-alpine")
@@ -190,9 +197,14 @@ describeRls("RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY", ()
 
   afterAll(async () => {
     await superSql?.end?.();
+    // db.sql is the module-level handle bound to app_owner. End it so the
+    // container stop doesn't race with live queries.
+    await db?.sql?.end?.();
     await container?.stop?.();
   });
+}
 
+describeRls("RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY", () => {
   it("(1) raw SELECT outside withTenantContext returns zero rows — FORCE bites the owner", async () => {
     // The db module's sql handle is the app_owner non-superuser. Without a
     // withTenantContext wrap, `app.current_tenant_id` is unset, the policy
