@@ -5,6 +5,7 @@ import { loadModule } from "@new-one-two/harness";
 import { handleWebhookInvoke } from "./webhook-handler.js";
 import { handleWidgetInvoke } from "./widget-handler.js";
 import { handleAdminInvoke } from "./admin-handler.js";
+import { ErrorCode, errorResponse, formatZodIssues } from "./error-response.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "8080", 10);
 
@@ -49,15 +50,24 @@ app.post<{ Params: { "*": string } }>(
     const tenantId = request.headers["x-tenant-id"] as string | undefined;
 
     if (!tenantId) {
-      return reply.status(400).send({ error: "missing_tenant_id" });
+      return reply
+        .status(400)
+        .send(
+          errorResponse(ErrorCode.InvalidRequest, "Missing x-tenant-id header")
+        );
     }
 
     const parsed = ProxyBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: "invalid body",
-        issues: parsed.error.issues,
-      });
+      return reply
+        .status(400)
+        .send(
+          errorResponse(
+            ErrorCode.InvalidRequest,
+            "Request body failed validation",
+            { issues: formatZodIssues(parsed.error) }
+          )
+        );
     }
 
     const { status, data } = await handleAdminInvoke(
@@ -76,15 +86,24 @@ app.post<{ Params: { "*": string } }>(
     const tenantId = request.headers["x-tenant-id"] as string | undefined;
 
     if (!tenantId) {
-      return reply.status(400).send({ error: "missing_tenant_id" });
+      return reply
+        .status(400)
+        .send(
+          errorResponse(ErrorCode.InvalidRequest, "Missing x-tenant-id header")
+        );
     }
 
     const parsed = ProxyBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({
-        error: "invalid body",
-        issues: parsed.error.issues,
-      });
+      return reply
+        .status(400)
+        .send(
+          errorResponse(
+            ErrorCode.InvalidRequest,
+            "Request body failed validation",
+            { issues: formatZodIssues(parsed.error) }
+          )
+        );
     }
 
     const { status, data } = await handleWidgetInvoke(
@@ -99,10 +118,15 @@ app.post<{ Params: { "*": string } }>(
 app.post("/invoke", async (request, reply) => {
   const parsed = InvokeRequestSchema.safeParse(request.body);
   if (!parsed.success) {
-    return reply.status(400).send({
-      error: "invalid invoke request",
-      issues: parsed.error.issues,
-    });
+    return reply
+      .status(400)
+      .send(
+        errorResponse(
+          ErrorCode.InvalidRequest,
+          "Request body failed validation",
+          { issues: formatZodIssues(parsed.error) }
+        )
+      );
   }
   const body = parsed.data;
 

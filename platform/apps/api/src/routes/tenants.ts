@@ -51,13 +51,20 @@ import { requireTenant } from "../plugins/auth.js";
 
 // ─── Request schemas ──────────────────────────────────────────────────────────
 
-// Reserved lowercase alphanumerics + hyphens for slugs — matches the DB
-// constraints on tenants.slug (`^[a-z0-9-]+$`) and apps.slug (same grammar).
+// Lowercase alphanumerics + hyphens for slugs.
+//
+// Intentionally STRICTER than the DB CHECK constraints on tenants.slug /
+// apps.slug (`^[a-z0-9-]+$`) — the DB permits a leading hyphen, this
+// regex does not. Leading-hyphen slugs clash with DNS labels, npm package
+// names, URL segments after a `/`, and CLI arguments, so the platform
+// rejects them at the ingress even though the DB would accept them.
+// Tightening the DB check to match would be a separate migration and is
+// left to a follow-up.
 const SlugSchema = z
   .string()
   .min(1)
   .max(63)
-  .regex(/^[a-z0-9][a-z0-9-]*$/, "slug must be lowercase alphanumerics + hyphens");
+  .regex(/^[a-z0-9][a-z0-9-]*$/, "slug must be lowercase alphanumerics + hyphens and cannot start with '-'");
 
 const CreateTenantBodySchema = z.object({
   id: z.string().uuid().optional(),

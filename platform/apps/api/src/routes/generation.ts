@@ -57,6 +57,13 @@ import { requireTenant } from "../plugins/auth.js";
 // .strict() fails validation on any key the schema doesn't know about, so
 // additions on the Python side require a matching update here. That drift
 // pain is the point: silent drift was the bug we just closed.
+//
+// The six product_agent fields are always present. The two *Description
+// fields are merchant-authored extras from the component picker UI (see
+// platform-front/src/components/features/generation/ChatMessages.tsx:527)
+// and are read by the architect (generator/subagents/architect_agent.py:401).
+// They are optional from this endpoint's perspective — merchants who don't
+// touch the component picker don't send them.
 const PreComputedIntentSchema = z
   .object({
     triggerTypes: z.array(z.string()).optional(),
@@ -65,6 +72,8 @@ const PreComputedIntentSchema = z
     cronSchedule: z.string().nullable().optional(),
     appCategory: z.string().optional(),
     qualityBrief: z.string().optional(),
+    widgetDescription: z.string().max(2000).optional(),
+    adminDescription: z.string().max(2000).optional(),
   })
   .strict();
 
