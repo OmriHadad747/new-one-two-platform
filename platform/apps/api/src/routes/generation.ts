@@ -303,11 +303,40 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   );
 
   // ─── GET /generation/:jobId/progress (SSE) ─────────────────────────────────
+  //
+  // Authenticated like every other /generation/* route. The EventSource client
+  // passes the JWT via the ?token= query string (EventSource cannot attach
+  // custom headers); the global authHook validates it and populates
+  // req.tenantAuth before this handler runs. requireAuthedTenantId rejects
+  // unauthenticated calls with 401 in BOTH prod and dev — previously the SSE
+  // stream was the one /generation/* endpoint that worked without a token,
+  // which let anyone who observed a jobId (log exporter, proxy, browser
+  // extension) reconnect and watch the live progress + meta.
+  //
+  // On top of authn: we verify the authenticated tenant actually owns the
+  // jobId. getSessionByJobId runs under FORCE-RLS withTenantContext, so a
+  // mismatched (tenantId, jobId) returns null and we reply 404. That closes
+  // the lateral path where tenant A could subscribe to tenant B's stream if
+  // they got hold of B's jobId.
 
   app.get<{ Params: { jobId: string } }>(
     "/:jobId/progress",
     async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+      const tenantId = requireAuthedTenantId(req, reply);
+      if (!tenantId) return;
       const { jobId } = req.params;
+
+      // Confirm this tenant owns the jobId BEFORE opening the stream. A
+      // mismatched pair looks exactly like "no session yet" from the DB's
+      // perspective (FORCE RLS + LIMIT 1 → null) — serving a 404 both
+      // denies cross-tenant subscription and avoids leaking whether the
+      // jobId exists under some other tenant.
+      const session = await getSessionByJobId(tenantId, jobId);
+      if (!session) {
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Job not found"));
+      }
 
       reply.raw.setHeader("Content-Type", "text/event-stream");
       reply.raw.setHeader("Cache-Control", "no-cache");
