@@ -375,6 +375,15 @@ def _phase_codegen(
 
     artifacts: Dict[str, str] = {}
     error_map: Dict[str, List[str]] = {}
+    # Cumulative errors across all retry attempts, keyed by generator name.
+    # A fresh validate_artifacts() on each attempt only returns the CURRENT
+    # attempt's errors; passing that alone to the model caused whack-a-mole —
+    # attempt 2 fixes A → introduces B → attempt 3 fixes B → reintroduces A,
+    # because the model never saw both constraints at the same time. The
+    # cumulative view is the union of every unique error string a generator has
+    # produced across all attempts so far, so by attempt N the model has the
+    # full picture of every rule it has violated.
+    cumulative_errors: Dict[str, List[str]] = {}
     # per-agent token totals accumulated across all attempts (handler, migration,
     # widget_js, admin_ui, revision). Each value is (input_tokens, output_tokens).
     token_totals: Dict[str, Tuple[int, int]] = {}
@@ -401,6 +410,7 @@ def _phase_codegen(
             is_storefront,
             is_admin_ui,
             error_map,
+            cumulative_errors,
             artifacts,
             attempt,
         )
@@ -410,6 +420,14 @@ def _phase_codegen(
 
         _emit(request, "validation", "running", "Validating generated artifacts…")
         error_map = validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
+
+        # Merge this attempt's errors into the cumulative view (dedup per generator).
+        # The cumulative view is what gets shown to the model on the NEXT attempt.
+        for name, errs in error_map.items():
+            existing = cumulative_errors.setdefault(name, [])
+            for err in errs:
+                if err not in existing:
+                    existing.append(err)
 
         if not error_map:
             break
@@ -470,6 +488,7 @@ def _generate_artifacts(
     is_storefront: bool,
     is_admin_ui: bool,
     error_map: Dict[str, List[str]],
+    cumulative_errors: Dict[str, List[str]],
     artifacts: Dict[str, str],
     attempt: int,
 ) -> Tuple[Dict[str, str], Dict[str, Tuple[int, int]]]:
@@ -479,6 +498,12 @@ def _generate_artifacts(
     Attempt 1 on a revision run uses the holistic revision agent (single LLM call,
     reasons across all artifacts simultaneously). All other attempts use the standard
     parallel individual generators.
+
+    error_map: current attempt's errors — drives which generators re-run and the
+      coupled-retry heuristic.
+    cumulative_errors: union of every unique error string this generator has produced
+      across all attempts — fed to the model as previous_errors so retry 3 sees
+      attempt 1's errors, not just attempt 2's (prevents whack-a-mole regressions).
 
     Returns (artifacts, per_agent_tokens) where per_agent_tokens maps agent name
     (handler / migration / widget_js / admin_ui / revision) to (in_tokens, out_tokens).
@@ -505,6 +530,7 @@ def _generate_artifacts(
             is_storefront=is_storefront,
             is_admin_ui=is_admin_ui,
             error_map=error_map,
+            cumulative_errors=cumulative_errors,
             artifacts=artifacts,
         )
         parallel_tokens["revision"] = (
@@ -518,6 +544,7 @@ def _generate_artifacts(
         is_storefront=is_storefront,
         is_admin_ui=is_admin_ui,
         error_map=error_map,
+        cumulative_errors=cumulative_errors,
         artifacts=artifacts,
     )
 
@@ -726,6 +753,7 @@ def run_codegen_parallel(
     is_storefront: bool,
     is_admin_ui: bool,
     error_map: Dict[str, List[str]],
+    cumulative_errors: Dict[str, List[str]],
     artifacts: Dict[str, str],
 ) -> Tuple[Dict[str, str], Dict[str, Tuple[int, int]]]:
     """
@@ -735,8 +763,11 @@ def run_codegen_parallel(
     an artifact (first run) are executed. Generators whose artifacts are clean are
     skipped — their existing output is preserved in the returned dict.
 
-    Each generator receives its own CodegenContext with previous_errors populated
-    from error_map so the retry prompt is generator-specific.
+    error_map drives which generators re-run and the coupled-retry heuristic.
+    cumulative_errors is the union of every unique error a generator has produced
+    across all prior attempts — it's what gets passed to the model as
+    previous_errors so later retries have the full history, not just the
+    most recent failures.
 
     Returns (artifacts, per_agent_tokens) — tokens dict only contains keys for
     generators that actually ran on this invocation.
@@ -821,6 +852,23 @@ def run_codegen_parallel(
     if not to_run:
         return artifacts, {}
 
+    def _prev_errors(name: str) -> Optional[List[str]]:
+        """
+        Build the previous_errors list passed to a generator on retry.
+
+        Union of cumulative_errors (every unique error seen across all attempts)
+        and the current attempt's error_map (which also carries any coupled-retry
+        hints injected by the contract-break logic above). Deduped, ordered:
+        cumulative first, then any new items from error_map.
+        """
+        merged: List[str] = []
+        seen: set[str] = set()
+        for err in (cumulative_errors.get(name) or []) + (error_map.get(name) or []):
+            if err not in seen:
+                merged.append(err)
+                seen.add(err)
+        return merged or None
+
     per_agent_tokens: Dict[str, Tuple[int, int]] = {}
     with ThreadPoolExecutor(max_workers=len(to_run)) as pool:
         futures = {
@@ -831,7 +879,7 @@ def run_codegen_parallel(
                     plan=base_ctx.plan,
                     platform_api_catalog=base_ctx.platform_api_catalog,
                     api_context=base_ctx.api_context,
-                    previous_errors=error_map.get(gen.name),
+                    previous_errors=_prev_errors(gen.name),
                     prior_handler_code=base_ctx.prior_handler_code,
                     prior_widget_code=base_ctx.prior_widget_code,
                     prior_migration_sql=base_ctx.prior_migration_sql,
