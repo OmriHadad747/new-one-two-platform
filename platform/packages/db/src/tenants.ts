@@ -1,7 +1,7 @@
 // ─── Tenant / App Management Queries ─────────────────────────────────────────
 
 import type { Tenant, App, AppArchetype } from "@new-one-two/types";
-import { sql } from "./connection.js";
+import { sql, withTenantContext } from "./connection.js";
 
 export async function createTenant(params: {
   id?: string;
@@ -781,17 +781,24 @@ export async function getAppVersionSemvers(appId: string): Promise<string[]> {
   return rows.map((r) => r.semver);
 }
 
-export async function getLatestMigrationSqlForApp(appId: string): Promise<string | null> {
-  const rows = await sql<{ migSql: string | null }[]>`
-    SELECT bundle->'dbMigration'->>'sql' AS "migSql"
-    FROM generation_sessions
-    WHERE app_id = ${appId}
-      AND status = 'completed'
-      AND bundle IS NOT NULL
-    ORDER BY created_at DESC
-    LIMIT 1
-  `;
-  return rows[0]?.migSql ?? null;
+export async function getLatestMigrationSqlForApp(
+  tenantId: string,
+  appId: string
+): Promise<string | null> {
+  // Reads `generation_sessions`, which is force-RLS'd (see migration 0003),
+  // so this query must run inside withTenantContext or it returns zero rows.
+  return withTenantContext(tenantId, async (tx) => {
+    const rows = await tx<{ migSql: string | null }[]>`
+      SELECT bundle->'dbMigration'->>'sql' AS "migSql"
+      FROM generation_sessions
+      WHERE app_id = ${appId}
+        AND status = 'completed'
+        AND bundle IS NOT NULL
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    return rows[0]?.migSql ?? null;
+  });
 }
 
 /**

@@ -44,7 +44,7 @@ import type {
 } from "@new-one-two/types";
 import { canStartGeneration, isCategoryAllowed } from "../lib/plan-enforcement.js";
 import { trackGeneration, trackRevision, storeRevisionClassification } from "@new-one-two/db";
-import { requireTenant } from "../plugins/auth.js";
+import { requireTenant, requireAuthedTenantId } from "../plugins/auth.js";
 
 // ─── Request schemas ──────────────────────────────────────────────────────────
 //
@@ -249,17 +249,19 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         prompt,
       });
 
-      await updateGenerationSession(sessionId, { jobId, status: "running" });
+      await updateGenerationSession(tenantId, sessionId, { jobId, status: "running" });
 
       // Register the completed listener BEFORE publishing — prevents the race
       // condition where a fast generator publishes the result before we listen.
+      // The closure captures `tenantId` so every generation_sessions write
+      // below runs inside withTenantContext under the correct RLS context.
       const unsubCompleted = registerCompletedListener(
         jobId,
         async (bundleMsg: FeatureBundleMessage) => {
           unsubCompleted(); // self-cleanup
           if (bundleMsg.status === "success" && bundleMsg.bundle) {
             const bundle = bundleMsg.bundle as unknown as Record<string, unknown>;
-            await storeBundleInSession(jobId, bundle, "completed");
+            await storeBundleInSession(tenantId, jobId, bundle, "completed");
             // Set archetype immediately so app detail shows correct type badges
             // before the merchant deploys.
             await updateAppArchetype(appId, archetypeFromBundle(bundle));
@@ -270,6 +272,7 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
             await updateAppStatus(appId, "ready");
           } else {
             await storeBundleInSession(
+              tenantId,
               jobId,
               {},
               "failed",
@@ -360,8 +363,10 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { appId: string } }>(
     "/app/:appId/latest",
     async (req: FastifyRequest<{ Params: { appId: string } }>, reply: FastifyReply) => {
+      const tenantId = requireAuthedTenantId(req, reply);
+      if (!tenantId) return;
       const { appId } = req.params;
-      const session = await getLatestSessionForApp(appId);
+      const session = await getLatestSessionForApp(tenantId, appId);
       if (!session) {
         return reply
           .status(404)
@@ -376,8 +381,10 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { appId: string } }>(
     "/app/:appId/latest-completed",
     async (req: FastifyRequest<{ Params: { appId: string } }>, reply: FastifyReply) => {
+      const tenantId = requireAuthedTenantId(req, reply);
+      if (!tenantId) return;
       const { appId } = req.params;
-      const session = await getLatestCompletedSessionForApp(appId);
+      const session = await getLatestCompletedSessionForApp(tenantId, appId);
       if (!session) {
         return reply
           .status(404)
@@ -392,8 +399,10 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { appId: string } }>(
     "/app/:appId/sessions",
     async (req: FastifyRequest<{ Params: { appId: string } }>, reply: FastifyReply) => {
+      const tenantId = requireAuthedTenantId(req, reply);
+      if (!tenantId) return;
       const { appId } = req.params;
-      const sessions = await getSessionsForApp(appId);
+      const sessions = await getSessionsForApp(tenantId, appId);
       return reply.send(sessions);
     }
   );
@@ -403,9 +412,11 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { jobId: string } }>(
     "/:jobId/result",
     async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+      const tenantId = requireAuthedTenantId(req, reply);
+      if (!tenantId) return;
       const { jobId } = req.params;
 
-      const session = await getSessionByJobId(jobId);
+      const session = await getSessionByJobId(tenantId, jobId);
       if (!session) {
         return reply
           .status(404)
@@ -432,9 +443,11 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { jobId: string } }>(
     "/:jobId/approve",
     async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+      const tenantId = requireAuthedTenantId(req, reply);
+      if (!tenantId) return;
       const { jobId } = req.params;
 
-      const requestedSession = await getSessionByJobId(jobId);
+      const requestedSession = await getSessionByJobId(tenantId, jobId);
       if (!requestedSession) {
         return reply
           .status(404)
@@ -452,7 +465,7 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
             .status(422)
             .send(errorResponse(ErrorCode.Conflict, "Cannot deploy a failed generation"));
         }
-        const fallback = await getLatestCompletedSessionForApp(session.appId);
+        const fallback = await getLatestCompletedSessionForApp(tenantId, session.appId);
         if (!fallback) {
           return reply
             .status(422)
@@ -547,12 +560,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Params: { jobId: string } }>,
       reply: FastifyReply
     ) => {
+      const tenantId = requireAuthedTenantId(req, reply);
+      if (!tenantId) return;
       const { jobId } = req.params;
       const body = parseBody(ReviseGenerationBodySchema, req, reply);
       if (!body) return;
       const { feedback } = body;
 
-      const session = await getSessionByJobId(jobId);
+      const session = await getSessionByJobId(tenantId, jobId);
       if (!session) {
         return reply
           .status(404)
@@ -580,28 +595,30 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         tenantId: session.tenantId,
         prompt: revisedPrompt,
       });
-      await updateGenerationSession(newSessionId, {
+      await updateGenerationSession(session.tenantId, newSessionId, {
         jobId: newJobId,
         status: "running",
       });
 
       // Persist the new completed bundle to DB as well
+      const sessionTenantId = session.tenantId;
       const unsubCompleted = registerCompletedListener(
         newJobId,
         async (bundleMsg: FeatureBundleMessage) => {
           unsubCompleted();
           if (bundleMsg.status === "success" && bundleMsg.bundle) {
             const bundle = bundleMsg.bundle as unknown as Record<string, unknown>;
-            await storeBundleInSession(newJobId, bundle, "completed");
+            await storeBundleInSession(sessionTenantId, newJobId, bundle, "completed");
             // Update archetype in case the revision changed the bundle shape.
             await updateAppArchetype(session.appId!, archetypeFromBundle(bundle));
             // Refresh email metadata from the revised bundle. configured_by_merchant
             // is intentionally preserved by the upsert's update clause.
-            await applyBundleEmailMetadata(session.appId!, session.tenantId!, bundle);
+            await applyBundleEmailMetadata(session.appId!, sessionTenantId, bundle);
             // Revision succeeded: move app back to "ready" for merchant to re-deploy.
             await updateAppStatus(session.appId!, "ready");
           } else {
             await storeBundleInSession(
+              sessionTenantId,
               newJobId,
               {},
               "failed",
@@ -636,8 +653,10 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { jobId: string } }>(
     "/:jobId/cancel",
     async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+      const tenantId = requireAuthedTenantId(req, reply);
+      if (!tenantId) return;
       const { jobId } = req.params;
-      await cancelGenerationSession(jobId);
+      await cancelGenerationSession(tenantId, jobId);
       const cancel = cancelCallbacks.get(jobId);
       if (cancel) cancel("Generation cancelled by user");
       return reply.status(200).send({ ok: true });
@@ -652,18 +671,20 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
   app.patch<{ Params: { jobId: string } }>(
     "/:jobId/chat",
     async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+      const tenantId = requireAuthedTenantId(req, reply);
+      if (!tenantId) return;
       const { jobId } = req.params;
       const body = parseBody(ChatHistoryBodySchema, req, reply);
       if (!body) return;
 
-      const session = await getSessionByJobId(jobId);
+      const session = await getSessionByJobId(tenantId, jobId);
       if (!session) {
         return reply
           .status(404)
           .send(errorResponse(ErrorCode.NotFound, "Job not found"));
       }
 
-      await saveChatMessages(jobId, body.messages);
+      await saveChatMessages(tenantId, jobId, body.messages);
       return reply.status(204).send();
     }
   );
