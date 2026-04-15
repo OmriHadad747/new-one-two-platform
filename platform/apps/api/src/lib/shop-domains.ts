@@ -1,5 +1,5 @@
 /**
- * Shop-domain ownership cache (TD-013).
+ * Shop-domain ownership cache .
  *
  * The /widgets/* proxy reflects any Origin at the CORS layer because
  * merchant storefronts run on arbitrary custom domains (`shop.mybrand.com`,
@@ -15,7 +15,7 @@
  * the URL path. Shop domains are resolved via Shopify's Admin GraphQL API
  * and cached per-(shop) with a short TTL; on a cache miss we fetch, on a
  * cached stale entry with an Admin API failure we serve stale rather than
- * break the widget (graceful degradation, per TD-013).
+ * break the widget.
  *
  * Not in this module (deliberately):
  *   - DB-backed caching. Today every API instance maintains its own
@@ -57,7 +57,7 @@ const cache = new Map<string, CachedEntry>();
  */
 const inflight = new Map<string, Promise<Set<string>>>();
 
-/** 5 min TTL per TD-013. Long enough to absorb the Admin API rate limit,
+/** 5 min TTL. Long enough to absorb the Admin API rate limit,
  *  short enough that a legitimately-added alternate domain propagates fast. */
 const TTL_MS = 5 * 60_000;
 
@@ -98,7 +98,7 @@ export const ORIGIN_CHECK_ENABLED = DEPLOY_MODE === "cloudrun";
 export async function isOriginAllowedForShop(
   shop: string,
   origin: string | undefined,
-  requestId?: string
+  requestId?: string,
 ): Promise<boolean> {
   if (!ORIGIN_CHECK_ENABLED) return true;
 
@@ -129,7 +129,9 @@ export function __setNowForTests(fn: () => number): void {
 
 /** Test helper: inject a fake fetcher so tests don't hit Shopify's Admin API. */
 export function __setShopifyFetcherForTests(
-  fn: ((shopDomain: string, accessToken: string) => Promise<Set<string>>) | null
+  fn:
+    | ((shopDomain: string, accessToken: string) => Promise<Set<string>>)
+    | null,
 ): void {
   _shopifyFetcherOverride = fn;
 }
@@ -138,7 +140,7 @@ export function __setShopifyFetcherForTests(
 
 async function resolveShopHosts(
   shop: string,
-  requestId?: string
+  requestId?: string,
 ): Promise<Set<string> | null> {
   const now = nowFn();
   const cached = cache.get(shop);
@@ -170,13 +172,13 @@ async function resolveShopHosts(
     if (cached) {
       log.warn(
         { shop, err: err instanceof Error ? err.message : String(err) },
-        "shop-domains: Admin API failed, serving stale cache"
+        "shop-domains: Admin API failed, serving stale cache",
       );
       return cached.hosts;
     }
     log.warn(
       { shop, err: err instanceof Error ? err.message : String(err) },
-      "shop-domains: Admin API failed with no cache — rejecting request"
+      "shop-domains: Admin API failed with no cache — rejecting request",
     );
     return null;
   }
@@ -203,7 +205,9 @@ function fetchOrJoinInflight(shop: string, now: number): Promise<Set<string>> {
   // remove a newer promise that's already replaced it.
   p.finally(() => {
     if (inflight.get(shop) === p) inflight.delete(shop);
-  }).catch(() => { /* swallow — caller already sees it */ });
+  }).catch(() => {
+    /* swallow — caller already sees it */
+  });
   return p;
 }
 
@@ -247,7 +251,7 @@ async function fetchShopHostsFromShopify(shop: string): Promise<Set<string>> {
   });
   if (!response.ok) {
     throw new Error(
-      `Shopify Admin API ${response.status}: ${await response.text()}`
+      `Shopify Admin API ${response.status}: ${await response.text()}`,
     );
   }
   const json = (await response.json()) as {

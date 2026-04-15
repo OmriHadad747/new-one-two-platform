@@ -24,7 +24,7 @@
  *     refuses to start. The previous `@fastify/cors` config fell through
  *     to `origin: true` (wide open) in that case — a latent footgun.
  *
- * Route-layer Origin ownership check (previously TD-013, closed in B7):
+ * Route-layer Origin ownership check:
  *   reflection here is paired with `isOriginAllowedForShop` inside the
  *   widget proxy handler (apps/api/src/lib/shop-domains.ts). CORS reflects
  *   any origin so merchant custom domains Just Work; the handler then
@@ -82,13 +82,13 @@ export function parseAllowedOrigins(raw: string | undefined): string[] {
 
 export function assertProductionCorsConfig(
   nodeEnv: string | undefined,
-  allowedOrigins: readonly string[]
+  allowedOrigins: readonly string[],
 ): void {
   if (nodeEnv === "production" && allowedOrigins.length === 0) {
     throw new Error(
       "ALLOWED_ORIGINS must be set to a non-empty list in production " +
         "(comma-separated, e.g. `https://admin.shopify.com,https://*.myshopify.com`). " +
-        "Refusing to start with wide-open CORS."
+        "Refusing to start with wide-open CORS.",
     );
   }
 }

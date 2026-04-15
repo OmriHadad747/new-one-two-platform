@@ -37,7 +37,10 @@ type DbModule = typeof import("@new-one-two/db");
 type PostgresSql = import("postgres").Sql;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = path.resolve(__dirname, "../../../../packages/db/migrations");
+const MIGRATIONS_DIR = path.resolve(
+  __dirname,
+  "../../../../packages/db/migrations",
+);
 
 /**
  * Returns every `NNNN_*.sql` file in the migrations directory, sorted by the
@@ -46,26 +49,24 @@ const MIGRATIONS_DIR = path.resolve(__dirname, "../../../../packages/db/migratio
  *
  * Dynamic discovery — previously this list was hardcoded. Hardcoding it
  * meant the test silently drifted from the migrations directory: a new
- * `0004_generation_events.sql` (TD-004) lands on main, the test suite keeps
+ * `0004_generation_events.sql` lands on main, the test suite keeps
  * applying only the old three files, and whatever invariant the new
  * migration establishes goes uncovered. A glob-and-sort makes the suite
  * always run against the full committed schema.
  */
 async function listMigrationFiles(): Promise<string[]> {
   const entries = await fs.readdir(MIGRATIONS_DIR);
-  return entries
-    .filter((name) => /^\d{4}_.*\.sql$/.test(name))
-    .sort();
+  return entries.filter((name) => /^\d{4}_.*\.sql$/.test(name)).sort();
 }
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const TENANT_A = "11111111-1111-4111-8111-111111111111";
 const TENANT_B = "22222222-2222-4222-8222-222222222222";
-const APP_A    = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const APP_B    = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-const JOB_A    = "00000000-0000-4000-8000-00000000000a";
-const JOB_B    = "00000000-0000-4000-8000-00000000000b";
+const APP_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const APP_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const JOB_A = "00000000-0000-4000-8000-00000000000a";
+const JOB_B = "00000000-0000-4000-8000-00000000000b";
 
 // ─── Docker availability gate ────────────────────────────────────────────────
 //
@@ -91,7 +92,7 @@ if (!dockerAvailable) {
   // eslint-disable-next-line no-console
   console.warn(
     "[rls-generation.integration.test] skipping — Docker daemon not reachable. " +
-      "Install Docker to run the RLS invariant suite locally; CI runs this on every PR."
+      "Install Docker to run the RLS invariant suite locally; CI runs this on every PR.",
   );
 }
 const describeRls = dockerAvailable ? describe : describe.skip;
@@ -101,7 +102,7 @@ const describeRls = dockerAvailable ? describe : describe.skip;
 // Shared container + db + superuser handle across the two describe blocks
 // below. beforeAll/afterAll sit at file scope — previously they lived in
 // the first describe, which meant vitest ran afterAll (container.stop())
-// between the two describes and the TD-001/004 tests hit a dead postgres
+// between the two describes and the tests hit a dead postgres
 // socket (CONNECTION_ENDED). File-scope hooks apply to the whole file, so
 // the container lives from the first test in describe(1) through the last
 // test in describe(2).
@@ -128,7 +129,7 @@ if (dockerAvailable) {
       })
       .withExposedPorts(5432)
       .withWaitStrategy(
-        Wait.forLogMessage(/database system is ready to accept connections/, 2)
+        Wait.forLogMessage(/database system is ready to accept connections/, 2),
       )
       .start();
 
@@ -191,7 +192,8 @@ if (dockerAvailable) {
     //    owner role — that's the role whose "forgot withTenantContext" bug
     //    this suite exists to catch. Dynamic import so the module picks up
     //    the env override, not the hardcoded value from any .env file.
-    process.env["DATABASE_URL"] = `postgres://app_owner:x@${host}:${port}/platform_test`;
+    process.env["DATABASE_URL"] =
+      `postgres://app_owner:x@${host}:${port}/platform_test`;
     db = await import("@new-one-two/db");
   }, 120_000);
 
@@ -204,56 +206,65 @@ if (dockerAvailable) {
   });
 }
 
-describeRls("RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY", () => {
-  it("(1) raw SELECT outside withTenantContext returns zero rows — FORCE bites the owner", async () => {
-    // The db module's sql handle is the app_owner non-superuser. Without a
-    // withTenantContext wrap, `app.current_tenant_id` is unset, the policy
-    // is `tenant_id = NULL::uuid` → false for every row → 0 rows.
-    const rows = await db.sql`SELECT id FROM generation_sessions`;
-    expect(rows).toHaveLength(0);
-  });
+describeRls(
+  "RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY",
+  () => {
+    it("(1) raw SELECT outside withTenantContext returns zero rows — FORCE bites the owner", async () => {
+      // The db module's sql handle is the app_owner non-superuser. Without a
+      // withTenantContext wrap, `app.current_tenant_id` is unset, the policy
+      // is `tenant_id = NULL::uuid` → false for every row → 0 rows.
+      const rows = await db.sql`SELECT id FROM generation_sessions`;
+      expect(rows).toHaveLength(0);
+    });
 
-  it("(2) getSessionByJobId(tenantA, jobA) returns Tenant A's row", async () => {
-    const session = await db.getSessionByJobId(TENANT_A, JOB_A);
-    expect(session).not.toBeNull();
-    expect(session?.prompt).toBe("prompt-A");
-    expect(session?.tenantId).toBe(TENANT_A);
-  });
+    it("(2) getSessionByJobId(tenantA, jobA) returns Tenant A's row", async () => {
+      const session = await db.getSessionByJobId(TENANT_A, JOB_A);
+      expect(session).not.toBeNull();
+      expect(session?.prompt).toBe("prompt-A");
+      expect(session?.tenantId).toBe(TENANT_A);
+    });
 
-  it("(3) getSessionByJobId(tenantB, jobA) — cross-tenant attempt returns null", async () => {
-    // The policy scopes by tenant_id, not by job_id. With the "wrong"
-    // tenant in context, the query runs but sees zero rows, so the
-    // function returns null. A merchant authenticated as B cannot read A's
-    // session by knowing A's jobId.
-    const session = await db.getSessionByJobId(TENANT_B, JOB_A);
-    expect(session).toBeNull();
-  });
+    it("(3) getSessionByJobId(tenantB, jobA) — cross-tenant attempt returns null", async () => {
+      // The policy scopes by tenant_id, not by job_id. With the "wrong"
+      // tenant in context, the query runs but sees zero rows, so the
+      // function returns null. A merchant authenticated as B cannot read A's
+      // session by knowing A's jobId.
+      const session = await db.getSessionByJobId(TENANT_B, JOB_A);
+      expect(session).toBeNull();
+    });
 
-  it("(4) the superuser still sees both rows — sanity check on our test harness", async () => {
-    // If this ever flips to 0, the test container is misconfigured (maybe
-    // the superuser lost its BYPASSRLS attribute) — the test infra, not
-    // the code under test.
-    const rows = await superSql<{ tenant_id: string }[]>`
+    it("(4) the superuser still sees both rows — sanity check on our test harness", async () => {
+      // If this ever flips to 0, the test container is misconfigured (maybe
+      // the superuser lost its BYPASSRLS attribute) — the test infra, not
+      // the code under test.
+      const rows = await superSql<{ tenant_id: string }[]>`
       SELECT tenant_id FROM generation_sessions ORDER BY tenant_id
     `;
-    expect(rows).toHaveLength(2);
-  });
+      expect(rows).toHaveLength(2);
+    });
 
-  it("(5) getLatestCompletedSessionForApp scopes correctly across tenants", async () => {
-    // Same invariant, different entry point. The full TD-014 sweep would
-    // pattern-match tests like this across every function * every
-    // force-RLS'd table.
-    const forOwner = await db.getLatestCompletedSessionForApp(TENANT_A, APP_A);
-    expect(forOwner?.prompt).toBe("prompt-A");
+    it("(5) getLatestCompletedSessionForApp scopes correctly across tenants", async () => {
+      // Same invariant, different entry point. The full sweep would
+      // pattern-match tests like this across every function * every
+      // force-RLS'd table.
+      const forOwner = await db.getLatestCompletedSessionForApp(
+        TENANT_A,
+        APP_A,
+      );
+      expect(forOwner?.prompt).toBe("prompt-A");
 
-    // Cross-tenant: caller B asks for A's app → null (policy filters out
-    // rows where tenant_id doesn't match the session context).
-    const crossTenant = await db.getLatestCompletedSessionForApp(TENANT_B, APP_A);
-    expect(crossTenant).toBeNull();
-  });
-});
+      // Cross-tenant: caller B asks for A's app → null (policy filters out
+      // rows where tenant_id doesn't match the session context).
+      const crossTenant = await db.getLatestCompletedSessionForApp(
+        TENANT_B,
+        APP_A,
+      );
+      expect(crossTenant).toBeNull();
+    });
+  },
+);
 
-// ─── TD-001 + TD-004 — meta blob + generation_events fan-out ───────────────
+// ─────────── meta blob + generation_events fan-out ───────────────
 //
 // Migration 0004 adds a `meta` JSONB column on `generation_sessions` and a
 // normalised `generation_events` projection table. `storeBundleInSession`
@@ -264,7 +275,7 @@ describeRls("RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY", ()
 // sessions directly via superSql; here we drive storeBundleInSession
 // end-to-end so both the blob and the event rows are observed.
 
-describeRls("TD-001 + TD-004 — cost visibility write path", () => {
+describeRls("Ccost visibility write path", () => {
   // New jobIds so we don't clash with JOB_A/JOB_B from the RLS suite.
   const JOB_COST_A = "00000000-0000-4000-8000-00000000100a";
   const JOB_COST_B = "00000000-0000-4000-8000-00000000100b";
@@ -274,18 +285,47 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
     totalOutputTokens: 6_789,
     generationMs: 45_678,
     agentTrace: [
-      { agent: "product",     inputTokens: 1_000, outputTokens:   500, latencyMs: 3_000 },
-      { agent: "architect",   inputTokens: 4_000, outputTokens: 2_000, latencyMs: 9_000 },
-      { agent: "handler",     inputTokens: 5_000, outputTokens: 3_000, latencyMs: 18_000 },
-      { agent: "validation",  inputTokens:   900, outputTokens:   400, latencyMs: 2_000 },
-      { agent: "explanation", inputTokens: 1_445, outputTokens:   889, latencyMs: 13_678 },
+      {
+        agent: "product",
+        inputTokens: 1_000,
+        outputTokens: 500,
+        latencyMs: 3_000,
+      },
+      {
+        agent: "architect",
+        inputTokens: 4_000,
+        outputTokens: 2_000,
+        latencyMs: 9_000,
+      },
+      {
+        agent: "handler",
+        inputTokens: 5_000,
+        outputTokens: 3_000,
+        latencyMs: 18_000,
+      },
+      {
+        agent: "validation",
+        inputTokens: 900,
+        outputTokens: 400,
+        latencyMs: 2_000,
+      },
+      {
+        agent: "explanation",
+        inputTokens: 1_445,
+        outputTokens: 889,
+        latencyMs: 13_678,
+      },
     ],
   };
 
   // Create a fresh session per test under the superuser so the write-path
   // under test only has to UPDATE + INSERT, not race with a previous
   // run's rows.
-  async function seedEmptySession(tenantId: string, appId: string, jobId: string) {
+  async function seedEmptySession(
+    tenantId: string,
+    appId: string,
+    jobId: string,
+  ) {
     await superSql`
       INSERT INTO generation_sessions (app_id, tenant_id, prompt, status, job_id)
       VALUES (${appId}, ${tenantId}, 'cost-fixture', 'running', ${jobId})
@@ -293,7 +333,12 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
   }
 
   async function eventsForSession(jobId: string): Promise<
-    Array<{ agent_name: string; input_tokens: number; output_tokens: number; latency_ms: number }>
+    Array<{
+      agent_name: string;
+      input_tokens: number;
+      output_tokens: number;
+      latency_ms: number;
+    }>
   > {
     // superSql bypasses RLS so the test can directly inspect what landed,
     // independent of whatever context the code under test used.
@@ -311,14 +356,22 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
     await db.storeBundleInSession(
       TENANT_A,
       JOB_COST_A,
-      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      {
+        handlerModule: {
+          code: "module.exports = {};",
+          webhookTopics: [],
+          cronSchedule: null,
+        },
+      },
       "completed",
       undefined,
-      META_FIXTURE
+      META_FIXTURE,
     );
 
-    // Blob is persisted (TD-001).
-    const [sessionRow] = await superSql<Array<{ meta: Record<string, unknown> }>>`
+    // Blob is persisted.
+    const [sessionRow] = await superSql<
+      Array<{ meta: Record<string, unknown> }>
+    >`
       SELECT meta FROM generation_sessions WHERE job_id = ${JOB_COST_A}
     `;
     expect(sessionRow?.meta).toMatchObject({
@@ -326,9 +379,11 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
       totalOutputTokens: 6_789,
       generationMs: 45_678,
     });
-    expect(Array.isArray((sessionRow?.meta as { agentTrace: unknown[] }).agentTrace)).toBe(true);
+    expect(
+      Array.isArray((sessionRow?.meta as { agentTrace: unknown[] }).agentTrace),
+    ).toBe(true);
 
-    // Events are fanned out (TD-004). One row per agentTrace entry.
+    // Events are fanned out. One row per agentTrace entry.
     const events = await eventsForSession(JOB_COST_A);
     expect(events).toHaveLength(META_FIXTURE.agentTrace.length);
 
@@ -346,8 +401,14 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
     await db.storeBundleInSession(
       TENANT_B,
       JOB_COST_B,
-      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
-      "completed"
+      {
+        handlerModule: {
+          code: "module.exports = {};",
+          webhookTopics: [],
+          cronSchedule: null,
+        },
+      },
+      "completed",
       // no errorMessage, no meta
     );
 
@@ -370,23 +431,35 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
     await db.storeBundleInSession(
       TENANT_A,
       JOB_RLS,
-      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      {
+        handlerModule: {
+          code: "module.exports = {};",
+          webhookTopics: [],
+          cronSchedule: null,
+        },
+      },
       "completed",
       undefined,
-      META_FIXTURE
+      META_FIXTURE,
     );
 
     // A query run under context=TENANT_B must see none of A's events.
-    const seenAsB = await db.sql.begin(async (tx) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const seenAsB = await db.sql.begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_tenant_id', ${TENANT_B}, TRUE)`;
-      return tx<Array<{ id: string }>>`SELECT id FROM generation_events WHERE job_id = ${JOB_RLS}`;
+      return tx<
+        Array<{ id: string }>
+      >`SELECT id FROM generation_events WHERE job_id = ${JOB_RLS}`;
     });
     expect(seenAsB).toHaveLength(0);
 
     // And context=TENANT_A sees them (context integrity check).
-    const seenAsA = await db.sql.begin(async (tx) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const seenAsA = await db.sql.begin(async (tx: any) => {
       await tx`SELECT set_config('app.current_tenant_id', ${TENANT_A}, TRUE)`;
-      return tx<Array<{ id: string }>>`SELECT id FROM generation_events WHERE job_id = ${JOB_RLS}`;
+      return tx<
+        Array<{ id: string }>
+      >`SELECT id FROM generation_events WHERE job_id = ${JOB_RLS}`;
     });
     expect(seenAsA.length).toBe(META_FIXTURE.agentTrace.length);
   });
@@ -404,7 +477,12 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
       ...META_FIXTURE,
       agentTrace: [
         { agent: "valid", inputTokens: 1, outputTokens: 1, latencyMs: 1 },
-        { agent: { oops: "not-a-string" }, inputTokens: 2, outputTokens: 2, latencyMs: 2 },
+        {
+          agent: { oops: "not-a-string" },
+          inputTokens: 2,
+          outputTokens: 2,
+          latencyMs: 2,
+        },
       ],
     };
 
@@ -415,12 +493,14 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
         { handlerModule: { code: "", webhookTopics: [], cronSchedule: null } },
         "completed",
         undefined,
-        brokenMeta as unknown as Record<string, unknown>
-      )
+        brokenMeta as unknown as Record<string, unknown>,
+      ),
     ).rejects.toThrow(/agent/i); // zod issue path includes "agent"
 
     // Session row is unchanged: still 'running', no meta, no bundle.
-    const [row] = await superSql<Array<{ meta: unknown; status: string; bundle: unknown }>>`
+    const [row] = await superSql<
+      Array<{ meta: unknown; status: string; bundle: unknown }>
+    >`
       SELECT meta, status, bundle FROM generation_sessions WHERE job_id = ${JOB_ROLLBACK}
     `;
     expect(row?.meta).toBeNull();
@@ -444,10 +524,16 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
     await db.storeBundleInSession(
       TENANT_A,
       JOB_REDELIVER,
-      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      {
+        handlerModule: {
+          code: "module.exports = {};",
+          webhookTopics: [],
+          cronSchedule: null,
+        },
+      },
       "completed",
       undefined,
-      META_FIXTURE
+      META_FIXTURE,
     );
 
     const firstPass = await eventsForSession(JOB_REDELIVER);
@@ -458,10 +544,16 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
     await db.storeBundleInSession(
       TENANT_A,
       JOB_REDELIVER,
-      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      {
+        handlerModule: {
+          code: "module.exports = {};",
+          webhookTopics: [],
+          cronSchedule: null,
+        },
+      },
       "completed",
       undefined,
-      META_FIXTURE
+      META_FIXTURE,
     );
 
     const secondPass = await eventsForSession(JOB_REDELIVER);
@@ -479,20 +571,46 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
     const metaWithRetry = {
       ...META_FIXTURE,
       agentTrace: [
-        { agent: "product",   inputTokens: 1_000, outputTokens:   500, latencyMs: 3_000 },
-        { agent: "architect", inputTokens: 4_000, outputTokens: 2_000, latencyMs: 9_000 },
-        { agent: "handler",   inputTokens: 5_000, outputTokens: 3_000, latencyMs: 18_000 },
-        { agent: "architect", inputTokens:   500, outputTokens:   300, latencyMs: 2_000 }, // retry
+        {
+          agent: "product",
+          inputTokens: 1_000,
+          outputTokens: 500,
+          latencyMs: 3_000,
+        },
+        {
+          agent: "architect",
+          inputTokens: 4_000,
+          outputTokens: 2_000,
+          latencyMs: 9_000,
+        },
+        {
+          agent: "handler",
+          inputTokens: 5_000,
+          outputTokens: 3_000,
+          latencyMs: 18_000,
+        },
+        {
+          agent: "architect",
+          inputTokens: 500,
+          outputTokens: 300,
+          latencyMs: 2_000,
+        }, // retry
       ],
     };
 
     await db.storeBundleInSession(
       TENANT_A,
       JOB_RETRY,
-      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      {
+        handlerModule: {
+          code: "module.exports = {};",
+          webhookTopics: [],
+          cronSchedule: null,
+        },
+      },
       "completed",
       undefined,
-      metaWithRetry
+      metaWithRetry,
     );
 
     const rows = await eventsForSession(JOB_RETRY);
@@ -501,7 +619,7 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
   });
 });
 
-// ─── TD-015 — SSE progress stream auth + ownership contract ────────────────
+// ─── SSE progress stream auth + ownership contract ────────────────
 //
 // Batch 6 put GET /generation/:jobId/progress behind the same JWT contract
 // as every other /generation/* route. These cases pin three invariants:
@@ -517,7 +635,7 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
 // file-level beforeAll. JWT_SECRET is set just before importing auth.ts
 // so signJwt/verifyJwt both see the same secret.
 
-describeRls("TD-015 — SSE /generation/:jobId/progress auth + ownership", () => {
+describeRls("SSE /generation/:jobId/progress auth + ownership", () => {
   const JOB_SSE_A = "00000000-0000-4000-8000-0000000012aa";
   const JOB_SSE_B = "00000000-0000-4000-8000-0000000013bb";
 
@@ -568,9 +686,12 @@ describeRls("TD-015 — SSE /generation/:jobId/progress auth + ownership", () =>
   });
 
   it("(13) SSE with tenant-B token for tenant-A's jobId returns 404, not 403 — no disclosure oracle", async () => {
-    const tokenB = signJwt({ tenantId: TENANT_B, shopDomain: "b.myshopify.com" });
+    const tokenB = signJwt({
+      tenantId: TENANT_B,
+      shopDomain: "b.myshopify.com",
+    });
     const res = await fetch(
-      `${baseUrl}/generation/${JOB_SSE_A}/progress?token=${encodeURIComponent(tokenB)}`
+      `${baseUrl}/generation/${JOB_SSE_A}/progress?token=${encodeURIComponent(tokenB)}`,
     );
     // 404 matches the "unknown jobId" shape: a caller with a valid token
     // for tenant B cannot distinguish "jobId doesn't exist" from "jobId
@@ -581,19 +702,26 @@ describeRls("TD-015 — SSE /generation/:jobId/progress auth + ownership", () =>
   });
 
   it("(14) SSE with owning tenant's token returns 200 + text/event-stream", async () => {
-    const tokenA = signJwt({ tenantId: TENANT_A, shopDomain: "a.myshopify.com" });
+    const tokenA = signJwt({
+      tenantId: TENANT_A,
+      shopDomain: "a.myshopify.com",
+    });
     const ac = new AbortController();
     // The stream never ends on its own (no Pub/Sub listener will fire in
     // this test). Abort after reading headers so fetch doesn't hang.
     const res = await fetch(
       `${baseUrl}/generation/${JOB_SSE_A}/progress?token=${encodeURIComponent(tokenA)}`,
-      { signal: ac.signal }
+      { signal: ac.signal },
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
     ac.abort();
     // Swallow the AbortError surfaced on the body stream — we aborted on
     // purpose, the test's assertion is about the head, not the tail.
-    try { await res.body?.cancel(); } catch { /* expected */ }
+    try {
+      await res.body?.cancel();
+    } catch {
+      /* expected */
+    }
   });
 });

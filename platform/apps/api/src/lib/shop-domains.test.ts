@@ -1,5 +1,5 @@
 /**
- * Unit tests for the shop-domain ownership cache (TD-013).
+ * Unit tests for the shop-domain ownership cache.
  *
  * We exercise the matcher + cache without hitting Shopify's Admin API: the
  * module exposes a test-only fetcher override and a pluggable clock so
@@ -62,7 +62,9 @@ afterEach(() => {
 
 describe("parseOriginHost", () => {
   it("strips scheme + returns lowercase hostname", async () => {
-    expect(mod.parseOriginHost("https://Shop.MyBrand.com")).toBe("shop.mybrand.com");
+    expect(mod.parseOriginHost("https://Shop.MyBrand.com")).toBe(
+      "shop.mybrand.com",
+    );
   });
   it("strips port", async () => {
     expect(mod.parseOriginHost("http://localhost:3000")).toBe("localhost");
@@ -89,13 +91,20 @@ describe("isOriginAllowedForShop — production path", () => {
   });
 
   it("allows the myshopifyDomain itself", async () => {
-    mod.__setShopifyFetcherForTests(async () => new Set(["acme.myshopify.com", "shop.acme.com"]));
-    const ok = await mod.isOriginAllowedForShop(SHOP, "https://acme.myshopify.com");
+    mod.__setShopifyFetcherForTests(
+      async () => new Set(["acme.myshopify.com", "shop.acme.com"]),
+    );
+    const ok = await mod.isOriginAllowedForShop(
+      SHOP,
+      "https://acme.myshopify.com",
+    );
     expect(ok).toBe(true);
   });
 
   it("rejects evil.com even though CORS reflected it", async () => {
-    mod.__setShopifyFetcherForTests(async () => new Set(["acme.myshopify.com", "shop.acme.com"]));
+    mod.__setShopifyFetcherForTests(
+      async () => new Set(["acme.myshopify.com", "shop.acme.com"]),
+    );
     const ok = await mod.isOriginAllowedForShop(SHOP, "https://evil.com");
     expect(ok).toBe(false);
   });
@@ -105,7 +114,10 @@ describe("isOriginAllowedForShop — production path", () => {
     // inherit trust. This is the suffix-trick guard that the CORS
     // wildcard matcher already enforces for non-widget routes.
     mod.__setShopifyFetcherForTests(async () => new Set(["shop.acme.com"]));
-    const ok = await mod.isOriginAllowedForShop(SHOP, "https://evil.shop.acme.com");
+    const ok = await mod.isOriginAllowedForShop(
+      SHOP,
+      "https://evil.shop.acme.com",
+    );
     expect(ok).toBe(false);
   });
 
@@ -159,11 +171,15 @@ describe("isOriginAllowedForShop — production path", () => {
     });
 
     // Seed.
-    expect(await mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com")).toBe(true);
+    expect(
+      await mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com"),
+    ).toBe(true);
 
     // Expire + fail-on-refresh → stale cache still accepted.
     clock += 6 * 60_000;
-    expect(await mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com")).toBe(true);
+    expect(
+      await mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com"),
+    ).toBe(true);
   });
 
   it("rejects on Admin API failure with an empty cold cache", async () => {
@@ -194,8 +210,8 @@ describe("isOriginAllowedForShop — production path", () => {
     // 20 concurrent callers, same shop, cold cache.
     const results = await Promise.all(
       Array.from({ length: 20 }, () =>
-        mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com")
-      )
+        mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com"),
+      ),
     );
     expect(results.every((r) => r === true)).toBe(true);
     expect(fetchCount).toBe(1);
@@ -213,11 +229,15 @@ describe("isOriginAllowedForShop — production path", () => {
 
     // First call: cold cache + failure → rejects through resolveShopHosts,
     // surfaces as `false`.
-    expect(await mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com")).toBe(false);
+    expect(
+      await mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com"),
+    ).toBe(false);
 
     // Second call after the in-flight entry was cleared → new fetch, now
     // succeeds.
-    expect(await mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com")).toBe(true);
+    expect(
+      await mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com"),
+    ).toBe(true);
     expect(calls).toBe(2);
   });
 });

@@ -38,12 +38,16 @@ import {
 } from "@new-one-two/db";
 import { deployFeatureBundle, deployAppVersion } from "@new-one-two/deployer";
 import { getTenantById } from "@new-one-two/db";
-import type {
-  FeatureBundle,
-  AppArchetype,
-} from "@new-one-two/types";
-import { canStartGeneration, isCategoryAllowed } from "../lib/plan-enforcement.js";
-import { trackGeneration, trackRevision, storeRevisionClassification } from "@new-one-two/db";
+import type { FeatureBundle, AppArchetype } from "@new-one-two/types";
+import {
+  canStartGeneration,
+  isCategoryAllowed,
+} from "../lib/plan-enforcement.js";
+import {
+  trackGeneration,
+  trackRevision,
+  storeRevisionClassification,
+} from "@new-one-two/db";
 import { requireTenant, requireAuthedTenantId } from "../plugins/auth.js";
 
 // ─── Request schemas ──────────────────────────────────────────────────────────
@@ -102,17 +106,17 @@ const AnalyzeBodySchema = z.object({
     z.object({
       role: z.string().min(1),
       content: z.string(),
-    })
+    }),
   ),
 });
 
 /** Derive AppArchetype from a raw bundle object. */
 function archetypeFromBundle(bundle: Record<string, unknown>): AppArchetype {
   const hasWidget = bundle["widgetModule"] != null;
-  const hasAdmin  = bundle["adminUiModule"] != null;
+  const hasAdmin = bundle["adminUiModule"] != null;
   if (hasWidget && hasAdmin) return "storefront_backend_admin";
-  if (hasAdmin)              return "backend_admin";
-  if (hasWidget)             return "storefront_backend";
+  if (hasAdmin) return "backend_admin";
+  if (hasWidget) return "storefront_backend";
   return "backend";
 }
 
@@ -131,7 +135,7 @@ function archetypeFromBundle(bundle: Record<string, unknown>): AppArchetype {
 async function applyBundleEmailMetadata(
   appId: string,
   tenantId: string,
-  bundle: Record<string, unknown>
+  bundle: Record<string, unknown>,
 ): Promise<void> {
   const usesEmail = bundle["usesEmail"] === true;
   await setAppUsesEmail(appId, usesEmail);
@@ -139,24 +143,35 @@ async function applyBundleEmailMetadata(
   if (!usesEmail) return;
 
   const variables = Array.isArray(bundle["emailVariables"])
-    ? (bundle["emailVariables"] as unknown[]).filter((v): v is string => typeof v === "string")
+    ? (bundle["emailVariables"] as unknown[]).filter(
+        (v): v is string => typeof v === "string",
+      )
     : [];
   await sql`
     UPDATE apps SET email_variables = ${JSON.stringify(variables)}::jsonb WHERE id = ${appId}
   `;
 
   const starter = bundle["emailStarterContent"] as
-    | { subject?: string; heading?: string | null; body?: string; ctaLabel?: string | null; ctaUrl?: string | null }
+    | {
+        subject?: string;
+        heading?: string | null;
+        body?: string;
+        ctaLabel?: string | null;
+        ctaUrl?: string | null;
+      }
     | undefined;
   if (!starter?.subject || !starter?.body) {
     logger.warn(
       { appId, tenantId },
-      "bundle.usesEmail=true but emailStarterContent missing subject/body — skipping app_email_configs seed"
+      "bundle.usesEmail=true but emailStarterContent missing subject/body — skipping app_email_configs seed",
     );
     return;
   }
 
-  const emailType = bundle["emailTypeSuggestion"] === "marketing" ? "marketing" : "transactional";
+  const emailType =
+    bundle["emailTypeSuggestion"] === "marketing"
+      ? "marketing"
+      : "transactional";
 
   await createAppEmailConfigFromStarter({
     appId,
@@ -188,119 +203,132 @@ const cancelCallbacks = new Map<string, (reason: string) => void>();
 export const generationRoute: FastifyPluginAsync = async (app) => {
   // ─── POST /generation ──────────────────────────────────────────────────────
 
-  app.post(
-    "/",
-    async (req: FastifyRequest, reply: FastifyReply) => {
-      // Zod-validated: rejects unknown keys on preComputedIntent so a client
-      // cannot smuggle fields past the Python intent agent's shape contract.
-      const body = parseBody(StartGenerationBodySchema, req, reply);
-      if (!body) return;
-      const { appId, prompt, preComputedIntent } = body;
+  app.post("/", async (req: FastifyRequest, reply: FastifyReply) => {
+    // Zod-validated: rejects unknown keys on preComputedIntent so a client
+    // cannot smuggle fields past the Python intent agent's shape contract.
+    const body = parseBody(StartGenerationBodySchema, req, reply);
+    if (!body) return;
+    const { appId, prompt, preComputedIntent } = body;
 
-      const tenantId = requireTenant(req, reply, body.tenantId);
-      if (!tenantId) return;
+    const tenantId = requireTenant(req, reply, body.tenantId);
+    if (!tenantId) return;
 
-      // ── Plan enforcement: check generation quota ──
-      const tenant = await getTenantById(tenantId);
-      if (!tenant) {
-        return reply
-          .status(404)
-          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
-      }
-      const check = await canStartGeneration(tenant);
-      if (!check.allowed) {
+    // ── Plan enforcement: check generation quota ──
+    const tenant = await getTenantById(tenantId);
+    if (!tenant) {
+      return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
+    }
+    const check = await canStartGeneration(tenant);
+    if (!check.allowed) {
+      return reply
+        .status(403)
+        .send(
+          errorResponse(
+            ErrorCode.GenerationLimitReached,
+            check.reason ?? "Generation quota reached",
+            { upgradeHint: check.upgradeHint },
+          ),
+        );
+    }
+
+    // ── Plan enforcement: check category allowed ──
+    // preComputedIntent contains appCategory from the analyze flow.
+    // Zod narrowed this to a known-shape object or null/undefined so the
+    // old `as Record<string, unknown>` cast is gone.
+    const appCategory = preComputedIntent?.appCategory;
+    if (appCategory) {
+      const catCheck = isCategoryAllowed(tenant.billingPlan, appCategory);
+      if (!catCheck.allowed) {
         return reply
           .status(403)
           .send(
             errorResponse(
-              ErrorCode.GenerationLimitReached,
-              check.reason ?? "Generation quota reached",
-              { upgradeHint: check.upgradeHint }
-            )
+              ErrorCode.CategoryNotAllowed,
+              catCheck.reason ?? "This category is not available on your plan",
+              { upgradeHint: catCheck.upgradeHint },
+            ),
           );
       }
-
-      // ── Plan enforcement: check category allowed ──
-      // preComputedIntent contains appCategory from the analyze flow.
-      // Zod narrowed this to a known-shape object or null/undefined so the
-      // old `as Record<string, unknown>` cast is gone.
-      const appCategory = preComputedIntent?.appCategory;
-      if (appCategory) {
-        const catCheck = isCategoryAllowed(tenant.billingPlan, appCategory);
-        if (!catCheck.allowed) {
-          return reply
-            .status(403)
-            .send(
-              errorResponse(
-                ErrorCode.CategoryNotAllowed,
-                catCheck.reason ?? "This category is not available on your plan",
-                { upgradeHint: catCheck.upgradeHint }
-              )
-            );
-        }
-      }
-
-      const jobId = crypto.randomUUID();
-
-      // Create session before publishing — so the SSE subscriber can look it up
-      const { id: sessionId } = await createGenerationSession({
-        appId,
-        tenantId,
-        prompt,
-      });
-
-      await updateGenerationSession(tenantId, sessionId, { jobId, status: "running" });
-
-      // Register the completed listener BEFORE publishing — prevents the race
-      // condition where a fast generator publishes the result before we listen.
-      // The closure captures `tenantId` so every generation_sessions write
-      // below runs inside withTenantContext under the correct RLS context.
-      const unsubCompleted = registerCompletedListener(
-        jobId,
-        async (bundleMsg: FeatureBundleMessage) => {
-          unsubCompleted(); // self-cleanup
-          // `bundleMsg.meta` carries totalInputTokens/totalOutputTokens/
-          // generationMs/agentTrace[]; forwarding it to storeBundleInSession
-          // lands the blob on generation_sessions.meta (TD-001) and fans
-          // agentTrace[] into generation_events rows for cost analytics
-          // (TD-004). See migration 0004.
-          const meta = (bundleMsg.meta ?? null) as Record<string, unknown> | null;
-          if (bundleMsg.status === "success" && bundleMsg.bundle) {
-            const bundle = bundleMsg.bundle as unknown as Record<string, unknown>;
-            await storeBundleInSession(tenantId, jobId, bundle, "completed", undefined, meta);
-            // Set archetype immediately so app detail shows correct type badges
-            // before the merchant deploys.
-            await updateAppArchetype(appId, archetypeFromBundle(bundle));
-            // Persist email metadata (usesEmail flag, variables, seeded config)
-            // so the Email tab can render and deploy can block correctly.
-            await applyBundleEmailMetadata(appId, tenantId, bundle);
-            // Transition app to "ready" — bundle stored, awaiting merchant deploy.
-            await updateAppStatus(appId, "ready");
-          } else {
-            await storeBundleInSession(
-              tenantId,
-              jobId,
-              {},
-              "failed",
-              bundleMsg.error ?? "Generation failed",
-              meta
-            );
-            // Failed generation: revert app to "draft" so it can be re-generated.
-            await updateAppStatus(appId, "draft");
-          }
-          logger.info({ jobId, status: bundleMsg.status }, "Bundle stored in DB");
-        }
-      );
-
-      await publishGenerationRequest({ jobId, tenantId, appId, prompt, preComputedIntent });
-
-      // Track generation usage (counts toward monthly quota)
-      await trackGeneration(tenantId);
-
-      logger.info({ jobId, sessionId, appId }, "GenerationRequest published");
-      return reply.status(202).send({ jobId, sessionId });
     }
-  );
+
+    const jobId = crypto.randomUUID();
+
+    // Create session before publishing — so the SSE subscriber can look it up
+    const { id: sessionId } = await createGenerationSession({
+      appId,
+      tenantId,
+      prompt,
+    });
+
+    await updateGenerationSession(tenantId, sessionId, {
+      jobId,
+      status: "running",
+    });
+
+    // Register the completed listener BEFORE publishing — prevents the race
+    // condition where a fast generator publishes the result before we listen.
+    // The closure captures `tenantId` so every generation_sessions write
+    // below runs inside withTenantContext under the correct RLS context.
+    const unsubCompleted = registerCompletedListener(
+      jobId,
+      async (bundleMsg: FeatureBundleMessage) => {
+        unsubCompleted(); // self-cleanup
+        // `bundleMsg.meta` carries totalInputTokens/totalOutputTokens/
+        // generationMs/agentTrace[]; forwarding it to storeBundleInSession
+        // lands the blob on generation_sessions.meta and fans
+        // agentTrace[] into generation_events rows for cost analytics
+        // See migration 0004.
+        const meta = (bundleMsg.meta ?? null) as Record<string, unknown> | null;
+        if (bundleMsg.status === "success" && bundleMsg.bundle) {
+          const bundle = bundleMsg.bundle as unknown as Record<string, unknown>;
+          await storeBundleInSession(
+            tenantId,
+            jobId,
+            bundle,
+            "completed",
+            undefined,
+            meta,
+          );
+          // Set archetype immediately so app detail shows correct type badges
+          // before the merchant deploys.
+          await updateAppArchetype(appId, archetypeFromBundle(bundle));
+          // Persist email metadata (usesEmail flag, variables, seeded config)
+          // so the Email tab can render and deploy can block correctly.
+          await applyBundleEmailMetadata(appId, tenantId, bundle);
+          // Transition app to "ready" — bundle stored, awaiting merchant deploy.
+          await updateAppStatus(appId, "ready");
+        } else {
+          await storeBundleInSession(
+            tenantId,
+            jobId,
+            {},
+            "failed",
+            bundleMsg.error ?? "Generation failed",
+            meta,
+          );
+          // Failed generation: revert app to "draft" so it can be re-generated.
+          await updateAppStatus(appId, "draft");
+        }
+        logger.info({ jobId, status: bundleMsg.status }, "Bundle stored in DB");
+      },
+    );
+
+    await publishGenerationRequest({
+      jobId,
+      tenantId,
+      appId,
+      prompt,
+      preComputedIntent,
+    });
+
+    // Track generation usage (counts toward monthly quota)
+    await trackGeneration(tenantId);
+
+    logger.info({ jobId, sessionId, appId }, "GenerationRequest published");
+    return reply.status(202).send({ jobId, sessionId });
+  });
 
   // ─── GET /generation/:jobId/progress (SSE) ─────────────────────────────────
   //
@@ -321,7 +349,10 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
   app.get<{ Params: { jobId: string } }>(
     "/:jobId/progress",
-    async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+    async (
+      req: FastifyRequest<{ Params: { jobId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const tenantId = requireAuthedTenantId(req, reply);
       if (!tenantId) return;
       const { jobId } = req.params;
@@ -374,7 +405,7 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
           });
           cleanup();
           reply.raw.end();
-        }
+        },
       );
 
       const cleanup = () => {
@@ -391,14 +422,17 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       });
 
       req.raw.on("close", cleanup);
-    }
+    },
   );
 
   // ─── GET /generation/app/:appId/latest ─────────────────────────────────────
 
   app.get<{ Params: { appId: string } }>(
     "/app/:appId/latest",
-    async (req: FastifyRequest<{ Params: { appId: string } }>, reply: FastifyReply) => {
+    async (
+      req: FastifyRequest<{ Params: { appId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const tenantId = requireAuthedTenantId(req, reply);
       if (!tenantId) return;
       const { appId } = req.params;
@@ -406,17 +440,22 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       if (!session) {
         return reply
           .status(404)
-          .send(errorResponse(ErrorCode.NotFound, "No session found for this app"));
+          .send(
+            errorResponse(ErrorCode.NotFound, "No session found for this app"),
+          );
       }
       return reply.send(session);
-    }
+    },
   );
 
   // ─── GET /generation/app/:appId/latest-completed ───────────────────────────
 
   app.get<{ Params: { appId: string } }>(
     "/app/:appId/latest-completed",
-    async (req: FastifyRequest<{ Params: { appId: string } }>, reply: FastifyReply) => {
+    async (
+      req: FastifyRequest<{ Params: { appId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const tenantId = requireAuthedTenantId(req, reply);
       if (!tenantId) return;
       const { appId } = req.params;
@@ -424,30 +463,41 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       if (!session) {
         return reply
           .status(404)
-          .send(errorResponse(ErrorCode.NotFound, "No completed session found for this app"));
+          .send(
+            errorResponse(
+              ErrorCode.NotFound,
+              "No completed session found for this app",
+            ),
+          );
       }
       return reply.send(session);
-    }
+    },
   );
 
   // ─── GET /generation/app/:appId/sessions ────────────────────────────────────
 
   app.get<{ Params: { appId: string } }>(
     "/app/:appId/sessions",
-    async (req: FastifyRequest<{ Params: { appId: string } }>, reply: FastifyReply) => {
+    async (
+      req: FastifyRequest<{ Params: { appId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const tenantId = requireAuthedTenantId(req, reply);
       if (!tenantId) return;
       const { appId } = req.params;
       const sessions = await getSessionsForApp(tenantId, appId);
       return reply.send(sessions);
-    }
+    },
   );
 
   // ─── GET /generation/:jobId/result ─────────────────────────────────────────
 
   app.get<{ Params: { jobId: string } }>(
     "/:jobId/result",
-    async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+    async (
+      req: FastifyRequest<{ Params: { jobId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const tenantId = requireAuthedTenantId(req, reply);
       if (!tenantId) return;
       const { jobId } = req.params;
@@ -465,20 +515,26 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
           .send({ status: "failed", error: session.errorMessage });
       }
 
-      if (session.bundle && Object.keys(session.bundle as Record<string, unknown>).length > 0) {
+      if (
+        session.bundle &&
+        Object.keys(session.bundle as Record<string, unknown>).length > 0
+      ) {
         return reply.send({ status: "success", bundle: session.bundle });
       }
 
       // Still running
       return reply.status(202).send({ status: session.status });
-    }
+    },
   );
 
   // ─── POST /generation/:jobId/approve ───────────────────────────────────────
 
   app.post<{ Params: { jobId: string } }>(
     "/:jobId/approve",
-    async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+    async (
+      req: FastifyRequest<{ Params: { jobId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const tenantId = requireAuthedTenantId(req, reply);
       if (!tenantId) return;
       const { jobId } = req.params;
@@ -499,24 +555,32 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         if (!session.appId) {
           return reply
             .status(422)
-            .send(errorResponse(ErrorCode.Conflict, "Cannot deploy a failed generation"));
+            .send(
+              errorResponse(
+                ErrorCode.Conflict,
+                "Cannot deploy a failed generation",
+              ),
+            );
         }
-        const fallback = await getLatestCompletedSessionForApp(tenantId, session.appId);
+        const fallback = await getLatestCompletedSessionForApp(
+          tenantId,
+          session.appId,
+        );
         if (!fallback) {
           return reply
             .status(422)
             .send(
               errorResponse(
                 ErrorCode.Conflict,
-                "Generation failed and no prior successful version exists to deploy."
-              )
+                "Generation failed and no prior successful version exists to deploy.",
+              ),
             );
         }
         session = fallback;
         deployingFallback = true;
         logger.info(
           { requestedJobId: jobId, fallbackJobId: fallback.jobId },
-          "Requested session failed — deploying latest completed session instead"
+          "Requested session failed — deploying latest completed session instead",
         );
       }
 
@@ -529,15 +593,17 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
             .send(
               errorResponse(
                 ErrorCode.Conflict,
-                `App must be in 'ready' state to deploy (current: ${appRecord?.status ?? "unknown"})`
-              )
+                `App must be in 'ready' state to deploy (current: ${appRecord?.status ?? "unknown"})`,
+              ),
             );
         }
 
         // Block deploy if the bundle sends emails but the merchant hasn't
         // confirmed the email content yet. The Email tab in the dashboard
         // flips `configured_by_merchant` to TRUE on first save.
-        const bundleUsesEmail = (session.bundle as Record<string, unknown> | null)?.["usesEmail"] === true;
+        const bundleUsesEmail =
+          (session.bundle as Record<string, unknown> | null)?.["usesEmail"] ===
+          true;
         if (bundleUsesEmail) {
           const confirmed = await isAppEmailConfigured(session.appId);
           if (!confirmed) {
@@ -546,14 +612,16 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
               .send(
                 errorResponse(
                   ErrorCode.EmailNotConfirmed,
-                  "This app sends emails. Please review and save the email content in the Email tab before deploying."
-                )
+                  "This app sends emails. Please review and save the email content in the Email tab before deploying.",
+                ),
               );
           }
         }
       }
 
-      const bundleKeys = session.bundle ? Object.keys(session.bundle as Record<string, unknown>) : [];
+      const bundleKeys = session.bundle
+        ? Object.keys(session.bundle as Record<string, unknown>)
+        : [];
       if (bundleKeys.length > 0 && session.appId && session.tenantId) {
         // New path: Python-generated FeatureBundle
         const bundle = session.bundle as unknown as FeatureBundle;
@@ -563,8 +631,16 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
           tenantId: session.tenantId,
           bundle,
         });
-        logger.info({ jobId, deployedJobId: session.jobId, deployingFallback }, "FeatureBundle deployed");
-        return reply.send({ deployed: true, deployingFallback, deployedJobId: session.jobId, ...result });
+        logger.info(
+          { jobId, deployedJobId: session.jobId, deployingFallback },
+          "FeatureBundle deployed",
+        );
+        return reply.send({
+          deployed: true,
+          deployingFallback,
+          deployedJobId: session.jobId,
+          ...result,
+        });
       }
 
       if (session.appVersionId) {
@@ -572,9 +648,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         const result = await deployAppVersion(session.appVersionId);
         logger.info(
           { jobId, appVersionId: session.appVersionId, deployingFallback },
-          "Legacy app version deployed"
+          "Legacy app version deployed",
         );
-        return reply.send({ deployed: true, deployingFallback, deployedJobId: session.jobId, ...result });
+        return reply.send({
+          deployed: true,
+          deployingFallback,
+          deployedJobId: session.jobId,
+          ...result,
+        });
       }
 
       return reply
@@ -582,10 +663,10 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         .send(
           errorResponse(
             ErrorCode.Conflict,
-            "Session has no bundle or app version — generation may not be complete"
-          )
+            "Session has no bundle or app version — generation may not be complete",
+          ),
         );
-    }
+    },
   );
 
   // ─── POST /generation/:jobId/revise ────────────────────────────────────────
@@ -594,7 +675,7 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
     "/:jobId/revise",
     async (
       req: FastifyRequest<{ Params: { jobId: string } }>,
-      reply: FastifyReply
+      reply: FastifyReply,
     ) => {
       const tenantId = requireAuthedTenantId(req, reply);
       if (!tenantId) return;
@@ -612,7 +693,12 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       if (!session.appId || !session.tenantId) {
         return reply
           .status(409)
-          .send(errorResponse(ErrorCode.Conflict, "Session has no appId or tenantId"));
+          .send(
+            errorResponse(
+              ErrorCode.Conflict,
+              "Session has no appId or tenantId",
+            ),
+          );
       }
 
       const newJobId = crypto.randomUUID();
@@ -622,8 +708,13 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       await trackRevision(session.tenantId);
 
       // Classify revision for analytics (fire-and-forget — don't block the revision)
-      classifyRevisionAsync(session.tenantId, session.appId!, feedback, newJobId).catch(
-        (err) => logger.warn({ err }, "Revision classification failed (non-fatal)")
+      classifyRevisionAsync(
+        session.tenantId,
+        session.appId!,
+        feedback,
+        newJobId,
+      ).catch((err) =>
+        logger.warn({ err }, "Revision classification failed (non-fatal)"),
       );
 
       const { id: newSessionId } = await createGenerationSession({
@@ -642,16 +733,36 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         newJobId,
         async (bundleMsg: FeatureBundleMessage) => {
           unsubCompleted();
-          // meta forwarded to lands the blob + generation_events rows (TD-001+004).
-          const meta = (bundleMsg.meta ?? null) as Record<string, unknown> | null;
+          // meta forwarded to lands the blob + generation_events rows.
+          const meta = (bundleMsg.meta ?? null) as Record<
+            string,
+            unknown
+          > | null;
           if (bundleMsg.status === "success" && bundleMsg.bundle) {
-            const bundle = bundleMsg.bundle as unknown as Record<string, unknown>;
-            await storeBundleInSession(sessionTenantId, newJobId, bundle, "completed", undefined, meta);
+            const bundle = bundleMsg.bundle as unknown as Record<
+              string,
+              unknown
+            >;
+            await storeBundleInSession(
+              sessionTenantId,
+              newJobId,
+              bundle,
+              "completed",
+              undefined,
+              meta,
+            );
             // Update archetype in case the revision changed the bundle shape.
-            await updateAppArchetype(session.appId!, archetypeFromBundle(bundle));
+            await updateAppArchetype(
+              session.appId!,
+              archetypeFromBundle(bundle),
+            );
             // Refresh email metadata from the revised bundle. configured_by_merchant
             // is intentionally preserved by the upsert's update clause.
-            await applyBundleEmailMetadata(session.appId!, sessionTenantId, bundle);
+            await applyBundleEmailMetadata(
+              session.appId!,
+              sessionTenantId,
+              bundle,
+            );
             // Revision succeeded: move app back to "ready" for merchant to re-deploy.
             await updateAppStatus(session.appId!, "ready");
           } else {
@@ -661,11 +772,11 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
               {},
               "failed",
               bundleMsg.error ?? "Revision failed",
-              meta
+              meta,
             );
             // Revision failed: keep app in current status (already active or ready).
           }
-        }
+        },
       );
 
       // Infer archetype from prior bundle: widgetModule present → storefront_ui
@@ -681,17 +792,22 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       logger.info(
         { originalJobId: jobId, newJobId, feedback },
-        "Revision GenerationRequest published"
+        "Revision GenerationRequest published",
       );
-      return reply.status(202).send({ jobId: newJobId, sessionId: newSessionId });
-    }
+      return reply
+        .status(202)
+        .send({ jobId: newJobId, sessionId: newSessionId });
+    },
   );
 
   // ─── POST /generation/:jobId/cancel ────────────────────────────────────────
 
   app.post<{ Params: { jobId: string } }>(
     "/:jobId/cancel",
-    async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+    async (
+      req: FastifyRequest<{ Params: { jobId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const tenantId = requireAuthedTenantId(req, reply);
       if (!tenantId) return;
       const { jobId } = req.params;
@@ -699,7 +815,7 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       const cancel = cancelCallbacks.get(jobId);
       if (cancel) cancel("Generation cancelled by user");
       return reply.status(200).send({ ok: true });
-    }
+    },
   );
 
   // ─── PATCH /generation/:jobId/chat ─────────────────────────────────────────
@@ -709,7 +825,10 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
   app.patch<{ Params: { jobId: string } }>(
     "/:jobId/chat",
-    async (req: FastifyRequest<{ Params: { jobId: string } }>, reply: FastifyReply) => {
+    async (
+      req: FastifyRequest<{ Params: { jobId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const tenantId = requireAuthedTenantId(req, reply);
       if (!tenantId) return;
       const { jobId } = req.params;
@@ -725,32 +844,29 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       await saveChatMessages(tenantId, jobId, body.messages);
       return reply.status(204).send();
-    }
+    },
   );
 
   // ─── POST /generation/analyze ──────────────────────────────────────────────
 
-  app.post(
-    "/analyze",
-    async (req: FastifyRequest, reply: FastifyReply) => {
-      const body = parseBody(AnalyzeBodySchema, req, reply);
-      if (!body) return;
-      const generatorUrl = process.env.GENERATOR_URL ?? "http://localhost:8001";
-      const upstream = await fetch(`${generatorUrl}/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!upstream.ok) {
-        logger.error({ status: upstream.status }, "Generator /analyze failed");
-        return reply
-          .status(502)
-          .send(errorResponse(ErrorCode.UpstreamFailure, "Analyze failed"));
-      }
-      const data = await upstream.json();
-      return reply.send(data);
+  app.post("/analyze", async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = parseBody(AnalyzeBodySchema, req, reply);
+    if (!body) return;
+    const generatorUrl = process.env.GENERATOR_URL ?? "http://localhost:8001";
+    const upstream = await fetch(`${generatorUrl}/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!upstream.ok) {
+      logger.error({ status: upstream.status }, "Generator /analyze failed");
+      return reply
+        .status(502)
+        .send(errorResponse(ErrorCode.UpstreamFailure, "Analyze failed"));
     }
-  );
+    const data = await upstream.json();
+    return reply.send(data);
+  });
 };
 
 // ─── Revision Classification (fire-and-forget) ──────────────────────────────
@@ -759,7 +875,7 @@ async function classifyRevisionAsync(
   tenantId: string,
   appId: string,
   feedback: string,
-  jobId: string
+  jobId: string,
 ): Promise<void> {
   const generatorUrl = process.env.GENERATOR_URL ?? "http://localhost:8001";
   const response = await fetch(`${generatorUrl}/classify-revision`, {
@@ -769,7 +885,10 @@ async function classifyRevisionAsync(
   });
 
   if (!response.ok) {
-    logger.warn({ status: response.status }, "Revision classification endpoint failed");
+    logger.warn(
+      { status: response.status },
+      "Revision classification endpoint failed",
+    );
     return;
   }
 
@@ -782,7 +901,8 @@ async function classifyRevisionAsync(
     tenantId,
     appId,
     jobId,
-    classification: classification as import("@new-one-two/types").RevisionClassification,
+    classification:
+      classification as import("@new-one-two/types").RevisionClassification,
     confidence,
     merchantPrompt: feedback,
   });

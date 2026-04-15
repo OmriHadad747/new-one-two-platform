@@ -10,12 +10,12 @@
 // Functions in this file that DON'T touch generation_sessions
 // (resolveWidgetJs, resolveAdminUiJs, resolveAppFunctionUrl,
 // createDraftAppVersion) stay on the shared connection — the tables they hit
-// are not force-RLS'd today (see TECH_DEBT TD-014 for the full sweep).
+// are not force-RLS'd today.
 
 import { z } from "zod";
 import { sql, withTenantContext } from "./connection.js";
 
-// ─── Meta validation (TD-001 / TD-004 write path) ────────────────────────────
+// ─── Meta validation  ──────────────────────────────────────
 //
 // Mirrors `MetaSchema` / `AgentTraceEntrySchema` in
 // @new-one-two/pubsub-client/src/schemas.ts — they are the wire contract from
@@ -92,7 +92,7 @@ export async function updateGenerationSession(
     appVersionId: string;
     errorMessage: string;
     jobId: string;
-  }>
+  }>,
 ): Promise<void> {
   await withTenantContext(tenantId, async (tx) => {
     await tx`
@@ -117,7 +117,7 @@ export async function updateGenerationSession(
 
 export async function cancelGenerationSession(
   tenantId: string,
-  jobId: string
+  jobId: string,
 ): Promise<void> {
   await withTenantContext(tenantId, async (tx) => {
     await tx`
@@ -132,7 +132,7 @@ export async function cancelGenerationSession(
  * Creates a draft app_version from generated code.
  * Uses the next sequential patch version for the app.
  *
- * app_versions is not force-RLS'd (see TD-014) so this function stays on
+ * app_versions is not force-RLS'd so this function stays on
  * the shared connection for now.
  */
 export async function createDraftAppVersion(params: {
@@ -171,7 +171,7 @@ export interface GenerationSessionWithBundle extends GenerationSessionRow {
  */
 export async function getLatestSessionForApp(
   tenantId: string,
-  appId: string
+  appId: string,
 ): Promise<GenerationSessionWithBundle | null> {
   return withTenantContext(tenantId, async (tx) => {
     const rows = await tx<
@@ -221,7 +221,7 @@ export async function getLatestSessionForApp(
 export async function getSessionsForApp(
   tenantId: string,
   appId: string,
-  limit = 20
+  limit = 20,
 ): Promise<
   Array<{
     id: string;
@@ -267,7 +267,7 @@ export async function getSessionsForApp(
  */
 export async function getLatestCompletedSessionForApp(
   tenantId: string,
-  appId: string
+  appId: string,
 ): Promise<GenerationSessionWithBundle | null> {
   return withTenantContext(tenantId, async (tx) => {
     const rows = await tx<
@@ -321,7 +321,7 @@ export async function getLatestCompletedSessionForApp(
  */
 export async function getSessionByJobId(
   tenantId: string,
-  jobId: string
+  jobId: string,
 ): Promise<GenerationSessionWithBundle | null> {
   return withTenantContext(tenantId, async (tx) => {
     const rows = await tx<
@@ -391,14 +391,19 @@ export async function storeBundleInSession(
   bundle: Record<string, unknown>,
   status: "completed" | "failed",
   errorMessage?: string,
-  meta?: Record<string, unknown> | null
+  meta?: Record<string, unknown> | null,
 ): Promise<void> {
-  const handlerModule = bundle["handlerModule"] as Record<string, unknown> | undefined;
-  const explanation = bundle["explanation"] as Record<string, unknown> | undefined;
+  const handlerModule = bundle["handlerModule"] as
+    | Record<string, unknown>
+    | undefined;
+  const explanation = bundle["explanation"] as
+    | Record<string, unknown>
+    | undefined;
 
   const generatedCode = (handlerModule?.["code"] as string) ?? null;
   const webhookTopics = (handlerModule?.["webhookTopics"] as string[]) ?? null;
-  const cronSchedule = (handlerModule?.["cronSchedule"] as string | null) ?? null;
+  const cronSchedule =
+    (handlerModule?.["cronSchedule"] as string | null) ?? null;
   const merchantFacing = (explanation?.["merchantFacing"] as string) ?? null;
 
   // Parse + validate meta BEFORE opening the transaction. A malformed
@@ -409,7 +414,7 @@ export async function storeBundleInSession(
 
   await withTenantContext(tenantId, async (tx) => {
     // 1. Upsert generation_sessions — meta goes on the blob column, the
-    //    legacy typed columns stay in sync with the bundle for TD-003.
+    //    legacy typed columns stay in sync with the bundle.
     const updated = await tx<{ id: string }[]>`
       UPDATE generation_sessions
       SET
@@ -463,7 +468,7 @@ export async function storeBundleInSession(
 export async function saveChatMessages(
   tenantId: string,
   jobId: string,
-  messages: Record<string, unknown>[]
+  messages: Record<string, unknown>[],
 ): Promise<void> {
   await withTenantContext(tenantId, async (tx) => {
     await tx`
@@ -485,10 +490,14 @@ export async function saveChatMessages(
  */
 export async function resolveWidgetJs(
   shopDomain: string,
-  appId: string
+  appId: string,
 ): Promise<{ widgetJs: string; functionUrl: string | null } | null> {
   const rows = await sql<
-    Array<{ widgetJs: string | null; appArchetype: string; functionUrl: string | null }>
+    Array<{
+      widgetJs: string | null;
+      appArchetype: string;
+      functionUrl: string | null;
+    }>
   >`
     SELECT
       a.widget_js       AS "widgetJs",
@@ -506,7 +515,9 @@ export async function resolveWidgetJs(
   `;
 
   const row = rows[0];
-  const isStorefront = row?.appArchetype === "storefront_backend" || row?.appArchetype === "storefront_backend_admin";
+  const isStorefront =
+    row?.appArchetype === "storefront_backend" ||
+    row?.appArchetype === "storefront_backend_admin";
   if (!row || !isStorefront || !row.widgetJs) return null;
   return { widgetJs: row.widgetJs, functionUrl: row.functionUrl };
 }
@@ -519,10 +530,14 @@ export async function resolveWidgetJs(
  */
 export async function resolveAdminUiJs(
   shopDomain: string,
-  appId: string
+  appId: string,
 ): Promise<{ adminUiJs: string; functionUrl: string | null } | null> {
   const rows = await sql<
-    Array<{ adminUiJs: string | null; appArchetype: string; functionUrl: string | null }>
+    Array<{
+      adminUiJs: string | null;
+      appArchetype: string;
+      functionUrl: string | null;
+    }>
   >`
     SELECT
       a.admin_ui_js     AS "adminUiJs",
@@ -540,7 +555,9 @@ export async function resolveAdminUiJs(
   `;
 
   const row = rows[0];
-  const hasAdmin = row?.appArchetype === "storefront_backend_admin" || row?.appArchetype === "backend_admin";
+  const hasAdmin =
+    row?.appArchetype === "storefront_backend_admin" ||
+    row?.appArchetype === "backend_admin";
   if (!row || !hasAdmin || !row.adminUiJs) return null;
   return { adminUiJs: row.adminUiJs, functionUrl: row.functionUrl };
 }
@@ -552,9 +569,11 @@ export async function resolveAdminUiJs(
  */
 export async function resolveAppFunctionUrl(
   shopDomain: string,
-  appId: string
+  appId: string,
 ): Promise<{ functionUrl: string; tenantId: string } | null> {
-  const rows = await sql<Array<{ functionUrl: string | null; tenantId: string }>>`
+  const rows = await sql<
+    Array<{ functionUrl: string | null; tenantId: string }>
+  >`
     SELECT df.function_url AS "functionUrl", t.id AS "tenantId"
     FROM apps a
     JOIN tenants t ON t.id = a.tenant_id

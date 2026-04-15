@@ -19,7 +19,7 @@
 --   runs as the table owner, so ENABLE-without-FORCE makes the policies
 --   inert for the owner connection and active for any future non-owner
 --   role. It's "paper RLS" until we do the full A-full-sweep (docs/
---   TECH_DEBT.md TD-014) but keeps the schema consistent in the meantime.
+--   TECH_DEBT.md but keeps the schema consistent in the meantime.
 --   Extending FORCE to these tables would require touching ~30 db
 --   functions across tenants.ts and is out of scope for this batch.
 --

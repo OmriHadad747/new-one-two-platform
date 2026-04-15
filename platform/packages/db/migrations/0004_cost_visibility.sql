@@ -1,6 +1,6 @@
 -- =============================================================================
 -- Migration: 0004_cost_visibility.sql
--- Description: TD-001 + TD-004 — persist generation meta and project the
+-- Description: Persist generation meta and project the
 --              per-agent trace into a queryable analytics table.
 --
 -- Without this, every generation silently burns Anthropic tokens with
@@ -9,15 +9,15 @@
 -- answer "which agent is burning tokens," "what's the $/generation for
 -- tenant X," or "did the architect prompt change regress token usage."
 --
--- TD-001 adds the blob (source of truth).
--- TD-004 adds the projection table (queryable analytics).
+--  adds the blob (source of truth).
+--  adds the projection table (queryable analytics).
 --
 -- Both land together: the write path in storeBundleInSession populates
 -- the blob and fans meta.agentTrace[] into event rows inside the same
 -- withTenantContext transaction. No split-writer race.
 -- =============================================================================
 
--- ─── TD-001: meta blob on generation_sessions ──────────────────────────────
+-- ─── : meta blob on generation_sessions ──────────────────────────────
 
 ALTER TABLE generation_sessions
   ADD COLUMN IF NOT EXISTS meta JSONB;
@@ -29,12 +29,12 @@ COMMENT ON COLUMN generation_sessions.meta IS
   'projection of meta.agentTrace; both are written in the same transaction '
   'from storeBundleInSession.';
 
--- ─── TD-004: generation_events projection table ────────────────────────────
+-- ───────── generation_events projection table ────────────────────────────
 --
 -- One row per agent invocation. Columns mirror exactly what the current
 -- AgentTraceEntry shape publishes today (pubsub-client/schemas.ts:79). If
 -- the generator ever starts emitting `model` / `attempt` / `status` /
--- `error` per entry (original TD-004 spec), add the columns here in a
+-- `error` per entry, add the columns here in a
 -- follow-up migration and update the fan-out loop in storeBundleInSession.
 
 CREATE TABLE generation_events (

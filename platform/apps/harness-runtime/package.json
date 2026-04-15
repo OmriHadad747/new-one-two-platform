@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/server.ts --bundle --platform=node --target=node20 --outfile=dist/server.cjs --external:@google-cloud/secret-manager --external:@google-cloud/kms --external:google-auth-library",
+    "build": "esbuild src/server.ts --bundle --platform=node --target=node20 --outfile=dist/server.cjs --external:@google-cloud/secret-manager --external:@google-cloud/kms --external:google-auth-library --log-override:require-resolve-not-external=silent",
     "dev": "tsx src/server.ts"
   },
   "dependencies": {

@@ -51,7 +51,7 @@ export async function widgetJsRoutes(app: FastifyInstance) {
         },
       },
     },
-    widgetJsHandler
+    widgetJsHandler,
   );
 
   app.post<{
@@ -65,7 +65,7 @@ async function widgetJsHandler(
   request: FastifyRequest<{
     Params: { shop: string; appId: string };
   }>,
-  reply: FastifyReply
+  reply: FastifyReply,
 ) {
   const { shop, appId } = request.params;
   const log = createRequestLogger({ requestId: request.id });
@@ -77,9 +77,7 @@ async function widgetJsHandler(
     const result = await resolveWidgetJs(shop, appId);
     if (!result) {
       log.debug({ shop, appId }, "No widget JS found");
-      return reply
-        .code(404)
-        .send("// Widget not found");
+      return reply.code(404).send("// Widget not found");
     }
 
     return reply
@@ -92,9 +90,7 @@ async function widgetJsHandler(
 
   if (!result) {
     log.debug({ shop, appId }, "No widget JS found");
-    return reply
-      .code(404)
-      .send("// Widget not found");
+    return reply.code(404).send("// Widget not found");
   }
 
   log.debug({ shop, appId }, "Widget JS resolved");
@@ -115,13 +111,13 @@ async function widgetProxyHandler(
   request: FastifyRequest<{
     Params: { shop: string; appId: string; "*": string };
   }>,
-  reply: FastifyReply
+  reply: FastifyReply,
 ) {
   const { shop, appId } = request.params;
   const path = request.params["*"];
   const log = createRequestLogger({ requestId: request.id });
 
-  // Origin ownership check (TD-013).
+  // Origin ownership check .
   //
   // CORS reflects any origin for /widgets/* because storefronts run on
   // arbitrary custom domains. That reflection is safe only because the
@@ -138,7 +134,12 @@ async function widgetProxyHandler(
     log.warn({ shop, appId, origin }, "Widget proxy: origin not owned by shop");
     return reply
       .code(403)
-      .send(errorResponse(ErrorCode.AccessDenied, "Origin not allowed for this shop"));
+      .send(
+        errorResponse(
+          ErrorCode.AccessDenied,
+          "Origin not allowed for this shop",
+        ),
+      );
   }
 
   const resolved = await resolveAppFunctionUrl(shop, appId);
@@ -148,7 +149,10 @@ async function widgetProxyHandler(
     return reply
       .code(503)
       .send(
-        errorResponse(ErrorCode.BackendNotDeployed, "App backend is not deployed")
+        errorResponse(
+          ErrorCode.BackendNotDeployed,
+          "App backend is not deployed",
+        ),
       );
   }
 
@@ -176,19 +180,27 @@ async function widgetProxyHandler(
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      log.error({ shop, appId, path, status: res.status, data }, "Widget proxy: harness returned error");
+      log.error(
+        { shop, appId, path, status: res.status, data },
+        "Widget proxy: harness returned error",
+      );
     } else {
       void trackAppExecution(tenantId);
     }
 
     return reply
-      .header("Content-Type", res.headers.get("content-type") || "application/json")
+      .header(
+        "Content-Type",
+        res.headers.get("content-type") || "application/json",
+      )
       .code(res.status)
       .send(data);
-
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    log.error({ message, shop, appId, path, targetUrl }, "Widget proxy: fetch failed");
+    log.error(
+      { message, shop, appId, path, targetUrl },
+      "Widget proxy: fetch failed",
+    );
 
     return reply
       .code(502)
