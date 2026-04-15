@@ -85,6 +85,16 @@ class CodegenContext:
     prior_admin_ui_code: Optional[str] = None
 
 
+
+# Thinking token budget for high-complexity features.
+# Thinking tokens count against max_tokens in Anthropic's API, so get_llm()
+# increases the ceiling by this amount to preserve the intended output budget.
+# Only applied to generators whose model supports extended thinking (Sonnet-class).
+# Haiku agents (product, validator, explanation) are never passed a thinking budget
+# because they use a different model — only the code generators go through base.py.
+_THINKING_BUDGET_HIGH = 4000
+
+
 class Generator(ABC):
     """
     Abstract base for all code-generation sub-agents.
@@ -110,7 +120,14 @@ class Generator(ABC):
 
     @abstractmethod
     def user_prompt(self, ctx: CodegenContext) -> str:
-        """Build and return the user prompt from context."""
+        """
+        Build and return the stable user prompt from context.
+
+        IMPORTANT: do NOT include retry error blocks here. The generate() method
+        handles retry errors separately so the stable prefix can be cached by
+        Anthropic's prompt cache — retry attempts only pay for the new error block,
+        not the full stable content (db schema, api_context, JIT sections, etc.).
+        """
 
     @abstractmethod
     def parse(self, raw: str) -> str:
@@ -131,10 +148,12 @@ class Generator(ABC):
 
     # ── Concrete template method ───────────────────────────────────────────────
 
-    def format_retry_block(self, errors: Optional[List[str]]) -> str:
+    def _format_retry_suffix(self, errors: Optional[List[str]]) -> str:
         """
-        Render previous validation errors as a prompt prefix for retry attempts.
-        Shared by all generators — do not override.
+        Render previous validation errors as the retry suffix passed to invoke().
+
+        This is intentionally separate from user_prompt() so the stable prompt
+        content can be cached — see generate() and adapter._build_user_message().
         """
         if not errors:
             return ""
@@ -153,10 +172,25 @@ class Generator(ABC):
 
         This is the only entry point the orchestrator needs to call.
         It must not be overridden — customise system_prompt, user_prompt, and parse.
+
+        Extended thinking is enabled for high-complexity features. The Architect
+        declares complexity in appContracts; high-complexity apps involve state
+        machines, multiple webhooks, and complex cross-component contracts where
+        the model most often "forgets" a constraint from the middle of a long prompt.
+        Extended thinking lets the model reason through all contracts before generating
+        code, dramatically reducing missed edge cases and incorrect field names.
         """
         from models.adapter import get_llm, invoke
         from models.agent_models import get_agent_model
 
-        llm = get_llm(model=get_agent_model(self.name), max_tokens=self.max_tokens)
-        result = invoke(llm, self.system_prompt(), self.user_prompt(ctx))
+        complexity = (ctx.plan.get("appContracts") or {}).get("complexity", "low")
+        thinking_budget = _THINKING_BUDGET_HIGH if complexity == "high" else None
+
+        llm = get_llm(
+            model=get_agent_model(self.name),
+            max_tokens=self.max_tokens,
+            thinking_budget=thinking_budget,
+        )
+        retry_suffix = self._format_retry_suffix(ctx.previous_errors)
+        result = invoke(llm, self.system_prompt(), self.user_prompt(ctx), retry_suffix=retry_suffix)
         return self.parse(result.content), result.input_tokens, result.output_tokens

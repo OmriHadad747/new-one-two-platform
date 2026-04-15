@@ -57,22 +57,37 @@ class LLMResponse:
 _CACHE_MIN_CHARS = 4096
 
 
-def get_llm(max_tokens: int = 2048, model: Optional[str] = None) -> ChatAnthropic:
+def get_llm(
+    max_tokens: int = 2048,
+    model: Optional[str] = None,
+    thinking_budget: Optional[int] = None,
+) -> ChatAnthropic:
     """
     Returns a configured ChatAnthropic instance.
 
     All callers pass an explicit model resolved via get_agent_model(agent_name).
     The model parameter is required in practice; the default is a safe fallback only.
+
+    thinking_budget: when set, enables extended thinking with the given token budget.
+    Anthropic counts thinking tokens against max_tokens, so we increase max_tokens
+    by thinking_budget to preserve the original visible-output budget.
+    Extended thinking requires temperature=1 (the default) and a capable model.
     """
     settings = get_settings()
     resolved_model = model or "claude-haiku-4-5-20251001"
-    timeout = _TIMEOUT_BASE_S + int(max_tokens * _TIMEOUT_PER_TOKEN_S)
-    return ChatAnthropic(
+    # Thinking tokens count against max_tokens — increase ceiling to preserve
+    # the intended visible-output budget alongside the thinking budget.
+    effective_max_tokens = max_tokens + thinking_budget if thinking_budget else max_tokens
+    timeout = _TIMEOUT_BASE_S + int(effective_max_tokens * _TIMEOUT_PER_TOKEN_S)
+    kwargs: dict = dict(
         model=resolved_model,  # type: ignore[call-arg]
-        max_tokens=max_tokens,
+        max_tokens=effective_max_tokens,
         api_key=settings.anthropic_api_key,
         timeout=timeout,
     )
+    if thinking_budget:
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+    return ChatAnthropic(**kwargs)
 
 
 def _invoke_with_retry(llm: ChatAnthropic, messages: list) -> object:
@@ -150,7 +165,55 @@ def _extract_cache_metrics(usage: dict) -> tuple[int, int]:
     return int(cache_read), int(cache_create)
 
 
-def invoke(llm: ChatAnthropic, system: str, user: str) -> LLMResponse:
+def _build_user_message(stable: str, retry_suffix: str = "") -> HumanMessage:
+    """
+    Build a HumanMessage with optional prompt caching on the stable prefix.
+
+    When retry_suffix is absent and the content is short: plain string (no overhead).
+    When the stable prefix is large enough: mark it with cache_control so that
+    retry attempts (which send the same stable content + a new retry_suffix) hit
+    the cache for the expensive portion — db schema, api_context, JIT sections.
+    The retry_suffix is always uncached because it changes between attempts.
+    """
+    if not retry_suffix and len(stable) < _CACHE_MIN_CHARS:
+        return HumanMessage(content=stable)
+
+    stable_block: dict = {"type": "text", "text": stable}
+    if len(stable) >= _CACHE_MIN_CHARS:
+        stable_block["cache_control"] = {"type": "ephemeral"}
+
+    if not retry_suffix:
+        return HumanMessage(content=[stable_block])
+
+    return HumanMessage(content=[stable_block, {"type": "text", "text": retry_suffix}])
+
+
+def _extract_text_content(raw_content: object) -> str:
+    """
+    Extract the visible text from an LLM response content value.
+
+    Handles three shapes that ChatAnthropic may return:
+      - str                    — plain text (no thinking, no blocks)
+      - list[dict]             — content blocks (text + optional thinking blocks)
+      - list[mixed]            — older LangChain fallback
+
+    Thinking blocks (type == "thinking") are intentionally excluded — only the
+    final text output is returned to callers.
+    """
+    if isinstance(raw_content, str):
+        return raw_content
+    parts: list[str] = []
+    for block in raw_content:
+        if isinstance(block, dict):
+            if block.get("type") == "text":
+                parts.append(block["text"])
+            # thinking blocks (type == "thinking") are skipped
+        else:
+            parts.append(str(block))
+    return "".join(parts)
+
+
+def invoke(llm: ChatAnthropic, system: str, user: str, retry_suffix: str = "") -> LLMResponse:
     """
     Calls the LLM with a system + user message pair.
     Returns content + token usage + latency.
@@ -158,25 +221,23 @@ def invoke(llm: ChatAnthropic, system: str, user: str) -> LLMResponse:
     The system prompt is automatically cached (Anthropic ephemeral cache) when
     it exceeds _CACHE_MIN_CHARS — all stable large prompts (handler, architect,
     revision, migration) qualify; the small product/classifier prompts do not.
+
+    retry_suffix: validation error block from a prior attempt. When provided, it
+    is sent as a separate uncached content block appended after the cached stable
+    user prefix. This means the second and third retry calls hit the cache for
+    the stable portion (db schema, api_context, JIT sections) and only pay full
+    price for the new retry_suffix.
     """
     start = time.monotonic()
     response = _invoke_with_retry(
-        llm, [_system_message(system), HumanMessage(content=user)]
+        llm, [_system_message(system), _build_user_message(user, retry_suffix)]
     )
     latency_ms = int((time.monotonic() - start) * 1000)
-
-    content = response.content
-    if not isinstance(content, str):
-        # ChatAnthropic may return a list of content blocks
-        content = "".join(
-            block["text"] if isinstance(block, dict) else str(block)
-            for block in content
-        )
 
     usage = getattr(response, "usage_metadata", None) or {}
     cache_read, cache_create = _extract_cache_metrics(usage)
     return LLMResponse(
-        content=content,
+        content=_extract_text_content(response.content),
         input_tokens=usage.get("input_tokens", 0) if usage else 0,
         output_tokens=usage.get("output_tokens", 0) if usage else 0,
         latency_ms=latency_ms,
@@ -203,17 +264,10 @@ def invoke_conversation(
     response = _invoke_with_retry(llm, lc_messages)
     latency_ms = int((time.monotonic() - start) * 1000)
 
-    content = response.content
-    if not isinstance(content, str):
-        content = "".join(
-            block["text"] if isinstance(block, dict) else str(block)
-            for block in content
-        )
-
     usage = getattr(response, "usage_metadata", None) or {}
     cache_read, cache_create = _extract_cache_metrics(usage)
     return LLMResponse(
-        content=content,
+        content=_extract_text_content(response.content),
         input_tokens=usage.get("input_tokens", 0) if usage else 0,
         output_tokens=usage.get("output_tokens", 0) if usage else 0,
         latency_ms=latency_ms,

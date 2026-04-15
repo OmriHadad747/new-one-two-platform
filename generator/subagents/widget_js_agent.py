@@ -106,7 +106,6 @@ class WidgetJsGenerator(Generator):
         return _SYSTEM_PROMPT
 
     def user_prompt(self, ctx: CodegenContext) -> str:
-        retry_block = self.format_retry_block(ctx.previous_errors)
         ux_block = _format_ux_guidance(ctx.plan)
         ux_expectations_block = _format_ux_expectations(ctx.plan)
         quality_brief_block = _format_quality_brief(ctx.intent)
@@ -114,7 +113,6 @@ class WidgetJsGenerator(Generator):
         prior_block = _format_prior_widget(ctx.prior_widget_code)
 
         return (
-            f"{retry_block}"
             f"Feature to build: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
             f"{quality_brief_block}"

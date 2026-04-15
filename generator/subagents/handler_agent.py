@@ -49,36 +49,36 @@ class HandlerGenerator(Generator):
         return f"You are an expert Node.js developer writing Shopify automation handlers.\n\n{HARNESS_BASE}"
 
     def user_prompt(self, ctx: CodegenContext) -> str:
-        retry_block = self.format_retry_block(ctx.previous_errors)
         jit_sections = _build_jit_sections(ctx.plan, ctx.platform_api_catalog)
         webhook_contract_block = _format_webhook_contract(ctx.plan)
         cron_contract_block = _format_cron_contract(ctx.plan)
         gaps_block = _format_platform_gaps(ctx.plan)
-        db_contracts_block = _format_db_contracts(ctx.plan)
         widget_catalog_block = _format_widget_catalog(ctx.platform_api_catalog)
         admin_catalog_block = _format_admin_catalog(ctx.plan)
         api_context_block = _format_api_context(ctx.api_context)
         prior_block = _format_prior_handler(ctx.prior_handler_code)
+        # db_contracts, routing_checklist, edge_cases, quality_checklist are placed
+        # at the END of the prompt — exact column names and required routes receive
+        # the highest model attention here, reducing "lost in the middle" misses.
+        db_contracts_block = _format_db_contracts(ctx.plan)
         routing_checklist = _format_routing_checklist(
             ctx.platform_api_catalog, ctx.plan
         )
-
         edge_cases_block = _format_edge_cases(ctx.plan)
         quality_checklist = _format_quality_checklist(ctx.plan)
 
         return (
-            f"{retry_block}"
             f"{jit_sections}"
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n\n"
             f"Shopify API plan:\n{json.dumps(ctx.plan.get('shopifyPlan', {}), indent=2)}\n"
             f"{webhook_contract_block}"
             f"{cron_contract_block}"
             f"{gaps_block}"
-            f"{db_contracts_block}"
             f"{widget_catalog_block}"
             f"{admin_catalog_block}"
             f"{api_context_block}"
             f"{prior_block}"
+            f"{db_contracts_block}"
             f"{routing_checklist}"
             f"{edge_cases_block}"
             f"{quality_checklist}"
