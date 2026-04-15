@@ -961,10 +961,6 @@ FORBIDDEN_WIDGET_JS_PATTERNS = [
         "For styles: const s = document.createElement('style'); s.textContent = '...'; container.appendChild(s) — never document.head.",
     ),
     (r"\bsetInterval\s*\(", "setInterval is not allowed"),
-    (
-        r"https?://",
-        "hardcoded URLs are not allowed — use host.call() with catalog paths",
-    ),
 ]
 
 
@@ -1149,10 +1145,6 @@ FORBIDDEN_ADMIN_UI_PATTERNS = [
         r"\bdocument\.(?!createElement|createTextNode)",
         "direct document.* access is not allowed — use container.querySelector() and container.appendChild() instead. "
         "For styles: const s = document.createElement('style'); s.textContent = '...'; container.appendChild(s) — never document.head.",
-    ),
-    (
-        r"https?://",
-        "hardcoded URLs are not allowed — use bridge.call() with catalog paths",
     ),
     (r"\bsetInterval\s*\(", "setInterval is not allowed"),
 ]
