@@ -65,14 +65,27 @@ CREATE INDEX idx_generation_events_created_at    ON generation_events (created_a
 
 -- ─── RLS ───────────────────────────────────────────────────────────────────
 --
--- ENABLE only, no FORCE, matching the pattern of the 14 other RLS tables
--- in the schema (see migration 0003 for the pattern rationale, and TD-014
--- for the full-FORCE sweep follow-up). The writer (storeBundleInSession)
--- runs under withTenantContext so the tenant isolation is enforced at the
--- policy layer for any future non-owner role even though the platform
--- owner currently bypasses it.
+-- ENABLE + FORCE — same treatment as generation_sessions (migration 0003).
+-- generation_events is a projection of meta.agentTrace[] and is just as
+-- cross-tenant-sensitive as the session it projects: it records per-agent
+-- cost / latency data, which is both PII-adjacent (reveals which generation
+-- a tenant ran) and commercially sensitive (cost-per-feature for that
+-- tenant).
+--
+-- FORCE means the owner role (`app_owner` in production / the Cloud SQL
+-- default role) is subject to the policy — a caller that forgets to wrap
+-- reads in withTenantContext returns zero rows instead of silently leaking
+-- events across tenants. The writer (storeBundleInSession) already runs
+-- under withTenantContext so no code change needed.
+--
+-- ⚠ Same dev-mode caveat as migration 0003: docker-compose Postgres creates
+-- POSTGRES_USER as a superuser which bypasses RLS regardless of FORCE. The
+-- RLS invariant test (rls-generation.integration.test.ts) hands ownership
+-- to a dedicated non-superuser role before asserting isolation, matching
+-- how Cloud SQL actually boots.
 
 ALTER TABLE generation_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE generation_events FORCE  ROW LEVEL SECURITY;
 
 DO $migration$ BEGIN
   CREATE POLICY generation_events_isolation ON generation_events
