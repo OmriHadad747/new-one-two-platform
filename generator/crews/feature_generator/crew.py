@@ -615,6 +615,7 @@ def _generate_artifacts(
     # Peer injection gives UI generators the real handler they're talking to,
     # which dramatically reduces contract-drift failures on retry.
     if attempt == 1:
+        log.info("job=%s codegen attempt=1 mode=parallel", request.jobId)
         return run_codegen_parallel(
             base_ctx,
             is_storefront=is_storefront,
@@ -623,6 +624,12 @@ def _generate_artifacts(
             cumulative_errors=cumulative_errors,
             artifacts=artifacts,
         )
+    log.info(
+        "job=%s codegen attempt=%d mode=sequential peer_injection=true failing=%s",
+        request.jobId,
+        attempt,
+        sorted(error_map.keys()),
+    )
     return run_codegen_sequential(
         base_ctx,
         is_storefront=is_storefront,
@@ -704,6 +711,13 @@ def _phase_validator(
         prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
     )
     _LOCKED = _revision_locked_artifacts(issues)
+    log.info(
+        "job=%s revision locking: questions=%s locked=%s unlocked=%s",
+        request.jobId,
+        sorted(i["question"] for i in issues),
+        sorted(_LOCKED),
+        sorted({"handler", "migration", "widget_js", "admin_ui"} - _LOCKED),
+    )
 
     _emit(request, "revision", "running", f"Fixing {len(issues)} semantic issue(s)…")
     rev_t0 = _now_ms()
