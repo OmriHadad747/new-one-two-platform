@@ -5,6 +5,7 @@ import { createRequestLogger } from "@new-one-two/logger";
 import { trackAppExecution } from "@new-one-two/db";
 import { parseBody } from "../lib/validate-body.js";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
+import { isOriginAllowedForShop } from "../lib/shop-domains.js";
 
 // Same loose-object shape as the admin proxy (admin-ui.ts): the merchant
 // handler's body contract is its own, but the top-level must be an object
@@ -119,6 +120,26 @@ async function widgetProxyHandler(
   const { shop, appId } = request.params;
   const path = request.params["*"];
   const log = createRequestLogger({ requestId: request.id });
+
+  // Origin ownership check (TD-013).
+  //
+  // CORS reflects any origin for /widgets/* because storefronts run on
+  // arbitrary custom domains. That reflection is safe only because the
+  // widget's `credentials: "omit"` keeps cookies off the request, and now
+  // because this check confirms the caller is actually on the shop's own
+  // storefront before we forward to the merchant's harness. evil.com gets
+  // a 403 here even though CORS happily reflected its origin.
+  //
+  // In local dev (DEPLOY_MODE=local), isOriginAllowedForShop short-circuits
+  // true so tunnels / preview domains / localhost aren't blocked.
+  const origin = request.headers.origin;
+  const originOk = await isOriginAllowedForShop(shop, origin, request.id);
+  if (!originOk) {
+    log.warn({ shop, appId, origin }, "Widget proxy: origin not owned by shop");
+    return reply
+      .code(403)
+      .send(errorResponse(ErrorCode.AccessDenied, "Origin not allowed for this shop"));
+  }
 
   const resolved = await resolveAppFunctionUrl(shop, appId);
 

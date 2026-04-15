@@ -24,13 +24,14 @@
  *     refuses to start. The previous `@fastify/cors` config fell through
  *     to `origin: true` (wide open) in that case — a latent footgun.
  *
- * Security-sensitive follow-up tracked in docs/TECH_DEBT.md (TD-013):
- *   verify at the route layer that the storefront origin is actually owned
- *   by the shop in the URL, so that a malicious page on `evil.com` can't
- *   make the widget proxy call its own-app-ID widget handler. Today the
- *   handler endpoint is safe to expose to arbitrary origins because it
- *   receives no credentials and the data surface is app-specific, but as
- *   handlers grow that assumption may not hold.
+ * Route-layer Origin ownership check (previously TD-013, closed in B7):
+ *   reflection here is paired with `isOriginAllowedForShop` inside the
+ *   widget proxy handler (apps/api/src/lib/shop-domains.ts). CORS reflects
+ *   any origin so merchant custom domains Just Work; the handler then
+ *   verifies the origin actually belongs to the shop in the URL path
+ *   before forwarding to the harness. A malicious page on `evil.com`
+ *   gets a 403 from the handler even though CORS happily reflected its
+ *   origin.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
