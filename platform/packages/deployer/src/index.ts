@@ -278,7 +278,7 @@ export async function deployFeatureBundle(params: {
     await updateAppStatus(appId, "active");
 
     // Step 8: Link session to the deployed version
-    await updateGenerationSession(sessionId, {
+    await updateGenerationSession(tenantId, sessionId, {
       appVersionId,
       status: "completed",
     });
@@ -494,7 +494,7 @@ export async function permanentDeleteApp(tenantId: string, appId: string): Promi
 
   // 4. Drop tenant-scoped tables created by the app's bundle migration
   try {
-    const migrationSql = await getLatestMigrationSqlForApp(appId);
+    const migrationSql = await getLatestMigrationSqlForApp(app.tenantId, appId);
     if (migrationSql) {
       await rollbackTenantMigration(app.tenantId, migrationSql);
     }

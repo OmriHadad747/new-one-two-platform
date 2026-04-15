@@ -9,15 +9,17 @@ Items that are known gaps but deliberately deferred. Each entry has the affected
 **Affected files**
 - `generator/crews/feature_generator/crew.py` — publishes `FeatureBundleMessage` with `meta`
 - `platform/apps/api/src/routes/generation.ts` — receives the message, drops `meta` before calling `storeBundleInSession`
-- `platform/packages/db/src/index.ts` — `storeBundleInSession` has no `meta` parameter
+- `platform/packages/db/src/generation.ts` — `storeBundleInSession` has no `meta` parameter; `generation_sessions` has no `meta` column
 
 **What's broken**
-`GenerationMeta` (totalInputTokens, totalOutputTokens, generationMs, agentTrace) is emitted in the Pub/Sub message and streamed to the SSE client, but never written to the database. After the client disconnects the data is gone. There is no way to audit generation costs or timing after the fact.
+`GenerationMeta` (totalInputTokens, totalOutputTokens, generationMs, agentTrace) is emitted in the Pub/Sub message and streamed to the SSE client, but never written to the database. After the client disconnects the data is gone. There is no way to audit generation costs or timing after the fact, and no per-agent cost breakdown survives.
 
 **What to do**
 1. Add a `meta JSONB` column to `generation_sessions` in a new migration.
 2. Update `storeBundleInSession` signature to accept `meta?: Record<string, unknown>`.
-3. Update the `registerCompletedListener` callback in `generation.ts` (POST `/generation` and POST `/generation/:jobId/revise`) to pass `bundleMsg.meta`.
+3. Update the `registerCompletedListener` callbacks in `generation.ts` (POST `/generation` and POST `/generation/:jobId/revise`) to pass `bundleMsg.meta`.
+
+**Note:** this supersedes the old TD-004 ("generation_events table"). The schema consolidation dropped that table; per-agent cost visibility now rides on the `agentTrace` entries inside `meta` rather than a separate rows-per-call table.
 
 ---
 
@@ -37,54 +39,42 @@ The adapter correctly reads `usage_metadata` from the Anthropic response, but ea
 
 ---
 
-## TD-003 — `generation_sessions` bundle fields are a single JSONB blob
+## TD-003 — `generation_sessions` has both a bundle blob and legacy typed columns
 
 **Affected files**
-- `platform/packages/db/migrations/0006_pubsub_bundle.sql` — adds a single `bundle JSONB` column
-- `platform/packages/db/src/index.ts` — `storeBundleInSession` writes the whole bundle as one blob
+- `platform/packages/db/migrations/0001_initial_schema.sql` — defines both `bundle JSONB` and the legacy `generated_code`, `explanation`, `webhook_topics`, `cron_schedule` columns on `generation_sessions`
+- `platform/packages/db/src/generation.ts` — `storeBundleInSession` writes to the blob AND derives the legacy columns from it
 
 **What's broken**
-All bundle content (`widgetModule`, `handlerModule`, `dbMigration`, `explanation`) lives in one opaque JSONB column. Querying or indexing individual fields requires parsing the blob. The legacy phase-3 columns (`generated_code`, `explanation`, `webhook_topics`, `cron_schedule`) are now duplicated data — the bundle is the source of truth but the columns must be kept in sync manually.
+The bundle is the source of truth but the legacy columns are kept in sync manually inside `storeBundleInSession` — a forgotten update to that function silently drifts one from the other. Querying or indexing individual bundle fields requires JSON path expressions.
 
 **What to do**
 Either:
-- (Simple) Keep the blob, drop the legacy columns, and update any code that reads them to read from `bundle->>'...'` instead.
+- (Simple) Drop the legacy columns in a migration and update any code that reads them to read from `bundle->>'...'` instead.
 - (Better) Normalize: add proper typed columns for `handler_code TEXT`, `migration_sql TEXT`, `widget_js TEXT`, `merchant_explanation TEXT`, `webhook_topics TEXT[]`, `cron_schedule TEXT` and populate them from the bundle at write time. Drop the `bundle` blob once readers are migrated.
 
 ---
 
-## TD-004 — `generation_events` table is never written to
+## TD-006 — Local-dev widget JS still reads from Postgres
+
+**Status:** Production path done. Local-dev path still reads Postgres.
 
 **Affected files**
-- `platform/packages/db/src/index.ts` — `insertGenerationEvent` exists but is never called
-- `platform/packages/db/migrations/0005_phase3.sql` — defines the `generation_events` table for per-agent LLM cost tracking
+- `platform/apps/api/src/routes/widget-js.ts` — branches on `DEPLOY_MODE`; the `cloudrun` branch redirects to GCS, the `local` branch reads `widget_js` from DB and streams it directly
+- `platform/packages/db/src/generation.ts` — `resolveWidgetJs` queries `apps.widget_js`
 
-**What's broken**
-The `generation_events` table was designed to hold one row per LLM call (agent name, model, tokens, latency). It is never populated. There is no per-agent cost visibility in the database.
+**What's done**
+In `cloudrun` mode the route issues a 302 to
+`https://storage.googleapis.com/<bucket>/widgets/<appId>/widget.js`, so
+storefront traffic in production no longer touches Postgres.
 
-**What to do**
-Once TD-002 is resolved (agents return token counts), call `insertGenerationEvent` from the crew after each agent completes, using the data already present in `AgentTraceEntry`.
+**What remains**
+Local dev still reads from Postgres because there's no GCS upload in the
+local deployer path. Dev storefront traffic is low enough that the
+Postgres read is fine; worth revisiting only if we ever want to run
+load tests that mirror production traffic.
 
----
-
-## TD-006 — Widget JS is served from Postgres; needs GCS in production
-
-**Affected files**
-- `platform/apps/api/src/routes/widget-js.ts` — reads `widget_js` from DB and streams it directly
-- `platform/packages/db/src/index.ts` — `resolveWidgetJs` queries `apps.widget_js`
-- `platform/packages/deployer/src/index.ts` — `updateAppWidgetJs` writes the raw JS string to Postgres
-
-**What's wrong**
-`GET /widgets/:shop/:appId.js` reads the raw JS out of `apps.widget_js` (Postgres TEXT column) on every request. Cache-Control is `max-age=5`, so at any real storefront traffic volume this becomes a Postgres read per page load. It also means widget JS is capped at Postgres row limits and bypasses the existing GCS bundle infrastructure.
-
-**What to do**
-1. In the deployer, upload widget JS to GCS as a public object at a deterministic path: `gs://<bucket>/widgets/<appId>.js`. Set `Cache-Control: public, max-age=3600` on the object.
-2. In `widget-js.ts`, replace the Postgres read with a `302` redirect to `https://storage.googleapis.com/<bucket>/widgets/<appId>.js`. GCS serves the file directly to the browser — no separate CDN product needed, Google's infrastructure handles global distribution.
-3. On re-deploy, overwrite the same GCS path. The 1-hour browser cache means stale widgets are served for at most an hour after a deploy — acceptable for most use cases.
-
-**Interim** (already in place): the 5-second `max-age` keeps Postgres load manageable for low traffic. Switch to GCS before going to production scale.
-
-**Complexity:** Low — follows the existing `gcsBundlePath` pattern already used for handler bundles.
+**Complexity:** Low — wire fake-gcs-server into the local deploy path so the `cloudrun` branch can also be exercised end-to-end in dev.
 
 ---
 
@@ -122,6 +112,8 @@ In `platform/packages/deployer/src/index.ts`, after writing the deployed functio
 `${functionUrl}/invoke` with a synthetic payload `{ topic: 'cron', tenantId, appId }`.
 On redeploy: update the existing job. On app delete: delete the job.
 Local dev (`DEPLOY_MODE=local`): skip Scheduler creation entirely — trigger `/invoke` manually.
+
+When this lands, the harness-runtime `InvokeRequestSchema` (apps/harness-runtime/src/server.ts) will need to accept the cron-synthetic shape — either as a schema union or by making the Shopify-specific fields (`shopifyWebhookId`, `rawBodyBase64`, `headers`, `receivedAt`) optional with `topic === "cron"` as the discriminator.
 
 **Scale ceiling:** Cloud Scheduler supports 4,000 jobs/project. Fine for MVP and growth.
 Beyond that, migrate to a single internal cron-dispatcher service that polls the DB and
@@ -227,3 +219,61 @@ app-scoped, non-sensitive traffic until this is implemented.
 **Complexity:** Medium — one new helper, one route-layer check, plus a
 cache. Admin API availability must be handled gracefully (stale cache,
 OAuth token expiry).
+
+---
+
+## TD-014 — Extend real (FORCE) RLS beyond `generation_sessions`
+
+**Context**
+Batch 4 turned on `FORCE ROW LEVEL SECURITY` for `generation_sessions`
+only. Every other table in the schema either has `ENABLE` without `FORCE`
+(10 tables: `tenants`, `apps`, `app_versions`, `deployed_functions`,
+`webhook_subscriptions`, `webhook_invocation_logs`, `tenant_brands`,
+`app_email_configs`, `email_deliveries`, `email_suppressions`) or got
+`ENABLE` only in Batch 4's migration (5 tables: `widget_invocation_logs`,
+`admin_invocation_logs`, `usage_records`, `revision_classifications`,
+`billing_events`).
+
+Without `FORCE`, the platform API — which owns the tables — bypasses RLS
+entirely on those 15 tables. The `CREATE POLICY` entries are defence-in-
+depth for any future non-owner role but fire nowhere today.
+
+**What the forced variant costs**
+Every read/write against a force-RLS'd table must run inside
+`withTenantContext(tenantId, ...)`. Batch 4 demonstrated the refactor
+for generation_sessions: ~10 db functions grew a `tenantId` parameter,
+a new `requireAuthedTenantId` helper was added to the auth plugin, and
+every route and deployer call site was threaded. For the remaining 15
+tables the surface is roughly:
+- `packages/db/src/tenants.ts` — ~20 functions (apps, tenants, deployed
+  functions, webhook subscriptions, invocation logs).
+- `packages/db/src/billing.ts` — ~8 functions.
+- `packages/db/src/email.ts` — ~12 functions.
+- `packages/db/src/usage.ts` — ~6 functions.
+- call-site updates across `apps/api/src/routes/**`.
+
+**What to do**
+Incrementally, one table family at a time, mirroring the Batch 4 pattern:
+
+1. Pick a family (e.g. `tenants` + `apps`).
+2. Add `FORCE ROW LEVEL SECURITY` in a new migration.
+3. Update every db function that touches those tables to take `tenantId`
+   and wrap the query in `withTenantContext`.
+4. Update call sites to pass the tenantId from `requireAuthedTenantId`
+   or existing `requireTenant(req, params.tenantId)` paths.
+5. Run the full test suite + smoke-test the local deploy flow.
+
+Batch at a time keeps each PR reviewable. The easy families (email,
+billing) don't have the chicken-and-egg lookup problem Batch 4 solved
+for `generation_sessions` — every caller already has tenantId in scope.
+
+**Affected files** (when all done)
+- All migrations that added RLS without FORCE — updated or re-issued.
+- Every function in `packages/db/src/{tenants,billing,email,usage}.ts`.
+- Most call sites in `apps/api/src/routes/**`.
+- Possibly a new bootstrap helper if any family has a jobId-style
+  lookup that doesn't know the tenant yet.
+
+**Complexity:** High — ~60 call sites and a handful of db functions.
+Low risk per PR because each family is independent and fail-closed
+(a bug returns zero rows rather than cross-tenant data).

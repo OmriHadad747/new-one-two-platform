@@ -230,3 +230,36 @@ export function requireTenant(
   }
   return tenantId;
 }
+
+/**
+ * Returns the authenticated tenant id, or sends 401 and returns null.
+ *
+ * For routes whose URL doesn't carry `tenantId` (e.g. `/generation/:jobId`
+ * or `/generation/app/:appId`) but whose target table is force-RLS'd and
+ * therefore requires a `withTenantContext(tenantId, ...)` wrap. The caller
+ * derives the tenant from the auth token; an unauthenticated request — even
+ * in the dev `API_AUTH_REQUIRED=false` mode — gets a 401 because we can't
+ * scope the query without a tenant id.
+ *
+ * Usage:
+ *   const tenantId = requireAuthedTenantId(req, reply);
+ *   if (!tenantId) return; // reply already sent
+ */
+export function requireAuthedTenantId(
+  req: FastifyRequest,
+  reply: FastifyReply
+): string | null {
+  const tenantId = req.tenantAuth?.tenantId;
+  if (!tenantId) {
+    void reply
+      .code(401)
+      .send(
+        errorResponse(
+          ErrorCode.AuthRequired,
+          "This endpoint requires an authenticated token — a tenant id is needed to scope the query"
+        )
+      );
+    return null;
+  }
+  return tenantId;
+}

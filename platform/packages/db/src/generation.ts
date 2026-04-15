@@ -1,7 +1,18 @@
 // ─── Generator Queries ────────────────────────────────────────────────────────
-// Service-level operations (no RLS). Called by apps/generator.
+//
+// Every function that reads or writes `generation_sessions` takes an explicit
+// `tenantId` and runs under `withTenantContext(tenantId, ...)`. The
+// `generation_sessions` table has `FORCE ROW LEVEL SECURITY` (see migration
+// 0003): even the DATABASE_URL role, which owns the table, is subject to the
+// policy. A call that forgets to pass `tenantId` — or passes the wrong one —
+// returns zero rows instead of silently reading another tenant's data.
+//
+// Functions in this file that DON'T touch generation_sessions
+// (resolveWidgetJs, resolveAdminUiJs, resolveAppFunctionUrl,
+// createDraftAppVersion) stay on the shared connection — the tables they hit
+// are not force-RLS'd today (see TECH_DEBT TD-014 for the full sweep).
 
-import { sql } from "./connection.js";
+import { sql, withTenantContext } from "./connection.js";
 
 export interface GenerationSessionRow {
   id: string;
@@ -23,19 +34,22 @@ export interface GenerationSessionRow {
 }
 
 export async function createGenerationSession(params: {
-  appId?: string;
-  tenantId?: string;
+  appId: string;
+  tenantId: string;
   prompt: string;
 }): Promise<{ id: string }> {
-  const rows = await sql<{ id: string }[]>`
-    INSERT INTO generation_sessions (app_id, tenant_id, prompt, status)
-    VALUES (${params.appId ?? null}, ${params.tenantId ?? null}, ${params.prompt}, 'running')
-    RETURNING id
-  `;
-  return { id: rows[0]!.id };
+  return withTenantContext(params.tenantId, async (tx) => {
+    const rows = await tx<{ id: string }[]>`
+      INSERT INTO generation_sessions (app_id, tenant_id, prompt, status)
+      VALUES (${params.appId}, ${params.tenantId}, ${params.prompt}, 'running')
+      RETURNING id
+    `;
+    return { id: rows[0]!.id };
+  });
 }
 
 export async function updateGenerationSession(
+  tenantId: string,
   id: string,
   update: Partial<{
     status: string;
@@ -51,36 +65,46 @@ export async function updateGenerationSession(
     jobId: string;
   }>
 ): Promise<void> {
-  await sql`
-    UPDATE generation_sessions
-    SET
-      status          = COALESCE(${update.status ?? null}, status),
-      intent          = COALESCE(${update.intent ? sql.json(update.intent as Record<string, string>) : null}, intent),
-      api_plan        = COALESCE(${update.apiPlan ? sql.json(update.apiPlan as Record<string, string>) : null}, api_plan),
-      generated_code  = COALESCE(${update.generatedCode ?? null}, generated_code),
-      explanation     = COALESCE(${update.explanation ?? null}, explanation),
-      webhook_topics  = COALESCE(${update.webhookTopics ?? null}, webhook_topics),
-      cron_schedule   = ${update.cronSchedule !== undefined ? update.cronSchedule : sql`cron_schedule`},
-      attempt_count   = COALESCE(${update.attemptCount ?? null}, attempt_count),
-      app_version_id  = COALESCE(${update.appVersionId ?? null}, app_version_id),
-      error_message   = COALESCE(${update.errorMessage ?? null}, error_message),
-      job_id          = COALESCE(${update.jobId ?? null}, job_id),
-      updated_at      = NOW()
-    WHERE id = ${id}
-  `;
+  await withTenantContext(tenantId, async (tx) => {
+    await tx`
+      UPDATE generation_sessions
+      SET
+        status          = COALESCE(${update.status ?? null}, status),
+        intent          = COALESCE(${update.intent ? tx.json(update.intent as Record<string, string>) : null}, intent),
+        api_plan        = COALESCE(${update.apiPlan ? tx.json(update.apiPlan as Record<string, string>) : null}, api_plan),
+        generated_code  = COALESCE(${update.generatedCode ?? null}, generated_code),
+        explanation     = COALESCE(${update.explanation ?? null}, explanation),
+        webhook_topics  = COALESCE(${update.webhookTopics ?? null}, webhook_topics),
+        cron_schedule   = ${update.cronSchedule !== undefined ? update.cronSchedule : tx`cron_schedule`},
+        attempt_count   = COALESCE(${update.attemptCount ?? null}, attempt_count),
+        app_version_id  = COALESCE(${update.appVersionId ?? null}, app_version_id),
+        error_message   = COALESCE(${update.errorMessage ?? null}, error_message),
+        job_id          = COALESCE(${update.jobId ?? null}, job_id),
+        updated_at      = NOW()
+      WHERE id = ${id}
+    `;
+  });
 }
 
-export async function cancelGenerationSession(jobId: string): Promise<void> {
-  await sql`
-    UPDATE generation_sessions
-    SET status = 'cancelled', updated_at = NOW()
-    WHERE job_id = ${jobId}
-  `;
+export async function cancelGenerationSession(
+  tenantId: string,
+  jobId: string
+): Promise<void> {
+  await withTenantContext(tenantId, async (tx) => {
+    await tx`
+      UPDATE generation_sessions
+      SET status = 'cancelled', updated_at = NOW()
+      WHERE job_id = ${jobId}
+    `;
+  });
 }
 
 /**
  * Creates a draft app_version from generated code.
  * Uses the next sequential patch version for the app.
+ *
+ * app_versions is not force-RLS'd (see TD-014) so this function stays on
+ * the shared connection for now.
  */
 export async function createDraftAppVersion(params: {
   appId: string;
@@ -117,45 +141,48 @@ export interface GenerationSessionWithBundle extends GenerationSessionRow {
  * Returns the most recent generation session for an app.
  */
 export async function getLatestSessionForApp(
+  tenantId: string,
   appId: string
 ): Promise<GenerationSessionWithBundle | null> {
-  const rows = await sql<
-    Array<{
-      id: string;
-      appId: string | null;
-      tenantId: string | null;
-      prompt: string;
-      status: string;
-      intent: Record<string, unknown> | null;
-      apiPlan: Record<string, unknown> | null;
-      generatedCode: string | null;
-      explanation: string | null;
-      webhookTopics: string[];
-      cronSchedule: string | null;
-      attemptCount: number;
-      appVersionId: string | null;
-      errorMessage: string | null;
-      jobId: string | null;
-      bundle: Record<string, unknown> | null;
-      chatMessages: Record<string, unknown>[] | null;
-      createdAt: Date;
-      updatedAt: Date;
-    }>
-  >`
-    SELECT
-      id, app_id AS "appId", tenant_id AS "tenantId", prompt, status,
-      intent, api_plan AS "apiPlan", generated_code AS "generatedCode",
-      explanation, webhook_topics AS "webhookTopics", cron_schedule AS "cronSchedule",
-      attempt_count AS "attemptCount", app_version_id AS "appVersionId",
-      error_message AS "errorMessage", job_id AS "jobId", bundle,
-      chat_messages AS "chatMessages",
-      created_at AS "createdAt", updated_at AS "updatedAt"
-    FROM generation_sessions
-    WHERE app_id = ${appId}
-    ORDER BY created_at DESC
-    LIMIT 1
-  `;
-  return rows[0] ?? null;
+  return withTenantContext(tenantId, async (tx) => {
+    const rows = await tx<
+      Array<{
+        id: string;
+        appId: string | null;
+        tenantId: string | null;
+        prompt: string;
+        status: string;
+        intent: Record<string, unknown> | null;
+        apiPlan: Record<string, unknown> | null;
+        generatedCode: string | null;
+        explanation: string | null;
+        webhookTopics: string[];
+        cronSchedule: string | null;
+        attemptCount: number;
+        appVersionId: string | null;
+        errorMessage: string | null;
+        jobId: string | null;
+        bundle: Record<string, unknown> | null;
+        chatMessages: Record<string, unknown>[] | null;
+        createdAt: Date;
+        updatedAt: Date;
+      }>
+    >`
+      SELECT
+        id, app_id AS "appId", tenant_id AS "tenantId", prompt, status,
+        intent, api_plan AS "apiPlan", generated_code AS "generatedCode",
+        explanation, webhook_topics AS "webhookTopics", cron_schedule AS "cronSchedule",
+        attempt_count AS "attemptCount", app_version_id AS "appVersionId",
+        error_message AS "errorMessage", job_id AS "jobId", bundle,
+        chat_messages AS "chatMessages",
+        created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM generation_sessions
+      WHERE app_id = ${appId}
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    return rows[0] ?? null;
+  });
 }
 
 /**
@@ -163,6 +190,7 @@ export async function getLatestSessionForApp(
  * Used by the version history panel in the app detail page.
  */
 export async function getSessionsForApp(
+  tenantId: string,
   appId: string,
   limit = 20
 ): Promise<
@@ -176,30 +204,32 @@ export async function getSessionsForApp(
     createdAt: Date;
   }>
 > {
-  return sql<
-    Array<{
-      id: string;
-      jobId: string | null;
-      status: string;
-      prompt: string;
-      errorMessage: string | null;
-      appVersionId: string | null;
-      createdAt: Date;
-    }>
-  >`
-    SELECT
-      id,
-      job_id         AS "jobId",
-      status,
-      prompt,
-      error_message  AS "errorMessage",
-      app_version_id AS "appVersionId",
-      created_at     AS "createdAt"
-    FROM generation_sessions
-    WHERE app_id = ${appId}
-    ORDER BY created_at DESC
-    LIMIT ${limit}
-  `;
+  return withTenantContext(tenantId, async (tx) => {
+    return tx<
+      Array<{
+        id: string;
+        jobId: string | null;
+        status: string;
+        prompt: string;
+        errorMessage: string | null;
+        appVersionId: string | null;
+        createdAt: Date;
+      }>
+    >`
+      SELECT
+        id,
+        job_id         AS "jobId",
+        status,
+        prompt,
+        error_message  AS "errorMessage",
+        app_version_id AS "appVersionId",
+        created_at     AS "createdAt"
+      FROM generation_sessions
+      WHERE app_id = ${appId}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+  });
 }
 
 /**
@@ -207,96 +237,108 @@ export async function getSessionsForApp(
  * Used by the approve endpoint to fall back when the latest session failed.
  */
 export async function getLatestCompletedSessionForApp(
+  tenantId: string,
   appId: string
 ): Promise<GenerationSessionWithBundle | null> {
-  const rows = await sql<
-    Array<{
-      id: string;
-      appId: string | null;
-      tenantId: string | null;
-      prompt: string;
-      status: string;
-      intent: Record<string, unknown> | null;
-      apiPlan: Record<string, unknown> | null;
-      generatedCode: string | null;
-      explanation: string | null;
-      webhookTopics: string[];
-      cronSchedule: string | null;
-      attemptCount: number;
-      appVersionId: string | null;
-      errorMessage: string | null;
-      jobId: string | null;
-      bundle: Record<string, unknown> | null;
-      chatMessages: Record<string, unknown>[] | null;
-      createdAt: Date;
-      updatedAt: Date;
-    }>
-  >`
-    SELECT
-      id, app_id AS "appId", tenant_id AS "tenantId", prompt, status,
-      intent, api_plan AS "apiPlan", generated_code AS "generatedCode",
-      explanation, webhook_topics AS "webhookTopics", cron_schedule AS "cronSchedule",
-      attempt_count AS "attemptCount", app_version_id AS "appVersionId",
-      error_message AS "errorMessage", job_id AS "jobId", bundle,
-      chat_messages AS "chatMessages",
-      created_at AS "createdAt", updated_at AS "updatedAt"
-    FROM generation_sessions
-    WHERE app_id = ${appId}
-      AND status = 'completed'
-    ORDER BY created_at DESC
-    LIMIT 1
-  `;
-  return rows[0] ?? null;
+  return withTenantContext(tenantId, async (tx) => {
+    const rows = await tx<
+      Array<{
+        id: string;
+        appId: string | null;
+        tenantId: string | null;
+        prompt: string;
+        status: string;
+        intent: Record<string, unknown> | null;
+        apiPlan: Record<string, unknown> | null;
+        generatedCode: string | null;
+        explanation: string | null;
+        webhookTopics: string[];
+        cronSchedule: string | null;
+        attemptCount: number;
+        appVersionId: string | null;
+        errorMessage: string | null;
+        jobId: string | null;
+        bundle: Record<string, unknown> | null;
+        chatMessages: Record<string, unknown>[] | null;
+        createdAt: Date;
+        updatedAt: Date;
+      }>
+    >`
+      SELECT
+        id, app_id AS "appId", tenant_id AS "tenantId", prompt, status,
+        intent, api_plan AS "apiPlan", generated_code AS "generatedCode",
+        explanation, webhook_topics AS "webhookTopics", cron_schedule AS "cronSchedule",
+        attempt_count AS "attemptCount", app_version_id AS "appVersionId",
+        error_message AS "errorMessage", job_id AS "jobId", bundle,
+        chat_messages AS "chatMessages",
+        created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM generation_sessions
+      WHERE app_id = ${appId}
+        AND status = 'completed'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    return rows[0] ?? null;
+  });
 }
 
 /**
  * Looks up a generation session by Pub/Sub job_id.
+ *
+ * Requires tenantId because `generation_sessions` is force-RLS'd. Callers
+ * that only have a jobId need to resolve tenantId first — typically from
+ * `req.tenantAuth.tenantId` on the authenticated API request. A mismatched
+ * (tenantId, jobId) pair returns null.
  */
 export async function getSessionByJobId(
+  tenantId: string,
   jobId: string
 ): Promise<GenerationSessionWithBundle | null> {
-  const rows = await sql<
-    Array<{
-      id: string;
-      appId: string | null;
-      tenantId: string | null;
-      prompt: string;
-      status: string;
-      intent: Record<string, unknown> | null;
-      apiPlan: Record<string, unknown> | null;
-      generatedCode: string | null;
-      explanation: string | null;
-      webhookTopics: string[];
-      cronSchedule: string | null;
-      attemptCount: number;
-      appVersionId: string | null;
-      errorMessage: string | null;
-      jobId: string | null;
-      bundle: Record<string, unknown> | null;
-      chatMessages: Record<string, unknown>[] | null;
-      createdAt: Date;
-      updatedAt: Date;
-    }>
-  >`
-    SELECT
-      id, app_id AS "appId", tenant_id AS "tenantId", prompt, status,
-      intent, api_plan AS "apiPlan", generated_code AS "generatedCode",
-      explanation, webhook_topics AS "webhookTopics", cron_schedule AS "cronSchedule",
-      attempt_count AS "attemptCount", app_version_id AS "appVersionId",
-      error_message AS "errorMessage", job_id AS "jobId", bundle,
-      chat_messages AS "chatMessages",
-      created_at AS "createdAt", updated_at AS "updatedAt"
-    FROM generation_sessions
-    WHERE job_id = ${jobId}
-    LIMIT 1
-  `;
-  return rows[0] ?? null;
+  return withTenantContext(tenantId, async (tx) => {
+    const rows = await tx<
+      Array<{
+        id: string;
+        appId: string | null;
+        tenantId: string | null;
+        prompt: string;
+        status: string;
+        intent: Record<string, unknown> | null;
+        apiPlan: Record<string, unknown> | null;
+        generatedCode: string | null;
+        explanation: string | null;
+        webhookTopics: string[];
+        cronSchedule: string | null;
+        attemptCount: number;
+        appVersionId: string | null;
+        errorMessage: string | null;
+        jobId: string | null;
+        bundle: Record<string, unknown> | null;
+        chatMessages: Record<string, unknown>[] | null;
+        createdAt: Date;
+        updatedAt: Date;
+      }>
+    >`
+      SELECT
+        id, app_id AS "appId", tenant_id AS "tenantId", prompt, status,
+        intent, api_plan AS "apiPlan", generated_code AS "generatedCode",
+        explanation, webhook_topics AS "webhookTopics", cron_schedule AS "cronSchedule",
+        attempt_count AS "attemptCount", app_version_id AS "appVersionId",
+        error_message AS "errorMessage", job_id AS "jobId", bundle,
+        chat_messages AS "chatMessages",
+        created_at AS "createdAt", updated_at AS "updatedAt"
+      FROM generation_sessions
+      WHERE job_id = ${jobId}
+      LIMIT 1
+    `;
+    return rows[0] ?? null;
+  });
 }
 
 /**
  * Stores the FeatureBundle JSONB and updates session status once generation.completed arrives.
  */
 export async function storeBundleInSession(
+  tenantId: string,
   jobId: string,
   bundle: Record<string, unknown>,
   status: "completed" | "failed",
@@ -310,19 +352,21 @@ export async function storeBundleInSession(
   const cronSchedule = (handlerModule?.["cronSchedule"] as string | null) ?? null;
   const merchantFacing = (explanation?.["merchantFacing"] as string) ?? null;
 
-  await sql`
-    UPDATE generation_sessions
-    SET
-      bundle          = ${sql.json(bundle as any)},
-      status          = ${status},
-      error_message   = COALESCE(${errorMessage ?? null}, error_message),
-      generated_code  = COALESCE(${generatedCode}, generated_code),
-      explanation     = COALESCE(${merchantFacing}, explanation),
-      webhook_topics  = COALESCE(${webhookTopics}, webhook_topics),
-      cron_schedule   = COALESCE(${cronSchedule}, cron_schedule),
-      updated_at      = NOW()
-    WHERE job_id = ${jobId}
-  `;
+  await withTenantContext(tenantId, async (tx) => {
+    await tx`
+      UPDATE generation_sessions
+      SET
+        bundle          = ${tx.json(bundle as any)},
+        status          = ${status},
+        error_message   = COALESCE(${errorMessage ?? null}, error_message),
+        generated_code  = COALESCE(${generatedCode}, generated_code),
+        explanation     = COALESCE(${merchantFacing}, explanation),
+        webhook_topics  = COALESCE(${webhookTopics}, webhook_topics),
+        cron_schedule   = COALESCE(${cronSchedule}, cron_schedule),
+        updated_at      = NOW()
+      WHERE job_id = ${jobId}
+    `;
+  });
 }
 
 /**
@@ -331,16 +375,19 @@ export async function storeBundleInSession(
  * `messages` is an array of ChatMessage objects with `actions` stripped.
  */
 export async function saveChatMessages(
+  tenantId: string,
   jobId: string,
   messages: Record<string, unknown>[]
 ): Promise<void> {
-  await sql`
-    UPDATE generation_sessions
-    SET
-      chat_messages = ${sql.json(messages as any)},
-      updated_at    = NOW()
-    WHERE job_id = ${jobId}
-  `;
+  await withTenantContext(tenantId, async (tx) => {
+    await tx`
+      UPDATE generation_sessions
+      SET
+        chat_messages = ${tx.json(messages as any)},
+        updated_at    = NOW()
+      WHERE job_id = ${jobId}
+    `;
+  });
 }
 
 /**
