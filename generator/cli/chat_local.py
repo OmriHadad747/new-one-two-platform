@@ -56,7 +56,11 @@ from subagents.product_agent import run_product_agent_analyze
 from subagents.revision_agent import run_revision_agent
 from subagents.static_validation import validate_architect_plan
 from subagents.validator_agent import run_validator_agent
-from crews.feature_generator.crew import run_codegen_parallel, validate_artifacts
+from crews.feature_generator.crew import (
+    run_codegen_parallel,
+    run_codegen_sequential,
+    validate_artifacts,
+)
 
 TEST_RESULTS_DIR = _HERE / "test_results"
 _MAX_ARCH_ATTEMPTS = 2   # matches crew.py
@@ -422,7 +426,11 @@ def _phase_codegen(
             _spinner(label)
 
         t0 = time.monotonic()
-        artifacts, attempt_tokens = run_codegen_parallel(
+        # Mirror crew.py: first attempt parallel for speed, retries sequential
+        # with peer-artifact injection (migration → handler → widget_js/admin_ui)
+        # so UI generators see the real handler they're calling.
+        codegen_fn = run_codegen_parallel if attempt == 1 else run_codegen_sequential
+        artifacts, attempt_tokens = codegen_fn(
             base_ctx,
             is_storefront=is_storefront,
             is_admin_ui=is_admin_ui,

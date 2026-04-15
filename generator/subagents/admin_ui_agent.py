@@ -192,6 +192,9 @@ class AdminUiGenerator(Generator):
         ux_expectations_block = _format_ux_expectations(ctx.plan)
         quality_brief_block = _format_quality_brief(ctx.intent)
         prior_block = _format_prior_admin_ui(ctx.prior_admin_ui_code)
+        # peer_handler is only set on sequential retries; shows the actual backend
+        # handler so bridge.call() fields match the real ctx.adminBody destructuring.
+        peer_handler_block = _format_peer_handler(ctx.peer_handler_code)
 
         return (
             f"App purpose: {ctx.intent.get('desiredOutcome', '')}\n"
@@ -205,6 +208,7 @@ class AdminUiGenerator(Generator):
             f"{catalog_desc}\n"
             f"{gaps_block}"
             f"{prior_block}"
+            f"{peer_handler_block}"
             "\nCRITICAL (validation rejects violations):\n"
             "- NEVER document.head / document.body — append styles and elements to `container`\n"
             "- NEVER import / export default — vanilla JS only, export function mount(...)\n\n"
@@ -307,5 +311,28 @@ def _format_prior_admin_ui(prior_code: Any) -> str:
         " Preserve all mount() logic and bridge.call() paths that are NOT being changed.)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{prior_code}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+
+def _format_peer_handler(peer_code: Any) -> str:
+    """
+    Inject the handler.js produced by the peer handler agent in THIS run.
+
+    Only populated on sequential retry. The catalog above says what each route
+    should look like; this block shows what the real handler does. Match your
+    bridge.call() body field names to the handler's ctx.adminBody destructuring
+    and your response reads to the exact keys the handler returns.
+    """
+    if not peer_code:
+        return ""
+    return (
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "PEER HANDLER CODE — the backend your bridge.call() reaches.\n"
+        "Read it to see the EXACT fields the handler destructures from\n"
+        "ctx.adminBody and the EXACT shape it returns. Every bridge.call()\n"
+        "body key and every response read MUST match the code below.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{peer_code}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )

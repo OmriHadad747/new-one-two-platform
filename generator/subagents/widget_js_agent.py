@@ -111,6 +111,9 @@ class WidgetJsGenerator(Generator):
         quality_brief_block = _format_quality_brief(ctx.intent)
         catalog_desc = _format_catalog(ctx.platform_api_catalog)
         prior_block = _format_prior_widget(ctx.prior_widget_code)
+        # peer_handler is only set on sequential retries; shows the actual backend
+        # handler so host.call() fields match the real ctx.widgetBody destructuring.
+        peer_handler_block = _format_peer_handler(ctx.peer_handler_code)
 
         return (
             f"Feature to build: {ctx.intent.get('desiredOutcome', '')}\n"
@@ -123,6 +126,7 @@ class WidgetJsGenerator(Generator):
             f"{catalog_desc}\n"
             f"{ux_block}"
             f"{prior_block}"
+            f"{peer_handler_block}"
             "\nCRITICAL (validation rejects violations):\n"
             "- NEVER document.head / document.body — append styles and elements to `container`\n"
             "- NEVER setInterval — use event-driven patterns only\n"
@@ -203,6 +207,29 @@ def _format_prior_widget(prior_code: Any) -> str:
         " Preserve all mount() logic and host.call() paths that are NOT being changed.)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{prior_code}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+
+def _format_peer_handler(peer_code: Any) -> str:
+    """
+    Inject the handler.js produced by the peer handler agent in THIS run.
+
+    Only populated on sequential retry. The catalog above says what each route
+    should look like; this block shows what the real handler does. Match your
+    host.call() body field names to the handler's ctx.widgetBody destructuring
+    and your response reads to the exact keys the handler returns.
+    """
+    if not peer_code:
+        return ""
+    return (
+        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "PEER HANDLER CODE — the backend your host.call() reaches.\n"
+        "Read it to see the EXACT fields the handler destructures from\n"
+        "ctx.widgetBody and the EXACT shape it returns. Every host.call()\n"
+        "body key and every response read MUST match the code below.\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{peer_code}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
 
