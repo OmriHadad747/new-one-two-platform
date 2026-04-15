@@ -19,7 +19,7 @@ Items that are known gaps but deliberately deferred. Each entry has the affected
 2. Update `storeBundleInSession` signature to accept `meta?: Record<string, unknown>`.
 3. Update the `registerCompletedListener` callbacks in `generation.ts` (POST `/generation` and POST `/generation/:jobId/revise`) to pass `bundleMsg.meta`.
 
-**Note:** this supersedes the old TD-004 ("generation_events table"). The schema consolidation dropped that table; per-agent cost visibility now rides on the `agentTrace` entries inside `meta` rather than a separate rows-per-call table.
+**Relationship to TD-004**: TD-001 gets the full `meta` blob (including `agentTrace[]`) onto `generation_sessions` as the source of truth. TD-004 projects the per-agent trace entries out into a queryable `generation_events` table for cost/latency analytics. Do TD-001 first; TD-004 is easy once the blob is persisted.
 
 ---
 
@@ -52,6 +52,133 @@ The bundle is the source of truth but the legacy columns are kept in sync manual
 Either:
 - (Simple) Drop the legacy columns in a migration and update any code that reads them to read from `bundle->>'...'` instead.
 - (Better) Normalize: add proper typed columns for `handler_code TEXT`, `migration_sql TEXT`, `widget_js TEXT`, `merchant_explanation TEXT`, `webhook_topics TEXT[]`, `cron_schedule TEXT` and populate them from the bundle at write time. Drop the `bundle` blob once readers are migrated.
+
+---
+
+## TD-004 — No per-agent cost / latency visibility
+
+**Why it matters**
+
+Anthropic bills per input+output token. Today the platform has no queryable way to answer:
+
+- Which agent is burning the most tokens across all tenants this month?
+- Which model (claude-sonnet-4-6 vs claude-opus-4-6 vs claude-haiku-4-5) gives the best $/successful-generation?
+- Did the architect prompt revision on 2026-04-10 regress token usage? By how much?
+- What's the real unit cost of one generation for tenant X — needed for pricing / margin analysis?
+- Which agent retried the most times on the expensive runs?
+
+`usage_records.generations` tracks **count**, not cost. A cheap run and a $5 run look identical. TD-001 persists the full `meta` blob (including `agentTrace[]`) onto `generation_sessions` — that's the write-path source of truth, but aggregating JSONB arrays across thousands of sessions is slow and awkward. We want a normalised rows-per-agent-call table that `GROUP BY agent_name, model, created_at::date` answers the above in O(index-scan) not O(parse-every-json-array).
+
+**What to do**
+
+### 1. New migration — add the `generation_events` projection table
+
+```sql
+CREATE TABLE generation_events (
+  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id    UUID        NOT NULL REFERENCES generation_sessions(id) ON DELETE CASCADE,
+  tenant_id     UUID        NOT NULL REFERENCES tenants(id)             ON DELETE CASCADE,
+  job_id        UUID,                                     -- for joining to frontend SSE jobs
+  agent_name    TEXT        NOT NULL,                     -- 'product' | 'architect' | 'handler' | 'widget_js' | 'admin_ui' | 'validation' | 'revision' | 'explanation'
+  model         TEXT        NOT NULL,                     -- e.g. 'claude-sonnet-4-6'
+  provider      TEXT        NOT NULL DEFAULT 'anthropic', -- future-proof for other providers
+  input_tokens  INTEGER     NOT NULL DEFAULT 0,
+  output_tokens INTEGER     NOT NULL DEFAULT 0,
+  latency_ms    INTEGER     NOT NULL DEFAULT 0,
+  attempt       INTEGER     NOT NULL DEFAULT 1,           -- non-1 when the agent retried
+  status        TEXT        NOT NULL DEFAULT 'success',   -- 'success' | 'failed' | 'retrying'
+  error         TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_generation_events_session       ON generation_events (session_id);
+CREATE INDEX idx_generation_events_tenant_agent  ON generation_events (tenant_id, agent_name, created_at);
+CREATE INDEX idx_generation_events_model_created ON generation_events (model, created_at);
+CREATE INDEX idx_generation_events_created_at    ON generation_events (created_at DESC);
+
+-- RLS: match the 'ENABLE only' pattern the 5 other service-level tables use
+-- (see TD-014 for the full-FORCE sweep). Platform API writes as owner and
+-- reads analytics as owner; no tenant-facing surface for this table.
+ALTER TABLE generation_events ENABLE ROW LEVEL SECURITY;
+CREATE POLICY generation_events_isolation ON generation_events
+  USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID);
+```
+
+### 2. Write path — one site only
+
+After TD-001 lands, `storeBundleInSession` receives `meta.agentTrace[]`. In the same transaction that writes `generation_sessions.meta`, fan each trace entry out into a `generation_events` row:
+
+```ts
+// platform/packages/db/src/generation.ts — inside storeBundleInSession,
+// still under the existing withTenantContext wrap:
+if (meta?.agentTrace) {
+  for (const entry of meta.agentTrace) {
+    await tx`
+      INSERT INTO generation_events
+        (session_id, tenant_id, job_id, agent_name, model,
+         input_tokens, output_tokens, latency_ms, attempt, status)
+      VALUES
+        (${sessionId}, ${tenantId}, ${jobId}, ${entry.agent}, ${entry.model},
+         ${entry.inputTokens}, ${entry.outputTokens}, ${entry.latencyMs},
+         ${entry.attempt ?? 1}, ${entry.status ?? 'success'})
+    `;
+  }
+}
+```
+
+Failure mode: if the insert throws, the whole `storeBundleInSession` transaction rolls back — that's desirable, we don't want a session persisted with partial event rows. Keep the events insert inside the same `withTenantContext` block.
+
+### 3. One dashboard query per question
+
+Cost by agent this month:
+```sql
+SELECT agent_name,
+       SUM(input_tokens)  AS in_tok,
+       SUM(output_tokens) AS out_tok,
+       -- per-model pricing lives in code; join to a rates CTE or compute client-side
+       COUNT(*)           AS calls
+FROM generation_events
+WHERE created_at >= date_trunc('month', NOW())
+GROUP BY agent_name
+ORDER BY out_tok DESC;
+```
+
+Cost per tenant:
+```sql
+SELECT tenant_id,
+       SUM(input_tokens + output_tokens) AS total_tokens,
+       COUNT(DISTINCT session_id)        AS generations
+FROM generation_events
+WHERE created_at >= NOW() - INTERVAL '30 days'
+GROUP BY tenant_id
+ORDER BY total_tokens DESC
+LIMIT 20;
+```
+
+Regression check after a prompt change:
+```sql
+SELECT DATE(created_at) AS day,
+       AVG(input_tokens + output_tokens) AS avg_tokens
+FROM generation_events
+WHERE agent_name = 'architect'
+  AND created_at >= '2026-04-01'
+GROUP BY 1
+ORDER BY 1;
+```
+
+### Dependencies
+
+- **Blocked on TD-002**: token counts are currently hardcoded to 0 in the crew. Implementing TD-004 before TD-002 populates the table with zeros — no signal.
+- **Requires TD-001**: `meta` must reach `storeBundleInSession`. Without it, there's no `agentTrace[]` to fan out.
+
+Do them in order: **TD-002 → TD-001 → TD-004**. TD-004 itself is ~40 lines of SQL + ~15 lines of TS; the engineering weight is on TD-002.
+
+**Affected files**
+- `platform/packages/db/migrations/0004_generation_events.sql` — new migration.
+- `platform/packages/db/src/generation.ts` — extend `storeBundleInSession` to fan out trace rows.
+- `platform/packages/db/src/analytics.ts` (new, optional) — typed helpers for the common queries above so ops dashboards don't hand-write SQL.
+
+**Complexity:** Low once TD-001 + TD-002 are done. Medium total if you count the prerequisites.
 
 ---
 
