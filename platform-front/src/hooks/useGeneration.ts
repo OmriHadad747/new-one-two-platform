@@ -1,12 +1,18 @@
 import { useState, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, AuthRequiredError } from "@/lib/api";
 import type {
   GenerationState,
   GenerationSSEEvent,
   ProgressEvent,
   CompletedEvent,
 } from "@/types/dashboard";
+
+// Kept as a module constant so both the SSE-open path and the
+// poll-after-stream-drop path emit the exact same copy. Referenced in two
+// places: progressStream() throwing AuthRequiredError synchronously, and
+// pollWithRetry() seeing a 401 on the result poll.
+const SESSION_EXPIRED_MSG = "Session expired — please re-authenticate.";
 
 const INITIAL: GenerationState = {
   jobId: null,
@@ -40,7 +46,20 @@ export function useGeneration() {
 
   /** Shared SSE wiring — used by both start() and startRevision(). */
   const _openStream = useCallback((jobId: string) => {
-    const es = api.generation.progressStream(jobId);
+    let es: EventSource;
+    try {
+      es = api.generation.progressStream(jobId);
+    } catch (err) {
+      // progressStream throws AuthRequiredError when no token is present —
+      // short-circuits the guaranteed-401 round-trip and surfaces a clear
+      // re-auth message instead of a generic "connection lost" after the
+      // onerror path fires.
+      if (err instanceof AuthRequiredError) {
+        _setState((s) => ({ ...s, status: "failed", error: SESSION_EXPIRED_MSG }));
+        return;
+      }
+      throw err;
+    }
     esRef.current = es;
 
     es.onmessage = (e: MessageEvent<string>) => {
@@ -102,7 +121,16 @@ export function useGeneration() {
               return;
             }
             // Still running — continue retrying
-          } catch {
+          } catch (err) {
+            // Auth expired mid-stream: the JWT stored in sessionStorage is no
+            // longer valid (exp elapsed, or signing secret rotated). No amount
+            // of reconnecting helps — the user needs to re-auth via Shopify.
+            // Match on the request() helper's "401 ..." message shape, same
+            // pattern as the existing "404" checks on lines ~227 / ~246.
+            if (err instanceof Error && err.message.startsWith("401")) {
+              _setState((prev) => ({ ...prev, status: "failed", error: SESSION_EXPIRED_MSG }));
+              return;
+            }
             // Network error — continue retrying
           }
         }

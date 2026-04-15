@@ -27,6 +27,23 @@ import { getAuthToken } from "./auth.js";
 
 const BASE = "/api";
 
+/**
+ * Thrown by client helpers that need a JWT but don't have one.
+ *
+ * Lets the hook layer distinguish "user isn't authenticated, show the re-auth
+ * CTA" from every other class of failure (network, 5xx, validation). The
+ * error bubbles out of `progressStream()` specifically, since EventSource
+ * can't propagate an auth failure as a typed response — without this class,
+ * the hook would see a generic EventSource `onerror` and assume the network
+ * died.
+ */
+export class AuthRequiredError extends Error {
+  constructor(message = "Authentication required") {
+    super(message);
+    this.name = "AuthRequiredError";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const hasBody = init?.body != null;
   const token = getAuthToken();
@@ -139,12 +156,18 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ feedback }),
       }),
-    progressStream: (jobId: string) => {
+    progressStream: (jobId: string): EventSource => {
       // EventSource does not support custom headers, so pass token via query param.
+      // Since B6 requires auth on /generation/:jobId/progress, there is no
+      // meaningful "anonymous" SSE anymore — if we reach this helper without a
+      // token, the server will 401 immediately. Fail fast with a distinct
+      // error the hook can translate into a "please re-authenticate" message
+      // instead of spending a round-trip on a guaranteed-401.
       const token = getAuthToken();
-      const url = token
-        ? `${BASE}/generation/${jobId}/progress?token=${encodeURIComponent(token)}`
-        : `${BASE}/generation/${jobId}/progress`;
+      if (!token) {
+        throw new AuthRequiredError("No auth token — cannot open SSE stream");
+      }
+      const url = `${BASE}/generation/${jobId}/progress?token=${encodeURIComponent(token)}`;
       return new EventSource(url);
     },
     analyze: (history: AnalyzeMessage[]) =>
