@@ -259,9 +259,15 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         jobId,
         async (bundleMsg: FeatureBundleMessage) => {
           unsubCompleted(); // self-cleanup
+          // `bundleMsg.meta` carries totalInputTokens/totalOutputTokens/
+          // generationMs/agentTrace[]; forwarding it to storeBundleInSession
+          // lands the blob on generation_sessions.meta (TD-001) and fans
+          // agentTrace[] into generation_events rows for cost analytics
+          // (TD-004). See migration 0004.
+          const meta = (bundleMsg.meta ?? null) as Record<string, unknown> | null;
           if (bundleMsg.status === "success" && bundleMsg.bundle) {
             const bundle = bundleMsg.bundle as unknown as Record<string, unknown>;
-            await storeBundleInSession(tenantId, jobId, bundle, "completed");
+            await storeBundleInSession(tenantId, jobId, bundle, "completed", undefined, meta);
             // Set archetype immediately so app detail shows correct type badges
             // before the merchant deploys.
             await updateAppArchetype(appId, archetypeFromBundle(bundle));
@@ -276,7 +282,8 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
               jobId,
               {},
               "failed",
-              bundleMsg.error ?? "Generation failed"
+              bundleMsg.error ?? "Generation failed",
+              meta
             );
             // Failed generation: revert app to "draft" so it can be re-generated.
             await updateAppStatus(appId, "draft");
@@ -606,9 +613,11 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         newJobId,
         async (bundleMsg: FeatureBundleMessage) => {
           unsubCompleted();
+          // meta forwarded to lands the blob + generation_events rows (TD-001+004).
+          const meta = (bundleMsg.meta ?? null) as Record<string, unknown> | null;
           if (bundleMsg.status === "success" && bundleMsg.bundle) {
             const bundle = bundleMsg.bundle as unknown as Record<string, unknown>;
-            await storeBundleInSession(sessionTenantId, newJobId, bundle, "completed");
+            await storeBundleInSession(sessionTenantId, newJobId, bundle, "completed", undefined, meta);
             // Update archetype in case the revision changed the bundle shape.
             await updateAppArchetype(session.appId!, archetypeFromBundle(bundle));
             // Refresh email metadata from the revised bundle. configured_by_merchant
@@ -622,7 +631,8 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
               newJobId,
               {},
               "failed",
-              bundleMsg.error ?? "Revision failed"
+              bundleMsg.error ?? "Revision failed",
+              meta
             );
             // Revision failed: keep app in current status (already active or ready).
           }

@@ -97,15 +97,27 @@ if (!dockerAvailable) {
 const describeRls = dockerAvailable ? describe : describe.skip;
 
 // ─── Suite ───────────────────────────────────────────────────────────────────
+//
+// Shared container + db + superuser handle across the two describe blocks
+// below. beforeAll/afterAll sit at file scope — previously they lived in
+// the first describe, which meant vitest ran afterAll (container.stop())
+// between the two describes and the TD-001/004 tests hit a dead postgres
+// socket (CONNECTION_ENDED). File-scope hooks apply to the whole file, so
+// the container lives from the first test in describe(1) through the last
+// test in describe(2).
 
-describeRls("RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY", () => {
-  let container: import("testcontainers").StartedTestContainer;
-  let db: DbModule;
-  // A superuser connection used only for test setup: seeding the non-RLS
-  // tenants/apps rows and reading the raw "no context" state. The db module
-  // under test uses its own module-level sql bound to `app_owner`.
-  let superSql: PostgresSql;
+let container: import("testcontainers").StartedTestContainer;
+let db: DbModule;
+// A superuser connection used only for test setup: seeding the non-RLS
+// tenants/apps rows and reading the raw "no context" state. The db module
+// under test uses its own module-level sql bound to `app_owner`.
+let superSql: PostgresSql;
 
+// File-level beforeAll/afterAll — gated on dockerAvailable so the skip path
+// doesn't try to boot a container. When Docker isn't reachable, describeRls
+// becomes describe.skip, no tests run, and these hooks are no-ops (the
+// setup block is guarded by the same flag).
+if (dockerAvailable) {
   beforeAll(async () => {
     const { GenericContainer, Wait } = await import("testcontainers");
     container = await new GenericContainer("postgres:16-alpine")
@@ -185,9 +197,14 @@ describeRls("RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY", ()
 
   afterAll(async () => {
     await superSql?.end?.();
+    // db.sql is the module-level handle bound to app_owner. End it so the
+    // container stop doesn't race with live queries.
+    await db?.sql?.end?.();
     await container?.stop?.();
   });
+}
 
+describeRls("RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY", () => {
   it("(1) raw SELECT outside withTenantContext returns zero rows — FORCE bites the owner", async () => {
     // The db module's sql handle is the app_owner non-superuser. Without a
     // withTenantContext wrap, `app.current_tenant_id` is unset, the policy
@@ -233,5 +250,253 @@ describeRls("RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY", ()
     // rows where tenant_id doesn't match the session context).
     const crossTenant = await db.getLatestCompletedSessionForApp(TENANT_B, APP_A);
     expect(crossTenant).toBeNull();
+  });
+});
+
+// ─── TD-001 + TD-004 — meta blob + generation_events fan-out ───────────────
+//
+// Migration 0004 adds a `meta` JSONB column on `generation_sessions` and a
+// normalised `generation_events` projection table. `storeBundleInSession`
+// persists both inside a single withTenantContext transaction.
+//
+// These tests share the beforeAll setup above (container + migrations +
+// seeded tenants/apps/sessions). The original rls-generation suite inserts
+// sessions directly via superSql; here we drive storeBundleInSession
+// end-to-end so both the blob and the event rows are observed.
+
+describeRls("TD-001 + TD-004 — cost visibility write path", () => {
+  // New jobIds so we don't clash with JOB_A/JOB_B from the RLS suite.
+  const JOB_COST_A = "00000000-0000-4000-8000-00000000100a";
+  const JOB_COST_B = "00000000-0000-4000-8000-00000000100b";
+
+  const META_FIXTURE = {
+    totalInputTokens: 12_345,
+    totalOutputTokens: 6_789,
+    generationMs: 45_678,
+    agentTrace: [
+      { agent: "product",     inputTokens: 1_000, outputTokens:   500, latencyMs: 3_000 },
+      { agent: "architect",   inputTokens: 4_000, outputTokens: 2_000, latencyMs: 9_000 },
+      { agent: "handler",     inputTokens: 5_000, outputTokens: 3_000, latencyMs: 18_000 },
+      { agent: "validation",  inputTokens:   900, outputTokens:   400, latencyMs: 2_000 },
+      { agent: "explanation", inputTokens: 1_445, outputTokens:   889, latencyMs: 13_678 },
+    ],
+  };
+
+  // Create a fresh session per test under the superuser so the write-path
+  // under test only has to UPDATE + INSERT, not race with a previous
+  // run's rows.
+  async function seedEmptySession(tenantId: string, appId: string, jobId: string) {
+    await superSql`
+      INSERT INTO generation_sessions (app_id, tenant_id, prompt, status, job_id)
+      VALUES (${appId}, ${tenantId}, 'cost-fixture', 'running', ${jobId})
+    `;
+  }
+
+  async function eventsForSession(jobId: string): Promise<
+    Array<{ agent_name: string; input_tokens: number; output_tokens: number; latency_ms: number }>
+  > {
+    // superSql bypasses RLS so the test can directly inspect what landed,
+    // independent of whatever context the code under test used.
+    return superSql`
+      SELECT agent_name, input_tokens, output_tokens, latency_ms
+      FROM generation_events
+      WHERE job_id = ${jobId}
+      ORDER BY agent_name
+    `;
+  }
+
+  it("(6) storeBundleInSession with meta writes the blob + one event row per agentTrace entry", async () => {
+    await seedEmptySession(TENANT_A, APP_A, JOB_COST_A);
+
+    await db.storeBundleInSession(
+      TENANT_A,
+      JOB_COST_A,
+      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      "completed",
+      undefined,
+      META_FIXTURE
+    );
+
+    // Blob is persisted (TD-001).
+    const [sessionRow] = await superSql<Array<{ meta: Record<string, unknown> }>>`
+      SELECT meta FROM generation_sessions WHERE job_id = ${JOB_COST_A}
+    `;
+    expect(sessionRow?.meta).toMatchObject({
+      totalInputTokens: 12_345,
+      totalOutputTokens: 6_789,
+      generationMs: 45_678,
+    });
+    expect(Array.isArray((sessionRow?.meta as { agentTrace: unknown[] }).agentTrace)).toBe(true);
+
+    // Events are fanned out (TD-004). One row per agentTrace entry.
+    const events = await eventsForSession(JOB_COST_A);
+    expect(events).toHaveLength(META_FIXTURE.agentTrace.length);
+
+    const handlerRow = events.find((e) => e.agent_name === "handler");
+    expect(handlerRow).toMatchObject({
+      input_tokens: 5_000,
+      output_tokens: 3_000,
+      latency_ms: 18_000,
+    });
+  });
+
+  it("(7) missing meta doesn't write any event rows — the table stays pristine when the generator doesn't emit meta", async () => {
+    await seedEmptySession(TENANT_B, APP_B, JOB_COST_B);
+
+    await db.storeBundleInSession(
+      TENANT_B,
+      JOB_COST_B,
+      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      "completed"
+      // no errorMessage, no meta
+    );
+
+    const events = await eventsForSession(JOB_COST_B);
+    expect(events).toHaveLength(0);
+
+    // Blob column is NULL, not overwritten.
+    const [row] = await superSql<Array<{ meta: unknown }>>`
+      SELECT meta FROM generation_sessions WHERE job_id = ${JOB_COST_B}
+    `;
+    expect(row?.meta).toBeNull();
+  });
+
+  it("(8) generation_events honors the RLS policy the same way sessions do", async () => {
+    // Seed-and-assert its own data so the suite can run tests in any order
+    // (vitest may shard / randomize in CI). Previously this test read
+    // JOB_COST_A's events that test (6) wrote — fine today, flaky tomorrow.
+    const JOB_RLS = "00000000-0000-4000-8000-0000000088aa";
+    await seedEmptySession(TENANT_A, APP_A, JOB_RLS);
+    await db.storeBundleInSession(
+      TENANT_A,
+      JOB_RLS,
+      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      "completed",
+      undefined,
+      META_FIXTURE
+    );
+
+    // A query run under context=TENANT_B must see none of A's events.
+    const seenAsB = await db.sql.begin(async (tx) => {
+      await tx`SELECT set_config('app.current_tenant_id', ${TENANT_B}, TRUE)`;
+      return tx<Array<{ id: string }>>`SELECT id FROM generation_events WHERE job_id = ${JOB_RLS}`;
+    });
+    expect(seenAsB).toHaveLength(0);
+
+    // And context=TENANT_A sees them (context integrity check).
+    const seenAsA = await db.sql.begin(async (tx) => {
+      await tx`SELECT set_config('app.current_tenant_id', ${TENANT_A}, TRUE)`;
+      return tx<Array<{ id: string }>>`SELECT id FROM generation_events WHERE job_id = ${JOB_RLS}`;
+    });
+    expect(seenAsA.length).toBe(META_FIXTURE.agentTrace.length);
+  });
+
+  it("(9) malformed meta is rejected by Zod before any DB write — no session mutation, no orphan events", async () => {
+    const JOB_ROLLBACK = "00000000-0000-4000-8000-0000000099aa";
+    await seedEmptySession(TENANT_A, APP_A, JOB_ROLLBACK);
+
+    // agentTrace[].agent must be a string. An object here fails
+    // MetaSchema.parse() inside storeBundleInSession, which throws
+    // BEFORE opening the withTenantContext transaction. Both the
+    // session UPDATE and the event INSERTs are therefore skipped
+    // entirely — no rollback needed because no write ran.
+    const brokenMeta = {
+      ...META_FIXTURE,
+      agentTrace: [
+        { agent: "valid", inputTokens: 1, outputTokens: 1, latencyMs: 1 },
+        { agent: { oops: "not-a-string" }, inputTokens: 2, outputTokens: 2, latencyMs: 2 },
+      ],
+    };
+
+    await expect(
+      db.storeBundleInSession(
+        TENANT_A,
+        JOB_ROLLBACK,
+        { handlerModule: { code: "", webhookTopics: [], cronSchedule: null } },
+        "completed",
+        undefined,
+        brokenMeta as unknown as Record<string, unknown>
+      )
+    ).rejects.toThrow(/agent/i); // zod issue path includes "agent"
+
+    // Session row is unchanged: still 'running', no meta, no bundle.
+    const [row] = await superSql<Array<{ meta: unknown; status: string; bundle: unknown }>>`
+      SELECT meta, status, bundle FROM generation_sessions WHERE job_id = ${JOB_ROLLBACK}
+    `;
+    expect(row?.meta).toBeNull();
+    expect(row?.status).toBe("running"); // unchanged from seedEmptySession
+    expect(row?.bundle).toBeNull();
+
+    // No events either.
+    const events = await eventsForSession(JOB_ROLLBACK);
+    expect(events).toHaveLength(0);
+  });
+
+  it("(10) Pub/Sub redelivery is idempotent — calling storeBundleInSession twice leaves one event row per agent, not two", async () => {
+    // Simulates what happens when the generator publishes a completion,
+    // a post-ack crash prevents the handler from finishing, and Pub/Sub
+    // redelivers to a fresh API instance. The DELETE-then-INSERT in the
+    // fan-out path makes the second call a no-op for analytics.
+    const JOB_REDELIVER = "00000000-0000-4000-8000-0000000077aa";
+    await seedEmptySession(TENANT_A, APP_A, JOB_REDELIVER);
+
+    // First delivery — full write.
+    await db.storeBundleInSession(
+      TENANT_A,
+      JOB_REDELIVER,
+      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      "completed",
+      undefined,
+      META_FIXTURE
+    );
+
+    const firstPass = await eventsForSession(JOB_REDELIVER);
+    expect(firstPass).toHaveLength(META_FIXTURE.agentTrace.length);
+
+    // Redelivery with the same meta — DELETE the old rows, INSERT fresh.
+    // Final row count equals the agent count, not 2× the agent count.
+    await db.storeBundleInSession(
+      TENANT_A,
+      JOB_REDELIVER,
+      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      "completed",
+      undefined,
+      META_FIXTURE
+    );
+
+    const secondPass = await eventsForSession(JOB_REDELIVER);
+    expect(secondPass).toHaveLength(META_FIXTURE.agentTrace.length);
+  });
+
+  it("(11) mid-generation retries are preserved — duplicate agent_name entries stay distinct", async () => {
+    // The Python crew can emit multiple entries for the same agent when a
+    // later phase forces a retry (e.g. handler validation fails → architect
+    // re-runs). DELETE-then-INSERT preserves multiplicity; a naive
+    // UNIQUE (session_id, agent_name) constraint would NOT.
+    const JOB_RETRY = "00000000-0000-4000-8000-0000000066aa";
+    await seedEmptySession(TENANT_A, APP_A, JOB_RETRY);
+
+    const metaWithRetry = {
+      ...META_FIXTURE,
+      agentTrace: [
+        { agent: "product",   inputTokens: 1_000, outputTokens:   500, latencyMs: 3_000 },
+        { agent: "architect", inputTokens: 4_000, outputTokens: 2_000, latencyMs: 9_000 },
+        { agent: "handler",   inputTokens: 5_000, outputTokens: 3_000, latencyMs: 18_000 },
+        { agent: "architect", inputTokens:   500, outputTokens:   300, latencyMs: 2_000 }, // retry
+      ],
+    };
+
+    await db.storeBundleInSession(
+      TENANT_A,
+      JOB_RETRY,
+      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      "completed",
+      undefined,
+      metaWithRetry
+    );
+
+    const rows = await eventsForSession(JOB_RETRY);
+    const architectRows = rows.filter((r) => r.agent_name === "architect");
+    expect(architectRows).toHaveLength(2);
   });
 });
