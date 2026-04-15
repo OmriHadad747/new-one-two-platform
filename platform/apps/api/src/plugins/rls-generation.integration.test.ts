@@ -500,3 +500,100 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
     expect(architectRows).toHaveLength(2);
   });
 });
+
+// ─── TD-015 — SSE progress stream auth + ownership contract ────────────────
+//
+// Batch 6 put GET /generation/:jobId/progress behind the same JWT contract
+// as every other /generation/* route. These cases pin three invariants:
+//
+//   (12) No token anywhere → 401. Previously this returned 200 and streamed.
+//   (13) Valid token for tenant B, jobId owned by tenant A → 404 with the
+//        same shape as "unknown job" so a caller cannot tell whether the
+//        jobId exists under a different tenant (disclosure oracle).
+//   (14) Valid token for the owning tenant → 200 + text/event-stream.
+//
+// We register the generation route onto a fresh Fastify instance with the
+// real authHook, using the same testcontainer + migrated schema from the
+// file-level beforeAll. JWT_SECRET is set just before importing auth.ts
+// so signJwt/verifyJwt both see the same secret.
+
+describeRls("TD-015 — SSE /generation/:jobId/progress auth + ownership", () => {
+  const JOB_SSE_A = "00000000-0000-4000-8000-0000000012aa";
+  const JOB_SSE_B = "00000000-0000-4000-8000-0000000013bb";
+
+  let server: import("fastify").FastifyInstance;
+  let baseUrl: string;
+  let signJwt: (payload: Record<string, unknown>) => string;
+
+  beforeAll(async () => {
+    // Set the secret BEFORE importing the auth module — auth.ts reads it at
+    // module scope, and once captured the env var is frozen for this
+    // process. 256-bit random-looking value; only used in-process.
+    process.env["JWT_SECRET"] = "sse-auth-test-secret-do-not-use-in-prod";
+    process.env["API_AUTH_REQUIRED"] = "false"; // dev-mode; requireAuthedTenantId still 401s
+
+    const { default: Fastify } = await import("fastify");
+    const authModule = await import("./auth.js");
+    const { generationRoute } = await import("../routes/generation.js");
+    signJwt = authModule.signJwt;
+
+    server = Fastify({ logger: false });
+    server.addHook("onRequest", authModule.authHook);
+    await server.register(generationRoute, { prefix: "/generation" });
+    // port:0 → ephemeral; we need a real socket because SSE streams can't
+    // be inspected via fastify.inject() (inject() waits for end-of-response
+    // and an open SSE stream never ends).
+    baseUrl = await server.listen({ port: 0, host: "127.0.0.1" });
+
+    // Seed one session per tenant with known jobIds. These are owned by
+    // their respective tenants via tenant_id; the SSE handler's ownership
+    // check runs getSessionByJobId under FORCE-RLS, so context=TENANT_B
+    // looking up JOB_SSE_A returns null → 404.
+    await superSql`
+      INSERT INTO generation_sessions (app_id, tenant_id, prompt, status, job_id) VALUES
+        (${APP_A}, ${TENANT_A}, 'sse-fixture-a', 'running', ${JOB_SSE_A}),
+        (${APP_B}, ${TENANT_B}, 'sse-fixture-b', 'running', ${JOB_SSE_B})
+    `;
+  });
+
+  afterAll(async () => {
+    await server?.close();
+  });
+
+  it("(12) SSE without ?token= returns 401 (was 200 pre-B6)", async () => {
+    const res = await fetch(`${baseUrl}/generation/${JOB_SSE_A}/progress`);
+    expect(res.status).toBe(401);
+    // Drain the body so fetch doesn't leave a dangling socket.
+    await res.text();
+  });
+
+  it("(13) SSE with tenant-B token for tenant-A's jobId returns 404, not 403 — no disclosure oracle", async () => {
+    const tokenB = signJwt({ tenantId: TENANT_B, shopDomain: "b.myshopify.com" });
+    const res = await fetch(
+      `${baseUrl}/generation/${JOB_SSE_A}/progress?token=${encodeURIComponent(tokenB)}`
+    );
+    // 404 matches the "unknown jobId" shape: a caller with a valid token
+    // for tenant B cannot distinguish "jobId doesn't exist" from "jobId
+    // exists under a different tenant." That's the invariant.
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body).toMatchObject({ code: "not_found" });
+  });
+
+  it("(14) SSE with owning tenant's token returns 200 + text/event-stream", async () => {
+    const tokenA = signJwt({ tenantId: TENANT_A, shopDomain: "a.myshopify.com" });
+    const ac = new AbortController();
+    // The stream never ends on its own (no Pub/Sub listener will fire in
+    // this test). Abort after reading headers so fetch doesn't hang.
+    const res = await fetch(
+      `${baseUrl}/generation/${JOB_SSE_A}/progress?token=${encodeURIComponent(tokenA)}`,
+      { signal: ac.signal }
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
+    ac.abort();
+    // Swallow the AbortError surfaced on the body stream — we aborted on
+    // purpose, the test's assertion is about the head, not the tail.
+    try { await res.body?.cancel(); } catch { /* expected */ }
+  });
+});
