@@ -19,23 +19,7 @@ Items that are known gaps but deliberately deferred. Each entry has the affected
 2. Update `storeBundleInSession` signature to accept `meta?: Record<string, unknown>`.
 3. Update the `registerCompletedListener` callbacks in `generation.ts` (POST `/generation` and POST `/generation/:jobId/revise`) to pass `bundleMsg.meta`.
 
-**Relationship to TD-004**: TD-001 gets the full `meta` blob (including `agentTrace[]`) onto `generation_sessions` as the source of truth. TD-004 projects the per-agent trace entries out into a queryable `generation_events` table for cost/latency analytics. Do TD-001 first; TD-004 is easy once the blob is persisted.
-
----
-
-## TD-002 — Token counts are always 0 in the generator
-
-**Affected files**
-- `generator/models/adapter.py` — `invoke()` returns `LLMResponse` with correct token counts
-- `generator/crews/feature_generator/crew.py` — `AgentTraceEntry` objects are hardcoded `inputTokens=0, outputTokens=0`; `GenerationMeta` is hardcoded `totalInputTokens=0, totalOutputTokens=0`
-
-**What's broken**
-The adapter correctly reads `usage_metadata` from the Anthropic response, but each agent discards the `LLMResponse` wrapper and only returns the parsed result. The crew therefore has no token data to put in the trace.
-
-**What to do**
-1. Change each agent's return type to include token counts (e.g. return a `(result, input_tokens, output_tokens)` tuple, or a typed dataclass).
-2. Accumulate counts in the crew and fill `AgentTraceEntry` and `GenerationMeta` correctly.
-3. Once TD-001 is resolved, the persisted `meta` will also reflect real numbers.
+**Relationship to TD-004**: TD-001 gets the full `meta` blob (including `agentTrace[]` with real token counts, since token-counting is already landed on the generator side) onto `generation_sessions` as the source of truth. TD-004 projects the per-agent trace entries out into a queryable `generation_events` table for cost/latency analytics. Do TD-001 first; TD-004 is easy once the blob is persisted.
 
 ---
 
@@ -168,10 +152,10 @@ ORDER BY 1;
 
 ### Dependencies
 
-- **Blocked on TD-002**: token counts are currently hardcoded to 0 in the crew. Implementing TD-004 before TD-002 populates the table with zeros — no signal.
 - **Requires TD-001**: `meta` must reach `storeBundleInSession`. Without it, there's no `agentTrace[]` to fan out.
+- Token counting in the generator is already landed — `run_product_agent` and the other agents return `(result, input_tokens, output_tokens)` tuples, and `_phase_*` functions in `crews/feature_generator/crew.py` populate every `AgentTraceEntry` with real values. So the moment TD-001 ships the `meta` blob to the DB, TD-004 can project real non-zero cost data from it.
 
-Do them in order: **TD-002 → TD-001 → TD-004**. TD-004 itself is ~40 lines of SQL + ~15 lines of TS; the engineering weight is on TD-002.
+Do them in order: **TD-001 → TD-004**. TD-004 itself is ~40 lines of SQL + ~15 lines of TS; both are small once the meta column is there.
 
 **Affected files**
 - `platform/packages/db/migrations/0004_generation_events.sql` — new migration.
