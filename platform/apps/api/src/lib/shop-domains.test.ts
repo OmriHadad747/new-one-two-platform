@@ -177,4 +177,47 @@ describe("isOriginAllowedForShop — production path", () => {
     // "API is down" case).
     expect(ok).toBe(false);
   });
+
+  it("dedupes concurrent cold-cache fetches (singleflight)", async () => {
+    // Regression for the Medium review finding: N instances × M concurrent
+    // cold requests would have fired N*M Admin API calls. The singleflight
+    // wrapper collapses that to 1.
+    let fetchCount = 0;
+    mod.__setShopifyFetcherForTests(async () => {
+      fetchCount++;
+      // Small delay so the second+ callers definitely arrive before the
+      // first resolves.
+      await new Promise((r) => setTimeout(r, 10));
+      return new Set(["shop.acme.com"]);
+    });
+
+    // 20 concurrent callers, same shop, cold cache.
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com")
+      )
+    );
+    expect(results.every((r) => r === true)).toBe(true);
+    expect(fetchCount).toBe(1);
+  });
+
+  it("singleflight clears on rejection so the next caller retries", async () => {
+    // If a failed fetch left the in-flight slot populated, subsequent
+    // callers would forever share the rejected promise.
+    let calls = 0;
+    mod.__setShopifyFetcherForTests(async () => {
+      calls++;
+      if (calls === 1) throw new Error("transient failure");
+      return new Set(["shop.acme.com"]);
+    });
+
+    // First call: cold cache + failure → rejects through resolveShopHosts,
+    // surfaces as `false`.
+    expect(await mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com")).toBe(false);
+
+    // Second call after the in-flight entry was cleared → new fetch, now
+    // succeeds.
+    expect(await mod.isOriginAllowedForShop(SHOP, "https://shop.acme.com")).toBe(true);
+    expect(calls).toBe(2);
+  });
 });

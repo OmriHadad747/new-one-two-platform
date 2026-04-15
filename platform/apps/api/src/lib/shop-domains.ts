@@ -44,12 +44,34 @@ interface CachedEntry {
 
 const cache = new Map<string, CachedEntry>();
 
+/**
+ * In-flight fetch promises, keyed by shop. Concurrent callers for the same
+ * shop on a cold (or expired) cache share a single Shopify Admin API call
+ * instead of each firing their own. Cleared in .finally() so a failed fetch
+ * doesn't poison future attempts — on rejection, the next caller starts a
+ * fresh fetch.
+ *
+ * Matters more at horizontal scale: without this, `N instances × M
+ * concurrent cold requests = N*M Shopify calls`, which eats into the 2
+ * req/s Admin API budget fast during a viral-storefront burst.
+ */
+const inflight = new Map<string, Promise<Set<string>>>();
+
 /** 5 min TTL per TD-013. Long enough to absorb the Admin API rate limit,
  *  short enough that a legitimately-added alternate domain propagates fast. */
 const TTL_MS = 5 * 60_000;
 
 /** Pluggable clock for tests. Real code uses Date.now. */
 let nowFn: () => number = () => Date.now();
+
+// ─── Shopify Admin API version ──────────────────────────────────────────────
+//
+// Shopify rotates Admin API versions quarterly; old versions are deprecated
+// ~12 months after release. When this one gets deprecated, Admin API calls
+// return 401/400 and every widget request fails-closed. Keep it named so
+// the next bump is a one-line change. If other services start hitting the
+// Admin API, consolidate on a shared constant.
+const ADMIN_API_VERSION = "2026-01";
 
 // ─── Config gate ────────────────────────────────────────────────────────────
 //
@@ -93,9 +115,11 @@ export async function isOriginAllowedForShop(
   return allowed.has(originHost);
 }
 
-/** Test helper: flush every cached entry. */
+/** Test helper: flush every cached entry (including the in-flight set so
+ *  tests don't leak pending fetches across cases). */
 export function __clearShopDomainCacheForTests(): void {
   cache.clear();
+  inflight.clear();
 }
 
 /** Test helper: inject a fake clock (exposed only to vitest). */
@@ -125,14 +149,24 @@ async function resolveShopHosts(
     return cached.hosts;
   }
 
-  // Cold / expired. Try to refresh.
+  // Cold / expired — run (or join) the in-flight fetch.
+  //
+  // Why the promise map: two concurrent widget requests for the same shop on
+  // a cold cache both used to fire their own Admin API call. At Cloud Run
+  // horizontal-scale scale, N instances × M concurrent cold requests = N*M
+  // calls, which is wasteful at best and breaches Shopify's 2 req/s cap at
+  // worst. Sharing the promise means the first caller pays for the fetch
+  // and the rest await its result.
   try {
-    const hosts = await fetchShopHostsFromShopify(shop);
-    cache.set(shop, { hosts, expiresAt: now + TTL_MS });
+    const hosts = await fetchOrJoinInflight(shop, now);
     return hosts;
   } catch (err) {
-    // If we have a stale entry, serve it. Better than locking out real
-    // storefronts when Shopify's Admin API is briefly unavailable.
+    // Stale-if-error: prefer a few minutes of stale data over locking out
+    // real storefronts during a Shopify blip. Admissible because the set
+    // of a shop's domains changes rarely (merchant adds a new storefront
+    // domain once in a blue moon) and the upper bound is the TTL: a stale
+    // entry can only be served for at most one full TTL past its
+    // original fetch before the operator notices.
     if (cached) {
       log.warn(
         { shop, err: err instanceof Error ? err.message : String(err) },
@@ -146,6 +180,31 @@ async function resolveShopHosts(
     );
     return null;
   }
+}
+
+/**
+ * Singleflight wrapper around the Shopify fetch. Concurrent callers for the
+ * same shop share one pending promise; the cache gets populated once,
+ * regardless of how many callers were waiting. On rejection, the in-flight
+ * entry is removed so the next caller retries — otherwise one transient
+ * failure would poison future attempts for the lifetime of the process.
+ */
+function fetchOrJoinInflight(shop: string, now: number): Promise<Set<string>> {
+  const existing = inflight.get(shop);
+  if (existing) return existing;
+
+  const p = fetchShopHostsFromShopify(shop).then((hosts) => {
+    cache.set(shop, { hosts, expiresAt: now + TTL_MS });
+    return hosts;
+  });
+  inflight.set(shop, p);
+  // Drop the in-flight ref whether it resolved or rejected — future cold
+  // calls start fresh. Guarded by ref-equality so a slow rejection doesn't
+  // remove a newer promise that's already replaced it.
+  p.finally(() => {
+    if (inflight.get(shop) === p) inflight.delete(shop);
+  }).catch(() => { /* swallow — caller already sees it */ });
+  return p;
 }
 
 // ─── Shopify fetch (Admin GraphQL) ──────────────────────────────────────────
@@ -177,7 +236,7 @@ async function fetchShopHostsFromShopify(shop: string): Promise<Set<string>> {
     return _shopifyFetcherOverride(shop, accessToken);
   }
 
-  const url = `https://${shop}/admin/api/2026-01/graphql.json`;
+  const url = `https://${shop}/admin/api/${ADMIN_API_VERSION}/graphql.json`;
   const response = await fetch(url, {
     method: "POST",
     headers: {
