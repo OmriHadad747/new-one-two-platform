@@ -45,8 +45,9 @@ The platform issues a signed JWT on successful Shopify OAuth install. The dev fl
 3. Complete Shopify OAuth once against your dev Partner app. The callback at
    `GET /oauth/callback` returns a `<script>`-style response that stores the
    JWT in `localStorage` on `DASHBOARD_URL` before redirecting. After that,
-   the frontend's fetch wrapper (`platform-front/src/lib/api.ts:36`) reads
-   the token and attaches `Authorization: Bearer <token>` to every request.
+   the `request()` wrapper in `platform-front/src/lib/api.ts` reads the
+   token via `getAuthToken()` and attaches `Authorization: Bearer <token>`
+   to every request.
 
 4. The token is long-lived (days). You don't re-auth every session — just
    hit Deploy / Approve / Revise as usual.

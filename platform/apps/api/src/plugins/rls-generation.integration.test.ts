@@ -38,11 +38,25 @@ type PostgresSql = import("postgres").Sql;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(__dirname, "../../../../packages/db/migrations");
-const MIGRATION_FILES = [
-  "0001_initial_schema.sql",
-  "0002_add_email_fields_to_apps.sql",
-  "0003_rls_on_remaining_tables.sql",
-];
+
+/**
+ * Returns every `NNNN_*.sql` file in the migrations directory, sorted by the
+ * numeric prefix so `0010_*` lands after `0009_*` (naive lexical sort works
+ * because the prefix is zero-padded to four digits).
+ *
+ * Dynamic discovery — previously this list was hardcoded. Hardcoding it
+ * meant the test silently drifted from the migrations directory: a new
+ * `0004_generation_events.sql` (TD-004) lands on main, the test suite keeps
+ * applying only the old three files, and whatever invariant the new
+ * migration establishes goes uncovered. A glob-and-sort makes the suite
+ * always run against the full committed schema.
+ */
+async function listMigrationFiles(): Promise<string[]> {
+  const entries = await fs.readdir(MIGRATIONS_DIR);
+  return entries
+    .filter((name) => /^\d{4}_.*\.sql$/.test(name))
+    .sort();
+}
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -119,7 +133,8 @@ describeRls("RLS invariant — generation_sessions FORCE ROW LEVEL SECURITY", ()
     const { default: postgres } = await import("postgres");
     const bootstrap = postgres(setupUrl);
     try {
-      for (const f of MIGRATION_FILES) {
+      const migrations = await listMigrationFiles();
+      for (const f of migrations) {
         const sqlText = await fs.readFile(path.join(MIGRATIONS_DIR, f), "utf8");
         await bootstrap.unsafe(sqlText);
       }

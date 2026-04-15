@@ -79,6 +79,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     needs: setup
+    # No `environment:` key on purpose — testcontainers runs the whole test
+    # suite on the runner itself, doesn't touch GCP / Cloud SQL / Secret
+    # Manager, and therefore doesn't need environment-scoped secrets like
+    # GCP_SA_KEY or DB_PASSWORD. If you add a step here that does need a
+    # secret (e.g. a smoke test against staging), also add `environment: …`
+    # or the step silently won't see the secret and will fail with a
+    # confusing auth error.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
