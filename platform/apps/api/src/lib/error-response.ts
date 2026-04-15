@@ -41,8 +41,14 @@ export function errorResponse(
 // Centralised so a grep for `ErrorCode.` finds every caller, and so a typo
 // like "invalid_requst" can never accidentally create a phantom branch. Add
 // new codes here; don't inline string literals at call sites.
+//
+// Mix of generic HTTP-flavoured codes (InvalidRequest, NotFound, …) and
+// specific business codes (CategoryNotAllowed, GenerationLimitReached, …).
+// Clients branch on the business codes directly; the generic codes exist for
+// ops/log filtering and for errors that don't have a more specific meaning.
 
 export const ErrorCode = {
+  // ── Generic / HTTP-flavoured
   InvalidRequest: "invalid_request",
   Unauthorized: "unauthorized",
   Forbidden: "forbidden",
@@ -50,6 +56,30 @@ export const ErrorCode = {
   Conflict: "conflict",
   UpstreamFailure: "upstream_failure",
   Internal: "internal_error",
+
+  // ── Plan / quota enforcement
+  GenerationLimitReached: "generation_limit_reached",
+  CategoryNotAllowed: "category_not_allowed",
+  AppLimitReached: "app_limit_reached",
+
+  // ── Auth / session
+  TokenMissing: "token_missing",
+  TokenInvalid: "token_invalid",
+  ShopMismatch: "shop_mismatch",
+  AuthRequired: "auth_required",
+  AccessDenied: "access_denied",
+
+  // ── Proxy / upstream plumbing
+  BackendNotDeployed: "backend_not_deployed",
+  BadGateway: "bad_gateway",
+
+  // ── OAuth / install flow
+  HmacInvalid: "hmac_invalid",
+  InvalidOAuthState: "invalid_oauth_state",
+
+  // ── Lifecycle
+  ShopNotConnected: "shop_not_connected",
+  EmailNotConfirmed: "email_not_confirmed",
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

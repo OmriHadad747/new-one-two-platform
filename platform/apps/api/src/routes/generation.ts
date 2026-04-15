@@ -194,15 +194,21 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       // ── Plan enforcement: check generation quota ──
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
       const check = await canStartGeneration(tenant);
       if (!check.allowed) {
-        return reply.status(403).send({
-          error: check.reason,
-          upgradeHint: check.upgradeHint,
-          code: "generation_limit_reached",
-        });
+        return reply
+          .status(403)
+          .send(
+            errorResponse(
+              ErrorCode.GenerationLimitReached,
+              check.reason ?? "Generation quota reached",
+              { upgradeHint: check.upgradeHint }
+            )
+          );
       }
 
       // ── Plan enforcement: check category allowed ──
@@ -213,16 +219,15 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       if (appCategory) {
         const catCheck = isCategoryAllowed(tenant.billingPlan, appCategory);
         if (!catCheck.allowed) {
-          // Kept in the pre-audit shape on purpose: platform-front and
-          // platform-shopify-admin already read `upgradeHint` and the legacy
-          // `code: "category_not_allowed"` slug off this response. A full
-          // migration to the unified envelope (L8) requires a coordinated
-          // frontend change; out of scope for this batch.
-          return reply.status(403).send({
-            error: catCheck.reason,
-            upgradeHint: catCheck.upgradeHint,
-            code: "category_not_allowed",
-          });
+          return reply
+            .status(403)
+            .send(
+              errorResponse(
+                ErrorCode.CategoryNotAllowed,
+                catCheck.reason ?? "This category is not available on your plan",
+                { upgradeHint: catCheck.upgradeHint }
+              )
+            );
         }
       }
 
@@ -349,7 +354,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const session = await getLatestSessionForApp(appId);
       if (!session) {
-        return reply.status(404).send({ error: "No session found for this app" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "No session found for this app"));
       }
       return reply.send(session);
     }
@@ -363,7 +370,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const session = await getLatestCompletedSessionForApp(appId);
       if (!session) {
-        return reply.status(404).send({ error: "No completed session found for this app" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "No completed session found for this app"));
       }
       return reply.send(session);
     }
@@ -389,7 +398,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       const session = await getSessionByJobId(jobId);
       if (!session) {
-        return reply.status(404).send({ error: "Job not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Job not found"));
       }
 
       if (session.status === "failed") {
@@ -416,7 +427,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       const requestedSession = await getSessionByJobId(jobId);
       if (!requestedSession) {
-        return reply.status(404).send({ error: "Job not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Job not found"));
       }
 
       // If the requested session failed, find the latest successful one for this app.
@@ -426,13 +439,20 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       let deployingFallback = false;
       if (session.status === "failed") {
         if (!session.appId) {
-          return reply.status(422).send({ error: "Cannot deploy a failed generation" });
+          return reply
+            .status(422)
+            .send(errorResponse(ErrorCode.Conflict, "Cannot deploy a failed generation"));
         }
         const fallback = await getLatestCompletedSessionForApp(session.appId);
         if (!fallback) {
-          return reply.status(422).send({
-            error: "Generation failed and no prior successful version exists to deploy.",
-          });
+          return reply
+            .status(422)
+            .send(
+              errorResponse(
+                ErrorCode.Conflict,
+                "Generation failed and no prior successful version exists to deploy."
+              )
+            );
         }
         session = fallback;
         deployingFallback = true;
@@ -446,9 +466,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       if (session.appId) {
         const appRecord = await getAppByIdUnsafe(session.appId);
         if (!appRecord || appRecord.status !== "ready") {
-          return reply.status(409).send({
-            error: `App must be in 'ready' state to deploy (current: ${appRecord?.status ?? "unknown"})`,
-          });
+          return reply
+            .status(409)
+            .send(
+              errorResponse(
+                ErrorCode.Conflict,
+                `App must be in 'ready' state to deploy (current: ${appRecord?.status ?? "unknown"})`
+              )
+            );
         }
 
         // Block deploy if the bundle sends emails but the merchant hasn't
@@ -458,10 +483,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         if (bundleUsesEmail) {
           const confirmed = await isAppEmailConfigured(session.appId);
           if (!confirmed) {
-            return reply.status(409).send({
-              error: "email_not_confirmed",
-              message: "This app sends emails. Please review and save the email content in the Email tab before deploying.",
-            });
+            return reply
+              .status(409)
+              .send(
+                errorResponse(
+                  ErrorCode.EmailNotConfirmed,
+                  "This app sends emails. Please review and save the email content in the Email tab before deploying."
+                )
+              );
           }
         }
       }
@@ -490,9 +519,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
         return reply.send({ deployed: true, deployingFallback, deployedJobId: session.jobId, ...result });
       }
 
-      return reply.status(409).send({
-        error: "Session has no bundle or app version — generation may not be complete",
-      });
+      return reply
+        .status(409)
+        .send(
+          errorResponse(
+            ErrorCode.Conflict,
+            "Session has no bundle or app version — generation may not be complete"
+          )
+        );
     }
   );
 
@@ -511,12 +545,14 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       const session = await getSessionByJobId(jobId);
       if (!session) {
-        return reply.status(404).send({ error: "Job not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Job not found"));
       }
       if (!session.appId || !session.tenantId) {
         return reply
           .status(409)
-          .send({ error: "Session has no appId or tenantId" });
+          .send(errorResponse(ErrorCode.Conflict, "Session has no appId or tenantId"));
       }
 
       const newJobId = crypto.randomUUID();
@@ -613,7 +649,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
 
       const session = await getSessionByJobId(jobId);
       if (!session) {
-        return reply.status(404).send({ error: "Job not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Job not found"));
       }
 
       await saveChatMessages(jobId, body.messages);
@@ -636,7 +674,9 @@ export const generationRoute: FastifyPluginAsync = async (app) => {
       });
       if (!upstream.ok) {
         logger.error({ status: upstream.status }, "Generator /analyze failed");
-        return reply.status(502).send({ error: "Analyze failed" });
+        return reply
+          .status(502)
+          .send(errorResponse(ErrorCode.UpstreamFailure, "Analyze failed"));
       }
       const data = await upstream.json();
       return reply.send(data);

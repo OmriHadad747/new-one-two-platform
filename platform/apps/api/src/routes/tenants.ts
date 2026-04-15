@@ -15,6 +15,7 @@
 import type { FastifyPluginAsync, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { parseBody } from "../lib/validate-body.js";
+import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import {
   createTenant,
   getTenantById,
@@ -119,7 +120,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
       return reply.send(tenant);
     }
@@ -134,7 +137,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
       const stats = await getTenantStats(tenantId);
       return reply.send(stats);
@@ -150,7 +155,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
       const apps = await getAppsByTenantId(tenantId);
       return reply.send(apps);
@@ -173,13 +180,20 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
       if (!tenant.shopDomain) {
         return reply
           .status(409)
-          .send({ error: "Tenant has no shop domain — complete OAuth installation first" });
+          .send(
+            errorResponse(
+              ErrorCode.Conflict,
+              "Tenant has no shop domain — complete OAuth installation first"
+            )
+          );
       }
 
       const shopifyClientId = process.env["SHOPIFY_CLIENT_ID"];
@@ -211,7 +225,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) {
-        return reply.status(404).send({ error: "App not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "App not found"));
       }
       return reply.send(foundApp);
     }
@@ -234,7 +250,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
       const foundApp = await getAppById(tenantId, appId);
       if (!foundApp) {
-        return reply.status(404).send({ error: "App not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "App not found"));
       }
 
       if (name?.trim()) await updateAppName(tenantId, appId, name.trim());
@@ -244,11 +262,15 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
         if (tenant) {
           const activateCheck = await canActivateApp(tenant);
           if (!activateCheck.allowed) {
-            return reply.status(403).send({
-              error: activateCheck.reason,
-              upgradeHint: activateCheck.upgradeHint,
-              code: "app_limit_reached",
-            });
+            return reply
+              .status(403)
+              .send(
+                errorResponse(
+                  ErrorCode.AppLimitReached,
+                  activateCheck.reason ?? "App activation limit reached",
+                  { upgradeHint: activateCheck.upgradeHint }
+                )
+              );
           }
         }
         await updateAppStatus(appId, "active");
@@ -286,7 +308,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
       await permanentDeleteApp(tenantId, appId);
       return reply.status(200).send({ deleted: true });
     }
@@ -302,7 +326,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200);
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
       const logs = await getWidgetInvocationLogs(appId, limit);
       return reply.send(logs);
     }
@@ -318,7 +344,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       const { appId } = req.params;
       const limit = Math.min(parseInt(req.query.limit ?? "50", 10), 200);
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
       const logs = await getAdminInvocationLogs(appId, limit);
       return reply.send(logs);
     }
@@ -334,11 +362,15 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
 
       const tenant = await getTenantById(tenantId);
       if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
-        return reply.status(409).send({ error: "Shop not connected" });
+        return reply
+          .status(409)
+          .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
       }
 
       const token = await getSecret(tenant.shopifyAccessTokenSecretName);
@@ -365,11 +397,15 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       const { targets } = body;
 
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
 
       const tenant = await getTenantById(tenantId);
       if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
-        return reply.status(409).send({ error: "Shop not connected" });
+        return reply
+          .status(409)
+          .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
       }
 
       const token = await getSecret(tenant.shopifyAccessTokenSecretName);
@@ -404,14 +440,20 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const { appId } = req.params;
       const foundApp = await getAppById(tenantId, appId);
-      if (!foundApp) return reply.status(404).send({ error: "App not found" });
+      if (!foundApp) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
       if (foundApp.themeInjectionStatus !== "injected" || !foundApp.themeInjectionThemeId) {
-        return reply.status(409).send({ error: "No injected theme to delete" });
+        return reply
+          .status(409)
+          .send(errorResponse(ErrorCode.Conflict, "No injected theme to delete"));
       }
 
       const tenant = await getTenantById(tenantId);
       if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
-        return reply.status(409).send({ error: "Shop not connected" });
+        return reply
+          .status(409)
+          .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
       }
 
       const token = await getSecret(tenant.shopifyAccessTokenSecretName);
@@ -442,7 +484,9 @@ export const tenantsRoute: FastifyPluginAsync = async (app) => {
 
       const tenant = await getTenantById(tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
       const logs = await getRecentWebhookInvocationLogs(tenantId, limit);

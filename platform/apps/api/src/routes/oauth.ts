@@ -20,6 +20,7 @@ import {
 } from "@new-one-two/db";
 import { reRegisterTenantWebhooks } from "../lib/shopify-webhooks.js";
 import { signJwt } from "../plugins/auth.js";
+import { ErrorCode, errorResponse } from "../lib/error-response.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -54,7 +55,11 @@ export const oauthRoute: FastifyPluginAsync = async (app) => {
       const shop = req.query.shop;
 
       if (!shop || !shop.endsWith(".myshopify.com")) {
-        return reply.status(400).send({ error: "Missing or invalid shop parameter" });
+        return reply
+          .status(400)
+          .send(
+            errorResponse(ErrorCode.InvalidRequest, "Missing or invalid shop parameter")
+          );
       }
 
       // State encodes a nonce + shop so we can validate it on callback without
@@ -88,17 +93,25 @@ export const oauthRoute: FastifyPluginAsync = async (app) => {
       const { code, shop, state, hmac } = req.query;
 
       if (!code || !shop || !state || !hmac) {
-        return reply.status(400).send({ error: "Missing required OAuth parameters" });
+        return reply
+          .status(400)
+          .send(
+            errorResponse(ErrorCode.InvalidRequest, "Missing required OAuth parameters")
+          );
       }
 
       // 1. Validate HMAC from Shopify
       if (!verifyShopifyHmac(req.query as Record<string, string>, hmac)) {
-        return reply.status(401).send({ error: "HMAC validation failed" });
+        return reply
+          .status(401)
+          .send(errorResponse(ErrorCode.HmacInvalid, "HMAC validation failed"));
       }
 
       // 2. Validate state (CSRF + shop binding)
       if (!verifyState(state, shop)) {
-        return reply.status(400).send({ error: "Invalid state parameter" });
+        return reply
+          .status(400)
+          .send(errorResponse(ErrorCode.InvalidOAuthState, "Invalid state parameter"));
       }
 
       // 3. Exchange code for access token
@@ -107,7 +120,14 @@ export const oauthRoute: FastifyPluginAsync = async (app) => {
         accessToken = await exchangeCodeForToken(shop, code);
       } catch (err) {
         logger.error({ err, shop }, "Failed to exchange OAuth code");
-        return reply.status(502).send({ error: "Failed to obtain access token from Shopify" });
+        return reply
+          .status(502)
+          .send(
+            errorResponse(
+              ErrorCode.UpstreamFailure,
+              "Failed to obtain access token from Shopify"
+            )
+          );
       }
 
       // 4. Write shop metafield so the App Block can discover the platform URL.
@@ -127,7 +147,9 @@ export const oauthRoute: FastifyPluginAsync = async (app) => {
         logger.info({ shop, tenantId }, "OAuth install complete");
       } catch (err) {
         logger.error({ err, shop }, "Failed to persist tenant after OAuth");
-        return reply.status(500).send({ error: "Internal error during install" });
+        return reply
+          .status(500)
+          .send(errorResponse(ErrorCode.Internal, "Internal error during install"));
       }
 
       // 5b. Create and persist a Storefront API token for this shop.

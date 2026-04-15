@@ -4,6 +4,7 @@ import { resolveWidgetJs, resolveAppFunctionUrl } from "@new-one-two/db";
 import { createRequestLogger } from "@new-one-two/logger";
 import { trackAppExecution } from "@new-one-two/db";
 import { parseBody } from "../lib/validate-body.js";
+import { ErrorCode, errorResponse } from "../lib/error-response.js";
 
 // Same loose-object shape as the admin proxy (admin-ui.ts): the merchant
 // handler's body contract is its own, but the top-level must be an object
@@ -125,7 +126,9 @@ async function widgetProxyHandler(
     log.debug({ shop, appId }, "Widget proxy: no deployed function");
     return reply
       .code(503)
-      .send({ error: "backend_not_deployed" });
+      .send(
+        errorResponse(ErrorCode.BackendNotDeployed, "App backend is not deployed")
+      );
   }
 
   const { functionUrl, tenantId } = resolved;
@@ -168,6 +171,6 @@ async function widgetProxyHandler(
 
     return reply
       .code(502)
-      .send({ error: "bad_gateway" });
+      .send(errorResponse(ErrorCode.BadGateway, "Harness upstream failure"));
   }
 }

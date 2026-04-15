@@ -7,6 +7,7 @@ import {
   installCors,
   parseAllowedOrigins,
 } from "./plugins/cors.js";
+import { ErrorCode, errorResponse } from "./lib/error-response.js";
 import {
   startSubscriptions,
   stopSubscriptions,
@@ -89,7 +90,9 @@ export async function buildServer() {
 
   app.setErrorHandler((err, _req, reply) => {
     logger.error({ err }, "Unhandled error");
-    void reply.status(500).send({ error: "Internal server error" });
+    void reply
+      .status(500)
+      .send(errorResponse(ErrorCode.Internal, "Internal server error"));
   });
 
   const shutdown = async (signal: string) => {

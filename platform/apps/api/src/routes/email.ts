@@ -37,6 +37,7 @@ import {
 } from "@new-one-two/harness";
 import { Resend } from "resend";
 import { requireTenant } from "../plugins/auth.js";
+import { ErrorCode, errorResponse } from "../lib/error-response.js";
 
 const RESEND_API_KEY = process.env["RESEND_API_KEY"] ?? "";
 const RESEND_FROM_TRANSACTIONAL =
@@ -80,7 +81,9 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
 
       const config = await getAppEmailConfig(appId);
       if (!config) {
-        return reply.status(404).send({ error: "Email config not found for this app" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Email config not found for this app"));
       }
       if (!requireTenant(req, reply, config.tenantId)) return;
 
@@ -118,19 +121,32 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
 
       // Authorize: verify caller owns this app's tenant
       const appRecord = await getAppByIdUnsafe(appId);
-      if (!appRecord) return reply.status(404).send({ error: "App not found" });
+      if (!appRecord) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
       if (!requireTenant(req, reply, appRecord.tenantId)) return;
 
       const body = req.body;
 
       if (!body.subjectTemplate?.trim()) {
-        return reply.status(400).send({ error: "subjectTemplate is required" });
+        return reply
+          .status(400)
+          .send(errorResponse(ErrorCode.InvalidRequest, "subjectTemplate is required"));
       }
       if (!body.bodyTemplate?.trim()) {
-        return reply.status(400).send({ error: "bodyTemplate is required" });
+        return reply
+          .status(400)
+          .send(errorResponse(ErrorCode.InvalidRequest, "bodyTemplate is required"));
       }
       if (body.emailType !== "transactional" && body.emailType !== "marketing") {
-        return reply.status(400).send({ error: "emailType must be 'transactional' or 'marketing'" });
+        return reply
+          .status(400)
+          .send(
+            errorResponse(
+              ErrorCode.InvalidRequest,
+              "emailType must be 'transactional' or 'marketing'"
+            )
+          );
       }
 
       try {
@@ -145,7 +161,9 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
         return reply.send({ config });
       } catch (err) {
         logger.error({ err, appId }, "failed to update app email config");
-        return reply.status(404).send({ error: "Email config not found for this app" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Email config not found for this app"));
       }
     }
   );
@@ -164,13 +182,17 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
 
       const config = await getAppEmailConfig(appId);
       if (!config) {
-        return reply.status(404).send({ error: "Email config not found for this app" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Email config not found for this app"));
       }
       if (!requireTenant(req, reply, config.tenantId)) return;
 
       const tenant = await getTenantById(config.tenantId);
       if (!tenant) {
-        return reply.status(404).send({ error: "Tenant not found" });
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
       // Test send requires a target address. The merchant provides one
@@ -238,7 +260,9 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
           failureReason: message,
         });
         logger.error({ err: message, appId, recipient }, "test send failed");
-        return reply.status(502).send({ error: "Test send failed", message });
+        return reply
+          .status(502)
+          .send(errorResponse(ErrorCode.UpstreamFailure, "Test send failed", { message }));
       }
     }
   );
@@ -250,7 +274,9 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const { appId } = req.params;
       const appRecord = await getAppByIdUnsafe(appId);
-      if (!appRecord) return reply.status(404).send({ error: "App not found" });
+      if (!appRecord) return reply
+        .status(404)
+        .send(errorResponse(ErrorCode.NotFound, "App not found"));
       if (!requireTenant(req, reply, appRecord.tenantId)) return;
 
       const stats = await getAppEmailStats(appId);

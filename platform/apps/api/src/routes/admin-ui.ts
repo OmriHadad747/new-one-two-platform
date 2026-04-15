@@ -4,6 +4,7 @@ import { resolveAdminUiJs, resolveAppFunctionUrl, getAdminUiAppsByShop } from "@
 import { createRequestLogger } from "@new-one-two/logger";
 import { trackAppExecution } from "@new-one-two/db";
 import { parseBody } from "../lib/validate-body.js";
+import { ErrorCode, errorResponse } from "../lib/error-response.js";
 
 const SHOPIFY_CLIENT_ID = process.env["SHOPIFY_CLIENT_ID"] ?? "";
 const SHOPIFY_CLIENT_SECRET = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
@@ -134,7 +135,7 @@ async function adminProxyHandler(
     log.warn({ shop, appId }, "Admin proxy: missing Authorization header");
     return reply
       .code(401)
-      .send({ error: "missing_token" });
+      .send(errorResponse(ErrorCode.TokenMissing, "Missing Authorization header"));
   }
 
   const token = authHeader.slice(7);
@@ -144,7 +145,7 @@ async function adminProxyHandler(
     log.warn({ shop, appId }, "Admin proxy: invalid or expired session token");
     return reply
       .code(401)
-      .send({ error: "invalid_token" });
+      .send(errorResponse(ErrorCode.TokenInvalid, "Invalid or expired session token"));
   }
 
   // The token's `dest` must match the shop this request claims to be for
@@ -152,7 +153,12 @@ async function adminProxyHandler(
     log.warn({ shop, appId, tokenShop: verified.shop }, "Admin proxy: token shop mismatch");
     return reply
       .code(403)
-      .send({ error: "shop_mismatch" });
+      .send(
+        errorResponse(
+          ErrorCode.ShopMismatch,
+          "Session token does not match the shop in the URL"
+        )
+      );
   }
 
   // ── Resolve deployed function ─────────────────────────────────────────────
@@ -162,7 +168,9 @@ async function adminProxyHandler(
     log.debug({ shop, appId }, "Admin proxy: no deployed function");
     return reply
       .code(503)
-      .send({ error: "backend_not_deployed" });
+      .send(
+        errorResponse(ErrorCode.BackendNotDeployed, "App backend is not deployed")
+      );
   }
 
   const { functionUrl, tenantId } = resolved;
@@ -206,7 +214,7 @@ async function adminProxyHandler(
 
     return reply
       .code(502)
-      .send({ error: "bad_gateway" });
+      .send(errorResponse(ErrorCode.BadGateway, "Harness upstream failure"));
   }
 }
 

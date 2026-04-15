@@ -72,14 +72,28 @@ function slugFromName(name: string): string {
   );
 }
 
-/** Parse a raw API error string into a user-facing message + optional upgrade hint + error code. */
+/** Parse a raw API error string into a user-facing message + optional upgrade hint + error code.
+ *
+ * Platform API error envelope (see apps/api/src/lib/error-response.ts):
+ *   { "error": "<human message>", "code": "<slug>", "details"?: { upgradeHint? ... } }
+ *
+ * `error` and `code` are top-level; `upgradeHint` lives under `details.upgradeHint`.
+ */
 function parseGenError(raw: string): { text: string; upgradeHint?: string; code?: string } {
   try {
     const match = raw.match(/\{[\s\S]*\}/);
     if (match) {
-      const parsed = JSON.parse(match[0]) as { error?: string; upgradeHint?: string; code?: string };
+      const parsed = JSON.parse(match[0]) as {
+        error?: string;
+        code?: string;
+        details?: { upgradeHint?: string };
+      };
       if (parsed.error) {
-        return { text: parsed.error, upgradeHint: parsed.upgradeHint, code: parsed.code };
+        return {
+          text: parsed.error,
+          upgradeHint: parsed.details?.upgradeHint,
+          code: parsed.code,
+        };
       }
     }
   } catch { /* ignore */ }
