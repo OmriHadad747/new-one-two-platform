@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Dict, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from models.adapter import extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
@@ -74,12 +74,20 @@ WIDGET (widget_js, if applicable):
 - Use EXACTLY the responseShape field names when reading results
 - Keep the same host.call() / host.storefront() / host.context structural pattern
 - Set to null (JSON null) if this is a backend-only app
+  FORBIDDEN — static validator rejects these immediately:
+    import statements of any kind • export default • React/JSX/useState/useEffect/createElement
+    document.head • document.body • setInterval • eval() • Function() • window.*
+    Sole allowed export: export function mount(container, host) { ... }
 
 ADMIN UI (admin_ui, if applicable):
 - Use EXACTLY the requestShape fields shown in adminApiCatalog for each bridge.call() body
 - Use EXACTLY the responseShape field names when reading results
 - Keep the same bridge.call() pattern
 - Set to null (JSON null) if this app has no admin panel
+  FORBIDDEN — static validator rejects these immediately:
+    import statements of any kind • export default • React/JSX/useState/useEffect/createElement
+    document.head • document.body • setInterval • eval() • Function() • window.*
+    Sole allowed export: export function mount(container, bridge) { ... }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT — respond with ONLY this JSON object (no markdown fences, no explanation):
@@ -100,6 +108,8 @@ def _build_user_prompt(
     is_storefront: bool,
     is_admin_ui: bool,
     validation_issues: Optional[list] = None,
+    locked_artifacts: FrozenSet[str] = frozenset(),
+    static_errors: Optional[Dict[str, List[str]]] = None,
 ) -> str:
     intent = ctx.intent
     plan = ctx.plan
@@ -117,6 +127,37 @@ def _build_user_prompt(
         else "(not applicable — no admin panel)"
     )
 
+    locked_block = ""
+    if locked_artifacts:
+        locked_list = ", ".join(sorted(locked_artifacts))
+        locked_block = f"""
+═══════════════════════════════════════════════════════════════
+LOCKED ARTIFACTS — read-only context, do NOT output revisions
+═══════════════════════════════════════════════════════════════
+{locked_list} are provided below as read-only context only.
+Do NOT output revised versions — omit them or set to null in your JSON.
+Revise ONLY the unlocked artifacts to align with the locked code's contracts.
+
+"""
+
+    static_errors_block = ""
+    if static_errors:
+        error_lines = "\n".join(
+            f"  [{gen}]: {err}"
+            for gen, errs in static_errors.items()
+            for err in errs
+        )
+        static_errors_block = f"""
+═══════════════════════════════════════════════════════════════
+STATIC VALIDATION FAILURES — fix these or output is rejected
+═══════════════════════════════════════════════════════════════
+Your previous revision was rejected by the static validator.
+Fix ONLY the failing artifacts listed. Do NOT change passing artifacts.
+
+{error_lines}
+
+"""
+
     issues_block = ""
     if validation_issues:
         lines = "\n".join(
@@ -133,6 +174,17 @@ Fix ALL of them in your revised output:
 
 """
 
+    handler_label = (
+        "handler.js (READ-ONLY — do not output a revised version)"
+        if "handler" in locked_artifacts
+        else "handler.js (prior)"
+    )
+    migration_label = (
+        "migration.sql (READ-ONLY — do not output a revised version)"
+        if "migration" in locked_artifacts
+        else "migration.sql (prior — NEVER drop or recreate these tables)"
+    )
+
     return f"""Merchant revision request: {intent.get("desiredOutcome", "")}
 
 Feature intent:
@@ -143,15 +195,15 @@ Shopify plan:
 
 App contracts (dbContracts, webhookContract, widgetApiCatalog, adminApiCatalog):
 {json.dumps(plan.get("appContracts", {}), indent=2)}
-{issues_block}
+{locked_block}{static_errors_block}{issues_block}
 ═══════════════════════════════════════════════════════════════
 EXISTING CODE — apply targeted changes only
 ═══════════════════════════════════════════════════════════════
 
-── handler.js (prior) ──
+── {handler_label} ──
 {prior_handler}
 
-── migration.sql (prior — NEVER drop or recreate these tables) ──
+── {migration_label} ──
 {prior_migration}
 
 ── widget.js (prior) ──
@@ -173,6 +225,8 @@ def run_revision_agent(
     is_storefront: bool,
     is_admin_ui: bool,
     validation_issues: Optional[list] = None,
+    locked_artifacts: FrozenSet[str] = frozenset(),
+    static_errors: Optional[Dict[str, List[str]]] = None,
 ) -> Tuple[Dict[str, str], int, int]:
     """
     Holistic code revision agent. Produces all artifacts in one LLM call.
@@ -189,6 +243,14 @@ def run_revision_agent(
     validation_issues:
         Optional list of high-confidence issues from the LLM validator.
         When provided, the agent is instructed to fix these specific misalignments.
+    locked_artifacts:
+        Set of artifact keys that the revision agent must NOT output revised versions
+        of. They are passed as read-only context. Keys in this set are skipped during
+        output parsing even if the LLM emits them.
+    static_errors:
+        Dict of {generator_name: [error_strings]} from a previous revision attempt
+        that failed static validation. Injected into the prompt so the agent knows
+        exactly what structural violations to fix.
 
     Returns
     -------
@@ -202,6 +264,8 @@ def run_revision_agent(
         is_storefront=is_storefront,
         is_admin_ui=is_admin_ui,
         validation_issues=validation_issues,
+        locked_artifacts=locked_artifacts,
+        static_errors=static_errors,
     )
     llm = get_llm(model=get_agent_model("revision"), max_tokens=16000)
     result = invoke(llm, REVISION_SYSTEM, user)
@@ -217,19 +281,21 @@ def run_revision_agent(
 
     artifacts: Dict[str, str] = {}
 
-    handler = parsed.get("handler")
-    if isinstance(handler, str) and handler.strip():
-        code = re.sub(
-            r"^```(?:javascript|js)?\s*", "", handler.strip(), flags=re.MULTILINE
-        )
-        code = re.sub(r"```\s*$", "", code.strip(), flags=re.MULTILINE)
-        artifacts["handler"] = code.strip()
+    if "handler" not in locked_artifacts:
+        handler = parsed.get("handler")
+        if isinstance(handler, str) and handler.strip():
+            code = re.sub(
+                r"^```(?:javascript|js)?\s*", "", handler.strip(), flags=re.MULTILINE
+            )
+            code = re.sub(r"```\s*$", "", code.strip(), flags=re.MULTILINE)
+            artifacts["handler"] = code.strip()
 
-    migration = parsed.get("migration")
-    if isinstance(migration, str) and migration.strip():
-        artifacts["migration"] = migration.strip()
+    if "migration" not in locked_artifacts:
+        migration = parsed.get("migration")
+        if isinstance(migration, str) and migration.strip():
+            artifacts["migration"] = migration.strip()
 
-    if is_storefront:
+    if is_storefront and "widget_js" not in locked_artifacts:
         widget = parsed.get("widget_js")
         if isinstance(widget, str) and widget.strip():
             code = re.sub(
@@ -238,7 +304,7 @@ def run_revision_agent(
             code = re.sub(r"```\s*$", "", code.strip(), flags=re.MULTILINE)
             artifacts["widget_js"] = code.strip()
 
-    if is_admin_ui:
+    if is_admin_ui and "admin_ui" not in locked_artifacts:
         admin = parsed.get("admin_ui")
         if isinstance(admin, str) and admin.strip():
             code = re.sub(

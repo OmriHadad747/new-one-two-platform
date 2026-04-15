@@ -22,7 +22,11 @@ Progress events are published to generation.progress at every stage transition.
 
 from __future__ import annotations
 
+import dataclasses
+import datetime
+import json
 import logging
+import pathlib
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
@@ -134,6 +138,30 @@ def _fail_and_abort(
         payload["errorCode"] = error_code
     _contract_publisher.publish_completed(FeatureBundleMessage(**payload))
     raise _PipelineAbort
+
+
+def _save_revision_failure(
+    job_id: str,
+    bad_artifacts: Dict[str, str],
+    errors: Dict[str, List[str]],
+) -> str:
+    """Persist bad revision artifacts to /tmp for post-mortem analysis. Returns file path."""
+    failure_dir = pathlib.Path("/tmp/revision_validation_failures")
+    failure_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
+    path = failure_dir / f"{ts}_{job_id}.json"
+    payload = {
+        "job_id": job_id,
+        "timestamp": ts,
+        "errors": errors,
+        "artifacts": bad_artifacts,
+    }
+    try:
+        path.write_text(json.dumps(payload, indent=2))
+        return str(path)
+    except OSError as exc:
+        log.warning("Could not save revision failure artifacts: %s", exc)
+        return "(save failed)"
 
 
 # ── Pipeline entry point ───────────────────────────────────────────────────────
@@ -581,9 +609,13 @@ def _phase_validator(
     """
     Optional Agent 4b: LLM semantic alignment check (LLM_VALIDATION_ENABLED=true).
 
-    Runs 6 targeted questions against the generated artifacts. Only HIGH-confidence
-    issues trigger one revision pass. Returns the (possibly revised) artifacts.
-    Fail-open: any error returns the original artifacts unchanged.
+    Runs targeted questions against the generated artifacts. Only HIGH-confidence
+    issues trigger a revision pass. The revision agent fixes only widget_js / admin_ui
+    (handler and migration are locked as read-only context — misalignments should be
+    resolved on the frontend side, not by changing the backend contract).
+
+    After each revision attempt the output is statically validated. If both attempts
+    produce structurally invalid code the job is failed (not silently swapped back).
     """
     from config import get_settings
 
@@ -622,13 +654,27 @@ def _phase_validator(
         f"{len(issues)} semantic issue(s) found — revising…",
     )
 
+    # Build context from the fresh codegen output so the revision agent works from
+    # the actual code it needs to fix, not from a (possibly absent) prior bundle.
+    revision_ctx = dataclasses.replace(
+        base_ctx,
+        prior_handler_code=artifacts.get("handler") or base_ctx.prior_handler_code,
+        prior_migration_sql=artifacts.get("migration") or base_ctx.prior_migration_sql,
+        prior_widget_code=artifacts.get("widget_js") or base_ctx.prior_widget_code,
+        prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
+    )
+    # Lock handler/migration — semantic misalignments between frontend and backend
+    # should be resolved by aligning the frontend to the handler, not vice versa.
+    _LOCKED = frozenset({"handler", "migration"})
+
     _emit(request, "revision", "running", f"Fixing {len(issues)} semantic issue(s)…")
     rev_t0 = _now_ms()
     revised, rev_in, rev_out = run_revision_agent(
-        base_ctx,
+        revision_ctx,
         is_storefront=is_storefront,
         is_admin_ui=is_admin_ui,
         validation_issues=issues,
+        locked_artifacts=_LOCKED,
     )
     agent_trace.append(
         AgentTraceEntry(
@@ -638,16 +684,83 @@ def _phase_validator(
             outputTokens=rev_out,
         )
     )
-    if revised.get("handler") and revised.get("migration"):
-        _emit(request, "revision", "completed", "Semantic issues resolved")
-        return {**artifacts, **revised}
 
+    # Only accept frontend artifacts — handler/migration are locked.
+    frontend_revised = {k: v for k, v in revised.items() if k not in _LOCKED}
+    if not frontend_revised:
+        log.warning(
+            "job=%s revision_agent: returned no frontend artifacts — keeping originals",
+            request.jobId,
+        )
+        _emit(request, "revision", "completed", "Revision incomplete — keeping originals")
+        return artifacts
+
+    # Statically validate the revised frontend artifacts before accepting them.
+    merged = {**artifacts, **frontend_revised}
+    all_errors = validate_artifacts(merged, revision_ctx, is_storefront, is_admin_ui)
+    static_errors: Dict[str, List[str]] = {
+        k: v for k, v in all_errors.items() if k in frontend_revised
+    }
+
+    if not static_errors:
+        _emit(request, "revision", "completed", "Semantic issues resolved")
+        return merged
+
+    # First revision failed static validation — retry once with the errors fed back.
     log.warning(
-        "job=%s validator_agent: revision returned incomplete output — keeping originals",
+        "job=%s revision_agent: static validation failed on attempt 1 — retrying. errors=%s",
         request.jobId,
+        {k: v for k, v in static_errors.items()},
     )
-    _emit(request, "revision", "completed", "Revision incomplete — keeping originals")
-    return artifacts
+    rev2_t0 = _now_ms()
+    revised2, rev2_in, rev2_out = run_revision_agent(
+        revision_ctx,
+        is_storefront=is_storefront,
+        is_admin_ui=is_admin_ui,
+        validation_issues=issues,
+        locked_artifacts=_LOCKED,
+        static_errors=static_errors,
+    )
+    agent_trace.append(
+        AgentTraceEntry(
+            agent="revision",
+            latencyMs=_now_ms() - rev2_t0,
+            inputTokens=rev2_in,
+            outputTokens=rev2_out,
+        )
+    )
+
+    frontend_revised2 = {k: v for k, v in revised2.items() if k not in _LOCKED}
+    merged2 = {**artifacts, **frontend_revised2}
+    all_errors2 = validate_artifacts(merged2, revision_ctx, is_storefront, is_admin_ui)
+    static_errors2: Dict[str, List[str]] = {
+        k: v for k, v in all_errors2.items() if k in frontend_revised2
+    }
+
+    if not static_errors2:
+        _emit(request, "revision", "completed", "Semantic issues resolved (static retry)")
+        return merged2
+
+    # Both revision attempts produced statically invalid code — fail the job.
+    bad = {**frontend_revised, **frontend_revised2}
+    failure_path = _save_revision_failure(request.jobId, bad, static_errors2)
+    error_detail = "; ".join(
+        f"{k}: {', '.join(errs)}" for k, errs in static_errors2.items()
+    )
+    log.error(
+        "job=%s revision_agent: static validation failed after 2 attempts — failing job. "
+        "saved=%s errors=%s",
+        request.jobId,
+        failure_path,
+        error_detail,
+    )
+    _fail_and_abort(
+        request,
+        "revision",
+        "Revision produced structurally invalid code — generation failed",
+        f"Revision agent emitted invalid artifacts after 2 attempts: {error_detail}",
+        error_code="REVISION_STATIC_VALIDATION_FAILED",
+    )
 
 
 def _phase_explanation(
