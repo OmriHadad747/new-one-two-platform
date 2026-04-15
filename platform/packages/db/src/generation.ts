@@ -12,7 +12,36 @@
 // createDraftAppVersion) stay on the shared connection — the tables they hit
 // are not force-RLS'd today (see TECH_DEBT TD-014 for the full sweep).
 
+import { z } from "zod";
 import { sql, withTenantContext } from "./connection.js";
+
+// ─── Meta validation (TD-001 / TD-004 write path) ────────────────────────────
+//
+// Mirrors `MetaSchema` / `AgentTraceEntrySchema` in
+// @new-one-two/pubsub-client/src/schemas.ts — they are the wire contract from
+// the Python generator. Redeclared here rather than imported to keep the dep
+// graph one-way (db depends on nothing above it). Drift is caught by the
+// integration test that feeds real fixtures through this path.
+//
+// Previously this boundary silently coerced malformed entries to
+// `agent_name = "unknown"` and zero tokens. That turned analytics data into
+// a minefield: a schema change on the Python side would quietly poison a
+// month of cost-per-agent queries with `"unknown"` rows and no alert would
+// fire. Now we throw — a generator-side drift surfaces as a hard error on
+// the first completed generation, not months later in a dashboard.
+const AgentTraceEntrySchema = z.object({
+  agent: z.string(),
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  latencyMs: z.number().int(),
+});
+
+const MetaSchema = z.object({
+  totalInputTokens: z.number().int().min(0),
+  totalOutputTokens: z.number().int().min(0),
+  generationMs: z.number().int().min(0),
+  agentTrace: z.array(AgentTraceEntrySchema),
+});
 
 export interface GenerationSessionRow {
   id: string;
@@ -342,10 +371,19 @@ export async function getSessionByJobId(
  * (see migration 0004) — a rolled-back UPDATE never leaves orphan event
  * rows.
  *
- * `meta` is shaped after `Meta` from @new-one-two/pubsub-client/schemas.ts.
- * Kept as `Record<string, unknown>` here to avoid pulling pubsub-client
- * as a runtime dep of @new-one-two/db; the caller (routes/generation.ts)
- * owns the typed contract end-to-end.
+ * `meta`, when provided, MUST match the GenerationMeta shape from
+ * @new-one-two/pubsub-client/schemas.ts. Validated via MetaSchema.parse()
+ * at the top of the function; a malformed blob throws synchronously before
+ * any DB write. The previous defensive coercion has been removed — see the
+ * header comment on MetaSchema for the rationale.
+ *
+ * Pub/Sub-redelivery idempotency: the fan-out does a DELETE over the
+ * session's existing events before inserting, so a redelivered completion
+ * produces the same final set of rows rather than duplicating every agent.
+ * Retries inside a single generation (multiple entries with the same
+ * agent_name, e.g. architect -> handler -> architect on a validation
+ * retry) stay intact because DELETE-then-INSERT preserves multiplicity of
+ * the freshly-parsed agentTrace[].
  */
 export async function storeBundleInSession(
   tenantId: string,
@@ -363,6 +401,12 @@ export async function storeBundleInSession(
   const cronSchedule = (handlerModule?.["cronSchedule"] as string | null) ?? null;
   const merchantFacing = (explanation?.["merchantFacing"] as string) ?? null;
 
+  // Parse + validate meta BEFORE opening the transaction. A malformed
+  // payload throws here, so no session UPDATE or event INSERT runs and
+  // the DB state is untouched.
+  const parsedMeta =
+    meta !== undefined && meta !== null ? MetaSchema.parse(meta) : undefined;
+
   await withTenantContext(tenantId, async (tx) => {
     // 1. Upsert generation_sessions — meta goes on the blob column, the
     //    legacy typed columns stay in sync with the bundle for TD-003.
@@ -370,7 +414,7 @@ export async function storeBundleInSession(
       UPDATE generation_sessions
       SET
         bundle          = ${tx.json(bundle as any)},
-        meta            = ${meta !== undefined && meta !== null ? tx.json(meta as any) : tx`meta`},
+        meta            = ${parsedMeta ? tx.json(parsedMeta as any) : tx`meta`},
         status          = ${status},
         error_message   = COALESCE(${errorMessage ?? null}, error_message),
         generated_code  = COALESCE(${generatedCode}, generated_code),
@@ -382,29 +426,29 @@ export async function storeBundleInSession(
       RETURNING id
     `;
 
-    // 2. Fan out agentTrace[] into generation_events rows. Same transaction
-    //    as (1) — a rolled-back session update never leaves orphan events.
-    //    Safe to call repeatedly on a re-delivered Pub/Sub message: the
-    //    existing rows aren't deduplicated (session_id + agent_name aren't
-    //    unique), but at-most-once delivery is enforced upstream by the
-    //    `registerCompletedListener` self-unsubscribe in routes/generation.ts.
-    //    If duplication becomes a concern later, add a DELETE-before-insert
-    //    or a UNIQUE constraint on (session_id, agent_name, created_at).
+    // 2. Fan out agentTrace[] into generation_events rows.
+    //
+    //    Idempotent on Pub/Sub redelivery: DELETE any existing events for
+    //    this session, then INSERT the fresh set. A redelivered message
+    //    produces the same final state instead of duplicating every agent
+    //    entry in dashboards. Chosen over a UNIQUE (session_id, agent_name)
+    //    constraint because the generator legitimately emits multiple
+    //    entries for the same agent on a mid-generation retry — UNIQUE
+    //    would drop the retry entries; DELETE-then-INSERT preserves them.
+    //
+    //    Both the DELETE and the INSERTs run under the same
+    //    withTenantContext transaction as the UPDATE above — a throw
+    //    anywhere rolls back the session update AND the events, no
+    //    orphans, no partial state.
     const sessionId = updated[0]?.id;
-    const agentTrace = Array.isArray(meta?.["agentTrace"])
-      ? (meta!["agentTrace"] as Array<Record<string, unknown>>)
-      : [];
-    if (sessionId && agentTrace.length > 0) {
-      for (const entry of agentTrace) {
-        const agent = typeof entry["agent"] === "string" ? entry["agent"] : "unknown";
-        const inputTokens = typeof entry["inputTokens"] === "number" ? entry["inputTokens"] : 0;
-        const outputTokens = typeof entry["outputTokens"] === "number" ? entry["outputTokens"] : 0;
-        const latencyMs = typeof entry["latencyMs"] === "number" ? entry["latencyMs"] : 0;
+    if (sessionId && parsedMeta && parsedMeta.agentTrace.length > 0) {
+      await tx`DELETE FROM generation_events WHERE session_id = ${sessionId}`;
+      for (const entry of parsedMeta.agentTrace) {
         await tx`
           INSERT INTO generation_events
             (session_id, tenant_id, job_id, agent_name, input_tokens, output_tokens, latency_ms)
           VALUES
-            (${sessionId}, ${tenantId}, ${jobId}, ${agent}, ${inputTokens}, ${outputTokens}, ${latencyMs})
+            (${sessionId}, ${tenantId}, ${jobId}, ${entry.agent}, ${entry.inputTokens}, ${entry.outputTokens}, ${entry.latencyMs})
         `;
       }
     }

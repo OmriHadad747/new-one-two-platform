@@ -350,30 +350,44 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
   });
 
   it("(8) generation_events honors the RLS policy the same way sessions do", async () => {
-    // Written in (6) under TENANT_A.
+    // Seed-and-assert its own data so the suite can run tests in any order
+    // (vitest may shard / randomize in CI). Previously this test read
+    // JOB_COST_A's events that test (6) wrote — fine today, flaky tomorrow.
+    const JOB_RLS = "00000000-0000-4000-8000-0000000088aa";
+    await seedEmptySession(TENANT_A, APP_A, JOB_RLS);
+    await db.storeBundleInSession(
+      TENANT_A,
+      JOB_RLS,
+      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      "completed",
+      undefined,
+      META_FIXTURE
+    );
+
     // A query run under context=TENANT_B must see none of A's events.
     const seenAsB = await db.sql.begin(async (tx) => {
       await tx`SELECT set_config('app.current_tenant_id', ${TENANT_B}, TRUE)`;
-      return tx<Array<{ id: string }>>`SELECT id FROM generation_events WHERE job_id = ${JOB_COST_A}`;
+      return tx<Array<{ id: string }>>`SELECT id FROM generation_events WHERE job_id = ${JOB_RLS}`;
     });
     expect(seenAsB).toHaveLength(0);
 
     // And context=TENANT_A sees them (context integrity check).
     const seenAsA = await db.sql.begin(async (tx) => {
       await tx`SELECT set_config('app.current_tenant_id', ${TENANT_A}, TRUE)`;
-      return tx<Array<{ id: string }>>`SELECT id FROM generation_events WHERE job_id = ${JOB_COST_A}`;
+      return tx<Array<{ id: string }>>`SELECT id FROM generation_events WHERE job_id = ${JOB_RLS}`;
     });
     expect(seenAsA.length).toBe(META_FIXTURE.agentTrace.length);
   });
 
-  it("(9) a thrown error inside storeBundleInSession rolls back both the session update AND the event rows — no orphans", async () => {
+  it("(9) malformed meta is rejected by Zod before any DB write — no session mutation, no orphan events", async () => {
     const JOB_ROLLBACK = "00000000-0000-4000-8000-0000000099aa";
     await seedEmptySession(TENANT_A, APP_A, JOB_ROLLBACK);
 
-    // Break the meta payload so the INSERT loop throws mid-way: agent
-    // names must be strings; passing an object here forces the INSERT
-    // statement to fail with a type mismatch, rolling the whole
-    // withTenantContext transaction back.
+    // agentTrace[].agent must be a string. An object here fails
+    // MetaSchema.parse() inside storeBundleInSession, which throws
+    // BEFORE opening the withTenantContext transaction. Both the
+    // session UPDATE and the event INSERTs are therefore skipped
+    // entirely — no rollback needed because no write ran.
     const brokenMeta = {
       ...META_FIXTURE,
       agentTrace: [
@@ -391,17 +405,86 @@ describeRls("TD-001 + TD-004 — cost visibility write path", () => {
         undefined,
         brokenMeta as unknown as Record<string, unknown>
       )
-    ).rejects.toThrow();
+    ).rejects.toThrow(/agent/i); // zod issue path includes "agent"
 
-    // Session blob must be NULL (the UPDATE rolled back).
-    const [row] = await superSql<Array<{ meta: unknown; status: string }>>`
-      SELECT meta, status FROM generation_sessions WHERE job_id = ${JOB_ROLLBACK}
+    // Session row is unchanged: still 'running', no meta, no bundle.
+    const [row] = await superSql<Array<{ meta: unknown; status: string; bundle: unknown }>>`
+      SELECT meta, status, bundle FROM generation_sessions WHERE job_id = ${JOB_ROLLBACK}
     `;
     expect(row?.meta).toBeNull();
     expect(row?.status).toBe("running"); // unchanged from seedEmptySession
+    expect(row?.bundle).toBeNull();
 
-    // No orphan events either.
+    // No events either.
     const events = await eventsForSession(JOB_ROLLBACK);
     expect(events).toHaveLength(0);
+  });
+
+  it("(10) Pub/Sub redelivery is idempotent — calling storeBundleInSession twice leaves one event row per agent, not two", async () => {
+    // Simulates what happens when the generator publishes a completion,
+    // a post-ack crash prevents the handler from finishing, and Pub/Sub
+    // redelivers to a fresh API instance. The DELETE-then-INSERT in the
+    // fan-out path makes the second call a no-op for analytics.
+    const JOB_REDELIVER = "00000000-0000-4000-8000-0000000077aa";
+    await seedEmptySession(TENANT_A, APP_A, JOB_REDELIVER);
+
+    // First delivery — full write.
+    await db.storeBundleInSession(
+      TENANT_A,
+      JOB_REDELIVER,
+      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      "completed",
+      undefined,
+      META_FIXTURE
+    );
+
+    const firstPass = await eventsForSession(JOB_REDELIVER);
+    expect(firstPass).toHaveLength(META_FIXTURE.agentTrace.length);
+
+    // Redelivery with the same meta — DELETE the old rows, INSERT fresh.
+    // Final row count equals the agent count, not 2× the agent count.
+    await db.storeBundleInSession(
+      TENANT_A,
+      JOB_REDELIVER,
+      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      "completed",
+      undefined,
+      META_FIXTURE
+    );
+
+    const secondPass = await eventsForSession(JOB_REDELIVER);
+    expect(secondPass).toHaveLength(META_FIXTURE.agentTrace.length);
+  });
+
+  it("(11) mid-generation retries are preserved — duplicate agent_name entries stay distinct", async () => {
+    // The Python crew can emit multiple entries for the same agent when a
+    // later phase forces a retry (e.g. handler validation fails → architect
+    // re-runs). DELETE-then-INSERT preserves multiplicity; a naive
+    // UNIQUE (session_id, agent_name) constraint would NOT.
+    const JOB_RETRY = "00000000-0000-4000-8000-0000000066aa";
+    await seedEmptySession(TENANT_A, APP_A, JOB_RETRY);
+
+    const metaWithRetry = {
+      ...META_FIXTURE,
+      agentTrace: [
+        { agent: "product",   inputTokens: 1_000, outputTokens:   500, latencyMs: 3_000 },
+        { agent: "architect", inputTokens: 4_000, outputTokens: 2_000, latencyMs: 9_000 },
+        { agent: "handler",   inputTokens: 5_000, outputTokens: 3_000, latencyMs: 18_000 },
+        { agent: "architect", inputTokens:   500, outputTokens:   300, latencyMs: 2_000 }, // retry
+      ],
+    };
+
+    await db.storeBundleInSession(
+      TENANT_A,
+      JOB_RETRY,
+      { handlerModule: { code: "module.exports = {};", webhookTopics: [], cronSchedule: null } },
+      "completed",
+      undefined,
+      metaWithRetry
+    );
+
+    const rows = await eventsForSession(JOB_RETRY);
+    const architectRows = rows.filter((r) => r.agent_name === "architect");
+    expect(architectRows).toHaveLength(2);
   });
 });
