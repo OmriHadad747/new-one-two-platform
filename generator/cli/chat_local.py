@@ -61,6 +61,7 @@ from crews.feature_generator.crew import (
     run_codegen_parallel,
     run_codegen_sequential,
     validate_artifacts,
+    _revision_locked_artifacts,
 )
 
 TEST_RESULTS_DIR = _HERE / "test_results"
@@ -552,8 +553,7 @@ def _phase_validator(
         prior_widget_code=artifacts.get("widget_js") or base_ctx.prior_widget_code,
         prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
     )
-    # Lock handler/migration — misalignments should be resolved on the frontend side.
-    _LOCKED = frozenset({"handler", "migration"})
+    _LOCKED = _revision_locked_artifacts(issues)
 
     _spinner("Revision")
     t0 = time.monotonic()

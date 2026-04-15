@@ -29,7 +29,8 @@ import logging
 import pathlib
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Tuple
+from datetime import timezone
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import contract.publisher as _contract_publisher
 from contract.validators import (
@@ -63,6 +64,17 @@ log = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3        # total codegen attempts (1 initial + 2 retries)
 _MAX_ARCH_ATTEMPTS = 2  # architect: 1 initial + 1 retry
+
+# Validator question keys that indicate a backend (handler) problem.
+# When any of these fire, the revision agent must be allowed to edit the handler.
+# Q3/Q4-only failures are frontend misalignments — the handler stays locked.
+_BACKEND_VALIDATOR_QUESTIONS: FrozenSet[str] = frozenset({
+    "q1_table_names",
+    "q2_column_names",
+    "q5_cron_bulk_fetch",
+    "q6_state_machine",
+    "q7_schema_completeness",
+})
 
 # Pipeline-level deadline. A healthy run finishes well inside 5 minutes; we give
 # a generous 15-minute ceiling so that legitimate long runs (3 codegen attempts
@@ -148,7 +160,7 @@ def _save_revision_failure(
     """Persist bad revision artifacts to /tmp for post-mortem analysis. Returns file path."""
     failure_dir = pathlib.Path("/tmp/revision_validation_failures")
     failure_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H-%M-%S")
+    ts = datetime.datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
     path = failure_dir / f"{ts}_{job_id}.json"
     payload = {
         "job_id": job_id,
@@ -162,6 +174,29 @@ def _save_revision_failure(
     except OSError as exc:
         log.warning("Could not save revision failure artifacts: %s", exc)
         return "(save failed)"
+
+
+def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
+    """
+    Determine which artifacts the revision agent must treat as read-only based on
+    which validator questions fired.
+
+    - Q3/Q4 only (widget/admin_ui ↔ handler field mismatch): fix the frontend.
+      Handler and migration are locked — they are the ground truth contract.
+    - Q1/Q2/Q5/Q6/Q7 (handler ↔ DB mismatch or handler logic error): fix the handler.
+      Migration stays locked (it's the schema ground truth); handler is unlocked.
+
+    Invariant: this function is only called after handler and migration have already
+    passed static validation in the codegen loop. If that invariant ever breaks, the
+    lock could paper over a real backend bug — revisit if backend static validation
+    is weakened or bypassed.
+    """
+    issue_keys = {i["question"] for i in issues}
+    if issue_keys & _BACKEND_VALIDATOR_QUESTIONS:
+        # Backend question fired — handler must be revised to align with migration/DB.
+        return frozenset({"migration"})
+    # Frontend-only misalignment — handler is ground truth, fix widget/admin_ui.
+    return frozenset({"handler", "migration"})
 
 
 # ── Pipeline entry point ───────────────────────────────────────────────────────
@@ -610,12 +645,17 @@ def _phase_validator(
     Optional Agent 4b: LLM semantic alignment check (LLM_VALIDATION_ENABLED=true).
 
     Runs targeted questions against the generated artifacts. Only HIGH-confidence
-    issues trigger a revision pass. The revision agent fixes only widget_js / admin_ui
-    (handler and migration are locked as read-only context — misalignments should be
-    resolved on the frontend side, not by changing the backend contract).
+    issues trigger a revision pass.
+
+    Locking strategy (see _revision_locked_artifacts):
+    - Q3/Q4 (frontend ↔ handler field mismatch): lock handler + migration, fix frontend.
+    - Q1/Q2/Q5/Q6/Q7 (handler ↔ DB or handler logic): lock migration only, fix handler.
+    Migration is always locked — it is the schema ground truth.
 
     After each revision attempt the output is statically validated. If both attempts
     produce structurally invalid code the job is failed (not silently swapped back).
+    Trade-off: a double revision failure is rare and always indicates a structural bug
+    (React code, import statements, etc.) — silently shipping that is worse than failing.
     """
     from config import get_settings
 
@@ -663,9 +703,7 @@ def _phase_validator(
         prior_widget_code=artifacts.get("widget_js") or base_ctx.prior_widget_code,
         prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
     )
-    # Lock handler/migration — semantic misalignments between frontend and backend
-    # should be resolved by aligning the frontend to the handler, not vice versa.
-    _LOCKED = frozenset({"handler", "migration"})
+    _LOCKED = _revision_locked_artifacts(issues)
 
     _emit(request, "revision", "running", f"Fixing {len(issues)} semantic issue(s)…")
     rev_t0 = _now_ms()
