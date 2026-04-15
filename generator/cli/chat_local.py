@@ -395,6 +395,7 @@ def _phase_codegen(
     """
     artifacts: Dict[str, str] = {}
     error_map: Dict[str, List[str]] = {}
+    cumulative_errors: Dict[str, List[str]] = {}
     retry_log: List[Dict] = []
     token_totals: Dict[str, Tuple[int, int]] = {}
 
@@ -426,6 +427,7 @@ def _phase_codegen(
             is_storefront=is_storefront,
             is_admin_ui=is_admin_ui,
             error_map=error_map,
+            cumulative_errors=cumulative_errors,
             artifacts=artifacts,
         )
         ms = int((time.monotonic() - t0) * 1000)
@@ -451,6 +453,12 @@ def _phase_codegen(
         if not error_map:
             _agent_line("Validation", ok=True, ms=ms_val, notes="all artifacts pass")
             return artifacts, retry_log, token_totals
+
+        for name, errs in error_map.items():
+            existing = cumulative_errors.setdefault(name, [])
+            for err in errs:
+                if err not in existing:
+                    existing.append(err)
 
         retry_log.append({
             "attempt": attempt,
