@@ -78,7 +78,6 @@ class MigrationGenerator(Generator):
         return _SYSTEM_PROMPT
 
     def user_prompt(self, ctx: CodegenContext) -> str:
-        retry_block = self.format_retry_block(ctx.previous_errors)
         contracts_block = _format_db_contracts(ctx.plan)
         prior_block = _format_prior_migration(ctx.prior_migration_sql)
 
@@ -101,7 +100,6 @@ class MigrationGenerator(Generator):
             )
 
         return (
-            f"{retry_block}"
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Triggers: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
             f"{contracts_block}"

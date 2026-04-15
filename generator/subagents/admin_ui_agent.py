@@ -187,7 +187,6 @@ class AdminUiGenerator(Generator):
         return _SYSTEM_PROMPT
 
     def user_prompt(self, ctx: CodegenContext) -> str:
-        retry_block = self.format_retry_block(ctx.previous_errors)
         catalog_desc = _format_admin_catalog(ctx.plan)
         gaps_block = _format_gaps(ctx.plan)
         ux_expectations_block = _format_ux_expectations(ctx.plan)
@@ -195,7 +194,6 @@ class AdminUiGenerator(Generator):
         prior_block = _format_prior_admin_ui(ctx.prior_admin_ui_code)
 
         return (
-            f"{retry_block}"
             f"App purpose: {ctx.intent.get('desiredOutcome', '')}\n"
             f"App category: {ctx.intent.get('appCategory', '')}\n"
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
