@@ -335,14 +335,25 @@ export async function getSessionByJobId(
 }
 
 /**
- * Stores the FeatureBundle JSONB and updates session status once generation.completed arrives.
+ * Stores the FeatureBundle JSONB and updates session status once
+ * generation.completed arrives. Also persists the GenerationMeta blob on
+ * `generation_sessions.meta` and fans out `meta.agentTrace[]` into
+ * `generation_events` rows inside the same withTenantContext transaction
+ * (see migration 0004) — a rolled-back UPDATE never leaves orphan event
+ * rows.
+ *
+ * `meta` is shaped after `Meta` from @new-one-two/pubsub-client/schemas.ts.
+ * Kept as `Record<string, unknown>` here to avoid pulling pubsub-client
+ * as a runtime dep of @new-one-two/db; the caller (routes/generation.ts)
+ * owns the typed contract end-to-end.
  */
 export async function storeBundleInSession(
   tenantId: string,
   jobId: string,
   bundle: Record<string, unknown>,
   status: "completed" | "failed",
-  errorMessage?: string
+  errorMessage?: string,
+  meta?: Record<string, unknown> | null
 ): Promise<void> {
   const handlerModule = bundle["handlerModule"] as Record<string, unknown> | undefined;
   const explanation = bundle["explanation"] as Record<string, unknown> | undefined;
@@ -353,10 +364,13 @@ export async function storeBundleInSession(
   const merchantFacing = (explanation?.["merchantFacing"] as string) ?? null;
 
   await withTenantContext(tenantId, async (tx) => {
-    await tx`
+    // 1. Upsert generation_sessions — meta goes on the blob column, the
+    //    legacy typed columns stay in sync with the bundle for TD-003.
+    const updated = await tx<{ id: string }[]>`
       UPDATE generation_sessions
       SET
         bundle          = ${tx.json(bundle as any)},
+        meta            = ${meta !== undefined && meta !== null ? tx.json(meta as any) : tx`meta`},
         status          = ${status},
         error_message   = COALESCE(${errorMessage ?? null}, error_message),
         generated_code  = COALESCE(${generatedCode}, generated_code),
@@ -365,7 +379,35 @@ export async function storeBundleInSession(
         cron_schedule   = COALESCE(${cronSchedule}, cron_schedule),
         updated_at      = NOW()
       WHERE job_id = ${jobId}
+      RETURNING id
     `;
+
+    // 2. Fan out agentTrace[] into generation_events rows. Same transaction
+    //    as (1) — a rolled-back session update never leaves orphan events.
+    //    Safe to call repeatedly on a re-delivered Pub/Sub message: the
+    //    existing rows aren't deduplicated (session_id + agent_name aren't
+    //    unique), but at-most-once delivery is enforced upstream by the
+    //    `registerCompletedListener` self-unsubscribe in routes/generation.ts.
+    //    If duplication becomes a concern later, add a DELETE-before-insert
+    //    or a UNIQUE constraint on (session_id, agent_name, created_at).
+    const sessionId = updated[0]?.id;
+    const agentTrace = Array.isArray(meta?.["agentTrace"])
+      ? (meta!["agentTrace"] as Array<Record<string, unknown>>)
+      : [];
+    if (sessionId && agentTrace.length > 0) {
+      for (const entry of agentTrace) {
+        const agent = typeof entry["agent"] === "string" ? entry["agent"] : "unknown";
+        const inputTokens = typeof entry["inputTokens"] === "number" ? entry["inputTokens"] : 0;
+        const outputTokens = typeof entry["outputTokens"] === "number" ? entry["outputTokens"] : 0;
+        const latencyMs = typeof entry["latencyMs"] === "number" ? entry["latencyMs"] : 0;
+        await tx`
+          INSERT INTO generation_events
+            (session_id, tenant_id, job_id, agent_name, input_tokens, output_tokens, latency_ms)
+          VALUES
+            (${sessionId}, ${tenantId}, ${jobId}, ${agent}, ${inputTokens}, ${outputTokens}, ${latencyMs})
+        `;
+      }
+    }
   });
 }
 
