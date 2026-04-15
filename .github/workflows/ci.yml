@@ -1,0 +1,81 @@
+# ─── CI — PR & branch validation ─────────────────────────────────────────────
+#
+# Runs on every PR and on pushes to `development` / `main`. Builds every
+# TypeScript package and runs the full test suite, including the Docker-
+# backed RLS integration test at `apps/api/src/plugins/rls-generation.integration.test.ts`.
+#
+# GitHub-hosted `ubuntu-latest` runners have Docker installed and running
+# by default, so the testcontainers-based suite Just Works. No self-hosted
+# runner required.
+#
+# This workflow is intentionally separate from `build-deploy.yml`:
+#   - build-deploy.yml  → push-to-main/staging = ship to Cloud Run.
+#   - ci.yml            → PRs + branch pushes   = validate before merge.
+# A broken deploy doesn't stop tests from running; a broken test doesn't
+# hold the deploy pipeline open.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [development, main, staging]
+  push:
+    branches: [development, main]
+
+concurrency:
+  # One run per ref; if a new commit lands while a previous run is in flight,
+  # cancel the stale one. PRs get cancelled-and-replaced on push-to-branch;
+  # branch pushes similarly coalesce.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    # Hard cap on runtime — testcontainers + pulling postgres:16-alpine is the
+    # slowest step and should fit inside a few minutes. A hang on container
+    # startup shouldn't burn the runner budget.
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: platform
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        working-directory: platform
+        # `pnpm -r build` respects the dependency graph so types + db + deployer
+        # build before the apps that consume them.
+        run: pnpm -r build
+
+      - name: Verify Docker is available for testcontainers
+        # GitHub-hosted runners ship Docker but the daemon can momentarily be
+        # unreachable during runner warmup. A quick ping catches that so the
+        # RLS integration test fails loud if it can't start the container
+        # instead of self-skipping silently.
+        run: docker version
+
+      - name: Run tests (vitest — all suites, including RLS integration)
+        working-directory: platform
+        # testcontainers auto-pulls postgres:16-alpine on first run; subsequent
+        # runs reuse the cached image from the docker daemon on the runner.
+        # TESTCONTAINERS_RYUK_DISABLED silences the reaper warning that's
+        # harmless on ephemeral runners where the VM gets recycled anyway.
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: "true"
+        run: pnpm --filter @new-one-two/api --filter @new-one-two/deployer test
