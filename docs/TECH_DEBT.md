@@ -183,3 +183,34 @@ for `generation_sessions` — every caller already has tenantId in scope.
 Low risk per PR because each family is independent and fail-closed
 (a bug returns zero rows rather than cross-tenant data).
 
+---
+
+## TD-015 — Revision failure artifacts saved to /tmp only
+
+**Current state**
+When the revision agent produces structurally invalid code after two attempts,
+`_phase_validator()` in `crew.py` saves the bad artifacts (code + validation errors)
+to `/tmp/revision_validation_failures/<timestamp>_<job_id>.json`. `/tmp` is ephemeral
+— the file disappears when the Cloud Run container exits, making post-mortem analysis
+unreliable in production.
+
+**What to do**
+Replace or augment the `/tmp` write in `_save_revision_failure()` with a durable sink:
+
+- **GCS (preferred):** upload the JSON to a dedicated bucket, e.g.
+  `gs://<project>-generation-failures/revision/<timestamp>_<job_id>.json`.
+  Add the bucket name to settings (env var `REVISION_FAILURE_BUCKET`).
+  Use the same GCS client already present in the codebase.
+- **DB alternative:** insert a row into a `generation_failures` table
+  (`job_id`, `timestamp`, `failure_type`, `errors JSONB`, `artifacts JSONB`).
+  Lets you query failure patterns across runs without downloading files.
+
+The local CLI path (`chat_local.py`) already writes to
+`generator/cli/test_results/revision_failures/` which is persistent — no change needed there.
+
+**Affected files**
+- `generator/crews/feature_generator/crew.py` — `_save_revision_failure()`: add GCS/DB upload after the local write (keep `/tmp` as fallback if the upload fails)
+- `generator/config.py` (or equivalent settings module) — add `REVISION_FAILURE_BUCKET` setting
+- Possibly a new migration if the DB route is chosen
+
+**Complexity:** Low — the GCS upload pattern is already used elsewhere in the codebase.
