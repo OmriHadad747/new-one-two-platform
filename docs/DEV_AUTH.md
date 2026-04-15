@@ -12,16 +12,32 @@ POST   /generation/:jobId/revise
 POST   /generation/:jobId/cancel
 PATCH  /generation/:jobId/chat
 GET    /generation/:jobId/result
+GET    /generation/:jobId/progress     — SSE (token via ?token=…, see below)
 GET    /generation/app/:appId/latest
 GET    /generation/app/:appId/latest-completed
 GET    /generation/app/:appId/sessions
 ```
 
+`/generation/:jobId/progress` is the only route in that list that uses
+`?token=<jwt>` instead of the `Authorization` header — the browser's
+`EventSource` API can't attach custom headers, so we fall back to the
+query-string source the auth plugin already supports (see
+`plugins/auth.ts` `extractToken()`). The frontend's `progressStream()`
+helper appends it automatically (`platform-front/src/lib/api.ts`);
+curl callers need to do the same:
+
+```
+curl -N http://localhost:3002/generation/<jobId>/progress?token=<jwt>
+```
+
+A valid token + mismatched `(tenantId, jobId)` returns **404** (same
+shape as "unknown job") rather than 403 — avoids leaking whether a
+jobId exists under some other tenant.
+
 These still work without a token (unchanged):
 
 ```
 POST   /generation/                    — body carries `tenantId`
-GET    /generation/:jobId/progress     — SSE, reads only Pub/Sub, never touches the DB
 GET    /health, /oauth, /widgets, /admin-ui — exempt by design (see plugins/auth.ts EXEMPT_PREFIXES)
 ```
 
