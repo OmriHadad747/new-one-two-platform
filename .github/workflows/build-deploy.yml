@@ -65,10 +65,57 @@ jobs:
         id: tag
         run: echo "tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
+  # ─── Pre-deploy gate: build + tests must pass ───────────────────────────────
+  # Mirrors the ci.yml job for PR validation, but runs inline here so a push
+  # direct to main/staging (bypassing the PR gate) still has to pass tests
+  # before any Docker image is built or any Cloud Run service is touched.
+  #
+  # `build` depends on this job; `migrate` and `deploy` depend transitively
+  # via `build`. A test failure short-circuits the entire deploy chain.
+  #
+  # Deliberate duplication with ci.yml rather than a reusable workflow: two
+  # call sites today, both short, trivially readable. If a third one shows
+  # up we extract.
+  test:
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: platform/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: platform
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        working-directory: platform
+        run: pnpm -r build
+
+      - name: Verify Docker is available for testcontainers
+        run: docker version
+
+      - name: Run tests (vitest — all suites, including RLS integration)
+        working-directory: platform
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: "true"
+        run: pnpm --filter @new-one-two/api --filter @new-one-two/deployer test
+
   # ─── Build & Push Docker Images ─────────────────────────────────────────────
   build:
     runs-on: ubuntu-latest
-    needs: setup
+    needs: [setup, test]
     environment: ${{ needs.setup.outputs.environment }}
     env:
       GCP_REGION: ${{ vars.GCP_REGION }}

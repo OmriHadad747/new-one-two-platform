@@ -20,7 +20,7 @@ on:
   pull_request:
     branches: [development, main, staging]
   push:
-    branches: [development, main]
+    branches: [development, main, staging]
 
 concurrency:
   # One run per ref; if a new commit lands while a previous run is in flight,
