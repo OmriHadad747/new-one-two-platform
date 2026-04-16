@@ -298,6 +298,8 @@ def _format_prior_handler(prior_code: Any) -> str:
     )
 
 
+
+
 def _format_edge_cases(plan: Dict[str, Any]) -> str:
     """Render architect-declared edge cases so the handler addresses each one."""
     cases = (plan.get("appContracts") or {}).get("edgeCases") or []

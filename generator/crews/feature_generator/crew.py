@@ -22,10 +22,15 @@ Progress events are published to generation.progress at every stage transition.
 
 from __future__ import annotations
 
+import dataclasses
+import datetime
+import json
 import logging
+import pathlib
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Tuple
+from datetime import timezone
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 import contract.publisher as _contract_publisher
 from contract.validators import (
@@ -59,6 +64,17 @@ log = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3        # total codegen attempts (1 initial + 2 retries)
 _MAX_ARCH_ATTEMPTS = 2  # architect: 1 initial + 1 retry
+
+# Validator question keys that indicate a backend (handler) problem.
+# When any of these fire, the revision agent must be allowed to edit the handler.
+# Q3/Q4-only failures are frontend misalignments — the handler stays locked.
+_BACKEND_VALIDATOR_QUESTIONS: FrozenSet[str] = frozenset({
+    "q1_table_names",
+    "q2_column_names",
+    "q5_cron_bulk_fetch",
+    "q6_state_machine",
+    "q7_schema_completeness",
+})
 
 # Pipeline-level deadline. A healthy run finishes well inside 5 minutes; we give
 # a generous 15-minute ceiling so that legitimate long runs (3 codegen attempts
@@ -134,6 +150,53 @@ def _fail_and_abort(
         payload["errorCode"] = error_code
     _contract_publisher.publish_completed(FeatureBundleMessage(**payload))
     raise _PipelineAbort
+
+
+def _save_revision_failure(
+    job_id: str,
+    bad_artifacts: Dict[str, str],
+    errors: Dict[str, List[str]],
+) -> str:
+    """Persist bad revision artifacts to /tmp for post-mortem analysis. Returns file path."""
+    failure_dir = pathlib.Path("/tmp/revision_validation_failures")
+    failure_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    path = failure_dir / f"{ts}_{job_id}.json"
+    payload = {
+        "job_id": job_id,
+        "timestamp": ts,
+        "errors": errors,
+        "artifacts": bad_artifacts,
+    }
+    try:
+        path.write_text(json.dumps(payload, indent=2))
+        return str(path)
+    except OSError as exc:
+        log.warning("Could not save revision failure artifacts: %s", exc)
+        return "(save failed)"
+
+
+def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
+    """
+    Determine which artifacts the revision agent must treat as read-only based on
+    which validator questions fired.
+
+    - Q3/Q4 only (widget/admin_ui ↔ handler field mismatch): fix the frontend.
+      Handler and migration are locked — they are the ground truth contract.
+    - Q1/Q2/Q5/Q6/Q7 (handler ↔ DB mismatch or handler logic error): fix the handler.
+      Migration stays locked (it's the schema ground truth); handler is unlocked.
+
+    Invariant: this function is only called after handler and migration have already
+    passed static validation in the codegen loop. If that invariant ever breaks, the
+    lock could paper over a real backend bug — revisit if backend static validation
+    is weakened or bypassed.
+    """
+    issue_keys = {i["question"] for i in issues}
+    if issue_keys & _BACKEND_VALIDATOR_QUESTIONS:
+        # Backend question fired — handler must be revised to align with migration/DB.
+        return frozenset({"migration"})
+    # Frontend-only misalignment — handler is ground truth, fix widget/admin_ui.
+    return frozenset({"handler", "migration"})
 
 
 # ── Pipeline entry point ───────────────────────────────────────────────────────
@@ -495,9 +558,16 @@ def _generate_artifacts(
     """
     Produce artifacts for one codegen attempt.
 
-    Attempt 1 on a revision run uses the holistic revision agent (single LLM call,
-    reasons across all artifacts simultaneously). All other attempts use the standard
-    parallel individual generators.
+    Dispatch order:
+      - Revision run + attempt 1: holistic revision agent first, parallel
+        fallthrough if revision returns incomplete output.
+      - Attempt 1 (any other case): parallel codegen (fastest; no peer code
+        exists yet anyway).
+      - Attempt > 1: sequential codegen with peer-artifact injection
+        (migration → handler → {widget_js, admin_ui} in parallel). UI generators
+        see the real handler code they're calling instead of only the catalog,
+        which closes the whack-a-mole loop where contract drift between handler
+        and UI caused alternating failure modes across attempts.
 
     error_map: current attempt's errors — drives which generators re-run and the
       coupled-retry heuristic.
@@ -539,6 +609,12 @@ def _generate_artifacts(
         )
         return parallel_artifacts, parallel_tokens
 
+    log.info(
+        "job=%s codegen attempt=%d mode=parallel failing=%s",
+        request.jobId,
+        attempt,
+        sorted(error_map.keys()) if attempt > 1 else [],
+    )
     return run_codegen_parallel(
         base_ctx,
         is_storefront=is_storefront,
@@ -560,9 +636,18 @@ def _phase_validator(
     """
     Optional Agent 4b: LLM semantic alignment check (LLM_VALIDATION_ENABLED=true).
 
-    Runs 6 targeted questions against the generated artifacts. Only HIGH-confidence
-    issues trigger one revision pass. Returns the (possibly revised) artifacts.
-    Fail-open: any error returns the original artifacts unchanged.
+    Runs targeted questions against the generated artifacts. Only HIGH-confidence
+    issues trigger a revision pass.
+
+    Locking strategy (see _revision_locked_artifacts):
+    - Q3/Q4 (frontend ↔ handler field mismatch): lock handler + migration, fix frontend.
+    - Q1/Q2/Q5/Q6/Q7 (handler ↔ DB or handler logic): lock migration only, fix handler.
+    Migration is always locked — it is the schema ground truth.
+
+    After each revision attempt the output is statically validated. If both attempts
+    produce structurally invalid code the job is failed (not silently swapped back).
+    Trade-off: a double revision failure is rare and always indicates a structural bug
+    (React code, import statements, etc.) — silently shipping that is worse than failing.
     """
     from config import get_settings
 
@@ -601,13 +686,32 @@ def _phase_validator(
         f"{len(issues)} semantic issue(s) found — revising…",
     )
 
+    # Build context from the fresh codegen output so the revision agent works from
+    # the actual code it needs to fix, not from a (possibly absent) prior bundle.
+    revision_ctx = dataclasses.replace(
+        base_ctx,
+        prior_handler_code=artifacts.get("handler") or base_ctx.prior_handler_code,
+        prior_migration_sql=artifacts.get("migration") or base_ctx.prior_migration_sql,
+        prior_widget_code=artifacts.get("widget_js") or base_ctx.prior_widget_code,
+        prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
+    )
+    _LOCKED = _revision_locked_artifacts(issues)
+    log.info(
+        "job=%s revision locking: questions=%s locked=%s unlocked=%s",
+        request.jobId,
+        sorted(i["question"] for i in issues),
+        sorted(_LOCKED),
+        sorted({"handler", "migration", "widget_js", "admin_ui"} - _LOCKED),
+    )
+
     _emit(request, "revision", "running", f"Fixing {len(issues)} semantic issue(s)…")
     rev_t0 = _now_ms()
     revised, rev_in, rev_out = run_revision_agent(
-        base_ctx,
+        revision_ctx,
         is_storefront=is_storefront,
         is_admin_ui=is_admin_ui,
         validation_issues=issues,
+        locked_artifacts=_LOCKED,
     )
     agent_trace.append(
         AgentTraceEntry(
@@ -617,16 +721,83 @@ def _phase_validator(
             outputTokens=rev_out,
         )
     )
-    if revised.get("handler") and revised.get("migration"):
-        _emit(request, "revision", "completed", "Semantic issues resolved")
-        return {**artifacts, **revised}
 
+    # Only accept frontend artifacts — handler/migration are locked.
+    frontend_revised = {k: v for k, v in revised.items() if k not in _LOCKED}
+    if not frontend_revised:
+        log.warning(
+            "job=%s revision_agent: returned no frontend artifacts — keeping originals",
+            request.jobId,
+        )
+        _emit(request, "revision", "completed", "Revision incomplete — keeping originals")
+        return artifacts
+
+    # Statically validate the revised frontend artifacts before accepting them.
+    merged = {**artifacts, **frontend_revised}
+    all_errors = validate_artifacts(merged, revision_ctx, is_storefront, is_admin_ui)
+    static_errors: Dict[str, List[str]] = {
+        k: v for k, v in all_errors.items() if k in frontend_revised
+    }
+
+    if not static_errors:
+        _emit(request, "revision", "completed", "Semantic issues resolved")
+        return merged
+
+    # First revision failed static validation — retry once with the errors fed back.
     log.warning(
-        "job=%s validator_agent: revision returned incomplete output — keeping originals",
+        "job=%s revision_agent: static validation failed on attempt 1 — retrying. errors=%s",
         request.jobId,
+        {k: v for k, v in static_errors.items()},
     )
-    _emit(request, "revision", "completed", "Revision incomplete — keeping originals")
-    return artifacts
+    rev2_t0 = _now_ms()
+    revised2, rev2_in, rev2_out = run_revision_agent(
+        revision_ctx,
+        is_storefront=is_storefront,
+        is_admin_ui=is_admin_ui,
+        validation_issues=issues,
+        locked_artifacts=_LOCKED,
+        static_errors=static_errors,
+    )
+    agent_trace.append(
+        AgentTraceEntry(
+            agent="revision",
+            latencyMs=_now_ms() - rev2_t0,
+            inputTokens=rev2_in,
+            outputTokens=rev2_out,
+        )
+    )
+
+    frontend_revised2 = {k: v for k, v in revised2.items() if k not in _LOCKED}
+    merged2 = {**artifacts, **frontend_revised2}
+    all_errors2 = validate_artifacts(merged2, revision_ctx, is_storefront, is_admin_ui)
+    static_errors2: Dict[str, List[str]] = {
+        k: v for k, v in all_errors2.items() if k in frontend_revised2
+    }
+
+    if not static_errors2:
+        _emit(request, "revision", "completed", "Semantic issues resolved (static retry)")
+        return merged2
+
+    # Both revision attempts produced statically invalid code — fail the job.
+    bad = {**frontend_revised, **frontend_revised2}
+    failure_path = _save_revision_failure(request.jobId, bad, static_errors2)
+    error_detail = "; ".join(
+        f"{k}: {', '.join(errs)}" for k, errs in static_errors2.items()
+    )
+    log.error(
+        "job=%s revision_agent: static validation failed after 2 attempts — failing job. "
+        "saved=%s errors=%s",
+        request.jobId,
+        failure_path,
+        error_detail,
+    )
+    _fail_and_abort(
+        request,
+        "revision",
+        "Revision produced structurally invalid code — generation failed",
+        f"Revision agent emitted invalid artifacts after 2 attempts: {error_detail}",
+        error_code="REVISION_STATIC_VALIDATION_FAILED",
+    )
 
 
 def _phase_explanation(
@@ -747,6 +918,142 @@ def _publish_success(
 # ── Parallel CodeGen ───────────────────────────────────────────────────────────
 
 
+_CONTRACT_ERROR_MARKERS = (
+    "widget route",
+    "admin route",
+    "widget sends",
+    "admin UI sends",
+    "ctx.widgetBody",
+    "ctx.adminBody",
+    "destructures",
+    "requestShape",
+    "responseShape",
+    "field name",
+)
+
+
+def _plan_codegen_batch(
+    *,
+    is_storefront: bool,
+    is_admin_ui: bool,
+    error_map: Dict[str, List[str]],
+    artifacts: Dict[str, str],
+) -> List[Generator]:
+    """
+    Decide which generators to (re)run this attempt and apply the coupled-retry
+    heuristic. Mutates error_map in place to add coupled-retry hints.
+
+    Returns the Generator list to invoke. Shared by parallel (first attempt)
+    and sequential (retry) paths so both use the same coupled-retry logic.
+
+    Coupled retries: if the handler is regenerating AND its errors indicate a
+    field-contract break, widget_js / admin_ui must be regenerated alongside
+    so both sides realign. A handler retry caused by an unrelated issue
+    (missing npmPackages, forbidden setInterval, etc.) does not touch
+    ctx.widgetBody / ctx.adminBody — re-running the widget/admin UI in that
+    case would burn Sonnet tokens with no benefit.
+
+    Pairs enforced:
+      handler ↔ widget_js   (storefront_backend, storefront_backend_admin)
+      handler ↔ admin_ui    (backend_admin, storefront_backend_admin)
+    """
+    to_run: List[Generator] = []
+    for name, gen in GENERATORS.items():
+        if name == "widget_js" and not is_storefront:
+            continue
+        if name == "admin_ui" and not is_admin_ui:
+            continue
+        if name in error_map or name not in artifacts:
+            to_run.append(gen)
+
+    if not artifacts:
+        return to_run  # first run — no coupling possible
+
+    handler_errs = error_map.get("handler", [])
+    handler_contract_broken = any(
+        any(marker in err for marker in _CONTRACT_ERROR_MARKERS)
+        for err in handler_errs
+    )
+    to_run_names = {gen.name for gen in to_run}
+    coupled_pairs: List[tuple] = []
+    if is_storefront:
+        coupled_pairs.append(
+            (
+                "handler",
+                "widget_js",
+                "Re-generating to stay in sync with the handler. "
+                "Ensure every host.call() field name exactly matches the widgetApiCatalog requestShape.",
+            )
+        )
+    if is_admin_ui:
+        coupled_pairs.append(
+            (
+                "handler",
+                "admin_ui",
+                "Re-generating to stay in sync with the handler. "
+                "Ensure every bridge.call() field name exactly matches the adminApiCatalog requestShape.",
+            )
+        )
+    for a, b, hint in coupled_pairs:
+        pair = {a, b}
+        if not (pair & to_run_names):
+            continue  # neither side is running — nothing to couple
+        if not handler_contract_broken:
+            log.info(
+                "codegen: skipping coupled retry of %s — handler errors are not contract-related",
+                ", ".join(sorted(pair - to_run_names)),
+            )
+            continue
+        for name in pair - to_run_names:
+            if name in GENERATORS and name in artifacts:
+                error_map.setdefault(name, [hint])
+                to_run.append(GENERATORS[name])
+                to_run_names.add(name)
+
+    return to_run
+
+
+def _build_prev_errors(
+    name: str,
+    cumulative_errors: Dict[str, List[str]],
+    error_map: Dict[str, List[str]],
+) -> Optional[List[str]]:
+    """
+    Build the previous_errors list passed to a generator on retry.
+
+    Union of cumulative_errors (every unique error seen across all attempts)
+    and the current attempt's error_map (which also carries any coupled-retry
+    hints injected by _plan_codegen_batch). Deduped, ordered:
+    cumulative first, then any new items from error_map.
+    """
+    merged: List[str] = []
+    seen: set[str] = set()
+    for err in (cumulative_errors.get(name) or []) + (error_map.get(name) or []):
+        if err not in seen:
+            merged.append(err)
+            seen.add(err)
+    return merged or None
+
+
+def _build_codegen_context(
+    base_ctx: CodegenContext,
+    *,
+    previous_errors: Optional[List[str]],
+) -> CodegenContext:
+    """Build the per-generator CodegenContext for one invocation."""
+    return CodegenContext(
+        intent=base_ctx.intent,
+        plan=base_ctx.plan,
+        platform_api_catalog=base_ctx.platform_api_catalog,
+        api_context=base_ctx.api_context,
+        previous_errors=previous_errors,
+        prior_handler_code=base_ctx.prior_handler_code,
+        prior_widget_code=base_ctx.prior_widget_code,
+        prior_migration_sql=base_ctx.prior_migration_sql,
+        prior_admin_ui_code=base_ctx.prior_admin_ui_code,
+    )
+
+
 def run_codegen_parallel(
     base_ctx: CodegenContext,
     *,
@@ -757,7 +1064,9 @@ def run_codegen_parallel(
     artifacts: Dict[str, str],
 ) -> Tuple[Dict[str, str], Dict[str, Tuple[int, int]]]:
     """
-    Run generators in parallel via ThreadPoolExecutor.
+    Run generators in parallel via ThreadPoolExecutor. Used for the first codegen
+    attempt where no peer code exists yet — running concurrently is strictly
+    faster since the generators cannot inform each other on the first pass.
 
     Only generators that either have errors (retry path) or have not yet produced
     an artifact (first run) are executed. Generators whose artifacts are clean are
@@ -772,124 +1081,31 @@ def run_codegen_parallel(
     Returns (artifacts, per_agent_tokens) — tokens dict only contains keys for
     generators that actually ran on this invocation.
     """
-    to_run: List[Generator] = []
-    for name, gen in GENERATORS.items():
-        if name == "widget_js" and not is_storefront:
-            continue
-        if name == "admin_ui" and not is_admin_ui:
-            continue
-        if name in error_map or name not in artifacts:
-            to_run.append(gen)
-
-    # Coupled retries: if the handler is regenerating AND its errors indicate a
-    # field-contract break, widget_js / admin_ui must be regenerated alongside
-    # so both sides realign. We used to couple unconditionally, but a handler
-    # retry caused by an unrelated issue (missing npmPackages, forbidden
-    # setInterval, etc.) doesn't touch ctx.widgetBody/adminBody — re-running
-    # the widget/admin UI in that case burned Sonnet tokens with no benefit.
-    #
-    # Pairs enforced:
-    #   handler ↔ widget_js   (storefront_backend, storefront_backend_admin)
-    #   handler ↔ admin_ui    (backend_admin, storefront_backend_admin)
-    _CONTRACT_ERROR_MARKERS = (
-        "widget route",
-        "admin route",
-        "widget sends",
-        "admin UI sends",
-        "ctx.widgetBody",
-        "ctx.adminBody",
-        "destructures",
-        "requestShape",
-        "responseShape",
-        "field name",
+    to_run = _plan_codegen_batch(
+        is_storefront=is_storefront,
+        is_admin_ui=is_admin_ui,
+        error_map=error_map,
+        artifacts=artifacts,
     )
-    if artifacts:  # non-empty = this is a retry, not the first run
-        handler_errs = error_map.get("handler", [])
-        handler_contract_broken = any(
-            any(marker in err for marker in _CONTRACT_ERROR_MARKERS)
-            for err in handler_errs
-        )
-        to_run_names = {gen.name for gen in to_run}
-        coupled_pairs: List[tuple] = []
-        if is_storefront:
-            coupled_pairs.append(
-                (
-                    "handler",
-                    "widget_js",
-                    "Re-generating to stay in sync with the handler. "
-                    "Ensure every host.call() field name exactly matches the widgetApiCatalog requestShape.",
-                )
-            )
-        if is_admin_ui:
-            coupled_pairs.append(
-                (
-                    "handler",
-                    "admin_ui",
-                    "Re-generating to stay in sync with the handler. "
-                    "Ensure every bridge.call() field name exactly matches the adminApiCatalog requestShape.",
-                )
-            )
-        for a, b, hint in coupled_pairs:
-            pair = {a, b}
-            if not (pair & to_run_names):
-                continue  # neither side is running — nothing to couple
-            # Only drag the partner in when the handler's errors are contract-shaped.
-            # Non-contract handler errors (missing npmPackages, forbidden setInterval,
-            # etc.) don't touch ctx.widgetBody / ctx.adminBody, so re-running the
-            # partner burns tokens with no benefit.
-            if not handler_contract_broken:
-                log.info(
-                    "codegen: skipping coupled retry of %s — handler errors are not contract-related",
-                    ", ".join(sorted(pair - to_run_names)),
-                )
-                continue
-            for name in pair - to_run_names:
-                if name in GENERATORS and name in artifacts:
-                    error_map.setdefault(name, [hint])
-                    to_run.append(GENERATORS[name])
-                    to_run_names.add(name)
-
     if not to_run:
         return artifacts, {}
-
-    def _prev_errors(name: str) -> Optional[List[str]]:
-        """
-        Build the previous_errors list passed to a generator on retry.
-
-        Union of cumulative_errors (every unique error seen across all attempts)
-        and the current attempt's error_map (which also carries any coupled-retry
-        hints injected by the contract-break logic above). Deduped, ordered:
-        cumulative first, then any new items from error_map.
-        """
-        merged: List[str] = []
-        seen: set[str] = set()
-        for err in (cumulative_errors.get(name) or []) + (error_map.get(name) or []):
-            if err not in seen:
-                merged.append(err)
-                seen.add(err)
-        return merged or None
 
     per_agent_tokens: Dict[str, Tuple[int, int]] = {}
     with ThreadPoolExecutor(max_workers=len(to_run)) as pool:
         futures = {
             gen.name: pool.submit(
                 gen.generate,
-                CodegenContext(
-                    intent=base_ctx.intent,
-                    plan=base_ctx.plan,
-                    platform_api_catalog=base_ctx.platform_api_catalog,
-                    api_context=base_ctx.api_context,
-                    previous_errors=_prev_errors(gen.name),
-                    prior_handler_code=base_ctx.prior_handler_code,
-                    prior_widget_code=base_ctx.prior_widget_code,
-                    prior_migration_sql=base_ctx.prior_migration_sql,
-                    prior_admin_ui_code=base_ctx.prior_admin_ui_code,
+                _build_codegen_context(
+                    base_ctx,
+                    previous_errors=_build_prev_errors(
+                        gen.name, cumulative_errors, error_map
+                    ),
                 ),
             )
             for gen in to_run
         }
         for name, future in futures.items():
-            # Generator.generate() now returns (artifact, in_tokens, out_tokens)
+            # Generator.generate() returns (artifact, in_tokens, out_tokens)
             artifact, in_tok, out_tok = future.result()  # raises on sub-agent exception
             artifacts[name] = artifact
             per_agent_tokens[name] = (in_tok, out_tok)

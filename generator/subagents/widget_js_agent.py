@@ -207,6 +207,7 @@ def _format_prior_widget(prior_code: Any) -> str:
     )
 
 
+
 def _format_catalog(catalog: List[Dict[str, Any]]) -> str:
     """
     Format the widget API catalog with requestShape and responseShape.

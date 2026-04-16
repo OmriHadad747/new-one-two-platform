@@ -22,6 +22,7 @@ OUTPUT
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import re
@@ -56,7 +57,11 @@ from subagents.product_agent import run_product_agent_analyze
 from subagents.revision_agent import run_revision_agent
 from subagents.static_validation import validate_architect_plan
 from subagents.validator_agent import run_validator_agent
-from crews.feature_generator.crew import run_codegen_parallel, validate_artifacts
+from crews.feature_generator.crew import (
+    run_codegen_parallel,
+    validate_artifacts,
+    _revision_locked_artifacts,
+)
 
 TEST_RESULTS_DIR = _HERE / "test_results"
 _MAX_ARCH_ATTEMPTS = 2   # matches crew.py
@@ -482,6 +487,20 @@ def _phase_codegen(
     sys.exit(1)
 
 
+def _save_revision_failure_local(
+    bad_artifacts: Dict[str, str],
+    errors: Dict[str, List[str]],
+) -> Path:
+    """Save bad revision artifacts to test_results/revision_failures/ for analysis."""
+    failure_dir = TEST_RESULTS_DIR / "revision_failures"
+    failure_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    path = failure_dir / f"{ts}_revision_failure.json"
+    payload = {"timestamp": ts, "errors": errors, "artifacts": bad_artifacts}
+    path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
 def _phase_validator(
     base_ctx: CodegenContext,
     artifacts: Dict[str, str],
@@ -490,6 +509,11 @@ def _phase_validator(
 ) -> Tuple[Dict[str, str], int, int]:
     """
     Run LLM validator + optional revision pass.
+
+    The revision agent fixes only widget_js / admin_ui (handler and migration are
+    locked as read-only context). Revision output is statically validated; if both
+    attempts fail the run exits with an error and saves the bad artifacts.
+
     Returns (artifacts, total_in_tokens, total_out_tokens).
     """
     from config import get_settings
@@ -515,27 +539,95 @@ def _phase_validator(
     for iss in issues:
         print(f"    {_DIM}• {iss.get('question', '?')}: {str(iss.get('issue', ''))[:80]}{_RESET}")
 
+    # Build context from the fresh codegen output so the revision agent works from
+    # the actual code it needs to fix, not from a (possibly absent) prior bundle.
+    revision_ctx = dataclasses.replace(
+        base_ctx,
+        prior_handler_code=artifacts.get("handler") or base_ctx.prior_handler_code,
+        prior_migration_sql=artifacts.get("migration") or base_ctx.prior_migration_sql,
+        prior_widget_code=artifacts.get("widget_js") or base_ctx.prior_widget_code,
+        prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
+    )
+    _LOCKED = _revision_locked_artifacts(issues)
+
     _spinner("Revision")
     t0 = time.monotonic()
     revised, rev_in, rev_out = run_revision_agent(
-        base_ctx,
+        revision_ctx,
         is_storefront=is_storefront,
         is_admin_ui=is_admin_ui,
         validation_issues=issues,
+        locked_artifacts=_LOCKED,
     )
     ms = int((time.monotonic() - t0) * 1000)
 
     total_in  = val_in  + rev_in
     total_out = val_out + rev_out
 
-    if revised.get("handler") and revised.get("migration"):
+    frontend_revised = {k: v for k, v in revised.items() if k not in _LOCKED}
+    if not frontend_revised:
+        _agent_line("Revision", ok=False, ms=ms,
+                    notes=_tok_note(rev_in, rev_out, extra="no frontend artifacts returned — keeping originals"))
+        return artifacts, total_in, total_out
+
+    # Statically validate the revised frontend artifacts before accepting them.
+    merged = {**artifacts, **frontend_revised}
+    all_errors = validate_artifacts(merged, revision_ctx, is_storefront, is_admin_ui)
+    static_errors: Dict[str, List[str]] = {
+        k: v for k, v in all_errors.items() if k in frontend_revised
+    }
+
+    if not static_errors:
         _agent_line("Revision", ok=True, ms=ms,
                     notes=_tok_note(rev_in, rev_out, extra="semantic issues resolved"))
-        return {**artifacts, **revised}, total_in, total_out
+        return merged, total_in, total_out
 
+    # First revision failed static validation — retry once with errors fed back.
     _agent_line("Revision", ok=False, ms=ms,
-                notes=_tok_note(rev_in, rev_out, extra="incomplete — keeping originals"))
-    return artifacts, total_in, total_out
+                notes=_tok_note(rev_in, rev_out,
+                                extra=f"static validation failed ({len(static_errors)} artifact(s)) — retrying"))
+    for gen_name, errs in static_errors.items():
+        for e in errs:
+            print(f"    {_DIM}• [{gen_name}] {e[:80]}{_RESET}")
+
+    _spinner("Revision (static retry)")
+    t0 = time.monotonic()
+    revised2, rev2_in, rev2_out = run_revision_agent(
+        revision_ctx,
+        is_storefront=is_storefront,
+        is_admin_ui=is_admin_ui,
+        validation_issues=issues,
+        locked_artifacts=_LOCKED,
+        static_errors=static_errors,
+    )
+    ms2 = int((time.monotonic() - t0) * 1000)
+
+    total_in  += rev2_in
+    total_out += rev2_out
+
+    frontend_revised2 = {k: v for k, v in revised2.items() if k not in _LOCKED}
+    merged2 = {**artifacts, **frontend_revised2}
+    all_errors2 = validate_artifacts(merged2, revision_ctx, is_storefront, is_admin_ui)
+    static_errors2: Dict[str, List[str]] = {
+        k: v for k, v in all_errors2.items() if k in frontend_revised2
+    }
+
+    if not static_errors2:
+        _agent_line("Revision", ok=True, ms=ms2,
+                    notes=_tok_note(rev2_in, rev2_out, extra="semantic issues resolved (static retry)"))
+        return merged2, total_in, total_out
+
+    # Both revision attempts produced structurally invalid code — fail the run.
+    bad = {**frontend_revised, **frontend_revised2}
+    path = _save_revision_failure_local(bad, static_errors2)
+    _agent_line("Revision", ok=False, ms=ms2,
+                notes=_tok_note(rev2_in, rev2_out, extra="static validation failed after 2 attempts"))
+    print(f"\n  {_RED}Revision agent produced structurally invalid code after 2 attempts.{_RESET}")
+    for gen_name, errs in static_errors2.items():
+        for e in errs:
+            print(f"    • [{gen_name}] {e}")
+    print(f"  Saved for analysis: {path}")
+    sys.exit(1)
 
 
 # ── Output helpers ─────────────────────────────────────────────────────────────

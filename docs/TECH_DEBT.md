@@ -4,6 +4,65 @@ Items that are known gaps but deliberately deferred. Each entry has the affected
 
 ---
 
+## TD-016 — Generator has no unit or integration tests
+
+**Current state**
+`generator/` has a single test file (`test_mcp_gql_loop.py`) that exercises the MCP/GraphQL path only.
+All validation logic, prompt-building helpers, and pipeline decision functions are untested.
+Bugs in these are caught only by live generation runs (expensive, slow, non-deterministic).
+
+**High-value unit test targets** (pure functions, no LLM needed):
+
+`subagents/static_validation.py` — highest ROI, pure `str → List[str]` functions:
+- `validate_admin_ui_artifact`: confirm React patterns caught (`import`, `export default`), mount signature required, document.head/body blocked, Polaris tokens accepted
+- `validate_widget_artifact`: same shape, widget-specific rules
+- `validate_widget_handler_contract` / `validate_admin_handler_contract`: cross-artifact field alignment; easiest to test with fixture pairs of handler + UI code
+- `validate_architect_plan`: sentinel, cron syntax, catalog path format, dbContracts tenant_id presence
+
+Generator `parse()` methods (`handler_agent`, `widget_js_agent`, `admin_ui_agent`):
+- Strip markdown fences (` ```js ... ``` `)
+- Strip leading prose (text before the first JS token)
+- **Edge case**: if LLM output starts with a `//` comment, `js_start.start() == 0` so the `if start > 0` guard never fires — import statements immediately after the comment survive into the artifact. This was a contributing root cause of the April-15 React admin_ui incident. A regression test here would have caught it.
+
+`crews/feature_generator/crew.py:_revision_locked_artifacts()`:
+- Q3/Q4 only → `{"handler", "migration"}` locked
+- Q1/Q2/Q5/Q6/Q7 (any) → `{"migration"}` locked
+- Mixed Q1+Q3 → `{"migration"}` locked (backend question takes priority)
+- Empty issues → `{"handler", "migration"}` (default)
+
+`crews/feature_generator/crew.py:_plan_codegen_batch()`:
+- Coupled-retry heuristic: if handler errors contain a contract marker, dependent UI generators get added to `to_run` even if their own artifacts passed
+- Verify `to_run` set is computed correctly given various `error_map` shapes
+
+**High-value integration test targets** (mock LLM responses, no real API calls):
+
+`_phase_validator()` end-to-end with stubbed `run_validator_agent` + `run_revision_agent`:
+- Validator finds Q3/Q4 → locking correct → revision accepted → merged artifacts returned
+- Validator finds Q1 → handler unlocked → revision accepted → merged artifacts returned
+- Revision attempt 1 emits React code → static validation catches it → retry triggered → attempt 2 clean → accepted
+- Both revision attempts fail → artifacts saved → `_PipelineAbort` raised
+
+Sequential codegen peer injection (`run_codegen_sequential` with mocked generators):
+- Verify `widget_js` generator context receives `peer_handler_code` from phase-2 handler output
+- Verify `handler` generator context receives `peer_migration_sql` from phase-1 migration output
+
+**Suggested approach**
+- `pytest` with `unittest.mock.patch` to stub LLM calls
+- Fixture JS/SQL strings for common valid and invalid artifact patterns
+- No new dependencies beyond `pytest` (already likely available) and `pytest-mock`
+
+**Affected files** (when done)
+- `generator/tests/` — new directory
+- `generator/tests/test_static_validation.py`
+- `generator/tests/test_generator_parse.py`
+- `generator/tests/test_revision_locking.py`
+- `generator/tests/test_plan_codegen_batch.py`
+- `generator/tests/test_phase_validator.py` (integration)
+
+**Complexity:** Low for unit tests (no infra). Medium for integration tests (requires clean mock boundaries around LLM calls).
+
+---
+
 ## TD-003 — `generation_sessions` has both a bundle blob and legacy typed columns
 
 **Affected files**
@@ -183,3 +242,34 @@ for `generation_sessions` — every caller already has tenantId in scope.
 Low risk per PR because each family is independent and fail-closed
 (a bug returns zero rows rather than cross-tenant data).
 
+---
+
+## TD-015 — Revision failure artifacts saved to /tmp only
+
+**Current state**
+When the revision agent produces structurally invalid code after two attempts,
+`_phase_validator()` in `crew.py` saves the bad artifacts (code + validation errors)
+to `/tmp/revision_validation_failures/<timestamp>_<job_id>.json`. `/tmp` is ephemeral
+— the file disappears when the Cloud Run container exits, making post-mortem analysis
+unreliable in production.
+
+**What to do**
+Replace or augment the `/tmp` write in `_save_revision_failure()` with a durable sink:
+
+- **GCS (preferred):** upload the JSON to a dedicated bucket, e.g.
+  `gs://<project>-generation-failures/revision/<timestamp>_<job_id>.json`.
+  Add the bucket name to settings (env var `REVISION_FAILURE_BUCKET`).
+  Use the same GCS client already present in the codebase.
+- **DB alternative:** insert a row into a `generation_failures` table
+  (`job_id`, `timestamp`, `failure_type`, `errors JSONB`, `artifacts JSONB`).
+  Lets you query failure patterns across runs without downloading files.
+
+The local CLI path (`chat_local.py`) already writes to
+`generator/cli/test_results/revision_failures/` which is persistent — no change needed there.
+
+**Affected files**
+- `generator/crews/feature_generator/crew.py` — `_save_revision_failure()`: add GCS/DB upload after the local write (keep `/tmp` as fallback if the upload fails)
+- `generator/config.py` (or equivalent settings module) — add `REVISION_FAILURE_BUCKET` setting
+- Possibly a new migration if the DB route is chosen
+
+**Complexity:** Low — the GCS upload pattern is already used elsewhere in the codebase.
