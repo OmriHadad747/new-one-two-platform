@@ -51,11 +51,10 @@ ABSOLUTE RULES:
 5. NO DROP TABLE, NO TRUNCATE. NO ALTER TABLE except:
    - ALTER TABLE {name} ENABLE ROW LEVEL SECURITY  (required after CREATE TABLE)
    - ALTER TABLE {name} ADD COLUMN IF NOT EXISTS ...  (revision runs only)
-6. Use gen_random_uuid() for UUID primary keys
-7. If the feature doesn't need any new tables, output nothing at all — zero characters, no explanation
-8. Add useful indexes (tenant_id is always a candidate; avoid redundant standalone indexes
+6. If the feature doesn't need any new tables, output nothing at all — zero characters, no explanation
+7. Add useful indexes (tenant_id is always a candidate; avoid redundant standalone indexes
    when a composite index already starts with tenant_id)
-9. Derive ALL table columns EXACTLY from the DB contracts in the user prompt.
+8. Derive ALL table columns EXACTLY from the DB contracts in the user prompt.
    Generate every column listed there with the exact name, type, and constraints specified.
    Do not add or remove columns beyond what the contracts declare."""
 

@@ -115,17 +115,13 @@ DESIGN PRINCIPLES:
   single exception is Shopify brand green (#008060), which is safe to hardcode
   if you explicitly need it.
 
-- Components: tables for list data, stat cards for metrics, action buttons, forms for config.
-- Show loading states (spinner or skeleton) while bridge.call() is in progress.
-- Show error states clearly when bridge.call() rejects.
 - Paginate large lists: use the `page_size` declared in the route's adminApiCatalog requestShape; do not introduce a different limit here.
 
 RULES:
 1. Export ONLY a named `mount` function: export function mount(container, bridge) { ... }
 2. Render only inside `container` — never access the DOM outside it.
 3. All backend requests use bridge.call(). NEVER use raw fetch(), XMLHttpRequest, or hardcoded URLs.
-4. Never access window.* globals.
-5. DOM scoping — route ALL DOM access through `container` or document creation helpers:
+4. DOM scoping — route ALL DOM access through `container` or document creation helpers:
    ALLOWED:   container.querySelector()  container.querySelectorAll()
               container.appendChild()    container.innerHTML
               document.createElement()   document.createTextNode()
@@ -137,43 +133,26 @@ RULES:
      const style = document.createElement('style');
      style.textContent = `.my-widget { color: red; }`;
      container.appendChild(style);
-6. Never use eval(), Function(), setTimeout (except for debounce with ≤500ms), setInterval.
-7. Never hardcode tenant IDs, shop domains, or entity IDs — read from bridge.context.
-8. All bridge.call() paths must come from the adminApiCatalog — never invent paths.
-9. Output ONLY the raw JavaScript — no markdown fences, no explanation, no comments outside the code.
-10. Handle all bridge.call() rejections gracefully — show an error message in the UI.
-11. NEVER use React, JSX, or any JavaScript framework — vanilla DOM only.
+5. Never use eval(), Function(), setTimeout (except for debounce with ≤500ms), setInterval.
+6. Never hardcode tenant IDs, shop domains, or entity IDs — read from bridge.context.
+7. All bridge.call() paths must come from the adminApiCatalog — never invent paths.
+8. Output ONLY the raw JavaScript — no markdown fences, no explanation, no comments outside the code.
+9. Handle all bridge.call() rejections gracefully — show an error message in the UI.
+10. NEVER use React, JSX, or any JavaScript framework — vanilla DOM only.
     FORBIDDEN: import statements of any kind (import React, import { useState }, etc.)
     FORBIDDEN: export default function — the only allowed export is export function mount
     FORBIDDEN: JSX syntax — use document.createElement() / innerHTML for all DOM construction
     FORBIDDEN: React.createElement(), useState(), useEffect(), useRef(), or any React API
-12. NEVER hardcode hex colors except #008060 (Shopify brand green — safe to hardcode).
+11. NEVER hardcode hex colors except #008060 (Shopify brand green — safe to hardcode).
     For ALL other colors use Polaris CSS custom properties (--p-color-*).
     Example: color: var(--p-color-text) NOT color: #1a1a1a
     Hardcoded hex colors break the merchant's theme (dark mode, high-contrast accessibility).
-13. NEVER use container.innerHTML += after any container.appendChild() call.
+12. NEVER use container.innerHTML += after any container.appendChild() call.
     innerHTML-assign serializes the DOM back to an HTML string and re-parses it, destroying
     all previously appended DOM nodes and their event listeners.
     Safe pattern: assign container.innerHTML = '...' ONCE at the start of mount() to set the
     full HTML skeleton, then call container.appendChild(styleEl) to append the <style> last.
-
-LAYOUT PATTERNS:
-  Read-only dashboard (list + stats):
-    - Load data in mount() with bridge.call('/list') or similar
-    - Render a stat summary row at the top (totals, counts)
-    - Render a table below with the key fields
-    - Add a "Refresh" button
-
-  Action panel (trigger a backend operation):
-    - Render a description of what the action does
-    - Render a form (if the operation needs parameters) or a single button
-    - On submit: call bridge.call(path, body), show loading, then bridge.notify on result
-    - Disable the button while loading to prevent double-submit
-
-  Config panel:
-    - Load current config via bridge.call('/config/get')
-    - Render editable fields
-    - On save: call bridge.call('/config/save', values), then bridge.notify('Saved', 'success')"""
+13. When a button triggers a bridge.call(), disable it while the call is pending to prevent double-submit."""
 
 
 class AdminUiGenerator(Generator):

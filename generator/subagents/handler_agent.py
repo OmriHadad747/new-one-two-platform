@@ -323,7 +323,6 @@ def _format_quality_checklist(plan: Dict[str, Any]) -> str:
     checks = [
         "Every DB write handles the case where the record already exists (UPSERT or check-then-insert where appropriate)",
         "Every customer-facing response includes meaningful data or error messages, not empty objects",
-        "Shopify API calls are wrapped in try/catch with graceful degradation (log + continue, not crash)",
     ]
 
     if shopify.get("webhookTopics"):
@@ -334,11 +333,6 @@ def _format_quality_checklist(plan: Dict[str, Any]) -> str:
     if impl.get("widgetApiCatalog"):
         checks.append(
             "Widget routes return useful error responses (not just empty {}) when data is missing or the request is invalid"
-        )
-
-    if impl.get("adminApiCatalog"):
-        checks.append(
-            "Admin routes validate input and return clear error messages the UI can display"
         )
 
     lines = "\n".join(f"  ✓ {c}" for c in checks)

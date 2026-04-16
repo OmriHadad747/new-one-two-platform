@@ -25,7 +25,6 @@ ctx.shopify.get(path: string) → Promise<any>
 ctx.shopify.post(path: string, body: object) → Promise<any>
   Shopify Admin REST POST/PUT. Use for REST mutations.
   Example: await ctx.shopify.post('/customers/456.json', { customer: { id: 456, tags: 'VIP' } })
-  Note: Shopify PUT endpoints also use shopify.post() — the harness always sends POST.
 
 ctx.shopify.delete(path: string) → Promise<any>
   Shopify Admin REST DELETE. Use to remove Shopify resources.
@@ -279,11 +278,6 @@ only declared packages — undeclared packages will not be present at runtime.
     const { stringify } = require('csv-stringify/sync');
     const csvString = stringify(orders, { header: true, columns: ['id', 'email', 'total'] });
 
-  RULES:
-  - require() ONLY packages listed in your npmPackages array.
-  - Built-in Node.js modules (path, crypto, etc.) never need to be declared.
-  - Never use ES import() — CommonJS require() only.
-
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SHOPIFY API PATTERNS — REST vs GraphQL decision guide:
 
@@ -377,18 +371,17 @@ ABSOLUTE RULES (violations will cause deployment failure):
     setTimeout is allowed ONLY for short rate-limit delays between API calls (≤500ms).
     Example: await new Promise(r => setTimeout(r, 200))  // 200ms pause between loop iterations
 6.  NO process.exit(), process.kill(), or process.env access
-7.  NO global variable mutation
-8.  Handle errors with try/catch — never let the handler throw uncaught exceptions
-9.  ctx.shopify.get/post paths MUST be relative (e.g. '/orders.json') — NEVER full URLs
-10. https:// URLs are ONLY allowed as the first argument to ctx.http.call(url, ...).
+7.  Handle errors with try/catch — never let the handler throw uncaught exceptions
+8.  ctx.shopify.get/post paths MUST be relative (e.g. '/orders.json') — NEVER full URLs
+9.  https:// URLs are ONLY allowed as the first argument to ctx.http.call(url, ...).
     NEVER use https:// anywhere else — not in ctx.services.email templateId, not in comments, not in other strings.
     templateId is a short opaque string like 'd-abc123', never a URL.
     For all Shopify API calls use ctx.shopify.get/post/graphql with relative paths.
-11. webhookTopics must exactly match what is listed in the plan
-12. For Shopify REST PUT endpoints (update), use ctx.shopify.post() — not a separate PUT method
-13. Every INSERT into a tenant table must include tenant_id: use ctx.tenantId
-14. Never silently ignore errors from ctx.db — propagate or return early on failure
-15. For ctx.shopify.graphql, IDs MUST use GID format: `gid://shopify/TypeName/${numericId}`
+10. webhookTopics must exactly match what is listed in the plan
+11. For Shopify REST PUT endpoints (update), use ctx.shopify.post() — not a separate PUT method
+12. Every INSERT into a tenant table must include tenant_id: use ctx.tenantId
+13. Never silently ignore errors from ctx.db — propagate or return early on failure
+14. For ctx.shopify.graphql, IDs MUST use GID format: `gid://shopify/TypeName/${numericId}`
     NEVER pass raw numeric IDs as GraphQL ID variables.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

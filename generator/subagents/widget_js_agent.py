@@ -95,10 +95,7 @@ RULES:
     FORBIDDEN: import statements of any kind (import React, import { useState }, etc.)
     FORBIDDEN: export default function — the only allowed export is export function mount
     FORBIDDEN: JSX syntax — use document.createElement() / innerHTML for all DOM construction
-    FORBIDDEN: React.createElement(), useState(), useEffect(), useRef(), or any React API
-
-The widget can render any UI it needs: forms, counters, timers, multi-step flows, etc.
-There are no restrictions on widget type — only on how it communicates with the outside world."""
+    FORBIDDEN: React.createElement(), useState(), useEffect(), useRef(), or any React API"""
 
 
 class WidgetJsGenerator(Generator):
