@@ -118,7 +118,7 @@ DESIGN PRINCIPLES:
 - Components: tables for list data, stat cards for metrics, action buttons, forms for config.
 - Show loading states (spinner or skeleton) while bridge.call() is in progress.
 - Show error states clearly when bridge.call() rejects.
-- Paginate or limit large lists (show at most 50 rows; add "Load more" if needed).
+- Paginate large lists: use the `page_size` declared in the route's adminApiCatalog requestShape; do not introduce a different limit here.
 
 RULES:
 1. Export ONLY a named `mount` function: export function mount(container, bridge) { ... }
@@ -137,22 +137,21 @@ RULES:
      const style = document.createElement('style');
      style.textContent = `.my-widget { color: red; }`;
      container.appendChild(style);
-6. Never use eval(), Function(), setTimeout (except for debounce with < 500ms), setInterval.
+6. Never use eval(), Function(), setTimeout (except for debounce with ≤500ms), setInterval.
 7. Never hardcode tenant IDs, shop domains, or entity IDs — read from bridge.context.
 8. All bridge.call() paths must come from the adminApiCatalog — never invent paths.
 9. Output ONLY the raw JavaScript — no markdown fences, no explanation, no comments outside the code.
 10. Handle all bridge.call() rejections gracefully — show an error message in the UI.
-11. If adminApiCatalog is empty, render a clear "Backend not configured" message.
-12. NEVER use React, JSX, or any JavaScript framework — vanilla DOM only.
+11. NEVER use React, JSX, or any JavaScript framework — vanilla DOM only.
     FORBIDDEN: import statements of any kind (import React, import { useState }, etc.)
     FORBIDDEN: export default function — the only allowed export is export function mount
     FORBIDDEN: JSX syntax — use document.createElement() / innerHTML for all DOM construction
     FORBIDDEN: React.createElement(), useState(), useEffect(), useRef(), or any React API
-13. NEVER hardcode hex colors except #008060 (Shopify brand green — safe to hardcode).
+12. NEVER hardcode hex colors except #008060 (Shopify brand green — safe to hardcode).
     For ALL other colors use Polaris CSS custom properties (--p-color-*).
     Example: color: var(--p-color-text) NOT color: #1a1a1a
     Hardcoded hex colors break the merchant's theme (dark mode, high-contrast accessibility).
-14. NEVER use container.innerHTML += after any container.appendChild() call.
+13. NEVER use container.innerHTML += after any container.appendChild() call.
     innerHTML-assign serializes the DOM back to an HTML string and re-parses it, destroying
     all previously appended DOM nodes and their event listeners.
     Safe pattern: assign container.innerHTML = '...' ONCE at the start of mount() to set the
@@ -277,8 +276,6 @@ def _extract_admin_catalog(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def _format_admin_catalog(plan: Dict[str, Any]) -> str:
     catalog = _extract_admin_catalog(plan)
-    if not catalog:
-        return "  (none — render a 'Backend not configured' message)"
     lines = []
     for e in catalog:
         req = e.get("requestShape", "{}")

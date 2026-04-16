@@ -501,12 +501,27 @@ def _save_revision_failure_local(
     return path
 
 
+_REVISION_TRACES_SUBDIR = "revision_traces"
+
+
+def _save_revision_trace(run_ts: str, slug: str, trace: Dict[str, Any]) -> Path:
+    """Persist a validator+revision trace. Shares run_ts+slug with the report .md
+    so traces and reports are trivially cross-referenceable on disk."""
+    trace_dir = TEST_RESULTS_DIR / _REVISION_TRACES_SUBDIR
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    path = trace_dir / f"{run_ts}_{slug}.json"
+    path.write_text(json.dumps(trace, indent=2))
+    return path
+
+
 def _phase_validator(
     base_ctx: CodegenContext,
     artifacts: Dict[str, str],
     is_storefront: bool,
     is_admin_ui: bool,
-) -> Tuple[Dict[str, str], int, int]:
+    run_ts: str,
+    run_slug: str,
+) -> Tuple[Dict[str, str], int, int, Optional[Dict[str, Any]]]:
     """
     Run LLM validator + optional revision pass.
 
@@ -514,12 +529,15 @@ def _phase_validator(
     locked as read-only context). Revision output is statically validated; if both
     attempts fail the run exits with an error and saves the bad artifacts.
 
-    Returns (artifacts, total_in_tokens, total_out_tokens).
+    Returns (artifacts, total_in_tokens, total_out_tokens, trace). `trace` is None
+    when no revision was attempted (validator skipped or passed on first pass); a
+    dict otherwise, always persisted to test_results/revision_traces/ keyed by
+    run_ts + slug so the report .md can link to it.
     """
     from config import get_settings
     if not get_settings().llm_validation_enabled:
         _info("Validator skipped (LLM_VALIDATION_ENABLED not set)")
-        return artifacts, 0, 0
+        return artifacts, 0, 0, None
 
     _spinner("Validator")
     t0 = time.monotonic()
@@ -531,7 +549,7 @@ def _phase_validator(
     if not issues:
         _agent_line("Validator", ok=True, ms=ms,
                     notes=_tok_note(val_in, val_out, extra="semantic check passed"))
-        return artifacts, val_in, val_out
+        return artifacts, val_in, val_out, None
 
     issue_summary = ", ".join(i["question"] for i in issues)
     _agent_line("Validator", ok=True, ms=ms,
@@ -550,6 +568,26 @@ def _phase_validator(
     )
     _LOCKED = _revision_locked_artifacts(issues)
 
+    # Accumulate a trace that gets persisted no matter which branch we exit on.
+    trace: Dict[str, Any] = {
+        "run_ts": run_ts,
+        "slug": run_slug,
+        "validator": {
+            "duration_ms": ms,
+            "in_tokens": val_in,
+            "out_tokens": val_out,
+            "issues": issues,
+        },
+        "locked_artifacts": sorted(_LOCKED),
+        "pre_artifacts": dict(artifacts),
+        "attempts": [],
+        "final_outcome": None,
+    }
+
+    def _finalize(outcome: str) -> None:
+        trace["final_outcome"] = outcome
+        _save_revision_trace(run_ts, run_slug, trace)
+
     _spinner("Revision")
     t0 = time.monotonic()
     revised, rev_in, rev_out = run_revision_agent(
@@ -565,10 +603,23 @@ def _phase_validator(
     total_out = val_out + rev_out
 
     frontend_revised = {k: v for k, v in revised.items() if k not in _LOCKED}
+    trace["attempts"].append({
+        "attempt": 1,
+        "duration_ms": ms,
+        "in_tokens": rev_in,
+        "out_tokens": rev_out,
+        "returned_artifacts": sorted(frontend_revised.keys()),
+        "post": frontend_revised,
+        "static_errors": {},
+        "outcome": None,
+    })
+
     if not frontend_revised:
         _agent_line("Revision", ok=False, ms=ms,
                     notes=_tok_note(rev_in, rev_out, extra="no frontend artifacts returned — keeping originals"))
-        return artifacts, total_in, total_out
+        trace["attempts"][-1]["outcome"] = "no_output"
+        _finalize("kept_originals")
+        return artifacts, total_in, total_out, trace
 
     # Statically validate the revised frontend artifacts before accepting them.
     merged = {**artifacts, **frontend_revised}
@@ -580,9 +631,13 @@ def _phase_validator(
     if not static_errors:
         _agent_line("Revision", ok=True, ms=ms,
                     notes=_tok_note(rev_in, rev_out, extra="semantic issues resolved"))
-        return merged, total_in, total_out
+        trace["attempts"][-1]["outcome"] = "accepted"
+        _finalize("resolved")
+        return merged, total_in, total_out, trace
 
     # First revision failed static validation — retry once with errors fed back.
+    trace["attempts"][-1]["static_errors"] = static_errors
+    trace["attempts"][-1]["outcome"] = "retrying"
     _agent_line("Revision", ok=False, ms=ms,
                 notes=_tok_note(rev_in, rev_out,
                                 extra=f"static validation failed ({len(static_errors)} artifact(s)) — retrying"))
@@ -612,12 +667,27 @@ def _phase_validator(
         k: v for k, v in all_errors2.items() if k in frontend_revised2
     }
 
+    trace["attempts"].append({
+        "attempt": 2,
+        "duration_ms": ms2,
+        "in_tokens": rev2_in,
+        "out_tokens": rev2_out,
+        "returned_artifacts": sorted(frontend_revised2.keys()),
+        "post": frontend_revised2,
+        "static_errors": static_errors2,
+        "outcome": None,
+    })
+
     if not static_errors2:
         _agent_line("Revision", ok=True, ms=ms2,
                     notes=_tok_note(rev2_in, rev2_out, extra="semantic issues resolved (static retry)"))
-        return merged2, total_in, total_out
+        trace["attempts"][-1]["outcome"] = "accepted"
+        _finalize("resolved_on_retry")
+        return merged2, total_in, total_out, trace
 
     # Both revision attempts produced structurally invalid code — fail the run.
+    trace["attempts"][-1]["outcome"] = "failed"
+    _finalize("failed")
     bad = {**frontend_revised, **frontend_revised2}
     path = _save_revision_failure_local(bad, static_errors2)
     _agent_line("Revision", ok=False, ms=ms2,
@@ -649,6 +719,44 @@ def _save_arch_json(prompt: str, intent: Dict, plan: Dict, errors: List[str], pr
     return path
 
 
+def _validator_revision_md_lines(trace: Dict[str, Any]) -> List[str]:
+    """Render a concise '## Validator + Revision' section from a trace dict.
+    Includes a relative-path link back to the full trace JSON on disk."""
+    issues = trace.get("validator", {}).get("issues") or []
+    attempts = trace.get("attempts") or []
+    final = trace.get("final_outcome") or "?"
+    lines = ["## Validator + Revision", ""]
+    lines.append(f"**Final outcome:** `{final}`  ")
+    lines.append(f"**Validator issues:** {len(issues)}  ")
+    lines.append(f"**Revision attempts:** {len(attempts)}")
+    lines.append("")
+    if issues:
+        lines.append("**Issues raised by validator:**")
+        lines.append("")
+        for iss in issues:
+            q = iss.get("question", "?")
+            msg = str(iss.get("issue", "")).strip()
+            lines.append(f"- *{q}*: {msg}")
+        lines.append("")
+    for att in attempts:
+        lines.append(
+            f"- Attempt {att.get('attempt')}: "
+            f"{att.get('duration_ms', 0)}ms · "
+            f"in={att.get('in_tokens', 0)} out={att.get('out_tokens', 0)} · "
+            f"returned={att.get('returned_artifacts') or []} · "
+            f"outcome=`{att.get('outcome')}`"
+        )
+        se = att.get("static_errors") or {}
+        for gen, errs in se.items():
+            for e in errs:
+                lines.append(f"    - [{gen}] {e}")
+    trace_rel = f"{_REVISION_TRACES_SUBDIR}/{trace['run_ts']}_{trace['slug']}.json"
+    lines.append("")
+    lines.append(f"**Full trace:** [{trace_rel}]({trace_rel})")
+    lines.append("")
+    return lines
+
+
 def _save_artifacts_md(
     prompt: str,
     artifacts: Dict[str, str],
@@ -658,9 +766,11 @@ def _save_artifacts_md(
     retry_log: Optional[List[Dict]] = None,
     intent: Optional[Dict] = None,
     plan: Optional[Dict] = None,
+    run_ts: Optional[str] = None,
+    validator_trace: Optional[Dict[str, Any]] = None,
 ) -> Path:
     TEST_RESULTS_DIR.mkdir(exist_ok=True)
-    ts   = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    ts   = run_ts or datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     path = TEST_RESULTS_DIR / f"{ts}_{_slug(prompt)}_{stop_label}.md"
 
     lines = [
@@ -688,6 +798,9 @@ def _save_artifacts_md(
                 for e in errs:
                     lines.append(f"- **{gen_name}**: {e}")
             lines.append("")
+
+    if validator_trace:
+        lines += _validator_revision_md_lines(validator_trace)
 
     lines += ["## Artifacts", ""]
     if artifacts.get("handler"):
@@ -901,6 +1014,8 @@ def main() -> None:
     is_admin_ui   = archetype in ("storefront_backend_admin", "backend_admin")
 
     total_start = time.monotonic()
+    run_ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    run_slug = _slug(prompt)
     all_tokens: Dict[str, Tuple[int, int]] = {}
 
     def _fail_db(reason: str) -> None:
@@ -946,13 +1061,16 @@ def main() -> None:
         _print_artifacts(artifacts)
         _print_token_summary(all_tokens)
         report = _save_artifacts_md(prompt, artifacts, "codegen", is_storefront, is_admin_ui,
-                                    retry_log or None, intent=intent, plan=plan)
+                                    retry_log or None, intent=intent, plan=plan,
+                                    run_ts=run_ts)
         print(f"\n  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
         _hr("━")
         return
 
     # ── Phase: LLM Validator + Revision ───────────────────────────────────────
-    artifacts, val_in, val_out = _phase_validator(base_ctx, artifacts, is_storefront, is_admin_ui)
+    artifacts, val_in, val_out, validator_trace = _phase_validator(
+        base_ctx, artifacts, is_storefront, is_admin_ui, run_ts, run_slug,
+    )
     if val_in or val_out:
         all_tokens["validator"] = (val_in, val_out)
 
@@ -961,7 +1079,8 @@ def main() -> None:
         _print_artifacts(artifacts)
         _print_token_summary(all_tokens)
         report = _save_artifacts_md(prompt, artifacts, "validator", is_storefront, is_admin_ui,
-                                    retry_log or None, intent=intent, plan=plan)
+                                    retry_log or None, intent=intent, plan=plan,
+                                    run_ts=run_ts, validator_trace=validator_trace)
         print(f"\n  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
         _hr("━")
         return
@@ -992,8 +1111,7 @@ def main() -> None:
 
     # ── Save full report ───────────────────────────────────────────────────────
     TEST_RESULTS_DIR.mkdir(exist_ok=True)
-    ts     = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    report = TEST_RESULTS_DIR / f"{ts}_{_slug(prompt)}.md"
+    report = TEST_RESULTS_DIR / f"{run_ts}_{run_slug}.md"
 
     total_in  = sum(v[0] for v in all_tokens.values())
     total_out = sum(v[1] for v in all_tokens.values())
@@ -1028,6 +1146,8 @@ def main() -> None:
                 for e in errs:
                     lines.append(f"- **{gen_name}**: {e}")
             lines.append("")
+    if validator_trace:
+        lines += _validator_revision_md_lines(validator_trace)
     lines += ["## Artifacts", ""]
     if artifacts.get("handler"):
         lines += ["### handler.js",    "", "```javascript", artifacts["handler"],   "```", ""]

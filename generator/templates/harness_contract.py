@@ -126,7 +126,9 @@ ctx.services.email.send({ to, data? }) → Promise<void>
 
   The variable names you pass in `data` become the token palette shown to the
   merchant in the Email tab, so use descriptive names (customerName, cartTotal,
-  recoveryUrl) rather than single letters.
+  recoveryUrl) rather than single letters. All `data` keys MUST be camelCase —
+  never snake_case or PascalCase. The merchant references them as {{camelCase}}
+  in the template.
 
   Example:
     await ctx.services.email.send({

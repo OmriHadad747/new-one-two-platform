@@ -331,11 +331,6 @@ def _format_quality_checklist(plan: Dict[str, Any]) -> str:
             "Webhook handler is idempotent — duplicate deliveries of the same event do not create duplicate records or actions"
         )
 
-    if shopify.get("cronSchedule"):
-        checks.append(
-            "Cron job has a reasonable LIMIT on DB queries and Shopify API calls to prevent processing unbounded rows"
-        )
-
     if impl.get("widgetApiCatalog"):
         checks.append(
             "Widget routes return useful error responses (not just empty {}) when data is missing or the request is invalid"

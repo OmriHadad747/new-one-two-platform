@@ -91,6 +91,11 @@ RULES:
 9. If platformApiCatalog is empty and the feature requires persistent data collection (e.g. an
    email signup form), do NOT silently collect data that will be discarded — render a clear
    "this feature requires backend configuration" message instead. Never fake a successful save.
+10. NEVER use React, JSX, or any JavaScript framework — vanilla DOM only.
+    FORBIDDEN: import statements of any kind (import React, import { useState }, etc.)
+    FORBIDDEN: export default function — the only allowed export is export function mount
+    FORBIDDEN: JSX syntax — use document.createElement() / innerHTML for all DOM construction
+    FORBIDDEN: React.createElement(), useState(), useEffect(), useRef(), or any React API
 
 The widget can render any UI it needs: forms, counters, timers, multi-step flows, etc.
 There are no restrictions on widget type — only on how it communicates with the outside world."""

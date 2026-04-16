@@ -67,6 +67,9 @@ feasibility: Is this app BUILDABLE with the platform's capability surface?
         app's admin UI. The handler's only contract is
         ctx.services.email.send({ to, data }): pass runtime variable values in
         `data`; the platform renders the merchant's template against them.
+        When describing `data` keys in handlerMustProduce prose, use camelCase
+        identifiers (customerName, cartValue, recoveryUrl) — never snake_case.
+        The merchant will reference them as {{camelCase}} in the template.
       - SMS — outbound text messages
       - NOT available: push notifications, Slack, WhatsApp, phone/voice calls,
         in-app real-time alerts
@@ -238,6 +241,12 @@ webhookContract: Required when webhookTopics is non-empty. Declares what the han
 cronContract: Required when cronSchedule is non-null. Declares what data each batch
   iteration must have before processing.
   - handlerMustProduce: what the cron handler resolves per batch item before acting.
+    MUST NOT describe per-item Shopify reads inside the loop. Every piece of
+    Shopify data the loop needs must come from the single bulk pre-fetch declared
+    in cronBatching; the loop body may only consult that pre-fetched data, the
+    DB, and local logic. If a "re-verify before acting" step sounds needed,
+    include the required field (e.g. completedAt / status) in the bulk pre-fetch
+    instead of re-querying per item.
 
 widgetTargetTemplates: Which Shopify theme template pages this widget is designed to appear on.
   null for backend apps.

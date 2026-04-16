@@ -259,6 +259,14 @@ def run_revision_agent(
     optionally "widget_js" and/or "admin_ui".
     Returns ({}, in, out) on parse failure — caller falls back to run_codegen_parallel.
     """
+    log.info(
+        "revision_agent: enter — issues=%d locked=%s static_retry=%s storefront=%s admin_ui=%s",
+        len(validation_issues or []),
+        sorted(locked_artifacts) if locked_artifacts else [],
+        bool(static_errors),
+        is_storefront,
+        is_admin_ui,
+    )
     user = _build_user_prompt(
         ctx,
         is_storefront=is_storefront,
@@ -313,4 +321,10 @@ def run_revision_agent(
             code = re.sub(r"```\s*$", "", code.strip(), flags=re.MULTILINE)
             artifacts["admin_ui"] = code.strip()
 
+    log.info(
+        "revision_agent: exit — returned=%s in_tokens=%d out_tokens=%d",
+        sorted(artifacts.keys()),
+        in_tok,
+        out_tok,
+    )
     return artifacts, in_tok, out_tok
