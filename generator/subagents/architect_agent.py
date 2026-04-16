@@ -60,7 +60,13 @@ feasibility: Is this app BUILDABLE with the platform's capability surface?
       - PostgreSQL — per-tenant relational state, full SQL
 
     Notifications & messaging
-      - Email — transactional / triggered emails
+      - Email — transactional / triggered emails.
+        Templates (subject, body, CTA, brand, {{variable}} substitution) are
+        owned by the PLATFORM, stored in its own app_email_configs table, and
+        edited by the merchant in the Ton dashboard's Email tab — NOT in your
+        app's admin UI. The handler's only contract is
+        ctx.services.email.send({ to, data }): pass runtime variable values in
+        `data`; the platform renders the merchant's template against them.
       - SMS — outbound text messages
       - NOT available: push notifications, Slack, WhatsApp, phone/voice calls,
         in-app real-time alerts
@@ -177,11 +183,22 @@ CONTRACTS — binding interfaces between components
 dbContracts: Authoritative typed table definitions. The migration generator produces
   DDL mechanically from this — do NOT rely on prose guidance anywhere.
 
-  Do NOT declare configuration/settings tables (e.g. points_per_dollar, thresholds,
-  templates) unless adminApiCatalog includes routes to read and write them. A config
-  table with no admin UI is inaccessible — the merchant can never change the value.
-  If no admin panel exists: hardcode defaults in the handler, or note the constraint
-  in platformGaps. Only add a settings table when the admin panel actively manages it.
+  Do NOT declare configuration/settings tables (e.g. points_per_dollar,
+  notification_thresholds, abandonment_delay_hours) unless adminApiCatalog
+  includes routes to read and write them. A config table with no admin UI is
+  inaccessible — the merchant can never change the value. If no admin panel
+  exists: hardcode defaults in the handler, or note the constraint in
+  platformGaps. Only add a settings table when the admin panel actively manages it.
+
+  Do NOT declare email-template state in your dbContracts. Columns like
+  email_subject, email_body, email_body_template, email_cta_label, email_cta_url,
+  email_from_name, or any other field representing the merchant-editable email
+  template are PLATFORM-OWNED (app_email_configs) — the merchant edits them in
+  the Ton dashboard's Email tab, not in your app's settings. Likewise, do NOT
+  add adminApiCatalog routes to read or write those fields. Your app may still
+  declare feature-specific behavior columns (e.g. abandonment_delay_hours,
+  is_enabled) when they drive HANDLER logic — just not the template strings
+  themselves.
 
   COLUMN RULES (violations cause validation failures at deploy time):
   - Every table MUST include tenant_id UUID NOT NULL — no exceptions.
@@ -407,7 +424,8 @@ def run_architect_agent(
     component_descriptions_section = (
         "\nMerchant-provided component descriptions (components added beyond the AI suggestion — "
         "incorporate these requirements into the contracts):\n"
-        + "\n".join(comp_parts) + "\n"
+        + "\n".join(comp_parts)
+        + "\n"
         if comp_parts
         else ""
     )

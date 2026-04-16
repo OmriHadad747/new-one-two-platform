@@ -106,7 +106,7 @@ ctx.shop — Shopify store info
 These are provided by the platform. No npm package needed — always available via ctx.
 
 ctx.services.email.send({ to, data? }) → Promise<void>
-  Send an email via the platform's email service (Resend-backed).
+  Send an email via the platform's email service.
 
   The handler ONLY provides the recipient and runtime variables. The platform
   owns everything else — subject, body, brand, layout, from address, delivery,

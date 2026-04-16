@@ -43,7 +43,7 @@ import logging as _log
 (_HERE / "test_results").mkdir(exist_ok=True)
 _log.basicConfig(
     handlers=[_log.FileHandler(_HERE / "test_results" / "generation.log")],
-    level=_log.DEBUG,
+    level=_log.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
     force=True,
 )
@@ -769,6 +769,9 @@ def _build_bundle(
         return re.findall(r"""['"]([^'"]+)['"]""", m.group(1))
 
     email_meta = extract_email_metadata(handler_code, intent, plan)
+    starter = email_meta.get("emailStarterContent")
+    if starter is not None and hasattr(starter, "model_dump"):
+        starter = starter.model_dump()
 
     return {
         "widgetModule":          artifacts.get("widget_js") if is_storefront else None,
@@ -795,7 +798,7 @@ def _build_bundle(
         "usesEmail":          bool(email_meta.get("usesEmail")),
         "emailVariables":     email_meta.get("emailVariables", []) or [],
         "emailTypeSuggestion": email_meta.get("emailTypeSuggestion"),
-        "emailStarterContent": email_meta.get("emailStarterContent"),
+        "emailStarterContent": starter,
     }
 
 
@@ -982,6 +985,7 @@ def main() -> None:
             bundle = _build_bundle(artifacts, intent, plan, explanation, is_storefront, is_admin_ui)
             db_local.store_bundle(job_id, app_id, bundle)
         except Exception as exc:
+            _log.info("DB bundle save failed: %s", exc, exc_info=True)
             _info(f"DB bundle save failed: {exc}")
 
     total_ms = int((time.monotonic() - total_start) * 1000)
