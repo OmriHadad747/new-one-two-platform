@@ -72,15 +72,6 @@ class CodegenContext:
                         existing tables.
     prior_admin_ui_code The currently deployed admin UI module, present only on
                         revision runs for apps with an admin panel.
-    peer_handler_code   Handler code produced by a peer generator in THIS run, injected
-                        into widget_js / admin_ui prompts during sequential retry so the
-                        UI generators see the real backend they're talking to — not just
-                        the architect's catalog. None on first attempt (peer code doesn't
-                        exist yet) and for the handler itself (can't see its own code).
-    peer_migration_sql  Migration DDL produced by a peer generator in THIS run, injected
-                        into the handler prompt during sequential retry so SQL queries
-                        use the exact column names and types that ended up in the schema.
-                        None on first attempt and for the migration generator itself.
     """
 
     intent: Dict[str, Any]
@@ -92,8 +83,6 @@ class CodegenContext:
     prior_widget_code: Optional[str] = None
     prior_migration_sql: Optional[str] = None
     prior_admin_ui_code: Optional[str] = None
-    peer_handler_code: Optional[str] = None
-    peer_migration_sql: Optional[str] = None
 
 
 

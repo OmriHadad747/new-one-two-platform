@@ -609,28 +609,13 @@ def _generate_artifacts(
         )
         return parallel_artifacts, parallel_tokens
 
-    # First attempt: parallel (fastest path; no peer code exists yet anyway).
-    # Retries: sequential in dependency order with peer artifacts injected into
-    # failing generators' prompts (migration → handler → {widget_js, admin_ui}).
-    # Peer injection gives UI generators the real handler they're talking to,
-    # which dramatically reduces contract-drift failures on retry.
-    if attempt == 1:
-        log.info("job=%s codegen attempt=1 mode=parallel", request.jobId)
-        return run_codegen_parallel(
-            base_ctx,
-            is_storefront=is_storefront,
-            is_admin_ui=is_admin_ui,
-            error_map=error_map,
-            cumulative_errors=cumulative_errors,
-            artifacts=artifacts,
-        )
     log.info(
-        "job=%s codegen attempt=%d mode=sequential peer_injection=true failing=%s",
+        "job=%s codegen attempt=%d mode=parallel failing=%s",
         request.jobId,
         attempt,
-        sorted(error_map.keys()),
+        sorted(error_map.keys()) if attempt > 1 else [],
     )
-    return run_codegen_sequential(
+    return run_codegen_parallel(
         base_ctx,
         is_storefront=is_storefront,
         is_admin_ui=is_admin_ui,
@@ -1053,23 +1038,9 @@ def _build_prev_errors(
 def _build_codegen_context(
     base_ctx: CodegenContext,
     *,
-    gen_name: str,
     previous_errors: Optional[List[str]],
-    peer_handler_code: Optional[str] = None,
-    peer_migration_sql: Optional[str] = None,
 ) -> CodegenContext:
-    """
-    Build the per-generator CodegenContext for one invocation.
-
-    Peer injection rules (only matter on sequential retry):
-      migration  — neither peer is useful; it only reads dbContracts.
-      handler    — peer_migration_sql only; seeing its own prior code would confuse.
-      widget_js  — peer_handler_code only; the handler is what it calls.
-      admin_ui   — peer_handler_code only; same reason.
-    """
-    peer_handler = peer_handler_code if gen_name in ("widget_js", "admin_ui") else None
-    peer_migration = peer_migration_sql if gen_name == "handler" else None
-
+    """Build the per-generator CodegenContext for one invocation."""
     return CodegenContext(
         intent=base_ctx.intent,
         plan=base_ctx.plan,
@@ -1080,8 +1051,6 @@ def _build_codegen_context(
         prior_widget_code=base_ctx.prior_widget_code,
         prior_migration_sql=base_ctx.prior_migration_sql,
         prior_admin_ui_code=base_ctx.prior_admin_ui_code,
-        peer_handler_code=peer_handler,
-        peer_migration_sql=peer_migration,
     )
 
 
@@ -1128,7 +1097,6 @@ def run_codegen_parallel(
                 gen.generate,
                 _build_codegen_context(
                     base_ctx,
-                    gen_name=gen.name,
                     previous_errors=_build_prev_errors(
                         gen.name, cumulative_errors, error_map
                     ),
@@ -1141,99 +1109,6 @@ def run_codegen_parallel(
             artifact, in_tok, out_tok = future.result()  # raises on sub-agent exception
             artifacts[name] = artifact
             per_agent_tokens[name] = (in_tok, out_tok)
-
-    return artifacts, per_agent_tokens
-
-
-def run_codegen_sequential(
-    base_ctx: CodegenContext,
-    *,
-    is_storefront: bool,
-    is_admin_ui: bool,
-    error_map: Dict[str, List[str]],
-    cumulative_errors: Dict[str, List[str]],
-    artifacts: Dict[str, str],
-) -> Tuple[Dict[str, str], Dict[str, Tuple[int, int]]]:
-    """
-    Run generators in dependency order with peer-artifact injection. Used for
-    retry attempts (attempt > 1) where reliability beats parallelism.
-
-    Execution order:
-      1. migration   (no peer deps)
-      2. handler     (sees freshly generated migration SQL)
-      3. widget_js + admin_ui in parallel  (both see freshly generated handler)
-
-    After each step the `artifacts` dict is updated so the next step's
-    CodegenContext carries the real code its peer just produced. This closes
-    the gap between the architect's abstract contracts and the concrete code —
-    widget_js / admin_ui align with the actual handler they call, not just the
-    catalog description of it. Empirically this kills the whack-a-mole failure
-    where handler regenerates with a slightly different field name and the
-    UI layer's previous matching code now breaks.
-
-    Same signature / return shape as run_codegen_parallel so callers can
-    dispatch by attempt number without further plumbing.
-    """
-    to_run = _plan_codegen_batch(
-        is_storefront=is_storefront,
-        is_admin_ui=is_admin_ui,
-        error_map=error_map,
-        artifacts=artifacts,
-    )
-    if not to_run:
-        return artifacts, {}
-
-    to_run_names = {g.name for g in to_run}
-    gen_by_name = {g.name: g for g in to_run}
-    per_agent_tokens: Dict[str, Tuple[int, int]] = {}
-
-    def _run_one(name: str) -> None:
-        gen = gen_by_name[name]
-        ctx = _build_codegen_context(
-            base_ctx,
-            gen_name=name,
-            previous_errors=_build_prev_errors(name, cumulative_errors, error_map),
-            peer_handler_code=artifacts.get("handler"),
-            peer_migration_sql=artifacts.get("migration"),
-        )
-        artifact, in_tok, out_tok = gen.generate(ctx)
-        artifacts[name] = artifact
-        per_agent_tokens[name] = (in_tok, out_tok)
-
-    # Phase 1 — migration first (no peer deps).
-    if "migration" in to_run_names:
-        _run_one("migration")
-
-    # Phase 2 — handler, now able to read the freshly emitted migration DDL.
-    if "handler" in to_run_names:
-        _run_one("handler")
-
-    # Phase 3 — widget_js + admin_ui in parallel (independent of each other),
-    # both seeing the freshly regenerated handler in peer_handler_code.
-    ui_names = [n for n in ("widget_js", "admin_ui") if n in to_run_names]
-    if len(ui_names) == 1:
-        _run_one(ui_names[0])
-    elif len(ui_names) > 1:
-        with ThreadPoolExecutor(max_workers=len(ui_names)) as pool:
-            futures = {
-                name: pool.submit(
-                    gen_by_name[name].generate,
-                    _build_codegen_context(
-                        base_ctx,
-                        gen_name=name,
-                        previous_errors=_build_prev_errors(
-                            name, cumulative_errors, error_map
-                        ),
-                        peer_handler_code=artifacts.get("handler"),
-                        peer_migration_sql=artifacts.get("migration"),
-                    ),
-                )
-                for name in ui_names
-            }
-            for name, future in futures.items():
-                artifact, in_tok, out_tok = future.result()
-                artifacts[name] = artifact
-                per_agent_tokens[name] = (in_tok, out_tok)
 
     return artifacts, per_agent_tokens
 
