@@ -34,7 +34,7 @@ OUTPUT — valid JSON only, no markdown fences:
   "triggerTypes": ["<trigger>", ...],
   "resources": ["<resource>", ...],
   "desiredOutcome": "<one sentence, merchant or customer perspective>",
-  "cronSchedule": null | "<5-field cron expression, only when triggerTypes includes cron>",
+  "cronHint": null | "<brief schedule description when triggerTypes includes cron, e.g. 'every 6 hours', 'daily at midnight', 'every Monday at 9am'>",
   "appCategory": "<category>",
   "qualityBrief": "<3-5 sentences describing what makes a GOOD version of this app>"
 }
@@ -87,7 +87,7 @@ RESOURCES — only what the feature reads or writes. Use ONLY these values:
 "orders", "inventory", "customers", "products", "discounts"
 Never list communication channels (email, SMS) as resources — they are delivery mechanisms, not Shopify data resources.
 
-cronSchedule — standard 5-field cron string if "cron" is in triggerTypes, otherwise null."""
+cronHint — brief natural-language schedule (e.g. "every 6 hours", "nightly at 2am") when "cron" is in triggerTypes, otherwise null. The architect converts this into a precise cron expression."""
 
 
 def run_product_agent(prompt: str) -> Tuple[Dict[str, Any], int, int]:
@@ -130,7 +130,7 @@ When you have enough to proceed:
     "triggerTypes": ["<trigger>", ...],
     "resources": ["<resource>", ...],
     "desiredOutcome": "<one sentence>",
-    "cronSchedule": null | "<5-field cron expression, only when triggerTypes includes cron>",
+    "cronHint": null | "<brief schedule description when triggerTypes includes cron, e.g. 'every 6 hours', 'daily at midnight'>",
     "appCategory": "<category>",
     "qualityBrief": "<3-5 sentences: what makes a good version of this app — edge cases, UX details, common pitfalls>"
   }
