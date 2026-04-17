@@ -6,10 +6,9 @@ host.call(path, body) channel to the handler. Declared only for storefront
 archetypes; the architect emits `widgetCapabilities: null` for backend-only
 apps that have no widget at all.
 
-Each entry is a Capability with a short architect-facing description and
-(once the widget JIT exists) a full widget-prompt docs block. Today the
-widget generator does not consume docs — `.docs` is set but informational
-only; widget JIT is the follow-up work.
+Each entry is a Capability with a short architect-facing description and a
+full widget-prompt docs block. The widget JIT in widget_js_agent.py injects
+.docs for every declared entry, mirroring the handler JIT pattern.
 """
 
 from __future__ import annotations
@@ -36,7 +35,23 @@ host.storefront(relativePath) → Promise<any>
     '/cart.js'                     → current cart state
 
 The widget calls host.storefront() directly — these requests do NOT touch the
-backend handler. Do not try to proxy storefront reads through host.call().\
+backend handler. Do not try to proxy storefront reads through host.call().
+
+URL access — read the current page URL to build storefront paths:
+  location.pathname — e.g. "/products/my-handle", "/collections/sale"
+  location.search   — e.g. "?variant=12345"
+  These are the ONLY browser globals you may read for page context; all other
+  window.* / document.* access rules from the base prompt still apply.
+
+DECISION RULE — host.call vs host.storefront:
+  Public Shopify data (product details, variant availability, pricing, cart)
+    → host.storefront(relativePath)
+  Your backend (DB state, Admin-API-only data, writes)
+    → host.call(path, body)
+
+Rule: host.storefront(path) must use a relative path, never a full URL.
+Rule: host.storefront() paths are Shopify's public paths — they are NOT listed
+  in the platformApiCatalog. Only host.call() paths come from the catalog.\
 """,
             ),
         ),

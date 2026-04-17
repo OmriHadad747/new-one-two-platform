@@ -20,87 +20,9 @@ import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
+from subagents.prompts.widget import WIDGET_BASE
 from subagents.static_validation import validate_widget_artifact
-
-# TODO: migrate host.* API docs below to the registry-driven JIT pattern.
-#   Widget capabilities are already defined in templates/capabilities/widget.py
-#   with full `.docs` blocks. When this agent switches to JIT assembly, the
-#   docs for declared widgetCapabilities should be injected here in the same
-#   way handler_agent.py does — see _build_jit_sections() there for the pattern.
-_SYSTEM_PROMPT = """You are generating a Shopify storefront widget as a self-contained JavaScript ES module.
-
-The widget is loaded by a thin runtime (App Block) that calls:
-  widget.mount(container, host)
-
-WHERE:
-  container — the DOM element the widget owns. Render all your HTML inside it.
-  host      — the ONLY interface to the outside world. Its full shape:
-
-    host.context = {
-      shop: string,           // "example.myshopify.com"
-      customerId: string|null,// Shopify customer ID, null for guests
-    }
-    // host.context has NO product/variant/page fields — the runtime is a generic loader.
-    // To access any Shopify page data, read the current URL then call host.storefront():
-    //   location.pathname  — e.g. "/products/my-handle", "/collections/sale"
-    //   location.search    — e.g. "?variant=12345"
-    // location.pathname and location.search are the ONLY browser globals you may access.
-
-    host.call(path, body?)        // POST to your platform backend. Returns Promise<any>.
-                                  // Use ONLY for: DB reads/writes, Admin-API-only data, mutations.
-                                  // NEVER use for data available from Shopify's public storefront API.
-                                  // path must be one of the paths in platformApiCatalog.
-
-    host.storefront(relativePath) // Fetch Shopify's public storefront endpoints. Returns Promise<any>.
-                                  // Use for ALL publicly available Shopify data.
-                                  // relativePath must be a relative path (no hostname).
-                                  // Examples:
-                                  //   host.storefront('/products/' + handle + '.js')    → product JSON
-                                  //   host.storefront('/collections/' + handle + '.js') → collection JSON
-                                  //   host.storefront('/cart.js')                       → cart JSON
-
-    host.getFormData(form)        // Reads named inputs from a <form> element → plain object.
-
-RULES:
-1. Export ONLY a named `mount` function: export function mount(container, host) { ... }
-2. Render only inside `container` — never access the DOM outside it
-3. For backend requests use host.call(). For Shopify public storefront data use host.storefront().
-   NEVER use raw fetch(), XMLHttpRequest, or hardcoded URLs.
-   Decision rule: if the data is publicly available from Shopify's storefront (product details,
-   variant availability, pricing, cart) → host.storefront(). If it requires your backend
-   (DB state, Admin-API-only data, writes) → host.call().
-4. DOM scoping — route ALL DOM access through `container` or document creation helpers:
-   ALLOWED:   container.querySelector()  container.querySelectorAll()
-              container.appendChild()    container.innerHTML
-              document.createElement()   document.createTextNode()
-   FORBIDDEN: document.querySelector()  document.getElementById()
-              document.body             document.head
-              document.title            document.cookie
-              window.* (any property)
-   CSS/styles — inject into container, never document.head:
-     const style = document.createElement('style');
-     style.textContent = `.my-widget { color: red; }`;
-     container.appendChild(style);
-   EXCEPTION: location.pathname and location.search are allowed for reading the current page URL.
-5. Never use eval(), Function(), setInterval.
-   setTimeout is allowed ONLY for short debounce/throttle delays with a literal
-   numeric argument ≤500ms (e.g. setTimeout(() => search(q), 300)). Longer
-   delays or computed delays are rejected — the widget runs inside the shopper's
-   page and must not hold resources open.
-6. Never hardcode tenant IDs, shop domains, or entity IDs.
-   Read shop and customerId from host.context. Read all other page/entity context from the
-   URL (location.pathname / location.search) and resolve via host.storefront().
-7. All host.call() paths must come from the platformApiCatalog — never invent paths.
-   host.storefront() paths are Shopify's public paths, not from the catalog.
-8. Output ONLY the raw JavaScript — no markdown fences, no explanation, no comments outside the code
-9. If platformApiCatalog is empty and the feature requires persistent data collection (e.g. an
-   email signup form), do NOT silently collect data that will be discarded — render a clear
-   "this feature requires backend configuration" message instead. Never fake a successful save.
-10. NEVER use React, JSX, or any JavaScript framework — vanilla DOM only.
-    FORBIDDEN: import statements of any kind (import React, import { useState }, etc.)
-    FORBIDDEN: export default function — the only allowed export is export function mount
-    FORBIDDEN: JSX syntax — use document.createElement() / innerHTML for all DOM construction
-    FORBIDDEN: React.createElement(), useState(), useEffect(), useRef(), or any React API"""
+from templates.capabilities.widget import WIDGET_CAPABILITIES
 
 
 class WidgetJsGenerator(Generator):
@@ -110,9 +32,10 @@ class WidgetJsGenerator(Generator):
     # ── Generator interface ────────────────────────────────────────────────────
 
     def system_prompt(self) -> str:
-        return _SYSTEM_PROMPT
+        return WIDGET_BASE
 
     def user_prompt(self, ctx: CodegenContext) -> str:
+        jit_sections = _build_jit_sections(ctx.plan)
         ux_block = _format_ux_guidance(ctx.plan)
         ux_expectations_block = _format_ux_expectations(ctx.plan)
         quality_brief_block = _format_quality_brief(ctx.intent)
@@ -120,6 +43,7 @@ class WidgetJsGenerator(Generator):
         prior_block = _format_prior_widget(ctx.prior_widget_code)
 
         return (
+            f"{jit_sections}"
             f"Feature to build: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
             f"{quality_brief_block}"
@@ -168,6 +92,28 @@ def _sanitize_dom_access(code: str) -> str:
     code = re.sub(r"\bdocument\.head\b", "container", code)
     code = re.sub(r"\bdocument\.body\b", "container", code)
     return code
+
+
+# ── JIT capability section builder ────────────────────────────────────────────
+
+
+def _build_jit_sections(plan: Dict[str, Any]) -> str:
+    """
+    Inject capability docs for each widgetCapability the architect declared.
+
+    Mirrors handler_agent._build_jit_sections: iterate the registry in its
+    declared order (stable assembly → cache-friendly for the same cap set),
+    emit .docs for every entry that appears in widgetCapabilities. Undeclared
+    capabilities are absent from the prompt so the model cannot call APIs the
+    architect did not authorize.
+    """
+    impl = plan.get("appContracts") or {}
+    declared = set(impl.get("widgetCapabilities") or [])
+    sections: List[str] = []
+    for cap_name, cap in WIDGET_CAPABILITIES.items():
+        if cap_name in declared and cap.docs:
+            sections.append(cap.docs)
+    return "\n\n".join(sections) + ("\n\n" if sections else "")
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────
