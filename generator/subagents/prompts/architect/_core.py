@@ -121,9 +121,17 @@ edgeCases: Array of 3–6 specific edge cases the handler MUST handle for this
     guest customers, null fields in payloads, concurrent requests)
   - Specific to THIS app's domain (not generic "handle errors" advice)
   - Likely to cause data corruption, duplicate actions, or broken UX if ignored
+  Describe scenarios SEMANTICALLY — never cite literal Shopify API enum values
+  (strings like "fulfilled", "subscribed", "not_subscribed", "paid",
+  "authorized"). The handler has the live Shopify API context and will pick
+  the correct enum value itself. Prescribing an enum value you guessed at
+  risks the handler trusting it verbatim and comparing against a string
+  that does not exist in Shopify's response, silently no-opping the guard.
   Examples:
-    ✅ "Customer subscribes to a variant that gets deleted before restock — clean up orphaned subscriptions"
-    ✅ "Multiple inventory_levels/update webhooks fire in rapid succession for the same variant — deduplicate notifications"
+    ✅ "<Shopify resource> referenced by the app is deleted before the handler acts on it — clean up orphaned records"
+    ✅ "Multiple webhooks for the same resource fire in rapid succession — deduplicate writes"
+    ✅ "Customer/resource reaches a terminal state semantically described in plain English — handler skips further action"
+    ❌ "<resource>.<enum_field> == '<literal_enum_value>' — skip the action" (literal enum string; handler may trust it verbatim)
     ❌ "Handle errors gracefully" — too generic, not actionable
 
 uxExpectations: Describes what good UX looks like for each surface this app has.

@@ -169,6 +169,7 @@ class AdminUiGenerator(Generator):
         gaps_block = _format_gaps(ctx.plan)
         ux_expectations_block = _format_ux_expectations(ctx.plan)
         quality_brief_block = _format_quality_brief(ctx.intent)
+        state_machine_block = _format_state_machine(ctx.plan)
         prior_block = _format_prior_admin_ui(ctx.prior_admin_ui_code)
 
         return (
@@ -177,6 +178,7 @@ class AdminUiGenerator(Generator):
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
             f"{quality_brief_block}"
             f"{ux_expectations_block}"
+            f"{state_machine_block}"
             f"Admin API catalog — the ONLY paths the panel may call via bridge.call().\n"
             f"Use EXACTLY the requestShape shown when building the bridge.call() body.\n"
             f"Expect EXACTLY the responseShape shown when reading the result.\n"
@@ -245,6 +247,48 @@ def _format_ux_expectations(plan: Dict[str, Any]) -> str:
     return (
         "UX expectations for this admin panel:\n"
         f"{admin}\n\n"
+    )
+
+
+def _format_state_machine(plan: Dict[str, Any]) -> str:
+    """
+    Inject the canonical state vocabulary when the architect declared a
+    stateMachine. Without this the UI generator has no way to know which
+    status values the handler actually sets, and invents filter options
+    (e.g. "skipped") that the handler never produces — leaving the
+    filter dead in the UI. The set below is the union of every `from`
+    and `to` value across transitions; those are the ONLY status values
+    the UI may reference in filters, badges, or conditional rendering.
+    """
+    sm = (plan.get("appContracts") or {}).get("stateMachine")
+    if not isinstance(sm, dict):
+        return ""
+    transitions = sm.get("transitions") or []
+    if not isinstance(transitions, list) or not transitions:
+        return ""
+    states: List[str] = []
+    seen = set()
+    for t in transitions:
+        if not isinstance(t, dict):
+            continue
+        for key in ("from", "to"):
+            val = t.get(key)
+            if isinstance(val, str) and val and val not in seen:
+                states.append(val)
+                seen.add(val)
+    if not states:
+        return ""
+    tracked = sm.get("trackedField") or "status"
+    values_csv = ", ".join(f'"{s}"' for s in states)
+    return (
+        "Status vocabulary — the handler stores these EXACT values in the "
+        f"`{tracked}` column:\n"
+        f"  [{values_csv}]\n"
+        "When rendering filter dropdowns, status badges, or any UI that "
+        "references a status value, use ONLY values from this list. Do NOT "
+        "invent additional states (e.g. a 'skipped' filter when the handler "
+        "never sets 'skipped'); those render dead options the merchant "
+        "cannot act on.\n\n"
     )
 
 

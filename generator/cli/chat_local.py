@@ -26,7 +26,9 @@ import dataclasses
 import json
 import os
 import re
+import shutil
 import sys
+import textwrap
 import time
 from datetime import datetime
 from pathlib import Path
@@ -553,8 +555,23 @@ def _phase_validator(
     issue_summary = ", ".join(i["question"] for i in issues)
     _agent_line("Validator", ok=True, ms=ms,
                 notes=_tok_note(val_in, val_out, extra=f"{len(issues)} issue(s): {issue_summary}"))
+    # Print each issue fully, wrapped at terminal width with indented
+    # continuation lines. The previous [:80] cap silently truncated
+    # issue messages mid-sentence, hiding the actual diagnosis.
+    term_w = max(60, shutil.get_terminal_size((100, 20)).columns)
+    initial_indent = "    • "
+    subsequent_indent = "      "
     for iss in issues:
-        print(f"    {_DIM}• {iss.get('question', '?')}: {str(iss.get('issue', ''))[:80]}{_RESET}")
+        header = f"{iss.get('question', '?')}: {iss.get('issue', '')}"
+        wrapped = textwrap.fill(
+            header,
+            width=term_w,
+            initial_indent=initial_indent,
+            subsequent_indent=subsequent_indent,
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
+        print(f"{_DIM}{wrapped}{_RESET}")
 
     # Build context from the fresh codegen output so the revision agent works from
     # the actual code it needs to fix, not from a (possibly absent) prior bundle.
@@ -767,6 +784,7 @@ def _save_artifacts_md(
     plan: Optional[Dict] = None,
     run_ts: Optional[str] = None,
     validator_trace: Optional[Dict[str, Any]] = None,
+    handler_email_metadata: Optional[Dict[str, Any]] = None,
 ) -> Path:
     TEST_RESULTS_DIR.mkdir(exist_ok=True)
     ts   = run_ts or datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
@@ -804,6 +822,8 @@ def _save_artifacts_md(
     lines += ["## Artifacts", ""]
     if artifacts.get("handler"):
         lines += ["### handler.js",    "", "```javascript", artifacts["handler"],    "```", ""]
+    if handler_email_metadata is not None:
+        lines += _email_metadata_md_lines(handler_email_metadata)
     if artifacts.get("migration"):
         lines += ["### migration.sql", "", "```sql",        artifacts["migration"],  "```", ""]
     if is_storefront and artifacts.get("widget_js"):
@@ -813,6 +833,26 @@ def _save_artifacts_md(
 
     path.write_text("\n".join(lines) + "\n")
     return path
+
+
+def _email_metadata_md_lines(meta: Dict[str, Any]) -> List[str]:
+    """
+    Render the handler's email-metadata sidecar for the test-results report.
+
+    Makes sidecar presence, declared variables, and starter content inspectable
+    at a glance — matches the contract in templates/capabilities/handler.py
+    ("Email metadata sidecar"). Empty/None metadata produces nothing.
+    """
+    if not meta:
+        return []
+    return [
+        "### handler email metadata (sidecar)",
+        "",
+        "```json",
+        json.dumps(meta, indent=2),
+        "```",
+        "",
+    ]
 
 
 def _print_arch(intent: Dict, plan: Dict) -> None:
@@ -1078,7 +1118,8 @@ def main() -> None:
         _print_token_summary(all_tokens)
         report = _save_artifacts_md(prompt, artifacts, "codegen", is_storefront, is_admin_ui,
                                     retry_log or None, intent=intent, plan=plan,
-                                    run_ts=run_ts)
+                                    run_ts=run_ts,
+                                    handler_email_metadata=base_ctx.handler_email_metadata)
         print(f"\n  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
         _hr("━")
         return
@@ -1096,7 +1137,8 @@ def main() -> None:
         _print_token_summary(all_tokens)
         report = _save_artifacts_md(prompt, artifacts, "validator", is_storefront, is_admin_ui,
                                     retry_log or None, intent=intent, plan=plan,
-                                    run_ts=run_ts, validator_trace=validator_trace)
+                                    run_ts=run_ts, validator_trace=validator_trace,
+                                    handler_email_metadata=base_ctx.handler_email_metadata)
         print(f"\n  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
         _hr("━")
         return
@@ -1170,6 +1212,8 @@ def main() -> None:
     lines += ["## Artifacts", ""]
     if artifacts.get("handler"):
         lines += ["### handler.js",    "", "```javascript", artifacts["handler"],   "```", ""]
+    if base_ctx.handler_email_metadata is not None:
+        lines += _email_metadata_md_lines(base_ctx.handler_email_metadata)
     if artifacts.get("migration"):
         lines += ["### migration.sql", "", "```sql",        artifacts["migration"], "```", ""]
     if is_storefront and artifacts.get("widget_js"):

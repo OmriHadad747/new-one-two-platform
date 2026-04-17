@@ -91,7 +91,15 @@ emailSpec: Structured spec for the email the handler will send. MUST be
     This drives the handler's starter subject/body copy — the more concrete,
     the better the starter content the merchant sees on first open.
   - Keep this null if the handler does not send email. Do NOT invent an
-    emailSpec to document hypothetical future email sends."""
+    emailSpec to document hypothetical future email sends.
+  - When emailSpec is set, the handlerMustProduce on whichever contract
+    feeds the send (webhookContract or cronContract) MUST enumerate every
+    piece of data the merchant will reference in the email template —
+    recipient display name for personalization, the full content the email
+    describes (not just an ID or a single sample), and any concrete action
+    URL the CTA will point to. Listing only what the DB needs leaves the
+    handler to improvise an impoverished variable set the merchant cannot
+    build a decent template from."""
 
 
 WIDGET_CAPABILITIES = """\
