@@ -29,6 +29,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from templates.capabilities import (
+    ALLOWED_ADMIN_CAPABILITIES,
+    ALLOWED_HANDLER_CAPABILITIES,
+    ALLOWED_WIDGET_CAPABILITIES,
+)
+
 # ── Webhook topic registry ────────────────────────────────────────────────────
 #
 # Primary source: shopify_mcp/cache/webhook_topics.json — populated by
@@ -142,6 +148,12 @@ def validate_architect_plan(
       14. dbContracts entries must include a tenant_id column.
       15. storefront apps must declare widgetTargetTemplates (at least one valid template).
       16. cronBatching, when non-null, must include required=true.
+      17. handlerCapabilities, when present, must be an array of strings drawn
+          from the handler vocabulary in templates/capabilities/handler.py.
+      18. widgetCapabilities must be null for non-storefront archetypes and an
+          array from the widget vocabulary for storefront archetypes.
+      19. adminCapabilities must be null for non-admin archetypes and an array
+          from the admin vocabulary for admin archetypes (registry empty today).
     """
     errors: List[str] = []
     shopify = architect_output.get("shopifyPlan") or {}
@@ -393,7 +405,94 @@ def validate_architect_plan(
                 "knows to inject the bulk-fetch pattern"
             )
 
+    # 17. handlerCapabilities — closed-vocabulary array, always applicable.
+    #     Omitted is treated as [] (handler JIT falls back to include-all);
+    #     when present it must be a list of values from the handler vocabulary.
+    _check_capability_list(
+        impl.get("handlerCapabilities"),
+        field="handlerCapabilities",
+        allowed=ALLOWED_HANDLER_CAPABILITIES,
+        errors=errors,
+    )
+
+    # 18. widgetCapabilities — present only for storefront archetypes.
+    #     null for backend / backend_admin, array (from widget vocabulary) for
+    #     storefront_backend / storefront_backend_admin.
+    widget_caps = impl.get("widgetCapabilities")
+    has_widget = app_archetype in ("storefront_backend", "storefront_backend_admin")
+    if has_widget:
+        _check_capability_list(
+            widget_caps,
+            field="widgetCapabilities",
+            allowed=ALLOWED_WIDGET_CAPABILITIES,
+            errors=errors,
+        )
+    elif widget_caps is not None:
+        errors.append(
+            f"widgetCapabilities must be null for a {app_archetype!r} app — "
+            "this archetype has no storefront widget, so there are no widget "
+            "capabilities to declare (use null, not [])"
+        )
+
+    # 19. adminCapabilities — present only for admin archetypes.
+    #     null for backend / storefront_backend, array (from admin vocabulary)
+    #     for backend_admin / storefront_backend_admin. Admin vocabulary is
+    #     empty today so the array is effectively always [] for admin archetypes.
+    admin_caps = impl.get("adminCapabilities")
+    has_admin_panel = app_archetype in ("backend_admin", "storefront_backend_admin")
+    if has_admin_panel:
+        _check_capability_list(
+            admin_caps,
+            field="adminCapabilities",
+            allowed=ALLOWED_ADMIN_CAPABILITIES,
+            errors=errors,
+        )
+    elif admin_caps is not None:
+        errors.append(
+            f"adminCapabilities must be null for a {app_archetype!r} app — "
+            "this archetype has no admin panel, so there are no admin "
+            "capabilities to declare (use null, not [])"
+        )
+
     return errors
+
+
+def _check_capability_list(
+    value: Any,
+    *,
+    field: str,
+    allowed: frozenset,
+    errors: List[str],
+) -> None:
+    """
+    Shared capability-list validation. Treats None as "omitted" (no-op).
+    Rejects non-list, non-string items, and values outside the allowed set.
+    """
+    if value is None:
+        return
+    if not isinstance(value, list):
+        errors.append(
+            f"{field} must be an array of strings (or omitted) — "
+            f"got {type(value).__name__}"
+        )
+        return
+    unknown: List[str] = []
+    bad_type: List[Any] = []
+    for item in value:
+        if not isinstance(item, str):
+            bad_type.append(item)
+        elif item not in allowed:
+            unknown.append(item)
+    if bad_type:
+        errors.append(
+            f"{field} contains non-string entries {bad_type!r} — "
+            "every entry must be a capability name string"
+        )
+    if unknown:
+        errors.append(
+            f"{field} contains unknown value(s) {unknown!r} — "
+            f"allowed values: {sorted(allowed)}"
+        )
 
 
 def _extract_js_fields(obj_literal: str) -> List[str]:

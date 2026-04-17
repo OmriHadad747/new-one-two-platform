@@ -19,11 +19,13 @@ _WIDGET_EXAMPLE = """\
         "requestShape": { "<inputField>": "string" },
         "responseShape": { "<resultField>": "boolean" }
       }
-    ],"""
+    ],
+    "widgetCapabilities": [],"""
 
 _WIDGET_NULL = """\
     "widgetTargetTemplates": null,
-    "widgetApiCatalog": null,"""
+    "widgetApiCatalog": null,
+    "widgetCapabilities": null,"""
 
 _ADMIN_EXAMPLE = """\
     "adminApiCatalog": [
@@ -33,10 +35,12 @@ _ADMIN_EXAMPLE = """\
         "requestShape": { "page": "number", "page_size": "number" },
         "responseShape": { "items": [], "total": "number", "page": "number", "page_size": "number" }
       }
-    ]"""
+    ],
+    "adminCapabilities": []"""
 
 _ADMIN_NULL = """\
-    "adminApiCatalog": null"""
+    "adminApiCatalog": null,
+    "adminCapabilities": null"""
 
 _UX_STOREFRONT_PLACEHOLDER = '"<what the customer experience should feel like>"'
 _UX_ADMIN_PLACEHOLDER = '"<what the merchant dashboard should prioritize>"'
@@ -79,6 +83,7 @@ def build_output_shape(archetype: str) -> str:
         "    },\n"
         '    "stateMachine": null,\n'
         '    "platformGaps": [],\n'
+        '    "handlerCapabilities": [],\n'
         '    "cronBatching": null,\n'
         '    "dbContracts": [\n'
         "      {\n"

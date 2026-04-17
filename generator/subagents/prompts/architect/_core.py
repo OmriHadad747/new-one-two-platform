@@ -1,6 +1,17 @@
 """
 Core architect prompt sections — always included for every archetype.
+
+The AVAILABLE capabilities list in FEASIBILITY is rendered from the scoped
+registries in templates/capabilities/ so the vocabulary cannot drift between
+what the architect is told exists and what it is allowed to declare in
+handlerCapabilities / widgetCapabilities. Add a capability to the registry
+and this list updates automatically.
 """
+
+from templates.capabilities.admin import ADMIN_CAPABILITIES
+from templates.capabilities.handler import HANDLER_NPM_PACKAGES, HANDLER_SERVICES
+from templates.capabilities.widget import WIDGET_CAPABILITIES
+
 
 INTRO = """\
 You are a senior Shopify applications architect. You produce the complete structural plan and the binding contracts between all app components. Code generators implement directly from your output.
@@ -23,7 +34,13 @@ webhookTopics: Subscribe only to topics whose payload fields are actively consum
 cronSchedule: null unless periodic polling is required. Use standard 5-field cron expression.\
 """
 
-FEASIBILITY = """\
+
+def _render_registry(registry, indent: str = "    ") -> str:
+    return "\n".join(f'{indent}- "{name}" — {desc}' for name, desc in registry.items())
+
+
+FEASIBILITY = (
+    """\
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SECTION 2 — appContracts
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -33,41 +50,37 @@ feasibility: Is this app BUILDABLE with the platform's capability surface?
   be delivered without a capability that is genuinely absent AND has no valid
   in-platform substitute.
 
-  AVAILABLE capabilities (these and ONLY these may appear in platformGaps mitigations):
+  AVAILABLE capabilities — these and ONLY these may appear in platformGaps
+  mitigations, and the named entries below are ALSO the allowed values for
+  handlerCapabilities / widgetCapabilities / adminCapabilities:
 
-    Shopify data access
-      - Full Shopify Admin REST + GraphQL — all resources (orders, products, inventory, customers…)
-      - Shopify Storefront API — public product, cart, and collection data
+    Always available (no declaration needed — every app gets these):
+      - PostgreSQL (ctx.db) — per-tenant relational state, full SQL, RLS-scoped to ctx.tenantId
+      - Structured logging (ctx.logger), tenant scoping (ctx.tenantId),
+        trigger routing (ctx.trigger, ctx.payload, ctx.widget*/ctx.admin*)
 
-    Persistent storage
-      - PostgreSQL — per-tenant relational state, full SQL
-
-    Notifications & messaging
-      - Email — transactional / triggered emails.
-        Templates (subject, body, CTA, brand, {{variable}} substitution) are
-        owned by the PLATFORM, stored in its own app_email_configs table, and
-        edited by the merchant in the Ton dashboard's Email tab — NOT in your
-        app's admin UI. The handler's only contract is
-        ctx.services.email.send({ to, data }): pass runtime variable values in
-        `data`; the platform renders the merchant's template against them.
-        When describing `data` keys in handlerMustProduce prose, use camelCase
-        identifiers (customerName, cartValue, recoveryUrl) — never snake_case.
-        The merchant will reference them as {{camelCase}} in the template.
-      - SMS — outbound text messages
-      - NOT available: push notifications, Slack, WhatsApp, phone/voice calls,
-        in-app real-time alerts
-
-    File generation & export
-      - PDF (pdfkit), Excel (exceljs), CSV, XML, ZIP, QR codes, barcodes, images (sharp)
-      - File upload / managed storage (ctx.services.files)
-
-    External connectivity
-      - Outbound HTTPS to any third-party REST API
-      - NOT available: inbound webhooks from arbitrary sources, WebSockets,
-        real-time bidirectional streams, native binaries, GPU processing
-
-  When "blocked": set blockedReason to a single merchant-friendly sentence.\
+    Handler platform services — declare in handlerCapabilities when the handler uses them:
 """
+    + _render_registry(HANDLER_SERVICES, indent="      ")
+    + "\n\n    Handler npm packages — declare in handlerCapabilities when the handler require()s them:\n"
+    + _render_registry(HANDLER_NPM_PACKAGES, indent="      ")
+    + "\n\n    Widget client-side APIs — declare in widgetCapabilities (storefront archetypes only):\n"
+    + _render_registry(WIDGET_CAPABILITIES, indent="      ")
+    + (
+        "\n\n    Admin-panel capabilities — declare in adminCapabilities (admin archetypes only):\n"
+        + _render_registry(ADMIN_CAPABILITIES, indent="      ")
+        if ADMIN_CAPABILITIES
+        else "\n\n    Admin-panel capabilities — adminCapabilities is [] today (no declarable admin capabilities yet; reserved for future growth)."
+    )
+    + """
+
+  NOT available — NEVER reference these in platformGaps mitigations:
+    - push notifications, Slack, WhatsApp, phone/voice calls, in-app real-time alerts
+    - inbound webhooks from arbitrary sources, WebSockets, real-time bidirectional streams
+    - native binaries, GPU processing
+
+  When "blocked": set blockedReason to a single merchant-friendly sentence."""
+)
 
 COMPLEXITY = """\
 complexity: "low" | "medium" | "high"
