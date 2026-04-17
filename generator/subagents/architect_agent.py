@@ -115,13 +115,14 @@ def run_architect_agent(
         api_context_section=api_context_section,
     )
 
-    system = build_system_prompt(app_archetype)
+    system_shared, system_tail = build_system_prompt(app_archetype)
+    system_segments = [system_shared, system_tail]
     llm = get_llm(model=get_agent_model("architect"), max_tokens=4000)
     current_user = user
     total_in = 0
     total_out = 0
     for attempt in range(2):
-        result = invoke(llm, system, current_user)
+        result = invoke(llm, system_segments, current_user)
         total_in += result.input_tokens
         total_out += result.output_tokens
         raw = extract_json(result.content)

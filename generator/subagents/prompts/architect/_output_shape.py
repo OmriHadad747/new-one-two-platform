@@ -4,16 +4,20 @@ Archetype-aware OUTPUT FORMAT section for the architect prompt.
 Tailors the JSON example to the archetype so the model only sees fields relevant
 to the surfaces it must actually populate. A backend app never sees widgetApiCatalog
 in the example, reducing hallucination risk.
+
+Placeholders use angle-bracket syntax (e.g. "<table_name>", "/<widget_route>") to
+discourage the model from echoing them verbatim — concrete identifiers like
+"/example/action" were previously at risk of being copied literally into output.
 """
 
 _WIDGET_EXAMPLE = """\
     "widgetTargetTemplates": ["product"],
     "widgetApiCatalog": [
       {
-        "path": "/example/action",
+        "path": "/<widget_route>",
         "method": "POST",
-        "requestShape": { "variantId": "string" },
-        "responseShape": { "success": "boolean" }
+        "requestShape": { "<inputField>": "string" },
+        "responseShape": { "<resultField>": "boolean" }
       }
     ],"""
 
@@ -24,7 +28,7 @@ _WIDGET_NULL = """\
 _ADMIN_EXAMPLE = """\
     "adminApiCatalog": [
       {
-        "path": "/example/list",
+        "path": "/<admin_route>",
         "method": "GET",
         "requestShape": { "page": "number", "page_size": "number" },
         "responseShape": { "items": [], "total": "number", "page": "number", "page_size": "number" }
@@ -56,6 +60,9 @@ def build_output_shape(archetype: str) -> str:
     return (
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "OUTPUT FORMAT — respond ONLY with this JSON (no markdown fences, no explanation):\n"
+        "Replace every <placeholder> token in the example below (paths like /<widget_route>, "
+        "field names like <inputField>, table/column names like <table_name>) with identifiers "
+        "specific to THIS app. Do NOT echo angle-bracket placeholders verbatim.\n"
         "{\n"
         '  "shopifyPlan": {\n'
         '    "webhookTopics": [],\n'
@@ -75,13 +82,13 @@ def build_output_shape(archetype: str) -> str:
         '    "cronBatching": null,\n'
         '    "dbContracts": [\n'
         "      {\n"
-        '        "table": "example_table",\n'
+        '        "table": "<table_name>",\n'
         '        "columns": [\n'
-        '          { "name": "id",         "type": "UUID",        "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()" },\n'
-        '          { "name": "tenant_id",  "type": "UUID",        "constraints": "NOT NULL" },\n'
-        '          { "name": "field_a",    "type": "TEXT",        "constraints": "NOT NULL" },\n'
-        '          { "name": "field_b",    "type": "BIGINT",      "constraints": "NULL" },\n'
-        '          { "name": "created_at", "type": "TIMESTAMPTZ", "constraints": "NOT NULL DEFAULT now()" }\n'
+        '          { "name": "id",               "type": "UUID",        "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()" },\n'
+        '          { "name": "tenant_id",        "type": "UUID",        "constraints": "NOT NULL" },\n'
+        '          { "name": "<string_column>",  "type": "TEXT",        "constraints": "NOT NULL" },\n'
+        '          { "name": "<numeric_column>", "type": "BIGINT",      "constraints": "NULL" },\n'
+        '          { "name": "created_at",       "type": "TIMESTAMPTZ", "constraints": "NOT NULL DEFAULT now()" }\n'
         "        ],\n"
         '        "uniqueConstraint": null,\n'
         '        "indexes": ["tenant_id"],\n'

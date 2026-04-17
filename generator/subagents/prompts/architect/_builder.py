@@ -2,10 +2,18 @@
 Architect system prompt builder — assembles modular sections into a complete system prompt.
 
 Assembly rule:
-  Always:  _core + _state_machine + _cron_batching + _data_contracts
-  Widget:  + _widget   (storefront_backend, storefront_backend_admin)
-  Admin:   + _admin    (backend_admin, storefront_backend_admin)
-  Always:  + _output_shape.build_output_shape(archetype)
+  Shared (identical across every archetype, cacheable):
+    _core + _state_machine + _cron_batching + _data_contracts
+  Archetype tail (varies per archetype):
+    Widget:  _widget   (storefront_backend, storefront_backend_admin)
+    Admin:   _admin    (backend_admin, storefront_backend_admin)
+    NON-NULL SHAPES header + state-machine/cron shape snippets
+    _output_shape.build_output_shape(archetype)
+
+The builder returns (shared, tail). Callers may concatenate them for a single
+string prompt, or pass them as a list to models.adapter.invoke() so the shared
+prefix caches across archetype changes while the tail caches per-archetype
+(when large enough to qualify for Anthropic's prompt cache).
 """
 
 from ._core import INTRO, SHOPIFY_PLAN, FEASIBILITY, COMPLEXITY, PLATFORM_GAPS, EDGE_CASES
@@ -22,16 +30,25 @@ NON-NULL SHAPES — use exactly when these fields are set:\
 """
 
 
-def build_system_prompt(archetype: str) -> str:
+def build_system_prompt(archetype: str) -> tuple[str, str]:
     """
     Assemble the architect system prompt for the given app archetype.
 
     archetype: "backend" | "backend_admin" | "storefront_backend" | "storefront_backend_admin"
+
+    Returns
+    -------
+    (shared, tail)
+      shared: archetype-independent prefix, byte-identical across all archetypes.
+              Ends with a "\\n\\n" separator so ``shared + tail`` reproduces the
+              full prompt without further glue.
+      tail:   archetype-specific sections — widget/admin rules (when applicable)
+              followed by the NON-NULL SHAPES block and the OUTPUT FORMAT example.
     """
     has_widget = "storefront" in archetype
     has_admin = "admin" in archetype
 
-    sections = [
+    shared_sections = [
         INTRO,
         SHOPIFY_PLAN,
         FEASIBILITY,
@@ -46,17 +63,18 @@ def build_system_prompt(archetype: str) -> str:
         CRON_CONTRACT,
     ]
 
+    tail_sections: list[str] = []
     if has_widget:
-        sections += [WIDGET_TARGET_TEMPLATES, WIDGET_API_CATALOG]
-
+        tail_sections += [WIDGET_TARGET_TEMPLATES, WIDGET_API_CATALOG]
     if has_admin:
-        sections.append(ADMIN_API_CATALOG)
-
-    sections += [
+        tail_sections.append(ADMIN_API_CATALOG)
+    tail_sections += [
         _NON_NULL_SHAPES_HEADER,
         STATE_MACHINE_SHAPE,
         CRON_BATCHING_SHAPE,
         build_output_shape(archetype),
     ]
 
-    return "\n\n".join(sections)
+    shared = "\n\n".join(shared_sections) + "\n\n"
+    tail = "\n\n".join(tail_sections)
+    return shared, tail
