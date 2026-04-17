@@ -53,24 +53,8 @@ WHEN TO USE REST (vs ctx.shopify.graphql):
   • Simple CRUD on a single known entity (fetch order, update customer, create fulfillment)
   • Batch fetching one entity type with a batch endpoint (/products.json?ids=...,
     /inventory_levels.json?inventory_item_ids=...)
-  • Full-catalog scans — use since_id cursor pagination (see below)
+  • Full-catalog scans — use since_id cursor pagination (HTTP Link headers are not exposed by ctx.shopify.get)
   • Deleting Shopify resources (product images, metafields, etc.)
-
-REST full-catalog pagination — ALWAYS use since_id cursor (NOT Link headers):
-  The ctx.shopify.get response does NOT expose HTTP headers — Link header parsing will always fail.
-  Use since_id for reliable full-catalog traversal of products, orders, customers, etc.:
-  ✅ let sinceId = 0;
-     while (true) {
-       const { products } = await ctx.shopify.get(
-         `/products.json?fields=id,images&limit=250&since_id=${sinceId}`
-       );
-       if (!products || products.length === 0) break;
-       // process batch
-       sinceId = products[products.length - 1].id;
-       if (products.length < 250) break;  // last page
-     }
-  ❌ response._headers['link'] — headers are NOT available from ctx.shopify.get
-  ❌ /products.json without limit — returns at most 50 (Shopify default), silently truncated
 
 REST PUT endpoints use ctx.shopify.post() — there is no separate PUT method.\
 """,
