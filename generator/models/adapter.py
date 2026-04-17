@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 
 from anthropic import APIStatusError, APITimeoutError
 from langchain_anthropic import ChatAnthropic
@@ -115,30 +115,65 @@ def _invoke_with_retry(llm: ChatAnthropic, messages: list) -> object:
             log.warning("Anthropic overloaded/rate-limited (%s) — retrying in %ds (attempt %d)…", exc.status_code, _RETRY_DELAYS[attempt - 1], attempt)
 
 
-def _system_message(system: str) -> SystemMessage:
+def _system_message(system: Union[str, list[str]]) -> SystemMessage:
     """
     Build a SystemMessage with prompt caching marked when the system prompt is
     large enough to benefit.
 
-    We mark exactly one cache breakpoint at the end of the system content block —
-    every identical system prompt sent within the 5-minute TTL will be served
-    from the cache at ~10% of the normal input-token price.
+    String input (the common case):
+      One cache breakpoint at the end of the system block when the prompt is
+      above _CACHE_MIN_CHARS; plain text otherwise. Every identical system
+      prompt sent within the 5-minute TTL is served from the cache at ~10% of
+      the normal input-token price.
 
-    Short system prompts (below _CACHE_MIN_CHARS) are sent as plain strings;
-    Anthropic's cache has a ~1024-token floor and marking a short prompt just
-    wastes a content-block slot.
+    List input (used when the caller wants a segmented system prompt):
+      Useful when a stable shared prefix precedes caller-specific content — for
+      example the architect agent, whose rule body is identical across all
+      archetypes but whose tail (widget/admin sections + output example) varies
+      per archetype. Each segment at or above _CACHE_MIN_CHARS becomes its own
+      content block with a cache_control marker, so Anthropic's prefix matcher
+      can reuse the shared block even when the tail differs. Segments that fall
+      below the floor ride uncached as plain blocks. If no segment individually
+      qualifies, the segments are merged and treated as a single system prompt
+      (no separator inserted — callers embed their own whitespace at segment
+      boundaries).
     """
-    if len(system) < _CACHE_MIN_CHARS:
-        return SystemMessage(content=system)
-    return SystemMessage(
-        content=[
-            {
-                "type": "text",
-                "text": system,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ]
-    )
+    segments = [system] if isinstance(system, str) else [s for s in system if s]
+
+    if not segments:
+        return SystemMessage(content="")
+
+    if len(segments) == 1:
+        text = segments[0]
+        if len(text) < _CACHE_MIN_CHARS:
+            return SystemMessage(content=text)
+        return SystemMessage(
+            content=[
+                {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
+            ]
+        )
+
+    cacheable = [len(s) >= _CACHE_MIN_CHARS for s in segments]
+
+    # Nothing qualifies on its own — behave exactly like the single-string
+    # path by merging and caching (or not) on the total.
+    if not any(cacheable):
+        merged = "".join(segments)
+        if len(merged) < _CACHE_MIN_CHARS:
+            return SystemMessage(content=merged)
+        return SystemMessage(
+            content=[
+                {"type": "text", "text": merged, "cache_control": {"type": "ephemeral"}}
+            ]
+        )
+
+    blocks: list[dict] = []
+    for seg, mark in zip(segments, cacheable):
+        block: dict = {"type": "text", "text": seg}
+        if mark:
+            block["cache_control"] = {"type": "ephemeral"}
+        blocks.append(block)
+    return SystemMessage(content=blocks)
 
 
 def _extract_cache_metrics(usage: dict) -> tuple[int, int]:
@@ -213,7 +248,12 @@ def _extract_text_content(raw_content: object) -> str:
     return "".join(parts)
 
 
-def invoke(llm: ChatAnthropic, system: str, user: str, retry_suffix: str = "") -> LLMResponse:
+def invoke(
+    llm: ChatAnthropic,
+    system: Union[str, list[str]],
+    user: str,
+    retry_suffix: str = "",
+) -> LLMResponse:
     """
     Calls the LLM with a system + user message pair.
     Returns content + token usage + latency.
@@ -221,6 +261,11 @@ def invoke(llm: ChatAnthropic, system: str, user: str, retry_suffix: str = "") -
     The system prompt is automatically cached (Anthropic ephemeral cache) when
     it exceeds _CACHE_MIN_CHARS — all stable large prompts (handler, architect,
     revision, migration) qualify; the small product/classifier prompts do not.
+
+    ``system`` may also be a list of strings for callers that want a segmented
+    system prompt — each qualifying segment gets its own cache breakpoint so a
+    stable shared prefix can cache across calls whose tail differs (e.g. the
+    architect agent varies its tail per app archetype). See _system_message().
 
     retry_suffix: validation error block from a prior attempt. When provided, it
     is sent as a separate uncached content block appended after the cached stable
@@ -247,7 +292,7 @@ def invoke(llm: ChatAnthropic, system: str, user: str, retry_suffix: str = "") -
 
 
 def invoke_conversation(
-    llm: ChatAnthropic, system: str, messages: list[dict]
+    llm: ChatAnthropic, system: Union[str, list[str]], messages: list[dict]
 ) -> LLMResponse:
     """
     Multi-turn conversation call.
