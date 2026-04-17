@@ -1,6 +1,7 @@
 """
 Scoped capability registries — single source of truth for every capability
-the architect can declare on the generated app.
+the architect can declare on the generated app AND the only place each
+capability's implementation docs live.
 
 One file per component so the scope of each capability is unambiguous:
   capabilities/handler.py  — ctx.* platform services and npm packages the
@@ -11,20 +12,29 @@ One file per component so the scope of each capability is unambiguous:
   capabilities/admin.py    — (reserved) capabilities the embedded admin UI
                              uses. Empty today.
 
-Consumers (one import per consumer keeps vocabulary drift impossible):
-  - Architect prompt (subagents/prompts/architect/_capabilities.py) — renders
-    the allowed vocabulary and per-capability description directly from the
-    module-specific registries.
-  - Static validator (subagents/static_validation.py) — uses the ALLOWED_*
-    frozensets to reject unknown values, scoped per field.
-  - Handler / widget JITs (future) — map capability strings to the
-    corresponding harness / widget prompt sections.
+Each registry entry is a Capability with two fields:
+  - short: a one/two-line description the ARCHITECT sees in the AVAILABLE
+    capabilities list. Informs "declare or not" decisions.
+  - docs:  the full implementation prose the HANDLER (or widget / admin) JIT
+    injects into the component prompt when the capability is declared. Empty
+    for capabilities that have no JIT'able documentation yet.
 
-This package re-exports the ALLOWED_* frozensets for ergonomic imports
-(`from templates.capabilities import ALLOWED_HANDLER_CAPABILITIES, …`).
-Full registries stay in their module (`templates.capabilities.handler`, …).
+This split kills the old drift risk where short descriptions lived in the
+registry but full API docs lived in templates/harness_contract.py. Both are
+now derived from the same Capability entry.
+
+Consumers:
+  - Architect prompt (subagents/prompts/architect/_core.py, _capabilities.py)
+    — renders Capability.short.
+  - Static validator (subagents/static_validation.py) — uses ALLOWED_*
+    frozensets.
+  - Handler JIT (subagents/handler_agent.py) — renders Capability.docs for
+    each capability listed in handlerCapabilities.
 """
 
+from __future__ import annotations
+
+from ._types import Capability
 from .admin import ADMIN_CAPABILITIES, ALLOWED_ADMIN_CAPABILITIES
 from .handler import ALLOWED_HANDLER_CAPABILITIES
 from .widget import ALLOWED_WIDGET_CAPABILITIES
@@ -34,4 +44,5 @@ __all__ = [
     "ALLOWED_ADMIN_CAPABILITIES",
     "ALLOWED_HANDLER_CAPABILITIES",
     "ALLOWED_WIDGET_CAPABILITIES",
+    "Capability",
 ]

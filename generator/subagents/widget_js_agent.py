@@ -173,10 +173,7 @@ def _format_quality_brief(intent: Dict[str, Any]) -> str:
     brief = intent.get("qualityBrief", "")
     if not brief:
         return ""
-    return (
-        "Quality brief — what makes a good version of this app:\n"
-        f"{brief}\n\n"
-    )
+    return "Quality brief — what makes a good version of this app:\n" f"{brief}\n\n"
 
 
 def _format_ux_expectations(plan: Dict[str, Any]) -> str:
@@ -185,10 +182,7 @@ def _format_ux_expectations(plan: Dict[str, Any]) -> str:
     storefront = ux.get("storefront")
     if not storefront:
         return ""
-    return (
-        "UX expectations for this widget:\n"
-        f"{storefront}\n\n"
-    )
+    return "UX expectations for this widget:\n" f"{storefront}\n\n"
 
 
 def _format_prior_widget(prior_code: Any) -> str:
@@ -207,7 +201,6 @@ def _format_prior_widget(prior_code: Any) -> str:
         f"{prior_code}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
-
 
 
 def _format_catalog(catalog: List[Dict[str, Any]]) -> str:
@@ -233,5 +226,7 @@ def _format_ux_guidance(plan: Dict[str, Any]) -> str:
     gaps = (plan.get("appContracts") or {}).get("platformGaps") or []
     if not gaps:
         return ""
-    lines = "\n".join(f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps)
+    lines = "\n".join(
+        f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps
+    )
     return f"\nBackend limitations the widget UX must reflect:\n{lines}\n"

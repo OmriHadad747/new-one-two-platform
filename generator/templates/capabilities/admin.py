@@ -15,7 +15,9 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
+from ._types import Capability
 
-ADMIN_CAPABILITIES: "OrderedDict[str, str]" = OrderedDict()
+
+ADMIN_CAPABILITIES: "OrderedDict[str, Capability]" = OrderedDict()
 
 ALLOWED_ADMIN_CAPABILITIES: frozenset = frozenset(ADMIN_CAPABILITIES.keys())

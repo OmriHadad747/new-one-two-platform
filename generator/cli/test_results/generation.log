@@ -1,0 +1,7 @@
+2026-04-16 22:55:10,176 shopify_mcp.client INFO MCP api_context: 4015 chars for intent Re-engage abandoned cart customers with timely reminder emails to recover lost s
+2026-04-16 22:56:02,471 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-04-16 22:56:10,256 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-04-16 22:57:09,974 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-04-16 22:57:10,565 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-04-16 22:57:12,615 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-04-16 22:57:19,555 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"

@@ -405,15 +405,24 @@ def validate_architect_plan(
                 "knows to inject the bulk-fetch pattern"
             )
 
-    # 17. handlerCapabilities — closed-vocabulary array, always applicable.
-    #     Omitted is treated as [] (handler JIT falls back to include-all);
-    #     when present it must be a list of values from the handler vocabulary.
-    _check_capability_list(
-        impl.get("handlerCapabilities"),
-        field="handlerCapabilities",
-        allowed=ALLOWED_HANDLER_CAPABILITIES,
-        errors=errors,
-    )
+    # 17. handlerCapabilities — closed-vocabulary array, REQUIRED (non-null).
+    #     The handler JIT consumes this to decide which API docs to inject
+    #     into the handler prompt; a missing value means the handler would
+    #     ship without docs for the APIs it actually needs.
+    handler_caps = impl.get("handlerCapabilities")
+    if handler_caps is None:
+        errors.append(
+            "handlerCapabilities is missing — every app has a handler, so "
+            "this field is required (use [] when the handler needs only the "
+            "always-on surface ctx.db / ctx.logger / ctx.tenantId / ctx.trigger)"
+        )
+    else:
+        _check_capability_list(
+            handler_caps,
+            field="handlerCapabilities",
+            allowed=ALLOWED_HANDLER_CAPABILITIES,
+            errors=errors,
+        )
 
     # 18. widgetCapabilities — present only for storefront archetypes.
     #     null for backend / backend_admin, array (from widget vocabulary) for

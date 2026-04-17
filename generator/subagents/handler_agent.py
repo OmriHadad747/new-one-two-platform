@@ -6,15 +6,22 @@ and decides independently which REST/GraphQL calls to make. The Architect's
 contracts tell it WHAT data is needed; the api_context tells it WHAT is available
 in the Shopify schema.
 
-System prompt: HARNESS_BASE (always) — ctx API surface, output format, core rules.
+System prompt: HARNESS_BASE (always) — core-only (DB, trigger routing, logger,
+output format, absolute rules, loop rule). Per-API docs (ctx.shopify, ctx.services,
+ctx.http, ctx.storefront, npm packages) are JIT-injected into the USER prompt
+from templates/capabilities/handler.py based on appContracts.handlerCapabilities.
 
-JIT harness sections — injected into the user prompt only when the plan requires them:
-  HARNESS_SECTION_WEBHOOK       — when webhookTopics is non-empty
-  HARNESS_SECTION_STATE_MACHINE — when appContracts.stateMachine is non-null
-  HARNESS_SECTION_CRON_BATCHING — when appContracts.cronBatching.required is true
-  HARNESS_SECTION_WIDGET        — when platform_api_catalog is non-empty
-  HARNESS_SECTION_WIDGET_STOREFRONT — when widgetApiCatalog is [] (storefront app, no backend widget routes)
-  HARNESS_SECTION_ADMIN         — when adminApiCatalog is non-empty
+User-prompt JIT sections:
+  - Capability docs for each entry in handlerCapabilities (registry-driven).
+  - SHOPIFY_REST_VS_GRAPHQL_GUIDE only when BOTH shopify_rest AND shopify_graphql
+    are declared — no point showing a choose-one guide if only one is used.
+  - Trigger-gated sections (unchanged):
+      HARNESS_SECTION_WEBHOOK        — when webhookTopics is non-empty
+      HARNESS_SECTION_STATE_MACHINE  — when appContracts.stateMachine is non-null
+      HARNESS_SECTION_CRON_BATCHING  — when appContracts.cronBatching.required is true
+      HARNESS_SECTION_WIDGET         — when platform_api_catalog is non-empty
+      HARNESS_SECTION_WIDGET_STOREFRONT — when widgetApiCatalog is [] (storefront app, no backend widget routes)
+      HARNESS_SECTION_ADMIN          — when adminApiCatalog is non-empty
 
 Model: claude-sonnet-4-6 (via agent_models.py)
 """
@@ -28,6 +35,10 @@ from typing import Any, Dict, List
 from shopify_mcp.client import validate_handler_graphql
 from subagents.base import CodegenContext, Generator
 from subagents.static_validation import validate_handler_artifact
+from templates.capabilities.handler import (
+    HANDLER_CAPABILITY_REGISTRY,
+    SHOPIFY_REST_VS_GRAPHQL_GUIDE,
+)
 from templates.harness_contract import (
     HARNESS_BASE,
     HARNESS_SECTION_ADMIN,
@@ -118,6 +129,16 @@ def _build_jit_sections(
     """
     Inject only the harness pattern sections relevant to this specific plan.
     Irrelevant sections are omitted so the model focuses on what applies.
+
+    Assembly order:
+      1. Capability docs (registry-driven) — one block per declared
+         handlerCapabilities entry. This is where ctx.shopify.*, ctx.services.*,
+         ctx.http, ctx.storefront, and npm-package docs come from now.
+      2. SHOPIFY_REST_VS_GRAPHQL_GUIDE — injected only when BOTH shopify_rest
+         and shopify_graphql are declared. The choose-one decision guide has
+         no value for handlers that use only one.
+      3. Trigger-gated sections (webhook / state machine / cron batching /
+         widget / admin routing) — unchanged.
     """
     shopify = plan.get("shopifyPlan") or {}
     impl = plan.get("appContracts") or {}
@@ -126,6 +147,18 @@ def _build_jit_sections(
 
     sections: List[str] = []
 
+    # 1. Capability docs, preserving the registry's declared order so the
+    #    assembled prompt is stable (cache-friendly) for the same cap set.
+    declared = set(impl.get("handlerCapabilities") or [])
+    for cap_name, cap in HANDLER_CAPABILITY_REGISTRY.items():
+        if cap_name in declared and cap.docs:
+            sections.append(cap.docs)
+
+    # 2. REST vs GraphQL joint decision guide — only when both are declared.
+    if "shopify_rest" in declared and "shopify_graphql" in declared:
+        sections.append(SHOPIFY_REST_VS_GRAPHQL_GUIDE)
+
+    # 3. Trigger-gated sections (unchanged).
     if shopify.get("webhookTopics"):
         sections.append(HARNESS_SECTION_WEBHOOK)
 
@@ -147,7 +180,7 @@ def _build_jit_sections(
     if admin_catalog:
         sections.append(HARNESS_SECTION_ADMIN)
 
-    return "".join(sections)
+    return "\n\n".join(sections) + ("\n\n" if sections else "")
 
 
 # ── Prompt-building helpers ────────────────────────────────────────────────────

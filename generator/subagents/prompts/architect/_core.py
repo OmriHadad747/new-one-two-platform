@@ -36,7 +36,14 @@ cronSchedule: null unless periodic polling is required. Use standard 5-field cro
 
 
 def _render_registry(registry, indent: str = "    ") -> str:
-    return "\n".join(f'{indent}- "{name}" — {desc}' for name, desc in registry.items())
+    """
+    Render a capability registry as an architect-facing bullet list. Only the
+    .short field is emitted — the full .docs blocks are consumed downstream by
+    the handler JIT, not by the architect.
+    """
+    return "\n".join(
+        f'{indent}- "{name}" — {cap.short}' for name, cap in registry.items()
+    )
 
 
 FEASIBILITY = (

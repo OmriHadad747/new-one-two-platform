@@ -1,60 +1,39 @@
 """
 Harness contract sections — injected selectively into the handler sub-agent prompt.
 
-HARNESS_BASE is always injected: ctx API surface, Shopify patterns, output format, core rules.
+HARNESS_BASE carries the always-shipped CORE: DB / trigger routing / logger /
+output format / absolute rules / cross-cutting Shopify loop rule. It does NOT
+include per-API docs anymore — those live in the capability registries
+(templates/capabilities/handler.py) and are injected only when the architect
+declared the corresponding entry in handlerCapabilities.
 
-The three conditional sections are injected by handler_agent.py only when the plan requires them:
+Capability-gated sections (injected by handler_agent.py via the handler JIT):
+  - Handler platform services (ctx.shopify, ctx.services.email, etc.) and npm
+    packages (pdfkit, exceljs, csv, …) — pulled from handler.HANDLER_CAPABILITY_REGISTRY
+  - Cross-cutting REST-vs-GraphQL decision guide — injected only when BOTH
+    shopify_rest and shopify_graphql are declared (handler.SHOPIFY_REST_VS_GRAPHQL_GUIDE)
+
+Trigger-gated sections (still defined below — injected when the plan requires them):
   HARNESS_SECTION_WEBHOOK       — when webhookTopics is non-empty
   HARNESS_SECTION_STATE_MACHINE — when appContracts.stateMachine is non-null
   HARNESS_SECTION_CRON_BATCHING — when appContracts.cronBatching.required is true
+  HARNESS_SECTION_WIDGET        — when the handler serves widget routes
+  HARNESS_SECTION_WIDGET_STOREFRONT — when the widget reads storefront directly
+  HARNESS_SECTION_ADMIN         — when the handler serves admin-panel routes
 
-Keeping the system prompt focused prevents irrelevant rules from competing for attention
-with the patterns that actually apply to the feature being generated.
+Keeping the system prompt focused prevents irrelevant rules from competing for
+attention with the patterns that actually apply to the feature being generated.
 """
 
 HARNESS_BASE = """
-HARNESS CONTRACT — the only APIs available inside handler():
+HARNESS CONTRACT — core APIs available inside handler():
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-── Shopify REST ──────────────────────────────────────────────
-
-ctx.shopify.get(path: string) → Promise<any>
-  Shopify Admin REST GET. Path is relative to /admin/api/2026-01.
-  Example: await ctx.shopify.get('/orders.json?status=any&limit=10')
-
-ctx.shopify.post(path: string, body: object) → Promise<any>
-  Shopify Admin REST POST/PUT. Use for REST mutations.
-  Example: await ctx.shopify.post('/customers/456.json', { customer: { id: 456, tags: 'VIP' } })
-
-ctx.shopify.delete(path: string) → Promise<any>
-  Shopify Admin REST DELETE. Use to remove Shopify resources.
-  Example: await ctx.shopify.delete(`/products/${productId}/images/${imageId}.json`)
-  Returns {} on 204 No Content. Throws on non-2xx responses.
-  Common uses: delete product images, metafields, webhook subscriptions, draft orders.
-
-── Shopify GraphQL ───────────────────────────────────────────
-
-ctx.shopify.graphql(query: string, variables?: object) → Promise<any>
-  Shopify Admin GraphQL API — POST to /admin/api/2026-01/graphql.json.
-  The harness throws on GraphQL errors — no need to check result.errors.
-  The harness unwraps { data: ... } — access fields directly on the result.
-  IDs MUST use Shopify Global ID (GID) format: `gid://shopify/TypeName/${numericId}`
-    The type name matches the GraphQL schema type: Order, Product, Customer, etc.
-    Convert numeric IDs from webhooks and REST responses before use in variables.
-  Example:
-    const order = await ctx.shopify.graphql(
-      `query GetOrder($id: ID!) {
-        order(id: $id) {
-          id
-          fulfillments { trackingInfo { number company } }
-          lineItems(first: 50) { nodes { title quantity } }
-        }
-      }`,
-      { id: `gid://shopify/Order/${orderId}` }
-    )
-    const { fulfillments, lineItems } = order.order
-  Pagination: GraphQL uses cursor-based pagination — use edges/node or nodes pattern
-    with pageInfo { hasNextPage endCursor } and a variables-based loop.
+The always-available surface is below. Additional APIs (ctx.shopify.*,
+ctx.services.*, ctx.http, ctx.storefront, npm packages) are injected further
+down in this prompt based on the capabilities the architect declared in
+handlerCapabilities. If an API is not documented anywhere in this prompt,
+the architect did not declare it — do NOT call it.
 
 ctx.db  — postgres.js tagged template (RLS-scoped to this tenant)
   Example: const rows = await ctx.db`SELECT * FROM my_table WHERE id = ${someId}`
@@ -99,252 +78,6 @@ ctx.logger.error(msg)
 
 ctx.shop — Shopify store info
   ctx.shop.domain  — the store's myshopify.com domain, e.g. "example.myshopify.com"
-
-── Platform services (ctx.services.*) ───────────────────────
-
-These are provided by the platform. No npm package needed — always available via ctx.
-
-ctx.services.email.send({ to, data? }) → Promise<void>
-  Send an email via the platform's email service.
-
-  The handler ONLY provides the recipient and runtime variables. The platform
-  owns everything else — subject, body, brand, layout, from address, delivery,
-  tracking, unsubscribe. The merchant configures the template (subject, body,
-  CTA, brand) in the Ton dashboard's Email tab; any {{variable}} placeholders
-  they put in those fields are resolved against `data` at send time.
-
-    to:    recipient email address (string)
-    data:  optional variables bound to {{variable}} placeholders in the
-           merchant-configured template. Include whatever dynamic values the
-           merchant will want to reference: customer name, order ID, product
-           title, URLs, amounts, etc.
-
-  DO NOT pass `subject`, `templateId`, or HTML — those fields no longer exist
-  on the API. DO NOT store email HTML in your app's DB tables or compile
-  templates with Handlebars inside the handler — the platform does all of that.
-
-  The variable names you pass in `data` become the token palette shown to the
-  merchant in the Email tab, so use descriptive names (customerName, cartTotal,
-  recoveryUrl) rather than single letters. All `data` keys MUST be camelCase —
-  never snake_case or PascalCase. The merchant references them as {{camelCase}}
-  in the template.
-
-  Example:
-    await ctx.services.email.send({
-      to: cart.customerEmail,
-      data: {
-        customerName: cart.customerName,
-        cartTotal:    cart.total,
-        currency:     cart.currency,
-        recoveryUrl:  cart.recoveryUrl,
-      },
-    })
-
-  The merchant-configured template might then read:
-    Subject: "{{customerName}}, your cart is waiting"
-    Body:    "Come back and finish your order — {{cartTotal}} {{currency}}."
-    CTA:     "Return to checkout" → {{recoveryUrl}}
-
-  Deploy is blocked on apps that call ctx.email.send until the merchant has
-  saved the Email tab at least once. That's by design — uncustomized emails
-  would look generic and hurt the merchant's brand.
-
-ctx.services.sms.send({ to, body }) → Promise<void>
-  Send an SMS. Stub in MVP (logs SMS_SENT) — real Twilio in Phase 3.
-    to:   E.164 phone number, e.g. "+15551234567"
-    body: message text (max 160 chars)
-  Example: await ctx.services.sms.send({ to: customer.phone, body: `Your order is ready!` })
-
-ctx.services.files.upload(name, content, mimeType?) → Promise<string>
-  Upload a file and get back a URL. Stub in MVP (logs FILE_UPLOADED) — real GCS in Phase 3.
-  Returns a signed URL valid for 1 hour (stub returns a placeholder URL).
-    name:     filename, e.g. "orders-2024-01.csv"
-    content:  Buffer or string
-    mimeType: e.g. "text/csv", "application/pdf", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  Example:
-    const url = await ctx.services.files.upload('orders.csv', csvString, 'text/csv')
-    return { downloadUrl: url }
-
-── External HTTP ─────────────────────────────────────────────
-
-ctx.http.call(url, options?) → Promise<any>
-  Make an authenticated HTTP call to an external API. All calls are logged with tenant context.
-    url:            full URL (https:// is ALLOWED here — ctx.http is the only place)
-    options.method: HTTP method (default "GET")
-    options.headers: additional headers
-    options.body:   request body — serialized to JSON automatically
-  Throws on non-2xx responses.
-  Example:
-    const result = await ctx.http.call('https://api.example.com/compress', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer TOKEN' },
-      body: { imageUrl: originalUrl }
-    })
-
-── Storefront API ────────────────────────────────────────────
-
-ctx.storefront.graphql(query, variables?) → Promise<any>
-  Shopify Storefront API (public GraphQL). Uses the Storefront Access Token stored at OAuth time.
-  The harness unwraps { data: ... } — access fields directly on the result.
-  Use this for publicly available storefront data the handler needs server-side.
-  Note: Widget code uses host.storefront() for client-side reads — ctx.storefront is for the handler.
-  Example:
-    const data = await ctx.storefront.graphql(
-      `query GetProduct($handle: String!) {
-        productByHandle(handle: $handle) { id title variants(first: 10) { nodes { id availableForSale } } }
-      }`,
-      { handle: productHandle }
-    )
-
-── JS Library packages (require) ────────────────────────────
-
-For capabilities not available through ctx, declare npm packages in the npmPackages
-array and require() them at the top of the handler body. The deployer installs
-only declared packages — undeclared packages will not be present at runtime.
-
-  Available packages:
-  ┌─ Barcodes / QR codes ──────────────────────────────────────────────────────┐
-  │  qrcode@1.5.3          — QR code PNG buffer or SVG string                  │
-  │  jsbarcode@3.11.6      — Barcode SVG (CODE128, EAN13, UPC, CODE39, …)      │
-  │  @xmldom/xmldom@0.8.10 — DOM implementation required by jsbarcode           │
-  ├─ Images ───────────────────────────────────────────────────────────────────┤
-  │  sharp@0.33.5          — Image resize, crop, convert (JPEG/PNG/WebP/AVIF)  │
-  ├─ Documents ────────────────────────────────────────────────────────────────┤
-  │  pdfkit@0.15.0         — PDF generation (pure JS, no native deps)          │
-  │  exceljs@4.4.0         — Excel/XLSX workbook creation and export           │
-  ├─ Data parsing / serialization ─────────────────────────────────────────────┤
-  │  csv-parse@5.5.6       — CSV string/buffer → array of objects              │
-  │  csv-stringify@6.5.2   — Array of objects → CSV string                     │
-  │  fast-xml-parser@4.3.6 — XML → JS object (and back)                        │
-  ├─ Templating ───────────────────────────────────────────────────────────────┤
-  │  handlebars@4.7.8      — Mustache-style HTML/text templates                │
-  │  marked@15.0.0         — Markdown → HTML (for email bodies, previews)      │
-  ├─ Utilities ────────────────────────────────────────────────────────────────┤
-  │  dayjs@1.11.13         — Date parsing, formatting, and arithmetic          │
-  │  jszip@3.10.1          — In-memory ZIP archive creation                    │
-  │  uuid@9.0.1            — RFC 4122 UUID generation (v4 preferred)           │
-  │  slugify@1.6.6         — Convert strings to URL-safe slugs                 │
-  └────────────────────────────────────────────────────────────────────────────┘
-
-  Usage examples:
-
-    // QR code — declare: npmPackages: ['qrcode@1.5.3']
-    const QRCode = require('qrcode');
-    const svgString = await QRCode.toString(text, { type: 'svg', width: 300 });
-    const pngBuffer  = await QRCode.toBuffer(text, { width: 300 });
-
-    // Barcode — declare: npmPackages: ['jsbarcode@3.11.6', '@xmldom/xmldom@0.8.10']
-    const JsBarcode = require('jsbarcode');
-    const { DOMImplementation, XMLSerializer } = require('@xmldom/xmldom');
-    const doc    = new DOMImplementation().createDocument('http://www.w3.org/1999/xhtml', 'html', null);
-    const svgNode = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    JsBarcode(svgNode, value, { format: 'CODE128', width: 2, height: 100, xmlDocument: doc });
-    const svg = new XMLSerializer().serializeToString(svgNode);
-
-    // Image resize/convert — declare: npmPackages: ['sharp@0.33.5']
-    const sharp = require('sharp');
-    const resizedBuffer = await sharp(inputBuffer).resize(800, 600, { fit: 'cover' }).jpeg({ quality: 85 }).toBuffer();
-    const metadata = await sharp(inputBuffer).metadata(); // { width, height, format, size }
-
-    // PDF — declare: npmPackages: ['pdfkit@0.15.0']
-    const PDFDocument = require('pdfkit');
-    const doc = new PDFDocument();
-    const chunks = [];
-    doc.on('data', chunk => chunks.push(chunk));
-    await new Promise(resolve => { doc.on('end', resolve); doc.text('Hello').end(); });
-    const pdfBuffer = Buffer.concat(chunks);
-
-    // Excel — declare: npmPackages: ['exceljs@4.4.0']
-    const ExcelJS = require('exceljs');
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Orders');
-    ws.columns = [{ header: 'ID', key: 'id' }, { header: 'Email', key: 'email' }];
-    rows.forEach(r => ws.addRow(r));
-    const xlsxBuffer = await wb.xlsx.writeBuffer();
-
-    // Date — declare: npmPackages: ['dayjs@1.11.13']
-    const dayjs = require('dayjs');
-    const label = dayjs(order.created_at).format('YYYY-MM-DD');
-
-    // Handlebars template — declare: npmPackages: ['handlebars@4.7.8']
-    const Handlebars = require('handlebars');
-    const html = Handlebars.compile('<h1>Hi {{name}}</h1>')({ name: customer.first_name });
-
-    // CSV parse — declare: npmPackages: ['csv-parse@5.5.6']
-    const { parse } = require('csv-parse/sync');
-    const records = parse(csvString, { columns: true, skip_empty_lines: true });
-
-    // CSV stringify — declare: npmPackages: ['csv-stringify@6.5.2']
-    const { stringify } = require('csv-stringify/sync');
-    const csvString = stringify(orders, { header: true, columns: ['id', 'email', 'total'] });
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SHOPIFY API PATTERNS — REST vs GraphQL decision guide:
-
-Use ctx.shopify.get / ctx.shopify.post / ctx.shopify.delete (REST) when:
-  • Simple CRUD on a single known entity (fetch order, update customer, create fulfillment)
-  • Batch fetching one entity type with a batch endpoint (/products.json?ids=..., /inventory_levels.json?inventory_item_ids=...)
-  • Full-catalog scans — use since_id cursor pagination (see below)
-  • Deleting Shopify resources (product images, metafields, etc.) — use ctx.shopify.delete
-  ❌ NEVER use /variants.json?inventory_item_ids=... — that batch filter does not exist
-  ❌ NEVER search /customers.json with a filter and assume completeness — use /customers/${id}.json
-
-REST full-catalog pagination — ALWAYS use since_id cursor (NOT Link headers):
-  The ctx.shopify.get response does NOT expose HTTP headers — Link header parsing will always fail.
-  Use since_id for reliable full-catalog traversal of products, orders, customers, etc.:
-  ✅ let sinceId = 0;
-     while (true) {
-       const { products } = await ctx.shopify.get(
-         `/products.json?fields=id,images&limit=250&since_id=${sinceId}`
-       );
-       if (!products || products.length === 0) break;
-       // process batch
-       sinceId = products[products.length - 1].id;
-       if (products.length < 250) break;  // last page
-     }
-  ❌ response._headers['link'] — headers are NOT available from ctx.shopify.get
-  ❌ /products.json without limit — returns at most 50 (Shopify default), silently truncated
-
-Use ctx.shopify.graphql (GraphQL) when:
-  • A mutation has no REST equivalent — bulk tags, metafields, bulk discount codes:
-      tagsAdd / tagsRemove             — add/remove tags on any resource
-      metafieldsSet                    — write metafields on orders, products, customers
-      discountCodeBulkAdd              — create many discount codes in one call
-  • REST would require 2+ sequential calls to assemble the data you need:
-      e.g. getting order + fulfillments + lineItems in one query
-  • A cross-entity relationship that REST does not expose as a direct field
-  GraphQL IDs MUST use GID format: `gid://shopify/TypeName/${numericId}`
-    Type name matches the GraphQL schema type: Order, Product, Customer, InventoryItem, …
-    Convert numeric IDs from webhooks and REST responses before use in GraphQL variables.
-  ✅ const result = await ctx.shopify.graphql(
-       `mutation TagsAdd($id: ID!, $tags: [String!]!) {
-          tagsAdd(id: $id, tags: $tags) { node { id } userErrors { message } }
-        }`,
-       { id: `gid://shopify/Order/${orderId}`, tags: ['VIP', 'high-value'] }
-     )
-
-GraphQL cursor-based pagination — use this pattern when a query can return more
-than a page of results (typical first: 50, max first: 250). Loop on
-pageInfo.hasNextPage / endCursor until there are no more pages:
-
-  ✅ const PAGE_SIZE = 250
-     const collected = []
-     let cursor = null
-     do {
-       const result = await ctx.shopify.graphql(
-         `query OrdersByTag($cursor: String, $pageSize: Int!) {
-            orders(first: $pageSize, after: $cursor, query: "tag:backorder") {
-              pageInfo { hasNextPage endCursor }
-              nodes { id name createdAt }
-            }
-          }`,
-         { cursor, pageSize: PAGE_SIZE }
-       )
-       collected.push(...result.orders.nodes)
-       cursor = result.orders.pageInfo.hasNextPage ? result.orders.pageInfo.endCursor : null
-     } while (cursor)
-  ❌ Running one query with first: 50 and assuming the response is complete —
-     stores with many matches will silently miss records beyond the first page.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REQUIRED OUTPUT FORMAT — exactly this CommonJS module shape:
