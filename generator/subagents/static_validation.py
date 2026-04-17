@@ -146,7 +146,9 @@ def validate_architect_plan(
       13. stateMachine.unknownSentinel must be the string "null" when stateMachine is set.
       13b.stateMachine must have entity, trackedField, and transitions when non-null.
       13c.stateMachine transitions must not use numeric range labels (positive/negative/zero/high/low etc.).
-      14. dbContracts entries must include a tenant_id column.
+      14. dbContracts entries must include a tenant_id column. Money-holding
+          columns (names ending _cents/_amount/_price/_total/…) must use BIGINT,
+          not INTEGER — INTEGER overflows at ~$21.47M.
       15. storefront apps must declare widgetTargetTemplates (at least one valid template).
       16. cronBatching, when non-null, must include required=true.
       17. handlerCapabilities, when present, must be an array of strings drawn
@@ -344,6 +346,14 @@ def validate_architect_plan(
         "inventory_item_id", "location_id", "fulfillment_id",
         "draft_order_id", "discount_id",
     }
+    # Money-holding column name suffixes. INTEGER overflows at ~$21.47M in cents —
+    # a single enterprise cart or any aggregate SUM() across a busy tenant can hit
+    # that ceiling and crash the handler with 'integer out of range'. BIGINT caps
+    # at ~$92 quadrillion, so it's the safe default for anything storing currency.
+    _MONEY_COL_SUFFIXES = (
+        "_cents", "_amount", "_price", "_total", "_subtotal",
+        "_tax", "_fee", "_discount", "_cost", "_refund",
+    )
 
     def _base_type(type_str: str) -> str:
         # Strip parameterisation (VARCHAR(255) → VARCHAR, NUMERIC(10,2) → NUMERIC).
@@ -378,6 +388,13 @@ def validate_architect_plan(
                     f"dbContracts table '{table}' column '{name}' is a Shopify entity ID — "
                     f"use BIGINT (or TEXT), NEVER UUID. Only tenant_id and internal primary "
                     f"keys use UUID."
+                )
+            if base == "INTEGER" and any(name.endswith(s) for s in _MONEY_COL_SUFFIXES):
+                errors.append(
+                    f"dbContracts table '{table}' column '{name}' holds monetary values but uses INTEGER — "
+                    f"use BIGINT. INTEGER overflows at ~$21.47M (2,147,483,647 cents); a single "
+                    f"enterprise cart or SUM() aggregate above that ceiling crashes the handler with "
+                    f"'integer out of range'."
                 )
 
     # 15. storefront apps must declare widgetTargetTemplates
@@ -591,6 +608,12 @@ FORBIDDEN_HANDLER_PATTERNS = [
     (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
     (r"\bsetInterval\s*\(", "setInterval is not allowed — handlers are short-lived invocations, not long-running processes"),
     (r"\bsetImmediate\s*\(", "setImmediate is not allowed"),
+    (
+        r"\bsetTimeout\s*\(",
+        "setTimeout is not allowed in handlers — handlers are short-lived cron/webhook invocations, "
+        "not UI code that needs debounce. Per-item sleeps inside loops burn cron runtime and risk "
+        "timeouts; rate limiting belongs in the harness, not the handler.",
+    ),
 ]
 
 # Fields the old email API used to accept — all of them have moved into the
@@ -763,7 +786,7 @@ def validate_handler_artifact(
     Checks:
       1. Syntax completeness (balanced braces/parens/strings).
       2. module.exports, webhookTopics, handler present.
-      3. Forbidden patterns (fetch, eval, setInterval, setImmediate, process.env, etc.).
+      3. Forbidden patterns (fetch, eval, setInterval, setImmediate, setTimeout, process.env, etc.).
       4. Declared webhookTopics match the architect plan.
       5. Every widgetApiCatalog path has a ctx.widgetPath === '/path' branch
          outside any admin block (widget trigger routing).
