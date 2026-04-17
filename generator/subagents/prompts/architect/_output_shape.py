@@ -83,7 +83,7 @@ def build_output_shape(archetype: str) -> str:
         "    },\n"
         '    "stateMachine": null,\n'
         '    "platformGaps": [],\n'
-        '    "handlerCapabilities": [],\n'
+        '    "handlerCapabilities": ["shopify_rest", "email"],\n'
         '    "cronBatching": null,\n'
         '    "dbContracts": [\n'
         "      {\n"

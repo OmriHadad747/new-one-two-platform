@@ -22,6 +22,11 @@ from typing import Any, Dict, List
 from subagents.base import CodegenContext, Generator
 from subagents.static_validation import validate_widget_artifact
 
+# TODO: migrate host.* API docs below to the registry-driven JIT pattern.
+#   Widget capabilities are already defined in templates/capabilities/widget.py
+#   with full `.docs` blocks. When this agent switches to JIT assembly, the
+#   docs for declared widgetCapabilities should be injected here in the same
+#   way handler_agent.py does — see _build_jit_sections() there for the pattern.
 _SYSTEM_PROMPT = """You are generating a Shopify storefront widget as a self-contained JavaScript ES module.
 
 The widget is loaded by a thin runtime (App Block) that calls:

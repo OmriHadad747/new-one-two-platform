@@ -34,7 +34,7 @@ Consumers:
 
 from __future__ import annotations
 
-from ._types import Capability
+from ._types import Capability, render_registry
 from .admin import ADMIN_CAPABILITIES, ALLOWED_ADMIN_CAPABILITIES
 from .handler import ALLOWED_HANDLER_CAPABILITIES
 from .widget import ALLOWED_WIDGET_CAPABILITIES
@@ -45,4 +45,5 @@ __all__ = [
     "ALLOWED_HANDLER_CAPABILITIES",
     "ALLOWED_WIDGET_CAPABILITIES",
     "Capability",
+    "render_registry",
 ]

@@ -42,10 +42,10 @@ handlerCapabilities: Closed-vocabulary list declaring which platform services
   - Declare "shopify_rest" and/or "shopify_graphql" based on which Shopify
     APIs the handler actually calls. Most handlers declare at least one;
     a DB-only admin panel with no Shopify reads declares neither.
-  - Declare "email" when the handler calls ctx.services.email.send, even if
-    platformGaps also mentions email. The two fields serve different purposes:
-    platformGaps names what the platform CANNOT do; handlerCapabilities names
-    what the handler WILL do.
+  - Declare "email" when the handler calls ctx.services.email.send. Email is
+    an AVAILABLE capability — do NOT list it in platformGaps. Same for "sms"
+    and "files": these are available services; platformGaps is for capabilities
+    the platform cannot deliver at all.
   - Declare "files" when the handler produces any downloadable artefact
     (CSV export, PDF receipt, XLSX report). Declaring a document-format npm
     package (npm:pdfkit / npm:exceljs / npm:csv) without "files" is

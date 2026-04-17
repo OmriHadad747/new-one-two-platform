@@ -8,6 +8,7 @@ handlerCapabilities / widgetCapabilities. Add a capability to the registry
 and this list updates automatically.
 """
 
+from templates.capabilities import render_registry
 from templates.capabilities.admin import ADMIN_CAPABILITIES
 from templates.capabilities.handler import HANDLER_NPM_PACKAGES, HANDLER_SERVICES
 from templates.capabilities.widget import WIDGET_CAPABILITIES
@@ -35,17 +36,6 @@ cronSchedule: null unless periodic polling is required. Use standard 5-field cro
 """
 
 
-def _render_registry(registry, indent: str = "    ") -> str:
-    """
-    Render a capability registry as an architect-facing bullet list. Only the
-    .short field is emitted — the full .docs blocks are consumed downstream by
-    the handler JIT, not by the architect.
-    """
-    return "\n".join(
-        f'{indent}- "{name}" — {cap.short}' for name, cap in registry.items()
-    )
-
-
 FEASIBILITY = (
     """\
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -68,14 +58,14 @@ feasibility: Is this app BUILDABLE with the platform's capability surface?
 
     Handler platform services — declare in handlerCapabilities when the handler uses them:
 """
-    + _render_registry(HANDLER_SERVICES, indent="      ")
+    + render_registry(HANDLER_SERVICES, indent="      ")
     + "\n\n    Handler npm packages — declare in handlerCapabilities when the handler require()s them:\n"
-    + _render_registry(HANDLER_NPM_PACKAGES, indent="      ")
+    + render_registry(HANDLER_NPM_PACKAGES, indent="      ")
     + "\n\n    Widget client-side APIs — declare in widgetCapabilities (storefront archetypes only):\n"
-    + _render_registry(WIDGET_CAPABILITIES, indent="      ")
+    + render_registry(WIDGET_CAPABILITIES, indent="      ")
     + (
         "\n\n    Admin-panel capabilities — declare in adminCapabilities (admin archetypes only):\n"
-        + _render_registry(ADMIN_CAPABILITIES, indent="      ")
+        + render_registry(ADMIN_CAPABILITIES, indent="      ")
         if ADMIN_CAPABILITIES
         else "\n\n    Admin-panel capabilities — adminCapabilities is [] today (no declarable admin capabilities yet; reserved for future growth)."
     )
