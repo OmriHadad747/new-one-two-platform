@@ -96,6 +96,7 @@ export {
   getTenantBrand,
   upsertTenantBrand,
   getAppEmailConfig,
+  getAppEmailVariables,
   createAppEmailConfigFromStarter,
   updateAppEmailConfig,
   insertEmailDelivery,

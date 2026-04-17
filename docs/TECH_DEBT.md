@@ -244,6 +244,55 @@ Low risk per PR because each family is independent and fail-closed
 
 ---
 
+## TD-017 — Merchant-facing notifications channel for runtime warnings
+
+**Current state**
+Several platform-side signals are merchant-actionable but invisible in the UI because the Logs tab
+only shows invocation-level rows (`InvocationLogEntry` / `WebhookInvocationLogEntry` — id, path/topic,
+status, durationMs, errorMessage, timestamp). Individual `logger.warn` lines emitted inside handlers
+or platform services have nowhere to surface.
+
+Concrete first case driving this: `EMAIL_DATA_MANIFEST_DRIFT` in
+`platform/packages/harness/src/email-service.ts`. When the handler passes `data` keys that don't match
+the generator-declared `apps.email_variables` manifest, the merchant's `{{tokens}}` may render empty.
+Today this is warn-logged to the backend sink only — operators see it, merchants never do.
+
+**Why not just extend the Logs tab**
+`InvocationLogEntry` is a typed row per invocation. Widening it to carry arbitrary log lines would
+bloat every row and mix two audiences (operator debugging vs. merchant action). A separate
+Notifications tab keeps the two concerns cleanly split and gives room for filtering, mark-as-read,
+and badge counts that don't belong on the Logs tab.
+
+**Open product question (resolve before building)**
+What do we tell the merchant to do when they see a drift notification?
+  - "Run a revision on this app" (triggers a regen that aligns the manifest).
+  - Inform-only — the next regen will self-heal.
+  - "Edit the Email tab — some of your {{tokens}} may render empty."
+
+Surface-only is acceptable for the initial rollout; telemetry on hit rate will tell us whether a
+remediation path is worth the complexity.
+
+**What to do**
+1. New table `app_notifications (id, tenant_id, app_id, event, severity, payload jsonb, seen_at, created_at)` with RLS.
+2. Write path: every platform-side `logger.warn` event that is merchant-actionable also inserts a row.
+   Wrap the dual-write in a small helper (`emitNotification(logger, { event, severity, payload })`)
+   so call sites can't drift between log and row.
+3. Read path: `GET /tenants/:tid/apps/:aid/notifications` with pagination + a `PATCH .../seen` endpoint.
+4. New Notifications tab on `AppDetailPage` alongside Logs/Email/Settings; badge unread count on the tab label.
+
+**Affected files** (when done)
+- `platform/packages/db/migrations/00NN_app_notifications.sql` — new table + RLS.
+- `platform/packages/db/src/notifications.ts` — new module.
+- `platform/packages/harness/src/email-service.ts` — dual-write at the drift warn-log site.
+- `platform/apps/api/src/routes/notifications.ts` — new route.
+- `platform-front/src/pages/AppDetailPage.tsx` — new tab + badge.
+- `platform-front/src/types/dashboard.ts` — `AppNotification` type.
+
+**Complexity:** Medium. The DB + API + UI pieces are each straightforward; the cross-cutting
+ergonomics (helper + consistent event taxonomy) is what takes the extra time.
+
+---
+
 ## TD-015 — Revision failure artifacts saved to /tmp only
 
 **Current state**

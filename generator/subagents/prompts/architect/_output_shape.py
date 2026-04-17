@@ -84,6 +84,7 @@ def build_output_shape(archetype: str) -> str:
         '    "stateMachine": null,\n'
         '    "platformGaps": [],\n'
         '    "handlerCapabilities": ["shopify_rest", "email"],\n'
+        '    "emailSpec": { "type": "transactional", "purpose": "<one-line description of when and why this email fires>" },\n'
         '    "cronBatching": null,\n'
         '    "dbContracts": [\n'
         "      {\n"

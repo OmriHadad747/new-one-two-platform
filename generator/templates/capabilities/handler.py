@@ -177,7 +177,53 @@ ctx.services.email.send({ to, data? }) → Promise<void>
 
   Deploy is blocked on apps that call ctx.services.email.send until the merchant
   has saved the Email tab at least once. That's by design — uncustomized emails
-  would look generic and hurt the merchant's brand.\
+  would look generic and hurt the merchant's brand.
+
+── Email metadata sidecar (REQUIRED when you call email.send) ───
+
+  AFTER the handler.js code, emit a fenced JSON block declaring the exact
+  variables you chose for `data` plus starter template content for the
+  Email tab. The platform seeds the merchant's `app_email_configs` row
+  from this block so the merchant never sees a blank form on first open.
+
+  Format — one block per handler, fenced with ```email-metadata.
+  Replace every <placeholder> token below with values specific to THIS
+  app's send call(s); do NOT echo the angle-bracket placeholders verbatim.
+
+```email-metadata
+{
+  "variables": ["<variableOne>", "<variableTwo>", "<urlVariable>"],
+  "starterContent": {
+    "subject":  "<short subject line that references {{variableOne}} when natural>",
+    "heading":  "<optional greeting referencing a name-like variable, or omit>",
+    "body":     "<one or two sentences describing the context, referencing {{variableTwo}} etc.>",
+    "ctaLabel": "<short button label, or omit together with ctaUrl>",
+    "ctaUrl":   "{{<urlVariable>}}"
+  }
+}
+```
+
+  RULES:
+  - variables: the EXACT camelCase keys you pass in any `data: { ... }`
+    across ALL ctx.services.email.send() call sites in this handler. First-
+    seen order, deduplicated. If you only make one send call, it's just the
+    keys from that one object literal.
+  - starterContent.subject / body: short, warm, reference variables you
+    declared with {{variable}} placeholders. The merchant will edit this
+    copy — your job is to produce a sensible non-blank starting point
+    informed by emailSpec.purpose from the architect plan, NOT to write
+    final marketing copy.
+  - heading: optional. Include it for personalized greetings when a name-
+    like variable is available. Omit the key entirely otherwise.
+  - ctaLabel + ctaUrl: required together if ANY URL variable is in your
+    variables list (recoveryUrl, productUrl, orderUrl, actionUrl, url,
+    etc.). Omit both when the handler passes no URL variable.
+  - Keep variables consistent: every token referenced in starterContent
+    with {{x}} MUST be in the variables array, and vice versa (no unused
+    declared variables).
+  - Emit ONE block even across multiple send call sites — merge all
+    variables into a single array.
+  - Do NOT emit this block when the handler does not call email.send.\
 """,
             ),
         ),

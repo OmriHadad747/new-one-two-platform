@@ -155,6 +155,8 @@ def validate_architect_plan(
           array from the widget vocabulary for storefront archetypes.
       19. adminCapabilities must be null for non-admin archetypes and an array
           from the admin vocabulary for admin archetypes (registry empty today).
+      20. emailSpec must be a non-null object { type, purpose } when "email"
+          is in handlerCapabilities, and null otherwise.
     """
     errors: List[str] = []
     shopify = architect_output.get("shopifyPlan") or {}
@@ -462,6 +464,43 @@ def validate_architect_plan(
             f"adminCapabilities must be null for a {app_archetype!r} app — "
             "this archetype has no admin panel, so there are no admin "
             "capabilities to declare (use null, not [])"
+        )
+
+    # 20. emailSpec — coupled to handlerCapabilities.
+    #     Non-null object { type, purpose } when "email" is declared; null
+    #     otherwise. Consumed downstream by the Email tab seed + the handler
+    #     prompt's starter-content guidance.
+    email_spec = impl.get("emailSpec")
+    declares_email = isinstance(handler_caps, list) and "email" in handler_caps
+    if declares_email:
+        if email_spec is None:
+            errors.append(
+                "emailSpec is missing — required when 'email' is in "
+                "handlerCapabilities. Set emailSpec to "
+                "{ type: 'transactional'|'marketing', purpose: '<one-line description>' }"
+            )
+        elif not isinstance(email_spec, dict):
+            errors.append(
+                f"emailSpec must be an object, got {type(email_spec).__name__}"
+            )
+        else:
+            spec_type = email_spec.get("type")
+            if spec_type not in ("transactional", "marketing"):
+                errors.append(
+                    f"emailSpec.type must be 'transactional' or 'marketing', "
+                    f"got {spec_type!r}"
+                )
+            purpose = email_spec.get("purpose")
+            if not isinstance(purpose, str) or not purpose.strip():
+                errors.append(
+                    "emailSpec.purpose must be a non-empty string describing "
+                    "when and why the email fires"
+                )
+    elif email_spec is not None:
+        errors.append(
+            "emailSpec must be null when 'email' is not in "
+            "handlerCapabilities — do not declare an email spec for a "
+            "handler that does not call ctx.services.email.send"
         )
 
     return errors

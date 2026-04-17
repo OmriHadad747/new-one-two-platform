@@ -29,11 +29,12 @@ Model: claude-sonnet-4-6 (via agent_models.py)
 from __future__ import annotations
 
 import json
+import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from shopify_mcp.client import validate_handler_graphql
-from subagents.base import CodegenContext, Generator
+from subagents.base import CodegenContext, Generator, _THINKING_BUDGET_HIGH
 from subagents.static_validation import validate_handler_artifact
 from templates.capabilities.handler import (
     HANDLER_CAPABILITY_REGISTRY,
@@ -49,6 +50,17 @@ from subagents.prompts.handler import (
     HARNESS_SECTION_WIDGET_STOREFRONT,
 )
 
+log = logging.getLogger(__name__)
+
+# Fence for the structured email-metadata sidecar the handler emits after the
+# JS code when it calls ctx.services.email.send. See
+# templates/capabilities/handler.py ("Email metadata sidecar") for the contract
+# shown to the model.
+_EMAIL_META_FENCE_RE = re.compile(
+    r"```email-metadata\s*\n(.*?)\n```",
+    re.DOTALL,
+)
+
 
 class HandlerGenerator(Generator):
     name = "handler"
@@ -57,7 +69,7 @@ class HandlerGenerator(Generator):
     # ── Generator interface ────────────────────────────────────────────────────
 
     def system_prompt(self) -> str:
-        return f"You are an expert Node.js developer writing Shopify automation handlers.\n\n{HARNESS_BASE}"
+        return f"You are an expert Node.js backend developer writing server side shopify applications.\n\n{HARNESS_BASE}"
 
     def user_prompt(self, ctx: CodegenContext) -> str:
         jit_sections = _build_jit_sections(ctx.plan, ctx.platform_api_catalog)
@@ -97,9 +109,48 @@ class HandlerGenerator(Generator):
         )
 
     def parse(self, raw: str) -> str:
-        text = re.sub(r"^```(?:javascript|js)?\s*", "", raw.strip(), flags=re.MULTILINE)
+        # Strip any email-metadata sidecar first so it doesn't leak into the
+        # code artifact. The sidecar is captured separately in generate().
+        stripped = _EMAIL_META_FENCE_RE.sub("", raw).strip()
+        text = re.sub(r"^```(?:javascript|js)?\s*", "", stripped, flags=re.MULTILINE)
         text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE)
         return text.strip()
+
+    def generate(self, ctx: CodegenContext) -> Tuple[str, int, int]:
+        """
+        Overrides Generator.generate() to capture the email-metadata sidecar.
+
+        The handler agent emits TWO things in its response when the handler
+        calls ctx.services.email.send: the JS code, and a fenced
+        ```email-metadata``` JSON block declaring the `variables` it passed
+        and the `starterContent` to seed the Email tab.
+
+        parse() handles the code path (and strips the sidecar out of the code
+        artifact). This override additionally extracts the sidecar JSON and
+        stashes it on ctx.handler_email_metadata — an OUTPUT slot on
+        CodegenContext the orchestrator reads after this future resolves.
+        """
+        from models.adapter import get_llm, invoke
+        from models.agent_models import get_agent_model
+
+        complexity = (ctx.plan.get("appContracts") or {}).get("complexity", "low")
+        thinking_budget = _THINKING_BUDGET_HIGH if complexity == "high" else None
+
+        llm = get_llm(
+            model=get_agent_model(self.name),
+            max_tokens=self.max_tokens,
+            thinking_budget=thinking_budget,
+        )
+        retry_suffix = self._format_retry_suffix(ctx.previous_errors)
+        result = invoke(
+            llm,
+            self.system_prompt(),
+            self.user_prompt(ctx),
+            retry_suffix=retry_suffix,
+        )
+
+        ctx.handler_email_metadata = _extract_email_metadata(result.content)
+        return self.parse(result.content), result.input_tokens, result.output_tokens
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         topics = ctx.plan.get("shopifyPlan", {}).get("webhookTopics", [])
@@ -118,6 +169,40 @@ class HandlerGenerator(Generator):
         )
         errors += validate_handler_graphql(artifact)
         return errors
+
+
+# ── Email-metadata sidecar extraction ──────────────────────────────────────────
+
+
+def _extract_email_metadata(raw: str) -> Optional[Dict[str, Any]]:
+    """
+    Pull the ```email-metadata``` fenced JSON block out of the handler agent's
+    raw response. Returns the parsed dict, or None when no sidecar was emitted
+    (handler does not call ctx.services.email.send) or the block could not
+    be parsed.
+
+    Parse failures are logged but do not raise — the pipeline falls back to
+    no starter content, which is recoverable (merchant fills in the Email tab
+    manually). A loud failure here would be worse than a soft one.
+    """
+    match = _EMAIL_META_FENCE_RE.search(raw)
+    if not match:
+        return None
+    body = match.group(1).strip()
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError as err:
+        log.warning(
+            "handler emitted email-metadata block that is not valid JSON: %s", err
+        )
+        return None
+    if not isinstance(parsed, dict):
+        log.warning(
+            "handler email-metadata block parsed to %s, expected object",
+            type(parsed).__name__,
+        )
+        return None
+    return parsed
 
 
 # ── JIT harness section builder ────────────────────────────────────────────────
@@ -329,8 +414,6 @@ def _format_prior_handler(prior_code: Any) -> str:
         f"{prior_code}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
-
-
 
 
 def _format_edge_cases(plan: Dict[str, Any]) -> str:

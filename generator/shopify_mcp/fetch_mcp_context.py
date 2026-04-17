@@ -18,6 +18,7 @@ from shopify_mcp.client import _extract_text
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters
 
+
 async def fetch() -> str:
     server_params = StdioServerParameters(
         command="npx",
@@ -28,10 +29,13 @@ async def fetch() -> str:
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await asyncio.wait_for(
-                session.call_tool("learn_shopify_api", {"api": "admin", "model": "claude-sonnet-4-6"}),
+                session.call_tool(
+                    "learn_shopify_api", {"api": "admin", "model": "claude-sonnet-4-6"}
+                ),
                 timeout=60,
             )
             return _extract_text(result)
+
 
 print("Calling learn_shopify_api (direct session)...")
 text = asyncio.run(fetch())

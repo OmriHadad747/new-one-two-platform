@@ -9,33 +9,24 @@ Every generator in the pipeline implements the Generator ABC:
   user_prompt(ctx)   — dynamic user prompt built from CodegenContext
   parse(raw)         — post-process raw LLM output (strip fences, normalize)
   validate(art, ctx) — static analysis; returns error strings, [] = pass
-  generate(ctx)      — template method: system_prompt + user_prompt → invoke → parse
+  generate(ctx)      — template method: system_prompt + user_prompt → invoke → parse.
+                       Overridden by HandlerGenerator ONLY to capture a
+                       structured email-metadata sidecar alongside the code.
+                       Do not override elsewhere unless a future generator
+                       has a similar structured side-output requirement.
 
 Adding a new generator means creating one file that subclasses Generator and
 registering it in registry.py. No changes to orchestration code (crew.py).
 
 CodegenContext carries all inputs shared across generators for a single generation
-run. Sub-agents read only the fields they need.
+run. Sub-agents read only the fields they need. It also carries one side-band
+output slot (handler_email_metadata) written by HandlerGenerator.generate() so
+the orchestrator can read structured metadata without changing the artifacts dict
+shape.
 
-plan shape (Architect output — passed directly as the plan):
-  {
-    "shopifyPlan": {
-      "webhookTopics": [...],
-      "cronSchedule": null | "..."
-    },
-    "appContracts": {
-      "feasibility": "feasible" | "blocked",
-      "complexity": "low" | "medium" | "high",
-      "stateMachine": null | { entity, trackedField, unknownSentinel, skipWhenUnknown, transitions: [{from, to, action}] },
-      "platformGaps": [...],
-      "cronBatching": null | { required, ... },
-      "dbContracts": [{ table, columns: [{name, type, constraints}], uniqueConstraint, indexes, rls }],
-      "webhookContract": null | { payloadFields, handlerMustProduce },
-      "cronContract": null | { handlerMustProduce },
-      "widgetApiCatalog": null | [{ path, method, requestShape, responseShape }],
-      "adminApiCatalog": null | [{ path, method, requestShape, responseShape }]
-    }
-  }
+plan shape: see validate_architect_plan in subagents/static_validation.py
+and the architect prompt sections in subagents/prompts/architect/ for the
+authoritative schema. (Previously duplicated here — removed to avoid drift.)
 """
 
 from __future__ import annotations
@@ -72,6 +63,14 @@ class CodegenContext:
                         existing tables.
     prior_admin_ui_code The currently deployed admin UI module, present only on
                         revision runs for apps with an admin panel.
+    handler_email_metadata
+                        Side-band OUTPUT slot (not an input). Populated by
+                        HandlerGenerator.generate() when the handler emits
+                        the email-metadata sidecar (variables + starterContent
+                        the handler wrote alongside its code). None when the
+                        handler does not call ctx.services.email.send. The
+                        orchestrator reads this off the per-call ctx after
+                        the future resolves.
     """
 
     intent: Dict[str, Any]
@@ -83,6 +82,9 @@ class CodegenContext:
     prior_widget_code: Optional[str] = None
     prior_migration_sql: Optional[str] = None
     prior_admin_ui_code: Optional[str] = None
+
+    # OUTPUT slot — see docstring. Written by HandlerGenerator.generate().
+    handler_email_metadata: Optional[Dict[str, Any]] = None
 
 
 
@@ -100,8 +102,9 @@ class Generator(ABC):
     Abstract base for all code-generation sub-agents.
 
     Subclasses must set the class-level attributes and implement the four
-    abstract methods. The concrete generate() method is inherited and should
-    not be overridden.
+    abstract methods. The concrete generate() method is inherited and
+    typically should not be overridden — see its docstring for the one
+    supported exception (structured side-band output, as in HandlerGenerator).
     """
 
     # ── Class-level declarations (override in every subclass) ─────────────────
@@ -171,7 +174,10 @@ class Generator(ABC):
         The token counts let the orchestrator build an accurate AgentTraceEntry.
 
         This is the only entry point the orchestrator needs to call.
-        It must not be overridden — customise system_prompt, user_prompt, and parse.
+        Override ONLY when a generator has structured side-band output that
+        can't be expressed as a single artifact string (see HandlerGenerator,
+        which writes ctx.handler_email_metadata alongside the returned code).
+        For every other case, customise system_prompt, user_prompt, and parse.
 
         Extended thinking is enabled for high-complexity features. The Architect
         declares complexity in appContracts; high-complexity apps involve state

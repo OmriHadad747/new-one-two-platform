@@ -96,6 +96,25 @@ export async function getAppEmailConfig(appId: string): Promise<AppEmailConfig |
 }
 
 /**
+ * Returns the variable-name manifest the generator recorded on the app row
+ * when this app was generated. Populated from the handler's email-metadata
+ * sidecar at bundle-publish time; read at send time to detect drift between
+ * the declared manifest and the keys the handler actually passes in `data`.
+ *
+ * Returns [] when the app has no manifest (legacy rows from before the
+ * sidecar contract existed) — callers should treat [] as "drift check
+ * disabled" rather than "handler passes nothing".
+ */
+export async function getAppEmailVariables(appId: string): Promise<string[]> {
+  const rows = await sql<{ emailVariables: string[] | null }[]>`
+    SELECT email_variables AS "emailVariables"
+    FROM apps
+    WHERE id = ${appId}
+  `;
+  return rows[0]?.emailVariables ?? [];
+}
+
+/**
  * Inserts a new `app_email_configs` row on deploy, pre-filled with
  * AI-generated starter content. Called from the deployer when a bundle has
  * `usesEmail === true`. The row starts with `configured_by_merchant = FALSE`

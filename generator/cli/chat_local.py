@@ -51,7 +51,6 @@ _log.basicConfig(
 from shopify_mcp.client import prefetch_for_run
 from subagents.architect_agent import run_architect_agent, _ARCHITECT_USER_TEMPLATE
 from subagents.base import CodegenContext
-from subagents.email_metadata import extract_email_metadata
 from subagents.explanation_agent import run_explanation_agent
 from subagents.product_agent import run_product_agent_analyze
 from subagents.revision_agent import run_revision_agent
@@ -863,11 +862,17 @@ def _build_bundle(
     explanation: Dict[str, Any],
     is_storefront: bool,
     is_admin_ui: bool,
+    handler_email_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Assemble the FeatureBundle dict from generation outputs.
     Mirrors _publish_success in crew.py so the DB bundle is identical to what
     the production generator publishes via Pub/Sub.
+
+    Email metadata flow matches crew.py — see _publish_success for the full
+    rationale. usesEmail / emailTypeSuggestion come from the architect plan;
+    emailVariables / emailStarterContent come from the handler's structured
+    sidecar (captured by HandlerGenerator.generate() onto base_ctx).
     """
     handler_code = artifacts.get("handler", "")
     shopify_plan = plan.get("shopifyPlan", {})
@@ -881,10 +886,21 @@ def _build_bundle(
             return []
         return re.findall(r"""['"]([^'"]+)['"]""", m.group(1))
 
-    email_meta = extract_email_metadata(handler_code, intent, plan)
-    starter = email_meta.get("emailStarterContent")
-    if starter is not None and hasattr(starter, "model_dump"):
-        starter = starter.model_dump()
+    uses_email = "email" in (app_contracts.get("handlerCapabilities") or [])
+    email_spec = app_contracts.get("emailSpec") or {}
+    sidecar = handler_email_metadata or {}
+    raw_variables = sidecar.get("variables")
+    email_variables: List[str] = [
+        v for v in (raw_variables or []) if isinstance(v, str)
+    ]
+    starter_raw = sidecar.get("starterContent")
+    starter = (
+        starter_raw
+        if isinstance(starter_raw, dict)
+        and starter_raw.get("subject")
+        and starter_raw.get("body")
+        else None
+    )
 
     return {
         "widgetModule":          artifacts.get("widget_js") if is_storefront else None,
@@ -908,9 +924,9 @@ def _build_bundle(
                 "estimatedMonthlyCost":         technical.get("estimatedMonthlyCost", "$0"),
             },
         },
-        "usesEmail":          bool(email_meta.get("usesEmail")),
-        "emailVariables":     email_meta.get("emailVariables", []) or [],
-        "emailTypeSuggestion": email_meta.get("emailTypeSuggestion"),
+        "usesEmail":           uses_email,
+        "emailVariables":      email_variables,
+        "emailTypeSuggestion": email_spec.get("type"),
         "emailStarterContent": starter,
     }
 
@@ -1101,7 +1117,10 @@ def main() -> None:
     # ── DB: store bundle ──────────────────────────────────────────────────────
     if save_to_db and app_id and job_id:
         try:
-            bundle = _build_bundle(artifacts, intent, plan, explanation, is_storefront, is_admin_ui)
+            bundle = _build_bundle(
+                artifacts, intent, plan, explanation, is_storefront, is_admin_ui,
+                handler_email_metadata=base_ctx.handler_email_metadata,
+            )
             db_local.store_bundle(job_id, app_id, bundle)
         except Exception as exc:
             _log.info("DB bundle save failed: %s", exc, exc_info=True)

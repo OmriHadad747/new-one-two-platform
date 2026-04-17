@@ -7,9 +7,12 @@ only carry the RULES for how to populate handlerCapabilities and
 widgetCapabilities — they reference the AVAILABLE list above for the
 allowed values so the vocabulary is never duplicated in the prompt.
 
-Three exported sections:
+Four exported sections:
   HANDLER_CAPABILITIES  — always shown (every archetype has a handler).
                           Goes in the shared (archetype-independent) prefix.
+  EMAIL_SPEC            — always shown; coupled to handlerCapabilities.
+                          Required when "email" is declared. Lives in the
+                          shared prefix right after HANDLER_CAPABILITIES.
   WIDGET_CAPABILITIES   — only shown for storefront archetypes. Goes in the
                           archetype tail alongside the other widget-specific
                           prompt sections.
@@ -59,6 +62,36 @@ handlerCapabilities: Closed-vocabulary list declaring which platform services
   - Keep the array [] only when the handler truly needs nothing beyond the
     always-on surface (ctx.db, ctx.logger, ctx.tenantId, ctx.trigger) —
     rare in practice."""
+
+
+EMAIL_SPEC = """\
+emailSpec: Structured spec for the email the handler will send. MUST be
+  non-null whenever "email" is declared in handlerCapabilities, and MUST be
+  null otherwise. Consumed downstream by the Email tab (to pre-select email
+  type) and by the Handler prompt (to guide starter-content generation).
+
+  Shape when set:
+    {
+      "type": "transactional" | "marketing",
+      "purpose": "<one-line description of when this email is sent and why>"
+    }
+
+  RULES:
+  - type = "transactional" when the email is triggered by a customer action
+    (order confirmation, abandoned-cart recovery, shipping update, receipt,
+    password reset, subscription confirmation, etc.). Transactional is the
+    default for app-driven Shopify automations.
+  - type = "marketing" only for unsolicited merchant-to-customer outreach
+    (newsletter, win-back campaign, promotional blast, announcement). These
+    require customer consent and unsubscribe handling — declare marketing
+    ONLY when the feature is explicitly a marketing send.
+  - purpose: one sentence, present tense. Describe WHAT the email is and
+    WHEN it fires. Example: "Sent when a customer abandons a cart with
+    items totalling $50+, one hour after cart last-updated timestamp."
+    This drives the handler's starter subject/body copy — the more concrete,
+    the better the starter content the merchant sees on first open.
+  - Keep this null if the handler does not send email. Do NOT invent an
+    emailSpec to document hypothetical future email sends."""
 
 
 WIDGET_CAPABILITIES = """\

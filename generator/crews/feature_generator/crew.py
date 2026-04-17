@@ -30,12 +30,13 @@ import pathlib
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timezone
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 import contract.publisher as _contract_publisher
 from contract.validators import (
     Bundle,
     DbMigration,
+    EmailStarterContent,
     FeatureBundleMessage,
     FeatureExplanation,
     GenerationMeta,
@@ -53,7 +54,6 @@ from subagents.architect_agent import run_architect_agent
 from subagents.revision_agent import run_revision_agent
 from subagents.validator_agent import run_validator_agent
 from subagents.registry import GENERATORS
-from subagents.email_metadata import extract_email_metadata
 from subagents.static_validation import (
     validate_architect_plan,
     validate_widget_handler_contract,
@@ -62,19 +62,21 @@ from subagents.static_validation import (
 
 log = logging.getLogger(__name__)
 
-_MAX_RETRIES = 3        # total codegen attempts (1 initial + 2 retries)
+_MAX_RETRIES = 3  # total codegen attempts (1 initial + 2 retries)
 _MAX_ARCH_ATTEMPTS = 2  # architect: 1 initial + 1 retry
 
 # Validator question keys that indicate a backend (handler) problem.
 # When any of these fire, the revision agent must be allowed to edit the handler.
 # Q3/Q4-only failures are frontend misalignments — the handler stays locked.
-_BACKEND_VALIDATOR_QUESTIONS: FrozenSet[str] = frozenset({
-    "q1_table_names",
-    "q2_column_names",
-    "q5_cron_bulk_fetch",
-    "q6_state_machine",
-    "q7_schema_completeness",
-})
+_BACKEND_VALIDATOR_QUESTIONS: FrozenSet[str] = frozenset(
+    {
+        "q1_table_names",
+        "q2_column_names",
+        "q5_cron_bulk_fetch",
+        "q6_state_machine",
+        "q7_schema_completeness",
+    }
+)
 
 # Pipeline-level deadline. A healthy run finishes well inside 5 minutes; we give
 # a generous 15-minute ceiling so that legitimate long runs (3 codegen attempts
@@ -271,6 +273,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
             explanation,
             agent_trace,
             start_ms,
+            handler_email_metadata=base_ctx.handler_email_metadata,
         )
 
     except _PipelineAbort:
@@ -729,7 +732,9 @@ def _phase_validator(
             "job=%s revision_agent: returned no frontend artifacts — keeping originals",
             request.jobId,
         )
-        _emit(request, "revision", "completed", "Revision incomplete — keeping originals")
+        _emit(
+            request, "revision", "completed", "Revision incomplete — keeping originals"
+        )
         return artifacts
 
     # Statically validate the revised frontend artifacts before accepting them.
@@ -775,7 +780,9 @@ def _phase_validator(
     }
 
     if not static_errors2:
-        _emit(request, "revision", "completed", "Semantic issues resolved (static retry)")
+        _emit(
+            request, "revision", "completed", "Semantic issues resolved (static retry)"
+        )
         return merged2
 
     # Both revision attempts produced statically invalid code — fail the job.
@@ -839,8 +846,26 @@ def _publish_success(
     explanation: Dict,
     agent_trace: List[AgentTraceEntry],
     start_ms: int,
+    handler_email_metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Build the final Bundle and publish a success completion event."""
+    """Build the final Bundle and publish a success completion event.
+
+    Email metadata flow:
+      - usesEmail is derived from plan.appContracts.handlerCapabilities
+        (architect declares "email" when the gnerated app requries emailing).
+      - emailTypeSuggestion comes from plan.appContracts.emailSpec.type
+        (architect's committed transactional/marketing decision).
+      - emailVariables and emailStarterContent come from the handler's
+        structured ```email-metadata``` sidecar, surfaced on ctx by
+        HandlerGenerator.generate() and threaded here via the
+        handler_email_metadata argument.
+
+    On revision runs where the holistic revision agent runs without
+    falling through to parallel codegen, handler_email_metadata will be
+    None. In that case the platform preserves the existing
+    app_email_configs row (merchant edits are not overwritten). See
+    MEMORY notifications-center tech debt for the drift-surfacing plan.
+    """
     import re
 
     handler_code = artifacts.get("handler", "")
@@ -855,17 +880,28 @@ def _publish_success(
 
     app_contracts = plan.get("appContracts") or {}
 
-    # Email metadata: regex-scan the handler for ctx.email.send() + extract
-    # variables and build starter content. Drives the Email tab + deploy
-    # blocking on the platform side.
-    email_meta = extract_email_metadata(handler_code, intent or {}, plan or {})
+    uses_email = "email" in (app_contracts.get("handlerCapabilities") or [])
+    email_spec = app_contracts.get("emailSpec") or {}
+    sidecar = handler_email_metadata or {}
+    raw_variables = sidecar.get("variables")
+    email_variables: List[str] = [
+        v for v in (raw_variables or []) if isinstance(v, str)
+    ]
+    starter_raw = sidecar.get("starterContent")
+    email_starter = (
+        EmailStarterContent(**starter_raw)
+        if isinstance(starter_raw, dict) and starter_raw.get("subject") and starter_raw.get("body")
+        else None
+    )
 
     bundle = Bundle(
         widgetModule=artifacts.get("widget_js") if is_storefront else None,
         adminUiModule=artifacts.get("admin_ui") if is_admin_ui else None,
         widgetTargetTemplates=(
-            app_contracts.get("widgetTargetTemplates") or None
-        ) if is_storefront else None,
+            (app_contracts.get("widgetTargetTemplates") or None)
+            if is_storefront
+            else None
+        ),
         handlerModule=HandlerModule(
             code=handler_code,
             webhookTopics=shopify_plan.get("webhookTopics", []),
@@ -884,10 +920,10 @@ def _publish_success(
                 estimatedMonthlyCost=technical.get("estimatedMonthlyCost", "$0"),
             ),
         ),
-        usesEmail=bool(email_meta.get("usesEmail")),
-        emailVariables=email_meta.get("emailVariables", []) or [],
-        emailTypeSuggestion=email_meta.get("emailTypeSuggestion"),
-        emailStarterContent=email_meta.get("emailStarterContent"),
+        usesEmail=uses_email,
+        emailVariables=email_variables,
+        emailTypeSuggestion=email_spec.get("type"),
+        emailStarterContent=email_starter,
     )
 
     total_ms = _now_ms() - start_ms
@@ -971,8 +1007,7 @@ def _plan_codegen_batch(
 
     handler_errs = error_map.get("handler", [])
     handler_contract_broken = any(
-        any(marker in err for marker in _CONTRACT_ERROR_MARKERS)
-        for err in handler_errs
+        any(marker in err for marker in _CONTRACT_ERROR_MARKERS) for err in handler_errs
     )
     to_run_names = {gen.name for gen in to_run}
     coupled_pairs: List[tuple] = []
@@ -1091,17 +1126,20 @@ def run_codegen_parallel(
         return artifacts, {}
 
     per_agent_tokens: Dict[str, Tuple[int, int]] = {}
+    # Capture each generator's ctx so we can read side-band outputs
+    # (currently just HandlerGenerator's handler_email_metadata) after the
+    # future resolves. The per-call ctx is distinct from base_ctx — base_ctx
+    # lives for the whole pipeline; these are one-shot per generator call.
+    ctx_by_gen: Dict[str, CodegenContext] = {
+        gen.name: _build_codegen_context(
+            base_ctx,
+            previous_errors=_build_prev_errors(gen.name, cumulative_errors, error_map),
+        )
+        for gen in to_run
+    }
     with ThreadPoolExecutor(max_workers=len(to_run)) as pool:
         futures = {
-            gen.name: pool.submit(
-                gen.generate,
-                _build_codegen_context(
-                    base_ctx,
-                    previous_errors=_build_prev_errors(
-                        gen.name, cumulative_errors, error_map
-                    ),
-                ),
-            )
+            gen.name: pool.submit(gen.generate, ctx_by_gen[gen.name])
             for gen in to_run
         }
         for name, future in futures.items():
@@ -1109,6 +1147,13 @@ def run_codegen_parallel(
             artifact, in_tok, out_tok = future.result()  # raises on sub-agent exception
             artifacts[name] = artifact
             per_agent_tokens[name] = (in_tok, out_tok)
+
+    # Propagate HandlerGenerator's side-band email metadata onto base_ctx so
+    # downstream phases (_publish_success → Bundle construction) can read it
+    # without threading extra return values through every pipeline layer.
+    handler_ctx = ctx_by_gen.get("handler")
+    if handler_ctx is not None and handler_ctx.handler_email_metadata is not None:
+        base_ctx.handler_email_metadata = handler_ctx.handler_email_metadata
 
     return artifacts, per_agent_tokens
 
