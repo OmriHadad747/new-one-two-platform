@@ -39,7 +39,7 @@ from templates.capabilities.handler import (
     HANDLER_CAPABILITY_REGISTRY,
     SHOPIFY_REST_VS_GRAPHQL_GUIDE,
 )
-from templates.harness_contract import (
+from subagents.prompts.handler import (
     HARNESS_BASE,
     HARNESS_SECTION_ADMIN,
     HARNESS_SECTION_CRON_BATCHING,

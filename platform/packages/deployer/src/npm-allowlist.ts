@@ -3,16 +3,20 @@
 // its bundle's `_metadata.json → npmPackages` field.
 //
 // This list MUST stay in sync with the generator's `ALLOWED_NPM_PACKAGES` set
-// at `generator/subagents/static_validation.py`. The deployer enforces the
-// list INDEPENDENTLY so that a compromised, buggy, or prompt-injected
-// generator cannot install arbitrary packages into the tenant Cloud Run
-// image — defense in depth.
+// exported from `generator/templates/capabilities/__init__.py` (derived from
+// each npm:* Capability's `packages` tuple in capabilities/handler.py). The
+// deployer enforces the list INDEPENDENTLY so that a compromised, buggy, or
+// prompt-injected generator cannot install arbitrary packages into the tenant
+// Cloud Run image — defense in depth.
 //
 // To add a package:
 //   1. Add it to ALLOWED_NPM_PACKAGES below.
-//   2. Add it to the generator's ALLOWED_NPM_PACKAGES.
-//   3. Add a pinned version + documented use case to
-//      generator/templates/harness_contract.py.
+//   2. Add an `npm:<pkg>` Capability entry in
+//      `generator/templates/capabilities/handler.py` — set its `packages`
+//      tuple to the bare package name(s) and its `docs` to the usage block
+//      shown to the LLM (pinned version + example).
+//      The generator's allow-set is derived automatically from there; no
+//      further edits in the generator are required.
 //
 // Keep the list tight. Each entry is runtime code we ship to tenants; every
 // new dependency expands the audit surface for every merchant.

@@ -19,9 +19,9 @@ Each registry entry is a Capability with two fields:
     injects into the component prompt when the capability is declared. Empty
     for capabilities that have no JIT'able documentation yet.
 
-This split kills the old drift risk where short descriptions lived in the
-registry but full API docs lived in templates/harness_contract.py. Both are
-now derived from the same Capability entry.
+This split kills the old drift risk where short descriptions and full API
+docs lived in separate files and had to be manually kept aligned. Both now
+flow from the same Capability entry.
 
 Consumers:
   - Architect prompt (subagents/prompts/architect/_core.py, _capabilities.py)

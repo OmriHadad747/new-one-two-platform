@@ -27,7 +27,7 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 from models.adapter import extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
 from subagents.base import CodegenContext
-from templates.harness_contract import HARNESS_API_SURFACE
+from subagents.prompts.handler import HARNESS_API_SURFACE
 
 log = logging.getLogger(__name__)
 
