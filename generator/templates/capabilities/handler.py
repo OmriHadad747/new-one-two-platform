@@ -55,8 +55,6 @@ WHEN TO USE REST (vs ctx.shopify.graphql):
     /inventory_levels.json?inventory_item_ids=...)
   • Full-catalog scans — use since_id cursor pagination (see below)
   • Deleting Shopify resources (product images, metafields, etc.)
-  ❌ NEVER use /variants.json?inventory_item_ids=... — that batch filter does not exist
-  ❌ NEVER search /customers.json with a filter and assume completeness — use /customers/${id}.json
 
 REST full-catalog pagination — ALWAYS use since_id cursor (NOT Link headers):
   The ctx.shopify.get response does NOT expose HTTP headers — Link header parsing will always fail.
