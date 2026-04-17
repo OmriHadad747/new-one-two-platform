@@ -293,6 +293,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:qrcode",
             Capability(
                 short="QR code generation as PNG buffer or SVG string (qrcode).",
+                packages=("qrcode",),
                 docs="""\
 ── npm:qrcode ────────────────────────────────────────────────
   Declare: npmPackages: ['qrcode@1.5.3']
@@ -307,6 +308,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:jsbarcode",
             Capability(
                 short="Barcode SVG generation (jsbarcode, pulls in @xmldom/xmldom).",
+                packages=("jsbarcode", "@xmldom/xmldom"),
                 docs="""\
 ── npm:jsbarcode ─────────────────────────────────────────────
   Declare: npmPackages: ['jsbarcode@3.11.6', '@xmldom/xmldom@0.8.10']
@@ -325,6 +327,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:sharp",
             Capability(
                 short="Image resize / convert / compose (sharp).",
+                packages=("sharp",),
                 docs="""\
 ── npm:sharp ─────────────────────────────────────────────────
   Declare: npmPackages: ['sharp@0.33.5']
@@ -343,6 +346,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:pdfkit",
             Capability(
                 short="PDF generation (pdfkit).",
+                packages=("pdfkit",),
                 docs="""\
 ── npm:pdfkit ────────────────────────────────────────────────
   Declare: npmPackages: ['pdfkit@0.15.0']
@@ -361,6 +365,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:exceljs",
             Capability(
                 short="Excel / XLSX workbook creation (exceljs).",
+                packages=("exceljs",),
                 docs="""\
 ── npm:exceljs ───────────────────────────────────────────────
   Declare: npmPackages: ['exceljs@4.4.0']
@@ -378,6 +383,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:csv",
             Capability(
                 short="CSV parse and stringify (csv-parse, csv-stringify).",
+                packages=("csv-parse", "csv-stringify"),
                 docs="""\
 ── npm:csv ───────────────────────────────────────────────────
   Declare for parse:     npmPackages: ['csv-parse@5.5.6']
@@ -396,6 +402,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:xml",
             Capability(
                 short="XML parse and build (fast-xml-parser).",
+                packages=("fast-xml-parser",),
                 docs="""\
 ── npm:xml (fast-xml-parser) ─────────────────────────────────
   Declare: npmPackages: ['fast-xml-parser@4.3.6']
@@ -412,6 +419,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:handlebars",
             Capability(
                 short="Mustache-style HTML/text templating (handlebars).",
+                packages=("handlebars",),
                 docs="""\
 ── npm:handlebars ────────────────────────────────────────────
   Declare: npmPackages: ['handlebars@4.7.8']
@@ -429,6 +437,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:marked",
             Capability(
                 short="Markdown → HTML (marked).",
+                packages=("marked",),
                 docs="""\
 ── npm:marked ────────────────────────────────────────────────
   Declare: npmPackages: ['marked@15.0.0']
@@ -442,6 +451,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:dayjs",
             Capability(
                 short="Date parsing, formatting, arithmetic (dayjs).",
+                packages=("dayjs",),
                 docs="""\
 ── npm:dayjs ─────────────────────────────────────────────────
   Declare: npmPackages: ['dayjs@1.11.13']
@@ -456,6 +466,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:jszip",
             Capability(
                 short="In-memory ZIP archive creation (jszip).",
+                packages=("jszip",),
                 docs="""\
 ── npm:jszip ─────────────────────────────────────────────────
   Declare: npmPackages: ['jszip@3.10.1']
@@ -472,6 +483,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:uuid",
             Capability(
                 short="RFC 4122 UUID generation (uuid).",
+                packages=("uuid",),
                 docs="""\
 ── npm:uuid ──────────────────────────────────────────────────
   Declare: npmPackages: ['uuid@9.0.1']
@@ -487,6 +499,7 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
             "npm:slugify",
             Capability(
                 short="URL-safe slug generation (slugify).",
+                packages=("slugify",),
                 docs="""\
 ── npm:slugify ───────────────────────────────────────────────
   Declare: npmPackages: ['slugify@1.6.6']
@@ -507,6 +520,13 @@ HANDLER_CAPABILITY_REGISTRY: "OrderedDict[str, Capability]" = OrderedDict(
 )
 
 ALLOWED_HANDLER_CAPABILITIES: frozenset = frozenset(HANDLER_CAPABILITY_REGISTRY.keys())
+
+# Union of bare npm package names every npm capability authorizes. Derived from
+# the registry so adding an npm capability (with its `packages` tuple) auto-
+# extends the validator's allowed set — no parallel list to maintain.
+ALLOWED_NPM_PACKAGES: frozenset = frozenset(
+    pkg for cap in HANDLER_NPM_PACKAGES.values() for pkg in cap.packages
+)
 
 
 # ─── Cross-capability joint section ───────────────────────────────────────────

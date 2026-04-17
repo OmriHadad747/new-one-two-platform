@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional
 from templates.capabilities import (
     ALLOWED_ADMIN_CAPABILITIES,
     ALLOWED_HANDLER_CAPABILITIES,
+    ALLOWED_NPM_PACKAGES,
     ALLOWED_WIDGET_CAPABILITIES,
 )
 
@@ -760,25 +761,10 @@ def validate_handler_artifact(
         "buffer", "url", "http", "https", "net", "querystring",
         "string_decoder", "child_process", "process", "zlib",
     }
-    # Approved JS library packages — keep in sync with harness_contract.py.
-    # Only the base package name (no version), scoped packages use full @scope/name.
-    ALLOWED_NPM_PACKAGES = {
-        "qrcode",
-        "jsbarcode",
-        "@xmldom/xmldom",
-        "sharp",
-        "pdfkit",
-        "exceljs",
-        "csv-parse",
-        "csv-stringify",
-        "fast-xml-parser",
-        "handlebars",
-        "marked",
-        "dayjs",
-        "jszip",
-        "uuid",
-        "slugify",
-    }
+    # Approved JS library packages — derived from the handler capability registry
+    # (templates/capabilities/handler.py). Each npm:* capability's `packages`
+    # tuple contributes to this allowed set, so adding a new npm capability
+    # extends the validator with no edit here.
 
     def _pkg_base(name: str) -> str:
         """Strip version from a package name, handling scoped packages."""
