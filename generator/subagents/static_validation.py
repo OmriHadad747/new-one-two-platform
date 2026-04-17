@@ -761,10 +761,6 @@ def validate_handler_artifact(
         "buffer", "url", "http", "https", "net", "querystring",
         "string_decoder", "child_process", "process", "zlib",
     }
-    # Approved JS library packages — derived from the handler capability registry
-    # (templates/capabilities/handler.py). Each npm:* capability's `packages`
-    # tuple contributes to this allowed set, so adding a new npm capability
-    # extends the validator with no edit here.
 
     def _pkg_base(name: str) -> str:
         """Strip version from a package name, handling scoped packages."""
