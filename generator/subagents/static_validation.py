@@ -1150,13 +1150,63 @@ FORBIDDEN_WIDGET_JS_PATTERNS = [
         r"\bwindow\.(parent|top|opener|frames)\b",
         "window.parent/top/opener/frames cross-frame access is not allowed",
     ),
-    (
-        r"\bdocument\.(?!createElement|createTextNode)",
-        "direct document.* access is not allowed — use container.querySelector() and container.appendChild() instead. "
-        "For styles: const s = document.createElement('style'); s.textContent = '...'; container.appendChild(s) — never document.head.",
-    ),
+    # document.* scoping is enforced by _find_document_violations() — see the
+    # shared denylist above. We do NOT ban the full document.* namespace:
+    # addEventListener / querySelector / getElementById / dispatchEvent are
+    # legitimate when the component needs page-level reads or events.
     (r"\bsetInterval\s*\(", "setInterval is not allowed"),
 ]
+
+
+# ── document.* scoping — shared between widget and admin_ui validators ──────
+#
+# Both widget and admin_ui shells render into a `container` DOM node. Freely
+# reaching for document.* can leak outside the component (document.body /
+# document.head appendChild), mutate the merchant's page (document.title,
+# document.documentElement.style), or read/write sensitive state
+# (document.cookie). We denylist those specific shapes and accept
+# everything else — addEventListener, querySelector, getElementById,
+# dispatchEvent, createElement are all legitimate.
+_DOCUMENT_DENYLIST: frozenset[str] = frozenset(
+    {
+        "body",            # document.body.appendChild leaks outside container
+        "head",            # document.head.appendChild injects global styles
+        "documentElement", # document.documentElement.style mutates page root
+        "cookie",          # security — reads/writes merchant session cookies
+        "title",           # mutates the merchant's page title
+        "write",           # catastrophic — rewrites the entire page
+        "open",            # pairs with document.write
+        "close",           # pairs with document.write
+        "execCommand",     # legacy; prefer navigator.clipboard etc.
+    }
+)
+
+
+def _find_document_violations(js: str) -> List[str]:
+    """
+    Return a single actionable error naming the specific forbidden
+    ``document.*`` properties used. Empty list when only safe shapes
+    (addEventListener, querySelector, getElementById, createElement, etc.)
+    appear. Reused by validate_widget_artifact and validate_admin_ui_artifact.
+    """
+    found = sorted(
+        {
+            m.group(1)
+            for m in re.finditer(r"\bdocument\.([a-zA-Z_$][a-zA-Z0-9_$]*)", js)
+            if m.group(1) in _DOCUMENT_DENYLIST
+        }
+    )
+    if not found:
+        return []
+    props = ", ".join(f"document.{p}" for p in found)
+    return [
+        f"forbidden DOM access: {props} — these shapes leak outside the "
+        "component's container or mutate page-wide state. Use container.* for "
+        "DOM the component owns. Safe document.* shapes are permitted: "
+        "createElement / createTextNode (factories), addEventListener / "
+        "removeEventListener / dispatchEvent (page events), querySelector / "
+        "getElementById / querySelectorAll (reading the merchant's page)."
+    ]
 
 
 # setTimeout allowance — debounce / throttle only. Accept calls whose SECOND
@@ -1264,6 +1314,10 @@ def validate_widget_artifact(
     # setTimeout is allowed only as a bounded debounce — check delays.
     errors.extend(_find_setTimeout_violations(widget_js))
 
+    # document.* denylist — reject shapes that leak outside the container or
+    # mutate page-wide state; allow safe page reads/events.
+    errors.extend(_find_document_violations(widget_js))
+
     # host.storefront() must use relative paths
     storefront_calls = re.findall(
         r"""host\.storefront\s*\(\s*['"`]([^'"`]+)['"`]""", widget_js
@@ -1336,11 +1390,10 @@ FORBIDDEN_ADMIN_UI_PATTERNS = [
         r"\bwindow\.(parent|top|opener|frames)\b",
         "window.parent/top/opener/frames cross-frame access is not allowed",
     ),
-    (
-        r"\bdocument\.(?!createElement|createTextNode)",
-        "direct document.* access is not allowed — use container.querySelector() and container.appendChild() instead. "
-        "For styles: const s = document.createElement('style'); s.textContent = '...'; container.appendChild(s) — never document.head.",
-    ),
+    # document.* scoping is enforced by _find_document_violations() — see the
+    # shared denylist above. We do NOT ban the full document.* namespace:
+    # addEventListener / querySelector / getElementById / dispatchEvent are
+    # legitimate when the component needs page-level reads or events.
     (r"\bsetInterval\s*\(", "setInterval is not allowed"),
 ]
 
@@ -1366,6 +1419,10 @@ def validate_admin_ui_artifact(
 
     # setTimeout is allowed only as a bounded debounce — check delays.
     errors.extend(_find_setTimeout_violations(admin_ui_js))
+
+    # document.* denylist — reject shapes that leak outside the container or
+    # mutate page-wide state; allow safe page reads/events.
+    errors.extend(_find_document_violations(admin_ui_js))
 
     # bridge.call() paths must be in the admin catalog
     if admin_api_catalog:

@@ -106,17 +106,31 @@ RULES:
 1. Export ONLY a named `mount` function: export function mount(container, bridge) { ... }
 2. Render only inside `container` — never access the DOM outside it.
 3. All backend requests use bridge.call(). NEVER use raw fetch(), XMLHttpRequest, or hardcoded URLs.
-4. DOM scoping — route ALL DOM access through `container` or document creation helpers:
-   ALLOWED:   container.querySelector()  container.querySelectorAll()
-              container.appendChild()    container.innerHTML
-              document.createElement()   document.createTextNode()
-   FORBIDDEN: document.querySelector()  document.getElementById()
-              document.body             document.head
-              document.title            document.cookie
-              window.* (any property)
-   CSS/styles — inject into container, never document.head:
+4. DOM scoping — prefer `container.*` for panel-owned DOM; `document.*`
+   is permitted for legitimate page-level access with a narrow denylist.
+   SCOPED (preferred for anything the panel owns):
+     container.querySelector / querySelectorAll / appendChild / innerHTML
+   ALLOWED document.* (page-level needs):
+     document.createElement / createTextNode              (pure factories)
+     document.addEventListener / removeEventListener     (iframe events:
+       visibilitychange, keyboard shortcuts, outside-click)
+     document.dispatchEvent                              (custom events)
+     document.querySelector / getElementById / querySelectorAll
+       (reading the admin iframe's existing DOM when needed)
+   FORBIDDEN document.* (leak outside container or mutate iframe-wide state):
+     document.body.*          (injects nodes outside the panel container)
+     document.head.*          (injects global styles/scripts)
+     document.documentElement (mutates iframe root)
+     document.cookie          (security — reads admin session cookies)
+     document.title           (mutates the iframe title)
+     document.write / open / close (catastrophic — rewrites the whole iframe)
+     document.execCommand     (legacy; use navigator.clipboard etc.)
+   FORBIDDEN window.parent / window.top / window.opener / window.frames
+     (cross-frame hazard — break the Shopify Admin iframe isolation).
+     Other window.* reads (window.location, window.scrollY, etc.) are OK.
+   CSS/styles inject into container, never document.head:
      const style = document.createElement('style');
-     style.textContent = `.my-widget { color: red; }`;
+     style.textContent = `.my-panel { color: var(--p-color-text); }`;
      container.appendChild(style);
 5. Never use eval(), Function(), setTimeout (except for debounce with ≤500ms), setInterval.
 6. Never hardcode tenant IDs, shop domains, or entity IDs — read from bridge.context.

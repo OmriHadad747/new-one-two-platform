@@ -401,6 +401,71 @@ then measure.
 
 ---
 
+## TD-020 — `host.*` / `bridge.*` page-level event surface
+
+**Current state**
+After TD-019-adjacent work relaxed the widget and admin_ui validators to
+permit safe `document.*` shapes (denylist of `body` / `head` / `cookie` /
+`title` / `documentElement` / `write` / `open` / `close` / `execCommand`),
+generators reach for `document.addEventListener('visibilitychange', ...)`,
+`document.addEventListener('scroll', ...)`, and outside-click detection
+because there's no host-provided escape hatch for page-level events.
+
+**Why a host-surface matters even though validation now allows it**
+Two real problems remain with direct `document.addEventListener` on a
+storefront widget or admin iframe:
+1. **Leak on unmount.** The widget shell tears down the widget's
+   `container`, but listeners attached to `document` survive. Repeated
+   re-mounts (navigation between theme pages without a full reload)
+   accumulate zombie listeners.
+2. **No structured cleanup for the generator.** The LLM has to remember
+   to pair every `addEventListener` with a matching `removeEventListener`
+   at the right time — frequently forgotten.
+
+**What to do**
+Add a thin `host.on(event, cb)` / `bridge.on(event, cb)` API that
+registers the listener and returns a disposer the shell calls on
+unmount:
+
+```ts
+// widget host
+host.on("visibilitychange", (v) => { ... });
+host.on("scroll", onScroll, { passive: true });
+host.on("cart:update", handler);  // storefront/Shopify cart events
+
+// admin bridge — same shape, iframe-scoped events
+bridge.on("visibilitychange", (v) => { ... });
+```
+
+Implementation: wrap `document.addEventListener` inside the host, stash
+the disposer on the per-widget instance record, auto-dispose when the
+shell removes the container (or when the widget's mount ID changes).
+
+Once landed:
+- Add "use host.on / bridge.on for page-level events — never
+  document.addEventListener" to the widget/admin prompts.
+- Optionally tighten the validator: if `document.addEventListener` is
+  used alongside no matching `removeEventListener`, flag it. Or move
+  `addEventListener` onto the denylist entirely once the host surface is
+  documented and proven to cover the real use cases.
+
+**Affected files**
+- `platform/packages/harness/src/widget-host.ts` (or equivalent) — add
+  `host.on(event, cb)`, manage disposer set per widget mount.
+- Same for admin `bridge.on` in the admin shell.
+- `generator/subagents/prompts/widget/_core.py` — add the rule + example.
+- `generator/subagents/prompts/admin/_core.py` — add the rule + example.
+- `generator/subagents/static_validation.py` — optional tightening on
+  `document.addEventListener` once the host surface covers the
+  legitimate cases.
+
+**Complexity:** Low-Medium. The disposer plumbing is standard; the
+cross-cutting question is how to reliably detect "widget unmounted" in
+the shell (tied to container removal — if the shell already observes
+that, the rest is ~20 lines).
+
+---
+
 ## TD-015 — Revision failure artifacts saved to /tmp only
 
 **Current state**

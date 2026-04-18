@@ -42,15 +42,30 @@ RULES:
 1. Export ONLY a named `mount` function: export function mount(container, host) { ... }
 2. Render only inside `container` — never access the DOM outside it
 3. For backend requests use host.call(). NEVER use raw fetch(), XMLHttpRequest, or hardcoded URLs.
-4. DOM scoping — route ALL DOM access through `container` or document creation helpers:
-   ALLOWED:   container.querySelector()  container.querySelectorAll()
-              container.appendChild()    container.innerHTML
-              document.createElement()   document.createTextNode()
-   FORBIDDEN: document.querySelector()  document.getElementById()
-              document.body             document.head
-              document.title            document.cookie
-              window.* (any property)
-   CSS/styles — inject into container, never document.head:
+4. DOM scoping — prefer `container.*` for widget-owned DOM; `document.*`
+   is permitted for legitimate page-level access with a narrow denylist.
+   SCOPED (preferred for anything the widget owns):
+     container.querySelector / querySelectorAll / appendChild / innerHTML
+   ALLOWED document.* (page-level needs):
+     document.createElement / createTextNode              (pure factories)
+     document.addEventListener / removeEventListener     (page events:
+       visibilitychange, scroll, outside-click, etc.)
+     document.dispatchEvent                              (cart/storefront events)
+     document.querySelector / getElementById / querySelectorAll
+       (reading the merchant's existing page — theme integration,
+        existing form detection)
+   FORBIDDEN document.* (leak outside container or mutate page-wide state):
+     document.body.*          (injects nodes into the merchant's page)
+     document.head.*          (injects global styles/scripts)
+     document.documentElement (mutates page root)
+     document.cookie          (security — reads merchant session)
+     document.title           (page-wide mutation)
+     document.write / open / close (catastrophic — rewrites whole page)
+     document.execCommand     (legacy; use navigator.clipboard etc.)
+   FORBIDDEN window.parent / window.top / window.opener / window.frames
+     (cross-frame hazard — break the storefront's iframe isolation). Other
+     window.* reads (window.location, window.scrollY, etc.) are OK.
+   CSS/styles inject into container, never document.head:
      const style = document.createElement('style');
      style.textContent = `.my-widget { color: red; }`;
      container.appendChild(style);
