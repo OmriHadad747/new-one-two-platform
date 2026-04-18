@@ -10,17 +10,20 @@ import type { ShopifyAdminClient, ShopifyStorefrontClient } from "@new-one-two/t
 // The offline access token is provisioned once during the merchant's OAuth
 // install (see apps/api/src/routes/oauth.ts) and stored in Secret Manager.
 // It's long-lived — only invalidated when the merchant uninstalls — so we
-// resolve it once per process and cache the promise.
-let _accessTokenPromise: Promise<string> | null = null;
+// resolve it once per process and cache the promise. Keyed by secret name
+// so a process that ever resolves two distinct tenants doesn't cross-wire
+// tokens.
+const _accessTokenCache = new Map<string, Promise<string>>();
 
 function resolveAccessToken(accessTokenSecretName: string): Promise<string> {
-  if (!_accessTokenPromise) {
-    _accessTokenPromise = getSecret(accessTokenSecretName).catch((err) => {
-      _accessTokenPromise = null;
-      throw err;
-    });
-  }
-  return _accessTokenPromise;
+  const cached = _accessTokenCache.get(accessTokenSecretName);
+  if (cached) return cached;
+  const pending = getSecret(accessTokenSecretName).catch((err: unknown) => {
+    _accessTokenCache.delete(accessTokenSecretName);
+    throw err;
+  });
+  _accessTokenCache.set(accessTokenSecretName, pending);
+  return pending;
 }
 
 export function buildShopifyAdminClient(

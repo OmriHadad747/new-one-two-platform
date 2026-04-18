@@ -71,7 +71,11 @@ export interface ShopifyStorefrontClient {
 export interface HttpOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   headers?: Record<string, string>;
-  body?: unknown;
+  // Legal shapes match the runtime branching in context-factory:
+  //   Uint8Array / Buffer → passed through raw (binary uploads)
+  //   string              → passed through as-is (pre-serialized payloads)
+  //   object / array      → JSON.stringify'd with Content-Type auto-set
+  body?: string | Uint8Array | Record<string, unknown> | unknown[];
 }
 
 export interface HttpClient {

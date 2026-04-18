@@ -3,6 +3,7 @@ import type {
   FilesClient,
   HandlerContext,
   HttpClient,
+  HttpOptions,
   ServicesClient,
   ShopInfo,
   SmsClient,
@@ -74,7 +75,7 @@ export async function createBaseContext(options: CreateBaseContextOptions): Prom
   // Single fetch helper powering all three consumers. `json` and `text` serialize
   // object bodies as JSON; `buffer` passes Buffer / Uint8Array through raw so
   // handlers can POST binary (image uploads, octet-stream payloads, etc.).
-  async function httpFetch(url: string, opts: { method?: string; headers?: Record<string, string>; body?: unknown } | undefined, responseKind: "json" | "buffer" | "text"): Promise<Response> {
+  async function httpFetch(url: string, opts: HttpOptions | undefined, responseKind: "json" | "buffer" | "text"): Promise<Response> {
     const method = opts?.method ?? "GET";
     logger.info({ event: "HTTP_CALL", url, method, responseKind }, "external http call");
 
