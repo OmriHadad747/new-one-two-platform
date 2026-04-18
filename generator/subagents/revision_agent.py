@@ -26,8 +26,16 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from models.adapter import extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
-from subagents.base import CodegenContext
+from subagents.base import CodegenContext, needs_extended_thinking
 from subagents.prompts.handler import HARNESS_API_SURFACE
+
+# Extended-thinking budget for the revision agent.  Revision rewrites whole
+# artifacts to fix a precise list of validator issues — it is exactly the call
+# most likely to introduce new bugs while fixing old ones, so deeper reasoning
+# on complex apps earns its cost. 6000 sits between the codegen budget (4000
+# — single-artifact output) and the validator budget (8192 — open bug hunt),
+# reflecting revision's wider rewrite surface but narrower task definition.
+_REVISION_THINKING_BUDGET = 6000
 
 log = logging.getLogger(__name__)
 
@@ -275,7 +283,14 @@ def run_revision_agent(
         locked_artifacts=locked_artifacts,
         static_errors=static_errors,
     )
-    llm = get_llm(model=get_agent_model("revision"), max_tokens=16000)
+    thinking_budget = (
+        _REVISION_THINKING_BUDGET if needs_extended_thinking(ctx.plan) else None
+    )
+    llm = get_llm(
+        model=get_agent_model("revision"),
+        max_tokens=16000,
+        thinking_budget=thinking_budget,
+    )
     result = invoke(llm, REVISION_SYSTEM, user)
     in_tok = result.input_tokens
     out_tok = result.output_tokens

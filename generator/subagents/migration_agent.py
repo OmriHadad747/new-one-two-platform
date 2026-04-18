@@ -31,6 +31,11 @@ class MigrationGenerator(Generator):
     name = "migration"
     max_tokens = 2048
 
+    # Migration is a near-mechanical translation of dbContracts into CREATE TABLE
+    # DDL — reasoning surface does not scale with app complexity, so extended
+    # thinking goes unused. Opt out to save tokens and trim latency.
+    supports_thinking = False
+
     # ── Generator interface ────────────────────────────────────────────────────
 
     def system_prompt(self) -> str:

@@ -34,7 +34,12 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from shopify_mcp.client import validate_handler_graphql
-from subagents.base import CodegenContext, Generator, _THINKING_BUDGET_HIGH
+from subagents.base import (
+    CodegenContext,
+    Generator,
+    _THINKING_BUDGET_HIGH,
+    needs_extended_thinking,
+)
 from subagents.static_validation import validate_handler_artifact
 from templates.capabilities.handler import (
     HANDLER_CAPABILITY_REGISTRY,
@@ -133,8 +138,9 @@ class HandlerGenerator(Generator):
         from models.adapter import get_llm, invoke
         from models.agent_models import get_agent_model
 
-        complexity = (ctx.plan.get("appContracts") or {}).get("complexity", "low")
-        thinking_budget = _THINKING_BUDGET_HIGH if complexity == "high" else None
+        thinking_budget = (
+            _THINKING_BUDGET_HIGH if needs_extended_thinking(ctx.plan) else None
+        )
 
         llm = get_llm(
             model=get_agent_model(self.name),

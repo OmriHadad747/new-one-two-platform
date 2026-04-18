@@ -92,9 +92,43 @@ class CodegenContext:
 # Thinking tokens count against max_tokens in Anthropic's API, so get_llm()
 # increases the ceiling by this amount to preserve the intended output budget.
 # Only applied to generators whose model supports extended thinking (Sonnet-class).
-# Haiku agents (product, validator, explanation) are never passed a thinking budget
-# because they use a different model — only the code generators go through base.py.
+# Haiku agents (product, explanation) are never passed a thinking budget because
+# they use a different model — only the code generators go through base.py.
 _THINKING_BUDGET_HIGH = 4000
+
+
+def needs_extended_thinking(plan: Dict[str, Any]) -> bool:
+    """
+    Deterministic complexity gate for extended thinking.
+
+    Replaces the architect's self-reported ``complexity`` label: the label was
+    subjective ("complex joins", "non-trivial contract") and unaudited, so an
+    app could silently fall out of the thinking path. This helper inspects
+    observable plan facts instead — no LLM guesswork.
+
+    Returns True (→ enable thinking) when any of:
+      - the architect declared a stateMachine
+      - cronBatching.required is true (cron with bulk-fetch discipline)
+      - 2+ webhook topics (multi-event coordination)
+      - the app has BOTH storefront widget and admin UI surfaces (cross-surface
+        contract holding)
+
+    These are the cases where the model most often drops a constraint from the
+    middle of a long prompt. Single-trigger flat-schema apps skip thinking.
+    """
+    contracts = plan.get("appContracts") or {}
+    if contracts.get("stateMachine"):
+        return True
+    if (contracts.get("cronBatching") or {}).get("required"):
+        return True
+    webhook_topics = (plan.get("shopifyPlan") or {}).get("webhookTopics") or []
+    if len(webhook_topics) >= 2:
+        return True
+    has_widget = bool(contracts.get("widgetApiCatalog"))
+    has_admin = bool(contracts.get("adminApiCatalog"))
+    if has_widget and has_admin:
+        return True
+    return False
 
 
 class Generator(ABC):
@@ -114,6 +148,12 @@ class Generator(ABC):
 
     #: Max tokens for LLM output. Override in subclasses that generate longer code.
     max_tokens: int = 2048
+
+    #: Does this generator benefit from extended thinking? Defaults to True
+    #: (handler/widget_js/admin_ui all benefit on complex apps). Migration is
+    #: a near-mechanical translation of dbContracts into DDL — reasoning does
+    #: not scale with complexity, so it opts out to save tokens and latency.
+    supports_thinking: bool = True
 
     # ── Abstract interface ─────────────────────────────────────────────────────
 
@@ -179,18 +219,20 @@ class Generator(ABC):
         which writes ctx.handler_email_metadata alongside the returned code).
         For every other case, customise system_prompt, user_prompt, and parse.
 
-        Extended thinking is enabled for high-complexity features. The Architect
-        declares complexity in appContracts; high-complexity apps involve state
-        machines, multiple webhooks, and complex cross-component contracts where
-        the model most often "forgets" a constraint from the middle of a long prompt.
-        Extended thinking lets the model reason through all contracts before generating
-        code, dramatically reducing missed edge cases and incorrect field names.
+        Extended thinking is enabled when the plan is structurally complex —
+        see needs_extended_thinking() for the gate. Generators that don't
+        benefit from deeper reasoning (migration — mechanical DDL emission)
+        opt out via supports_thinking=False. The gate is deterministic, not
+        a self-reported architect label.
         """
         from models.adapter import get_llm, invoke
         from models.agent_models import get_agent_model
 
-        complexity = (ctx.plan.get("appContracts") or {}).get("complexity", "low")
-        thinking_budget = _THINKING_BUDGET_HIGH if complexity == "high" else None
+        thinking_budget = (
+            _THINKING_BUDGET_HIGH
+            if self.supports_thinking and needs_extended_thinking(ctx.plan)
+            else None
+        )
 
         llm = get_llm(
             model=get_agent_model(self.name),
