@@ -18,8 +18,18 @@ this catches semantic mismatches (aliased field names, spread operators, indirec
 Q5/Q6 are only asked when the plan declares cronBatching/stateMachine.
 Q7 always runs: catches the inverse of Q2 — not "wrong column name" but "missing required column".
 
+Part B — open review (new):
+  The validator also flags deploy-blocking bugs it sees in the artifacts that
+  Part A and static rules do not already cover (races, pagination, numeric
+  overflow, orphaned state, etc.). Each Part B finding is scoped to a specific
+  artifact and merged into the same issues list as Part A with a synthetic
+  question key `open_review[<artifact>]`; the `artifact` field drives revision
+  locking (handler/migration → backend unlock, widget_js/admin_ui → frontend only).
+
 Only HIGH confidence issues trigger an automatic revision. MEDIUM issues are
-logged but not acted upon (false positive mitigation).
+logged but not acted upon (false positive mitigation). Runs on Sonnet with
+extended thinking enabled — Part B requires multi-step reasoning across
+artifacts that Haiku-no-thinking cannot reliably perform.
 
 Controlled by LLM_VALIDATION_ENABLED=true in environment (default: false).
 """
@@ -34,6 +44,14 @@ from models.agent_models import get_agent_model
 from subagents.base import CodegenContext
 
 log = logging.getLogger(__name__)
+
+# Extended-thinking budget for the validator call. Part A is mechanical matching
+# (thinking helps marginally); Part B is real multi-artifact bug-finding where
+# deeper reasoning earns its cost. 8192 is enough for the model to trace a few
+# suspected issues end-to-end without blowing the per-call latency ceiling.
+_VALIDATOR_THINKING_BUDGET = 8192
+
+_VALID_OPEN_ARTIFACTS = {"handler", "migration", "widget_js", "admin_ui"}
 
 # ── System prompt ──────────────────────────────────────────────────────────────
 
@@ -269,14 +287,19 @@ def run_validator_agent(
 
     Only questions relevant to this app (storefront, admin, cronBatching, stateMachine)
     are included. Returns (issues, input_tokens, output_tokens).
-    issues is a list of HIGH-confidence issue dicts:
-        [{"question": "q5_cron_bulk_fetch", "issue": "...", "confidence": "high"}, ...]
+    issues is a list of HIGH-confidence issue dicts with a uniform shape:
+        Part A: {"question": "q5_cron_bulk_fetch", "issue": "...", "confidence": "high"}
+        Part B: {"question": "open_review[handler]", "issue": "...", "confidence": "high",
+                 "artifact": "handler"}
+    The ``artifact`` field on Part B entries drives revision locking downstream.
 
     MEDIUM-confidence issues are logged but not returned (false positive mitigation).
     Returns ([], in, out) on parse failure or when all checks pass (fail-open).
     """
     model = get_agent_model("validator")
-    llm = get_llm(model=model, max_tokens=1200)
+    llm = get_llm(
+        model=model, max_tokens=2000, thinking_budget=_VALIDATOR_THINKING_BUDGET
+    )
     user = _build_prompt(artifacts, ctx, is_storefront, is_admin_ui)
 
     in_tok = 0
@@ -291,47 +314,125 @@ def run_validator_agent(
         log.warning("validator_agent: failed to get/parse response (%s) — fail-open", exc)
         return [], in_tok, out_tok
 
-    # Phrases that indicate the LLM contradicted itself by flagging a non-issue.
-    _SELF_CONTRADICTING = (
-        "align correctly",
-        "both align",
-        "correctly aligned",
-        "are aligned",
-        "both routes align",
-        "no misalignment",
-        "fields match",
-        "correctly match",
-    )
+    if not isinstance(result, dict):
+        log.warning("validator_agent: response is not a JSON object — fail-open")
+        return [], in_tok, out_tok
 
     issues: List[Dict] = []
+    issues.extend(_parse_part_a(result))
+    issues.extend(_parse_open_findings(result.get("open_findings")))
+    return issues, in_tok, out_tok
+
+
+# Phrases that indicate the LLM contradicted itself by flagging a non-issue.
+_SELF_CONTRADICTING = (
+    "align correctly",
+    "both align",
+    "correctly aligned",
+    "are aligned",
+    "both routes align",
+    "no misalignment",
+    "fields match",
+    "correctly match",
+)
+
+
+def _parse_part_a(result: Dict) -> List[Dict]:
+    issues: List[Dict] = []
     for q_key, data in result.items():
-        if not isinstance(data, dict):
+        if q_key == "open_findings" or not isinstance(data, dict):
             continue
         aligned = data.get("aligned", True)
         confidence = data.get("confidence", "medium")
         issue_text = data.get("issue")
 
-        if not aligned and issue_text:
-            # Guard: reject self-contradicting issues where the issue text itself
-            # says the code is correct (LLM confused aligned=false with aligned=true).
-            lower = issue_text.lower()
-            if any(phrase in lower for phrase in _SELF_CONTRADICTING):
-                log.warning(
-                    "validator_agent: %s flagged as misaligned but issue says code is correct "
-                    "— treating as false positive and skipping: %s",
-                    q_key,
-                    issue_text,
-                )
-                continue
+        if aligned or not issue_text:
+            continue
 
-            if confidence == "high":
-                log.info(
-                    "validator_agent: %s HIGH confidence issue — %s", q_key, issue_text
-                )
-                issues.append({"question": q_key, "issue": issue_text, "confidence": "high"})
-            else:
-                log.info(
-                    "validator_agent: %s medium confidence (skipped) — %s", q_key, issue_text
-                )
+        lower = issue_text.lower()
+        if any(phrase in lower for phrase in _SELF_CONTRADICTING):
+            log.warning(
+                "validator_agent: %s flagged as misaligned but issue says code is correct "
+                "— treating as false positive and skipping: %s",
+                q_key,
+                issue_text,
+            )
+            continue
 
-    return issues, in_tok, out_tok
+        if confidence == "high":
+            log.info("validator_agent: %s HIGH confidence issue — %s", q_key, issue_text)
+            issues.append({"question": q_key, "issue": issue_text, "confidence": "high"})
+        else:
+            log.info(
+                "validator_agent: %s medium confidence (skipped) — %s", q_key, issue_text
+            )
+    return issues
+
+
+def _parse_open_findings(raw: object) -> List[Dict]:
+    """
+    Normalise Part B open_findings into the same shape Part A emits.
+
+    Skips findings that are missing a required field, name a non-canonical
+    artifact, or look like the schema-hint echoed back verbatim. HIGH-confidence
+    only, matching Part A's bar for triggering a revision.
+    """
+    if not isinstance(raw, list):
+        return []
+
+    out: List[Dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        artifact = (entry.get("artifact") or "").strip()
+        issue_text = (entry.get("issue") or "").strip()
+        location = (entry.get("location") or "").strip()
+        failure_mode = (entry.get("failure_mode") or "").strip()
+        confidence = (entry.get("confidence") or "medium").strip().lower()
+
+        # Reject the schema-hint echo where the model returns the placeholder
+        # string ("handler | migration | widget_js | admin_ui") instead of a
+        # concrete artifact name.
+        if artifact not in _VALID_OPEN_ARTIFACTS:
+            if artifact:
+                log.info(
+                    "validator_agent: open_finding skipped — artifact=%r not in %s",
+                    artifact,
+                    sorted(_VALID_OPEN_ARTIFACTS),
+                )
+            continue
+
+        if not issue_text or not failure_mode:
+            log.info(
+                "validator_agent: open_finding skipped — missing issue or failure_mode "
+                "(artifact=%s)", artifact,
+            )
+            continue
+
+        composed = (
+            f"[{location}] {issue_text} — {failure_mode}"
+            if location
+            else f"{issue_text} — {failure_mode}"
+        )
+
+        if confidence == "high":
+            log.info(
+                "validator_agent: open_review[%s] HIGH confidence — %s",
+                artifact,
+                composed,
+            )
+            out.append(
+                {
+                    "question": f"open_review[{artifact}]",
+                    "issue": composed,
+                    "confidence": "high",
+                    "artifact": artifact,
+                }
+            )
+        else:
+            log.info(
+                "validator_agent: open_review[%s] medium confidence (skipped) — %s",
+                artifact,
+                composed,
+            )
+    return out

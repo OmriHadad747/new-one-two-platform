@@ -78,6 +78,10 @@ _BACKEND_VALIDATOR_QUESTIONS: FrozenSet[str] = frozenset(
     }
 )
 
+# Artifact names on Part B open findings that indicate a backend problem.
+# Widget/admin-only findings leave the handler locked (frontend-only revision).
+_BACKEND_OPEN_ARTIFACTS: FrozenSet[str] = frozenset({"handler", "migration"})
+
 # Pipeline-level deadline. A healthy run finishes well inside 5 minutes; we give
 # a generous 15-minute ceiling so that legitimate long runs (3 codegen attempts
 # × 4 parallel generators + validator + revision) still succeed, but a stuck
@@ -181,12 +185,20 @@ def _save_revision_failure(
 def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
     """
     Determine which artifacts the revision agent must treat as read-only based on
-    which validator questions fired.
+    which validator findings fired.
 
+    Part A (Q-checks):
     - Q3/Q4 only (widget/admin_ui ↔ handler field mismatch): fix the frontend.
       Handler and migration are locked — they are the ground truth contract.
     - Q1/Q2/Q5/Q6/Q7 (handler ↔ DB mismatch or handler logic error): fix the handler.
       Migration stays locked (it's the schema ground truth); handler is unlocked.
+
+    Part B (open findings):
+    - artifact in {handler, migration}: backend problem — unlock the handler.
+    - artifact in {widget_js, admin_ui}: frontend problem — keep handler locked.
+
+    Migration is always locked — it is the schema ground truth even when a Part B
+    finding names it (the handler is what gets adjusted to match the schema).
 
     Invariant: this function is only called after handler and migration have already
     passed static validation in the codegen loop. If that invariant ever breaks, the
@@ -194,8 +206,11 @@ def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
     is weakened or bypassed.
     """
     issue_keys = {i["question"] for i in issues}
-    if issue_keys & _BACKEND_VALIDATOR_QUESTIONS:
-        # Backend question fired — handler must be revised to align with migration/DB.
+    open_artifacts = {i.get("artifact") for i in issues if i.get("artifact")}
+    if (issue_keys & _BACKEND_VALIDATOR_QUESTIONS) or (
+        open_artifacts & _BACKEND_OPEN_ARTIFACTS
+    ):
+        # Backend finding fired — handler must be revised to align with migration/DB.
         return frozenset({"migration"})
     # Frontend-only misalignment — handler is ground truth, fix widget/admin_ui.
     return frozenset({"handler", "migration"})

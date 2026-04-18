@@ -12,7 +12,8 @@ Override any agent by setting the corresponding environment variable:
 Defaults reflect the cost/quality tradeoff for each role:
   - Classification / text tasks  → Haiku  (cheap, fast)
   - Code generation / planning   → Sonnet (highest quality)
-  - Semantic validation          → Haiku  (focused prompt, doesn't need deep reasoning)
+  - Semantic validation          → Sonnet (Part B open review needs real reasoning
+                                   across artifacts; paired with extended thinking)
 """
 
 from __future__ import annotations
@@ -31,8 +32,11 @@ _DEFAULTS: dict[str, str] = {
     # Classification / text agents — Haiku is sufficient (fast, cheap)
     "product": "claude-haiku-4-5-20251001",
     "explanation": "claude-haiku-4-5-20251001",
-    # LLM validation — focused prompt, Haiku is sufficient
-    "validator": "claude-haiku-4-5-20251001",
+    # Hybrid validator — Part A identifier matching + Part B deploy-blocking
+    # bug review. Part B needs multi-step reasoning across handler/migration/
+    # widget/admin, so it runs on Sonnet with extended thinking enabled in
+    # validator_agent.py. Haiku was sufficient for Part A alone.
+    "validator": "claude-sonnet-4-6",
 }
 
 
