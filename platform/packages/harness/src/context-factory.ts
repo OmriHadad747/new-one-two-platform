@@ -13,8 +13,7 @@ import { checkUsageQuota, incrementUsage } from "@new-one-two/db";
 import { buildShopifyAdminClient, buildShopifyStorefrontClient } from "./shopify-client.js";
 import { createEmailService } from "./email-service.js";
 
-const SHOPIFY_CLIENT_ID = process.env["SHOPIFY_CLIENT_ID"] ?? null;
-const SHOPIFY_CLIENT_SECRET_NAME = process.env["SHOPIFY_CLIENT_SECRET_NAME"] ?? null;
+const SHOPIFY_ACCESS_TOKEN_SECRET_NAME = process.env["SHOPIFY_ACCESS_TOKEN_SECRET_NAME"] ?? null;
 const APP_SHOP_DOMAIN = process.env["SHOP_DOMAIN"] ?? "";
 
 export interface CreateBaseContextOptions {
@@ -37,7 +36,7 @@ export async function createBaseContext(options: CreateBaseContextOptions): Prom
     ...(executionLogId !== undefined && { requestId: executionLogId }),
   });
 
-  const shopify_admin = buildShopifyAdminClient(APP_SHOP_DOMAIN, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET_NAME);
+  const shopify_admin = buildShopifyAdminClient(APP_SHOP_DOMAIN, SHOPIFY_ACCESS_TOKEN_SECRET_NAME);
   const shopify_storefront = buildShopifyStorefrontClient(APP_SHOP_DOMAIN);
 
   const shop: ShopInfo = { domain: APP_SHOP_DOMAIN };
@@ -72,17 +71,46 @@ export async function createBaseContext(options: CreateBaseContextOptions): Prom
     },
   };
 
+  // Single fetch helper powering all three consumers. `json` and `text` serialize
+  // object bodies as JSON; `buffer` passes Buffer / Uint8Array through raw so
+  // handlers can POST binary (image uploads, octet-stream payloads, etc.).
+  async function httpFetch(url: string, opts: { method?: string; headers?: Record<string, string>; body?: unknown } | undefined, responseKind: "json" | "buffer" | "text"): Promise<Response> {
+    const method = opts?.method ?? "GET";
+    logger.info({ event: "HTTP_CALL", url, method, responseKind }, "external http call");
+
+    const headers: Record<string, string> = { ...(opts?.headers ?? {}) };
+    let body: string | Uint8Array | undefined;
+    if (opts?.body != null) {
+      if (opts.body instanceof Uint8Array) {
+        // Buffer and other typed arrays are Uint8Array subclasses — pass raw.
+        body = opts.body;
+      } else if (typeof opts.body === "string") {
+        body = opts.body;
+      } else {
+        body = JSON.stringify(opts.body);
+        if (!("Content-Type" in headers) && !("content-type" in headers)) {
+          headers["Content-Type"] = "application/json";
+        }
+      }
+    }
+
+    const res = await fetch(url, { method, headers, ...(body != null ? { body } : {}) });
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}: ${url}`);
+    return res;
+  }
+
   const http: HttpClient = {
-    async call(url, options) {
-      const method = options?.method ?? "GET";
-      logger.info({ event: "HTTP_CALL", url, method }, "external http call");
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
-        ...(options?.body != null ? { body: JSON.stringify(options.body) } : {}),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}: ${url}`);
+    async json(url, opts) {
+      const res = await httpFetch(url, opts, "json");
       return res.json();
+    },
+    async buffer(url, opts) {
+      const res = await httpFetch(url, opts, "buffer");
+      return Buffer.from(await res.arrayBuffer());
+    },
+    async text(url, opts) {
+      const res = await httpFetch(url, opts, "text");
+      return res.text();
     },
   };
 

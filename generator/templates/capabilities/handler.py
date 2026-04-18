@@ -297,23 +297,40 @@ ctx.services.files.upload(name, content, mimeType?) → Promise<string>
         (
             "http",
             Capability(
-                short="ctx.http.call(url, options?) — outbound HTTPS to a non-Shopify third party. Declare only for external integrations — never for Shopify endpoints.",
+                short="ctx.http.json / .buffer / .text — outbound HTTPS to a non-Shopify third party, split by response type. Declare only for external integrations — never for Shopify endpoints.",
                 docs="""\
-── ctx.http.call ─────────────────────────────────────────────
+── ctx.http.json / .buffer / .text ───────────────────────────
 
-ctx.http.call(url, options?) → Promise<any>
-  Make an authenticated HTTP call to an external API. All calls are logged with tenant context.
-    url:            full URL (https:// is ALLOWED here — ctx.http is the only place)
-    options.method: HTTP method (default "GET")
-    options.headers: additional headers
-    options.body:   request body — serialized to JSON automatically
-  Throws on non-2xx responses.
-  Example:
-    const result = await ctx.http.call('https://api.example.com/compress', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer TOKEN' },
-      body: { imageUrl: originalUrl }
-    })\
+Three methods, one per response type. Pick by what you expect back — never
+use .json for an image or a binary download; you'll get a parse error.
+
+  ctx.http.json(url, options?)   → Promise<unknown>    — JSON APIs
+  ctx.http.buffer(url, options?) → Promise<Buffer>     — images, files, any binary
+  ctx.http.text(url, options?)   → Promise<string>     — HTML, plaintext
+
+Shared options (all three methods):
+  url:            full URL (https:// is ALLOWED here — ctx.http is the only place)
+  options.method: HTTP method (default "GET")
+  options.headers: additional headers
+  options.body:   request body — objects are JSON-stringified automatically;
+                  Buffer / Uint8Array pass through raw (for uploading binary)
+
+All three throw on non-2xx responses. All calls are logged with tenant context.
+
+Examples:
+  // JSON API
+  const result = await ctx.http.json('https://api.example.com/enrich', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer TOKEN' },
+    body: { customerId: id }
+  })
+
+  // Download an image as bytes (e.g. to pass into sharp)
+  const bytes = await ctx.http.buffer(product.image.src)
+  const meta = await sharp(bytes).metadata()
+
+  // Scrape an HTML page
+  const html = await ctx.http.text('https://example.com/status')\
 """,
             ),
         ),

@@ -37,8 +37,7 @@ function buildHarnessEnvVars(params: {
   tenantId: string;
   appId: string;
   shopDomain: string;
-  clientId: string;
-  clientSecretName: string;
+  accessTokenSecretName: string | null;
   storefrontTokenSecretName: string | null;
 }): Record<string, string> {
   // When deploying locally, the harness runs inside Docker but the DB/Redis
@@ -53,13 +52,18 @@ function buildHarnessEnvVars(params: {
     TENANT_ID: params.tenantId,
     APP_ID: params.appId,
     SHOP_DOMAIN: params.shopDomain,
-    SHOPIFY_CLIENT_ID: params.clientId,
-    SHOPIFY_CLIENT_SECRET_NAME: params.clientSecretName,
     DATABASE_URL: databaseUrl,
     NODE_ENV: "production",
     LOG_LEVEL: process.env["LOG_LEVEL"] ?? "info",
     SERVICE_NAME: `harness-${params.appId}`,
   };
+
+  // Per-tenant offline access token — minted at merchant install (oauth.ts),
+  // stored in Secret Manager. Absent until OAuth completes; the harness stubs
+  // ctx.shopify.* when this is empty.
+  if (params.accessTokenSecretName) {
+    envVars["SHOPIFY_ACCESS_TOKEN_SECRET_NAME"] = params.accessTokenSecretName;
+  }
 
   // Storefront API token — fetched lazily by the harness from Secret Manager.
   // Only injected when a storefront token was provisioned during OAuth.
@@ -110,8 +114,7 @@ export async function deployAppVersion(appVersionId: string): Promise<{
       tenantId: tenant.id,
       appId: app.id,
       shopDomain: app.shopDomain,
-      clientId: app.shopifyClientId,
-      clientSecretName: app.shopifySecretName,
+      accessTokenSecretName: tenant.shopifyAccessTokenSecretName ?? null,
       storefrontTokenSecretName: tenant.storefrontAccessTokenSecretName ?? null,
     });
 
@@ -334,8 +337,7 @@ export async function reactivateApp(tenantId: string, appId: string): Promise<vo
     tenantId: tenant.id,
     appId: app.id,
     shopDomain: app.shopDomain,
-    clientId: app.shopifyClientId,
-    clientSecretName: app.shopifySecretName,
+    accessTokenSecretName: tenant.shopifyAccessTokenSecretName ?? null,
     storefrontTokenSecretName: tenant.storefrontAccessTokenSecretName ?? null,
   });
 

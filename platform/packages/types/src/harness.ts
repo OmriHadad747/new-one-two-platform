@@ -60,13 +60,24 @@ export interface ShopifyStorefrontClient {
 }
 
 // ─── ctx.http ─────────────────────────────────────────────────────────────────
+//
+// Three methods split by return type so each handler call has exactly one
+// intent: fetching a JSON API, downloading binary (images, files), or reading
+// text/HTML. No `responseType` flag — the method name *is* the choice.
+//
+// `body` is JSON-stringified for json/text; for `buffer`, a Buffer or
+// Uint8Array is passed through raw.
+
+export interface HttpOptions {
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  headers?: Record<string, string>;
+  body?: unknown;
+}
 
 export interface HttpClient {
-  call(url: string, options?: {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: unknown;
-  }): Promise<unknown>;
+  json(url: string, opts?: HttpOptions): Promise<unknown>;
+  buffer(url: string, opts?: HttpOptions): Promise<Buffer>;
+  text(url: string, opts?: HttpOptions): Promise<string>;
 }
 
 // ─── ctx.shop ─────────────────────────────────────────────────────────────────

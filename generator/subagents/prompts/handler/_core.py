@@ -36,6 +36,12 @@ ctx.db  — postgres.js tagged template (RLS-scoped to this tenant)
   String() on both sides — Shopify API returns numeric IDs, postgres.js returns strings for BIGINT:
     ✅ dataMap.set(String(item.id), item)       // Shopify → Map
     ✅ dataMap.get(String(row.entity_id))       // DB row → Map lookup
+  External-string safety: strip NUL bytes from any string sourced outside the handler
+  (err.message, third-party API output) before writing it — Postgres rejects them and aborts
+  the transaction: `const safe = raw.replace(/\\u0000/g, "")`.
+  Transaction scope: ctx.db is ONE open transaction per invocation. One failed statement
+  poisons it ("current transaction is aborted"). For per-row work that must survive sibling
+  failures, wrap each row in `ctx.db.savepoint(tx => tx\\`...\\`)` inside try/catch.
 
 ctx.tenantId — UUID string of the current tenant
   MUST be included as the tenant_id column value in every INSERT statement.
@@ -99,10 +105,13 @@ ABSOLUTE RULES (violations will cause deployment failure):
 6.  NO process.exit(), process.kill(), or process.env access
 7.  Handle errors with try/catch — never let the handler throw uncaught exceptions
 8.  ctx.shopify.get/post paths MUST be relative (e.g. '/orders.json') — NEVER full URLs
-9.  https:// URLs are ONLY allowed as the first argument to ctx.http.call(url, ...).
+9.  https:// URLs are ONLY allowed as the first argument to ctx.http.json / .buffer / .text.
     NEVER use https:// anywhere else — not in ctx.services.email templateId, not in comments, not in other strings.
     templateId is a short opaque string like 'd-abc123', never a URL.
     For all Shopify API calls use ctx.shopify.get/post/graphql with relative paths.
+    Pick the ctx.http method by response type: .json for JSON APIs, .buffer for
+    images/files/binary, .text for HTML/plaintext. Using .json on a binary URL
+    throws a parse error — always match the method to what you expect back.
 10. webhookTopics must exactly match what is listed in the plan
 11. For Shopify REST PUT endpoints (update), use ctx.shopify.post() — not a separate PUT method
 12. Every INSERT into a tenant table must include tenant_id: use ctx.tenantId

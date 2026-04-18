@@ -7,60 +7,31 @@ import type { ShopifyAdminClient, ShopifyStorefrontClient } from "@new-one-two/t
 // @new-one-two/types so HandlerContext can reference them without a circular dep.
 // callCount is tracked locally inside each builder for harness-internal metrics.
 
-// In-memory token cache keyed by shopDomain.
-// Entries are refreshed when < REFRESH_WINDOW_MS remains before expiry.
-const tokenCache = new Map<string, { token: string; expiresAt: number }>();
-const REFRESH_WINDOW_MS = 5 * 60 * 1000; // refresh 5 min before actual expiry
+// The offline access token is provisioned once during the merchant's OAuth
+// install (see apps/api/src/routes/oauth.ts) and stored in Secret Manager.
+// It's long-lived — only invalidated when the merchant uninstalls — so we
+// resolve it once per process and cache the promise.
+let _accessTokenPromise: Promise<string> | null = null;
 
-/**
- * Obtains a valid Shopify Admin API access token via the OAuth 2.0
- * client_credentials grant. Tokens expire in ~24 h (expires_in = 86399).
- * The result is cached in-process; a new grant is only issued when the
- * cached token is within REFRESH_WINDOW_MS of expiry.
- */
-async function getAccessToken(
-  shopDomain: string,
-  clientId: string,
-  clientSecretName: string
-): Promise<string> {
-  const cached = tokenCache.get(shopDomain);
-  if (cached && Date.now() < cached.expiresAt - REFRESH_WINDOW_MS) {
-    return cached.token;
+function resolveAccessToken(accessTokenSecretName: string): Promise<string> {
+  if (!_accessTokenPromise) {
+    _accessTokenPromise = getSecret(accessTokenSecretName).catch((err) => {
+      _accessTokenPromise = null;
+      throw err;
+    });
   }
-
-  const clientSecret = await getSecret(clientSecretName);
-
-  const res = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: "client_credentials",
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Shopify token refresh failed [${res.status}]: ${body}`);
-  }
-
-  const data = (await res.json()) as { access_token: string; expires_in: number };
-  const expiresAt = Date.now() + data.expires_in * 1000;
-  tokenCache.set(shopDomain, { token: data.access_token, expiresAt });
-  return data.access_token;
+  return _accessTokenPromise;
 }
 
 export function buildShopifyAdminClient(
   shopDomain: string,
-  clientId: string | null,
-  clientSecretName: string | null
+  accessTokenSecretName: string | null
 ): ShopifyAdminClient & { readonly callCount: number } {
   let callCount = 0;
 
-  // If no client credentials configured (e.g. backend-only apps), return a
-  // stub that warns rather than failing hard.
-  if (!clientId || !clientSecretName) {
+  // No tenant access token wired (install never completed, or dev-only app).
+  // Return a stub that warns rather than failing hard.
+  if (!accessTokenSecretName) {
     async function* emptyPaginator(): AsyncGenerator<unknown[], void, unknown> {
       callCount++;
       console.warn(`[shopify stub] paginate — no client credentials configured`);
@@ -98,7 +69,7 @@ export function buildShopifyAdminClient(
   return {
     async get(path: string): Promise<unknown> {
       callCount++;
-      const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+      const token = await resolveAccessToken(accessTokenSecretName);
       const res = await fetch(`${baseUrl}${path}`, {
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
       });
@@ -107,7 +78,7 @@ export function buildShopifyAdminClient(
     },
     async post(path: string, body: unknown): Promise<unknown> {
       callCount++;
-      const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+      const token = await resolveAccessToken(accessTokenSecretName);
       const res = await fetch(`${baseUrl}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
@@ -118,7 +89,7 @@ export function buildShopifyAdminClient(
     },
     async delete(path: string): Promise<unknown> {
       callCount++;
-      const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+      const token = await resolveAccessToken(accessTokenSecretName);
       const res = await fetch(`${baseUrl}${path}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
@@ -130,7 +101,7 @@ export function buildShopifyAdminClient(
     },
     async graphql(query: string, variables?: Record<string, unknown>): Promise<unknown> {
       callCount++;
-      const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+      const token = await resolveAccessToken(accessTokenSecretName);
       const res = await fetch(`${baseUrl}/graphql.json`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
@@ -145,14 +116,14 @@ export function buildShopifyAdminClient(
       path: string,
       params: Record<string, string | number | boolean> = {},
     ): AsyncGenerator<unknown[], void, unknown> {
-      return paginateRestImpl(path, params, shopDomain, clientId, clientSecretName, baseUrl, () => { callCount++; });
+      return paginateRestImpl(path, params, accessTokenSecretName, baseUrl, () => { callCount++; });
     },
     paginateGql(
       query: string,
       variables: Record<string, unknown>,
       connectionPath: string,
     ): AsyncGenerator<unknown[], void, unknown> {
-      return paginateGqlImpl(query, variables, connectionPath, shopDomain, clientId, clientSecretName, baseUrl, () => { callCount++; });
+      return paginateGqlImpl(query, variables, connectionPath, accessTokenSecretName, baseUrl, () => { callCount++; });
     },
     get callCount() { return callCount; },
   };
@@ -207,9 +178,7 @@ function buildQueryString(params: Record<string, string | number | boolean>): st
 async function* paginateRestImpl(
   path: string,
   params: Record<string, string | number | boolean>,
-  shopDomain: string,
-  clientId: string,
-  clientSecretName: string,
+  accessTokenSecretName: string,
   baseUrl: string,
   bumpCallCount: () => void,
 ): AsyncGenerator<unknown[], void, unknown> {
@@ -220,7 +189,7 @@ async function* paginateRestImpl(
   let url = `${baseUrl}${path.split("?")[0]}${buildQueryString({ ...params, limit })}`;
   while (true) {
     bumpCallCount();
-    const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+    const token = await resolveAccessToken(accessTokenSecretName);
     const res = await fetch(url, {
       headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
     });
@@ -258,16 +227,14 @@ async function* paginateGqlImpl(
   query: string,
   variables: Record<string, unknown>,
   connectionPath: string,
-  shopDomain: string,
-  clientId: string,
-  clientSecretName: string,
+  accessTokenSecretName: string,
   baseUrl: string,
   bumpCallCount: () => void,
 ): AsyncGenerator<unknown[], void, unknown> {
   let cursor: string | null = null;
   while (true) {
     bumpCallCount();
-    const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+    const token = await resolveAccessToken(accessTokenSecretName);
     const res = await fetch(`${baseUrl}/graphql.json`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },

@@ -200,7 +200,10 @@ def validate_architect_plan(
 
     # 5. storefront apps must declare widgetApiCatalog (non-null; [] valid for pure storefront-read widgets)
     widget_catalog = impl.get("widgetApiCatalog")
-    if app_archetype in ("storefront_backend", "storefront_backend_admin") and widget_catalog is None:
+    if (
+        app_archetype in ("storefront_backend", "storefront_backend_admin")
+        and widget_catalog is None
+    ):
         errors.append(
             "widgetApiCatalog is null for a storefront app — "
             "set to the list of paths the widget calls via host.call(), "
@@ -253,7 +256,10 @@ def validate_architect_plan(
     # 9b. No path parameters in widgetApiCatalog or adminApiCatalog paths.
     #     The harness routes on exact string equality — :param segments never match.
     _PATH_PARAM = re.compile(r"/:[\w]+")
-    for catalog_name, catalog in [("widgetApiCatalog", widget_catalog), ("adminApiCatalog", admin_catalog)]:
+    for catalog_name, catalog in [
+        ("widgetApiCatalog", widget_catalog),
+        ("adminApiCatalog", admin_catalog),
+    ]:
         for entry in catalog:
             path = entry.get("path", "")
             if _PATH_PARAM.search(path):
@@ -334,26 +340,59 @@ def validate_architect_plan(
     #     Catching bogus types here (e.g. "STRING" instead of "TEXT") saves a Sonnet
     #     round-trip when the migration agent tries to generate DDL.
     _VALID_PG_TYPES = {
-        "UUID", "BIGINT", "BIGSERIAL", "INTEGER", "INT", "SMALLINT", "SERIAL",
-        "TEXT", "VARCHAR", "CHAR", "CITEXT",
-        "BOOLEAN", "BOOL",
-        "TIMESTAMPTZ", "TIMESTAMP", "DATE", "TIME", "INTERVAL",
-        "JSONB", "JSON",
-        "NUMERIC", "DECIMAL", "REAL", "DOUBLE", "DOUBLE PRECISION",
+        "UUID",
+        "BIGINT",
+        "BIGSERIAL",
+        "INTEGER",
+        "INT",
+        "SMALLINT",
+        "SERIAL",
+        "TEXT",
+        "VARCHAR",
+        "CHAR",
+        "CITEXT",
+        "BOOLEAN",
+        "BOOL",
+        "TIMESTAMPTZ",
+        "TIMESTAMP",
+        "DATE",
+        "TIME",
+        "INTERVAL",
+        "JSONB",
+        "JSON",
+        "NUMERIC",
+        "DECIMAL",
+        "REAL",
+        "DOUBLE",
+        "DOUBLE PRECISION",
         "BYTEA",
     }
     _SHOPIFY_ID_COLS = {
-        "variant_id", "product_id", "order_id", "customer_id",
-        "inventory_item_id", "location_id", "fulfillment_id",
-        "draft_order_id", "discount_id",
+        "variant_id",
+        "product_id",
+        "order_id",
+        "customer_id",
+        "inventory_item_id",
+        "location_id",
+        "fulfillment_id",
+        "draft_order_id",
+        "discount_id",
     }
     # Money-holding column name suffixes. INTEGER overflows at ~$21.47M in cents —
     # a single enterprise cart or any aggregate SUM() across a busy tenant can hit
     # that ceiling and crash the handler with 'integer out of range'. BIGINT caps
     # at ~$92 quadrillion, so it's the safe default for anything storing currency.
     _MONEY_COL_SUFFIXES = (
-        "_cents", "_amount", "_price", "_total", "_subtotal",
-        "_tax", "_fee", "_discount", "_cost", "_refund",
+        "_cents",
+        "_amount",
+        "_price",
+        "_total",
+        "_subtotal",
+        "_tax",
+        "_fee",
+        "_discount",
+        "_cost",
+        "_refund",
     )
 
     def _base_type(type_str: str) -> str:
@@ -399,7 +438,16 @@ def validate_architect_plan(
                 )
 
     # 15. storefront apps must declare widgetTargetTemplates
-    _VALID_TEMPLATES = {"product", "collection", "index", "cart", "page", "blog", "article", "search"}
+    _VALID_TEMPLATES = {
+        "product",
+        "collection",
+        "index",
+        "cart",
+        "page",
+        "blog",
+        "article",
+        "search",
+    }
     if app_archetype in ("storefront_backend", "storefront_backend_admin"):
         targets = impl.get("widgetTargetTemplates") or []
         if not targets:
@@ -581,7 +629,11 @@ def _extract_js_fields(obj_literal: str) -> List[str]:
         if not part:
             continue
         key = part.split(":")[0].strip()
-        if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key) and key not in _NON_FIELD and key not in seen:
+        if (
+            re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key)
+            and key not in _NON_FIELD
+            and key not in seen
+        ):
             keys.append(key)
             seen.add(key)
     return sorted(keys)
@@ -596,18 +648,21 @@ def _extract_js_fields(obj_literal: str) -> List[str]:
 FORBIDDEN_HANDLER_PATTERNS = [
     (
         r"\bfetch\s*\(",
-        "raw fetch() calls are not allowed — use ctx.shopify or ctx.http.call()",
+        "raw fetch() calls are not allowed — use ctx.shopify or ctx.http.json/.buffer/.text",
     ),
     (
         r"\brequire\s*\(\s*['\"]https?['\"]",
-        "Node.js native http/https modules are not allowed — use ctx.shopify for Shopify API, ctx.http.call(url) for external HTTP calls",
+        "Node.js native http/https modules are not allowed — use ctx.shopify for Shopify API, ctx.http.json/.buffer/.text for external HTTP calls (pick by response type)",
     ),
     (r"\beval\s*\(", "eval() is not allowed"),
     (r"\bprocess\.exit\b", "process.exit is not allowed"),
     (r"\bprocess\.kill\b", "process.kill is not allowed"),
     (r"\bprocess\.env\b", "process.env access is not allowed"),
     (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
-    (r"\bsetInterval\s*\(", "setInterval is not allowed — handlers are short-lived invocations, not long-running processes"),
+    (
+        r"\bsetInterval\s*\(",
+        "setInterval is not allowed — handlers are short-lived invocations, not long-running processes",
+    ),
     (r"\bsetImmediate\s*\(", "setImmediate is not allowed"),
     # setTimeout is allowed ONLY as a bounded pause (≤500ms numeric literal) —
     # enforced via _find_setTimeout_violations() below, same rule widget/admin
@@ -832,7 +887,9 @@ def validate_handler_artifact(
     if "webhookTopics" not in code:
         errors.append("webhookTopics not found in exports")
     if "npmPackages" not in code:
-        errors.append("npmPackages not found in exports — add npmPackages: [] even if empty")
+        errors.append(
+            "npmPackages not found in exports — add npmPackages: [] even if empty"
+        )
     if "handler" not in code:
         errors.append("handler function not found in exports")
 
@@ -840,9 +897,23 @@ def validate_handler_artifact(
     #     and every npmPackages entry must be from the approved list.
     #     Built-in Node modules are always exempt.
     BUILTIN_MODULES = {
-        "path", "fs", "os", "crypto", "stream", "util", "events",
-        "buffer", "url", "http", "https", "net", "querystring",
-        "string_decoder", "child_process", "process", "zlib",
+        "path",
+        "fs",
+        "os",
+        "crypto",
+        "stream",
+        "util",
+        "events",
+        "buffer",
+        "url",
+        "http",
+        "https",
+        "net",
+        "querystring",
+        "string_decoder",
+        "child_process",
+        "process",
+        "zlib",
     }
 
     def _pkg_base(name: str) -> str:
@@ -869,8 +940,11 @@ def validate_handler_artifact(
     for req_match in re.finditer(r"""\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)""", code):
         pkg_name = req_match.group(1)
         # Allow sub-path imports like 'csv-parse/sync' — base is still 'csv-parse'
-        base = _pkg_base(pkg_name.split("/")[0] if not pkg_name.startswith("@") else
-                         "/".join(pkg_name.split("/")[:2]))
+        base = _pkg_base(
+            pkg_name.split("/")[0]
+            if not pkg_name.startswith("@")
+            else "/".join(pkg_name.split("/")[:2])
+        )
         if base in BUILTIN_MODULES:
             continue
         if base not in declared_packages:
@@ -995,9 +1069,7 @@ def validate_handler_artifact(
     #    This is a structural gate — whether the bulk-fetch is correctly implemented
     #    inside that branch is verified by the agentic validator (Q7).
     if cron_batching_required:
-        has_cron_branch = bool(
-            re.search(r"ctx\.trigger\s*===\s*['\"]cron['\"]", code)
-        )
+        has_cron_branch = bool(re.search(r"ctx\.trigger\s*===\s*['\"]cron['\"]", code))
         if not has_cron_branch:
             errors.append(
                 "cronBatching.required is true but handler has no ctx.trigger === 'cron' branch — "
@@ -1025,7 +1097,9 @@ def validate_handler_artifact(
 # ── Migration ─────────────────────────────────────────────────────────────────
 
 
-def validate_migration_artifact(sql: str, prior_tables: List[str] | None = None) -> List[str]:
+def validate_migration_artifact(
+    sql: str, prior_tables: List[str] | None = None
+) -> List[str]:
     """Validate the generated PostgreSQL DDL migration.
 
     prior_tables: table names already applied in a previous deploy. RLS and
@@ -1052,8 +1126,12 @@ def validate_migration_artifact(sql: str, prior_tables: List[str] | None = None)
     #   - ADD COLUMN IF NOT EXISTS  (safe incremental DDL for revision runs)
     alter_stmts = re.findall(r"\bALTER\s+TABLE\b[^;]+;", sql, re.IGNORECASE)
     for stmt in alter_stmts:
-        is_rls = bool(re.search(r"\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b", stmt, re.IGNORECASE))
-        is_add_col = bool(re.search(r"\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b", stmt, re.IGNORECASE))
+        is_rls = bool(
+            re.search(r"\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b", stmt, re.IGNORECASE)
+        )
+        is_add_col = bool(
+            re.search(r"\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b", stmt, re.IGNORECASE)
+        )
         if not is_rls and not is_add_col:
             errors.append("forbidden SQL operation: ALTER TABLE on existing tables")
 
@@ -1097,9 +1175,7 @@ def validate_migration_artifact(sql: str, prior_tables: List[str] | None = None)
         )
         missing_stmts = []
         if not has_enable_rls:
-            missing_stmts.append(
-                f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY"
-            )
+            missing_stmts.append(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY")
         if not has_policy:
             missing_stmts.append(
                 f"CREATE POLICY ... ON {table_name} USING (tenant_id = auth.uid()) WITH CHECK (tenant_id = auth.uid())"
@@ -1169,15 +1245,15 @@ FORBIDDEN_WIDGET_JS_PATTERNS = [
 # dispatchEvent, createElement are all legitimate.
 _DOCUMENT_DENYLIST: frozenset[str] = frozenset(
     {
-        "body",            # document.body.appendChild leaks outside container
-        "head",            # document.head.appendChild injects global styles
-        "documentElement", # document.documentElement.style mutates page root
-        "cookie",          # security — reads/writes merchant session cookies
-        "title",           # mutates the merchant's page title
-        "write",           # catastrophic — rewrites the entire page
-        "open",            # pairs with document.write
-        "close",           # pairs with document.write
-        "execCommand",     # legacy; prefer navigator.clipboard etc.
+        "body",  # document.body.appendChild leaks outside container
+        "head",  # document.head.appendChild injects global styles
+        "documentElement",  # document.documentElement.style mutates page root
+        "cookie",  # security — reads/writes merchant session cookies
+        "title",  # mutates the merchant's page title
+        "write",  # catastrophic — rewrites the entire page
+        "open",  # pairs with document.write
+        "close",  # pairs with document.write
+        "execCommand",  # legacy; prefer navigator.clipboard etc.
     }
 )
 
@@ -1229,9 +1305,9 @@ def _extract_settimeout_delays(js: str) -> List[Optional[str]]:
     """
     delays: List[Optional[str]] = []
     for m in re.finditer(r"\bsetTimeout\s*\(", js):
-        i = m.end()           # index just past the opening '('
+        i = m.end()  # index just past the opening '('
         n = len(js)
-        depth = 1             # we're inside the outer '('
+        depth = 1  # we're inside the outer '('
         in_string: Optional[str] = None
         first_top_comma: Optional[int] = None
 
@@ -1255,7 +1331,7 @@ def _extract_settimeout_delays(js: str) -> List[Optional[str]]:
             i += 1
 
         if first_top_comma is None:
-            delays.append(None)   # no second argument
+            delays.append(None)  # no second argument
             continue
 
         # i now points one past the closing ')'; js[i-1] == ')'
@@ -1351,14 +1427,12 @@ def validate_widget_artifact(
             widget_js,
         )
     )
-    has_form_input = bool(
-        re.search(r"<input|<textarea|\bgetFormData\b", widget_js)
-    )
-    has_click_submit = bool(
-        re.search(r"addEventListener\([\"']click", widget_js)
-    )
+    has_form_input = bool(re.search(r"<input|<textarea|\bgetFormData\b", widget_js))
+    has_click_submit = bool(re.search(r"addEventListener\([\"']click", widget_js))
     has_host_call = bool(re.search(r"\bhost\.call\s*\(", widget_js))
-    if (has_explicit_submit or (has_click_submit and has_form_input)) and not has_host_call:
+    if (
+        has_explicit_submit or (has_click_submit and has_form_input)
+    ) and not has_host_call:
         errors.append(
             "widget has a form action but never calls host.call() — collected data "
             "is silently discarded. Add a POST endpoint to platformApiCatalog and call "
@@ -1448,14 +1522,12 @@ def validate_admin_ui_artifact(
             admin_ui_js,
         )
     )
-    has_form_input = bool(
-        re.search(r"<input|<textarea|\bgetFormData\b", admin_ui_js)
-    )
-    has_click_submit = bool(
-        re.search(r"addEventListener\([\"']click", admin_ui_js)
-    )
+    has_form_input = bool(re.search(r"<input|<textarea|\bgetFormData\b", admin_ui_js))
+    has_click_submit = bool(re.search(r"addEventListener\([\"']click", admin_ui_js))
     has_bridge_call = bool(re.search(r"\bbridge\.call\s*\(", admin_ui_js))
-    if (has_explicit_submit or (has_click_submit and has_form_input)) and not has_bridge_call:
+    if (
+        has_explicit_submit or (has_click_submit and has_form_input)
+    ) and not has_bridge_call:
         errors.append(
             "admin UI has a form action but never calls bridge.call() — collected data "
             "is silently discarded. Add a POST endpoint to adminApiCatalog and call it "
@@ -1481,6 +1553,7 @@ def _extract_call_keys(body_str: str) -> set:
     the captured group does not include the closing `}`.
     """
     return set(_extract_js_fields(body_str))
+
 
 _NON_FIELD = {
     "true",
