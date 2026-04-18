@@ -37,6 +37,7 @@ artifacts that Haiku-no-thinking cannot reliably perform.
 
 Controlled by LLM_VALIDATION_ENABLED=true in environment (default: false).
 """
+
 from __future__ import annotations
 
 import json
@@ -61,6 +62,7 @@ _VALID_OPEN_ARTIFACTS = {"handler", "migration", "widget_js", "admin_ui"}
 
 # ── User prompt builder ────────────────────────────────────────────────────────
 
+
 def _build_prompt(
     artifacts: Dict[str, str],
     ctx: CodegenContext,
@@ -78,8 +80,16 @@ def _build_prompt(
 
     handler = artifacts.get("handler", "(missing)")
     migration = artifacts.get("migration", "(missing)")
-    widget = artifacts.get("widget_js", "(not applicable)") if is_storefront else "(not applicable)"
-    admin = artifacts.get("admin_ui", "(not applicable)") if is_admin_ui else "(not applicable)"
+    widget = (
+        artifacts.get("widget_js", "(not applicable)")
+        if is_storefront
+        else "(not applicable)"
+    )
+    admin = (
+        artifacts.get("admin_ui", "(not applicable)")
+        if is_admin_ui
+        else "(not applicable)"
+    )
 
     # ── Artifacts block ───────────────────────────────────────────────────────
     artifacts_block = f"""ARTIFACTS
@@ -104,22 +114,16 @@ def _build_prompt(
             f"{json.dumps(db_contracts, indent=2)}"
         )
     if is_storefront:
-        plan_parts.append(
-            f"widgetApiCatalog:\n{json.dumps(widget_catalog, indent=2)}"
-        )
+        plan_parts.append(f"widgetApiCatalog:\n{json.dumps(widget_catalog, indent=2)}")
     if is_admin_ui:
-        plan_parts.append(
-            f"adminApiCatalog:\n{json.dumps(admin_catalog, indent=2)}"
-        )
+        plan_parts.append(f"adminApiCatalog:\n{json.dumps(admin_catalog, indent=2)}")
     if has_cron_batching:
-        plan_parts.append(
-            f"cronBatching:\n{json.dumps(cron_batching, indent=2)}"
-        )
+        plan_parts.append(f"cronBatching:\n{json.dumps(cron_batching, indent=2)}")
     if has_state_machine:
-        plan_parts.append(
-            f"stateMachine:\n{json.dumps(sm, indent=2)}"
-        )
-    plan_block = "PLAN CONTEXT\n════════════\n\n" + "\n\n".join(plan_parts) if plan_parts else ""
+        plan_parts.append(f"stateMachine:\n{json.dumps(sm, indent=2)}")
+    plan_block = (
+        "PLAN CONTEXT\n════════════\n\n" + "\n\n".join(plan_parts) if plan_parts else ""
+    )
 
     # ── Questions (only relevant ones) ───────────────────────────────────────
     questions: List[str] = []
@@ -240,11 +244,15 @@ def _build_prompt(
     )
 
     return "\n\n".join(
-        filter(None, [artifacts_block, plan_block, part_a_block, part_b_block, response_block])
+        filter(
+            None,
+            [artifacts_block, plan_block, part_a_block, part_b_block, response_block],
+        )
     )
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
+
 
 def run_validator_agent(
     artifacts: Dict[str, str],
@@ -281,7 +289,9 @@ def run_validator_agent(
         raw = extract_json(response.content)
         result = json.loads(raw)
     except Exception as exc:
-        log.warning("validator_agent: failed to get/parse response (%s) — fail-open", exc)
+        log.warning(
+            "validator_agent: failed to get/parse response (%s) — fail-open", exc
+        )
         return [], in_tok, out_tok
 
     if not isinstance(result, dict):
@@ -330,11 +340,17 @@ def _parse_part_a(result: Dict) -> List[Dict]:
             continue
 
         if confidence == "high":
-            log.info("validator_agent: %s HIGH confidence issue — %s", q_key, issue_text)
-            issues.append({"question": q_key, "issue": issue_text, "confidence": "high"})
+            log.info(
+                "validator_agent: %s HIGH confidence issue — %s", q_key, issue_text
+            )
+            issues.append(
+                {"question": q_key, "issue": issue_text, "confidence": "high"}
+            )
         else:
             log.info(
-                "validator_agent: %s medium confidence (skipped) — %s", q_key, issue_text
+                "validator_agent: %s medium confidence (skipped) — %s",
+                q_key,
+                issue_text,
             )
     return issues
 
@@ -375,7 +391,8 @@ def _parse_open_findings(raw: object) -> List[Dict]:
         if not issue_text or not failure_mode:
             log.info(
                 "validator_agent: open_finding skipped — missing issue or failure_mode "
-                "(artifact=%s)", artifact,
+                "(artifact=%s)",
+                artifact,
             )
             continue
 

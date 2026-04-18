@@ -1,5 +1,5 @@
 """
-Compact handler API surface — used by the revision agent.
+Revision agent compact API surface.
 
 The revision agent sees the prior handler code in its user prompt, which
 already embodies the full patterns from HARNESS_BASE. Re-sending the whole
@@ -7,23 +7,37 @@ harness contract would waste tokens without improving output quality, so
 revisions get this crisp reminder of what APIs exist plus the handful of
 absolute rules that matter most when editing code.
 
-Per-capability "do it this way" rules are not hard-coded here — they are
-JIT-rendered from the handler registry via render_api_surface_rules() so
-the registry stays the single source of truth. Add an api_surface_usage_rule
-to a Capability and it shows up below; remove it and it disappears.
+Capability content is fully registry-driven — no hardcoded signature or
+rule prose lives in this file:
+  - Per-capability signatures render from HANDLER_SERVICES via render_registry()
+    (uses each Capability.short line).
+  - Per-capability usage rules render from HANDLER_CAPABILITY_REGISTRY via
+    render_usage_rules() (uses each Capability.usage_rule line, if set).
+Adding a new ctx.* service or rule is a single registry edit in
+templates/capabilities/handler.py; both blocks below update automatically.
+
+Hardcoded blocks below (Database, Trigger routing, Required module shape,
+Core rules) are platform invariants that are not capability-scoped and have
+no registry counterpart.
 
 Not used by the handler generator itself — initial handler generation uses
-HARNESS_BASE (see _core.py) plus capability-gated docs from the handler
-registry (templates/capabilities/handler.py).
+HARNESS_BASE (see prompts/handler/_core.py) plus capability-gated docs
+from the handler registry. This file lives under prompts/revision/ because
+the revision agent is its sole consumer.
 """
 
-from templates.capabilities import render_api_surface_rules
-from templates.capabilities.handler import HANDLER_CAPABILITY_REGISTRY
+from templates.capabilities import render_registry, render_usage_rules
+from templates.capabilities.handler import HANDLER_CAPABILITY_REGISTRY, HANDLER_SERVICES
 
 
-_CAPABILITY_RULES = render_api_surface_rules(HANDLER_CAPABILITY_REGISTRY)
+# Per-capability signatures — rendered from HANDLER_SERVICES (ctx.* platform
+# services only; npm packages are library declarations, not APIs callable
+# through ctx, so they belong in the handler's full docs JIT, not here).
+_SERVICE_SIGNATURES = render_registry(HANDLER_SERVICES, indent="  ")
 
-# Prefix with a labeled header only when at least one capability declares a rule.
+# Per-capability usage rules — one-liner disciplines for capabilities that
+# declare them (paginate, paginateGql, sharp/pdfkit/exceljs disk-writes).
+_CAPABILITY_RULES = render_usage_rules(HANDLER_CAPABILITY_REGISTRY)
 _CAPABILITY_RULES_BLOCK = (
     f"\nCapability usage rules:\n{_CAPABILITY_RULES}\n" if _CAPABILITY_RULES else ""
 )
@@ -32,17 +46,8 @@ HARNESS_API_SURFACE = f"""
 HARNESS API SURFACE — the only APIs available inside handler():
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Shopify:
-  ctx.shopify.get(path) / ctx.shopify.post(path, body) / ctx.shopify.delete(path)
-    — REST at /admin/api/2026-01. Path is relative.
-  ctx.shopify.paginate(path, params?)
-    — async generator over REST list endpoints; handles Link-header cursors.
-  ctx.shopify.graphql(query, variables?)
-    — Admin GraphQL. IDs use GID format: `gid://shopify/TypeName/${{numericId}}`.
-  ctx.shopify.paginateGql(query, vars, connectionPath)
-    — async generator over Relay connections; handles pageInfo/endCursor.
-  ctx.storefront.graphql(query, variables?)
-    — public Storefront API (server-side).
+Handler platform services (ctx.*) — declared per-app in handlerCapabilities:
+{_SERVICE_SIGNATURES}
 
 Database (postgres.js tagged template, RLS-scoped to ctx.tenantId):
   await ctx.db`SELECT ... WHERE tenant_id = ${{ctx.tenantId}} AND ...`
@@ -55,12 +60,6 @@ Trigger routing:
   ctx.adminPath  / ctx.adminBody    — when trigger === 'admin'
   ctx.shop.domain       — myshopify.com domain
   ctx.logger.info / warn / error
-
-Services (available on every ctx):
-  ctx.services.email.send({{ to, data? }})    — merchant-configured template
-  ctx.services.sms.send({{ to, body }})
-  ctx.services.files.upload(name, content, mimeType?) → signed URL
-  ctx.http.call(url, options?)              — https:// to third parties
 
 Required module shape (CommonJS):
   module.exports = {{

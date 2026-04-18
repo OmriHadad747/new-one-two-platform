@@ -31,7 +31,7 @@ HANDLER_SERVICES: "OrderedDict[str, Capability]" = OrderedDict(
         (
             "shopify_rest",
             Capability(
-                short="ctx.shopify.get / post / delete / paginate — Shopify Admin REST API at /admin/api/2026-01. Declare when the handler reads or mutates Shopify data via REST.",
+                short="ctx.shopify.get(path) / post(path, body) / delete(path) / paginate(path, params?) — Shopify Admin REST API at /admin/api/2026-01. Declare for REST reads or mutations.",
                 docs="""\
 ── Shopify REST ──────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ WHEN TO USE REST (vs ctx.shopify.graphql):
 
 REST PUT endpoints use ctx.shopify.post() — there is no separate PUT method.\
 """,
-                api_surface_usage_rule=(
+                usage_rule=(
                     "For Shopify REST list endpoints use `for await (const batch of ctx.shopify.paginate(path, params))` — "
                     "never hand-roll since_id, page_info, Link-header parsing, or ?page= loops."
                 ),
@@ -86,7 +86,7 @@ REST PUT endpoints use ctx.shopify.post() — there is no separate PUT method.\
         (
             "shopify_graphql",
             Capability(
-                short="ctx.shopify.graphql / paginateGql — Shopify Admin GraphQL API. Declare when the handler issues GraphQL queries or mutations (bulk tags, metafields, discountCodeBulkAdd, or joins across entities).",
+                short="ctx.shopify.graphql(query, variables?) / paginateGql(query, variables, connectionPath) — Shopify Admin GraphQL API. Declare for GraphQL mutations (bulk tags, metafields, discountCodeBulkAdd) or multi-entity joins REST can't express in one call.",
                 docs="""\
 ── Shopify GraphQL ───────────────────────────────────────────
 
@@ -154,7 +154,7 @@ ctx.shopify.paginateGql(query, variables, connectionPath) → AsyncGenerator<any
   DO still use ctx.shopify.graphql directly for single-page queries
   (everything-in-first:50 reads, mutations, counts).\
 """,
-                api_surface_usage_rule=(
+                usage_rule=(
                     "For paginated GraphQL reads use `for await (const nodes of ctx.shopify.paginateGql(query, vars, connectionPath))` — "
                     "never hand-roll `do { cursor } while(cursor)` over ctx.shopify.graphql."
                 ),
@@ -163,7 +163,7 @@ ctx.shopify.paginateGql(query, variables, connectionPath) → AsyncGenerator<any
         (
             "email",
             Capability(
-                short="ctx.services.email.send — merchant-configured email templates (subject / body / CTA owned by the platform; handler only passes `to` and `data` variables).",
+                short="ctx.services.email.send({ to, data? }) — merchant-configured email template (subject/body/CTA owned by the platform; handler passes recipient + variables only).",
                 docs="""\
 ── ctx.services.email.send ───────────────────────────────────
 
@@ -263,7 +263,7 @@ ctx.services.email.send({ to, data? }) → Promise<void>
         (
             "sms",
             Capability(
-                short="ctx.services.sms.send — outbound SMS to E.164 phone numbers.",
+                short="ctx.services.sms.send({ to, body }) — outbound SMS to E.164 phone numbers.",
                 docs="""\
 ── ctx.services.sms.send ─────────────────────────────────────
 
@@ -278,7 +278,7 @@ ctx.services.sms.send({ to, body }) → Promise<void>
         (
             "files",
             Capability(
-                short="ctx.services.files.upload — generate a file (CSV / PDF / XLSX / ZIP / image) and return a signed download URL.",
+                short="ctx.services.files.upload(name, content, mimeType?) → signed URL — generate a downloadable artefact (CSV / PDF / XLSX / ZIP / image); content is a Buffer or string.",
                 docs="""\
 ── ctx.services.files.upload ─────────────────────────────────
 
@@ -297,7 +297,7 @@ ctx.services.files.upload(name, content, mimeType?) → Promise<string>
         (
             "http",
             Capability(
-                short="ctx.http.call — outbound HTTPS to third-party REST APIs. Declare only when the handler integrates with a non-Shopify service.",
+                short="ctx.http.call(url, options?) — outbound HTTPS to a non-Shopify third party. Declare only for external integrations — never for Shopify endpoints.",
                 docs="""\
 ── ctx.http.call ─────────────────────────────────────────────
 
@@ -320,7 +320,7 @@ ctx.http.call(url, options?) → Promise<any>
         (
             "storefront",
             Capability(
-                short="ctx.storefront.graphql — server-side Shopify Storefront API reads. Rare: widgets usually read storefront data themselves via host.storefront (see widgetCapabilities). Declare here only when the handler itself needs public storefront data.",
+                short="ctx.storefront.graphql(query, variables?) — server-side Shopify Storefront API (public data). Rare — widgets usually read via host.storefront; declare here only when the handler itself needs public storefront data.",
                 docs="""\
 ── ctx.storefront.graphql (server-side Storefront API) ──────
 
@@ -399,8 +399,14 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
       .resize(800, 600, { fit: 'cover' })
       .jpeg({ quality: 85 })
       .toBuffer();
-    const metadata = await sharp(inputBuffer).metadata();  // { width, height, format, size }\
+    const metadata = await sharp(inputBuffer).metadata();  // { width, height, format, size }
+  Buffer only — .toFile() writes to a local path that does not exist on
+  Cloud Run; use .toBuffer() and pass the result to ctx.services.files.upload.\
 """,
+                usage_rule=(
+                    "Use sharp(...).toBuffer() and hand the result to "
+                    "ctx.services.files.upload — never .toFile() (Cloud Run FS is ephemeral)."
+                ),
             ),
         ),
         (
@@ -418,8 +424,14 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
     const chunks = [];
     doc.on('data', chunk => chunks.push(chunk));
     await new Promise(resolve => { doc.on('end', resolve); doc.text('Hello').end(); });
-    const pdfBuffer = Buffer.concat(chunks);\
+    const pdfBuffer = Buffer.concat(chunks);
+  Buffer only — do NOT .pipe(fs.createWriteStream(...)) the document. Cloud
+  Run's filesystem is ephemeral; hand the Buffer to ctx.services.files.upload.\
 """,
+                usage_rule=(
+                    "Buffer pdfkit output via the data/end event pattern and hand the Buffer to "
+                    "ctx.services.files.upload — never .pipe(fs.createWriteStream(...)) (Cloud Run FS is ephemeral)."
+                ),
             ),
         ),
         (
@@ -436,8 +448,15 @@ HANDLER_NPM_PACKAGES: "OrderedDict[str, Capability]" = OrderedDict(
     const ws = wb.addWorksheet('Orders');
     ws.columns = [{ header: 'ID', key: 'id' }, { header: 'Email', key: 'email' }];
     rows.forEach(r => ws.addRow(r));
-    const xlsxBuffer = await wb.xlsx.writeBuffer();\
+    const xlsxBuffer = await wb.xlsx.writeBuffer();
+  Buffer only — wb.xlsx.writeFile(path) writes to a local path that does not
+  exist on Cloud Run; use wb.xlsx.writeBuffer() and pass the result to
+  ctx.services.files.upload.\
 """,
+                usage_rule=(
+                    "Use wb.xlsx.writeBuffer() and hand the Buffer to ctx.services.files.upload — "
+                    "never wb.xlsx.writeFile(path) (Cloud Run FS is ephemeral)."
+                ),
             ),
         ),
         (

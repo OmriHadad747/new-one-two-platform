@@ -27,7 +27,7 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 from models.adapter import extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
 from subagents.base import CodegenContext, needs_extended_thinking
-from subagents.prompts.handler import HARNESS_API_SURFACE
+from subagents.prompts.revision import REVISION_SYSTEM
 
 # Extended-thinking budget for the revision agent.  Revision rewrites whole
 # artifacts to fix a precise list of validator issues — it is exactly the call
@@ -39,72 +39,11 @@ _REVISION_THINKING_BUDGET = 6000
 
 log = logging.getLogger(__name__)
 
-# ── System prompt ──────────────────────────────────────────────────────────────
-#
-# The revision agent uses the compact HARNESS_API_SURFACE rather than the full
-# HARNESS_BASE. Revisions see the prior handler code in the user prompt, which
-# already embodies the handler patterns; re-sending the full harness contract
-# wastes tokens without improving edits.
-
-REVISION_SYSTEM = f"""You are an expert Shopify applications code revision specialist.
-
-You receive existing working handler code (and optionally widget + admin UI code)
-along with a revised architect plan. Apply MINIMUM targeted changes.
-
-{HARNESS_API_SURFACE}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-REVISION RULES — read before editing
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-APPROACH:
-1. Read existing code — understand what it does and what contracts it maintains.
-2. Compare the existing code against the new appContracts (dbContracts, webhookContract,
-   widgetApiCatalog, adminApiCatalog requestShape/responseShape).
-3. Apply only the changes required — preserve everything else.
-4. If a field name changes in the handler, also change it in the widget and admin UI.
-
-HANDLER:
-- Output MUST be a full CommonJS module: module.exports = {{ webhookTopics, cronSchedule, handler }}
-- Implement all routes declared in widgetApiCatalog and adminApiCatalog
-- Use exact column names from dbContracts in all SQL queries
-- Update webhookTopics and cronSchedule only if the new plan changes them
-
-MIGRATION:
-- Output ONLY incremental DDL
-- NEVER drop, recreate, or modify existing columns/tables (the prior migration was already applied)
-- New table → full CREATE TABLE IF NOT EXISTS ... with tenant isolation pattern
-- New column → ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...
-- If nothing changed in the schema → output exactly: -- no schema changes
-
-WIDGET (widget_js, if applicable):
-- Use EXACTLY the requestShape fields shown in widgetApiCatalog for each host.call() body
-- Use EXACTLY the responseShape field names when reading results
-- Keep the same host.call() / host.storefront() / host.context structural pattern
-- Set to null (JSON null) if this is a backend-only app
-  FORBIDDEN — static validator rejects these immediately:
-    import statements of any kind • export default • React/JSX/useState/useEffect/createElement
-    document.head • document.body • setInterval • eval() • Function() • window.*
-    Sole allowed export: export function mount(container, host) { ... }
-
-ADMIN UI (admin_ui, if applicable):
-- Use EXACTLY the requestShape fields shown in adminApiCatalog for each bridge.call() body
-- Use EXACTLY the responseShape field names when reading results
-- Keep the same bridge.call() pattern
-- Set to null (JSON null) if this app has no admin panel
-  FORBIDDEN — static validator rejects these immediately:
-    import statements of any kind • export default • React/JSX/useState/useEffect/createElement
-    document.head • document.body • setInterval • eval() • Function() • window.*
-    Sole allowed export: export function mount(container, bridge) { ... }
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT — respond with ONLY this JSON object (no markdown fences, no explanation):
-{{
-  "handler": "<full revised handler.js CommonJS module>",
-  "migration": "<incremental SQL DDL, or exactly '-- no schema changes'>",
-  "widget_js": "<full revised widget ES module, or null>",
-  "admin_ui": "<full revised admin UI ES module, or null>"
-}}"""
+# System prompt: REVISION_SYSTEM (in subagents/prompts/revision/_core.py) —
+# embeds the compact HARNESS_API_SURFACE so revisions see the handler API
+# reminder without the full HARNESS_BASE. Revisions already have the prior
+# handler code in the user prompt, which embodies the handler patterns;
+# re-sending the full harness contract wastes tokens without improving edits.
 
 
 # ── User prompt builder ────────────────────────────────────────────────────────

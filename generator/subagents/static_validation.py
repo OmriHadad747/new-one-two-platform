@@ -615,6 +615,28 @@ FORBIDDEN_HANDLER_PATTERNS = [
         "not UI code that needs debounce. Per-item sleeps inside loops burn cron runtime and risk "
         "timeouts; rate limiting belongs in the harness, not the handler.",
     ),
+    # ── Local-disk writes — always forbidden on Cloud Run ────────────────────
+    # Cloud Run's filesystem is ephemeral and per-instance; anything written to
+    # disk is unreachable by subsequent invocations and by the merchant. All
+    # generated files MUST be handed to ctx.services.files.upload as a Buffer.
+    # These patterns catch the three npm-producer call shapes the LLM reliably
+    # hand-rolls when it copies disk-writing examples from generic tutorials.
+    (
+        r"\bsharp\s*\([^)]*\)[\s\S]*?\.toFile\s*\(",
+        "sharp(...).toFile(path) writes to the local filesystem which is ephemeral on Cloud Run — "
+        "use sharp(...).toBuffer() and hand the Buffer to ctx.services.files.upload instead.",
+    ),
+    (
+        r"\.pipe\s*\(\s*fs\.createWriteStream\s*\(",
+        ".pipe(fs.createWriteStream(...)) writes to the local filesystem which is ephemeral on Cloud Run — "
+        "buffer the stream in memory (e.g. collect chunks via the 'data' event, then Buffer.concat) "
+        "and hand the Buffer to ctx.services.files.upload.",
+    ),
+    (
+        r"\.xlsx\.writeFile\s*\(",
+        "wb.xlsx.writeFile(path) writes to the local filesystem which is ephemeral on Cloud Run — "
+        "use wb.xlsx.writeBuffer() and hand the Buffer to ctx.services.files.upload.",
+    ),
 ]
 
 # Fields the old email API used to accept — all of them have moved into the
