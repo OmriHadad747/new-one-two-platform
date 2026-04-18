@@ -99,36 +99,17 @@ _THINKING_BUDGET_HIGH = 4000
 
 def needs_extended_thinking(plan: Dict[str, Any]) -> bool:
     """
-    Deterministic complexity gate for extended thinking.
+    Thinking gate — reads the architect's ``complexity`` label.
 
-    Replaces the architect's self-reported ``complexity`` label: the label was
-    subjective ("complex joins", "non-trivial contract") and unaudited, so an
-    app could silently fall out of the thinking path. This helper inspects
-    observable plan facts instead — no LLM guesswork.
-
-    Returns True (→ enable thinking) when any of:
-      - the architect declared a stateMachine
-      - cronBatching.required is true (cron with bulk-fetch discipline)
-      - 2+ webhook topics (multi-event coordination)
-      - the app has BOTH storefront widget and admin UI surfaces (cross-surface
-        contract holding)
-
-    These are the cases where the model most often drops a constraint from the
-    middle of a long prompt. Single-trigger flat-schema apps skip thinking.
+    The architect labels complexity using the concrete rubric in
+    subagents/prompts/architect/_core.py (stateMachine, cronBatching,
+    2+ webhooks, cross-surface contract, plus a narrow semantic escape
+    hatch). Consumers use that single label so complexity lives in one
+    place — the plan. If labelling drift shows up in practice, tighten
+    the architect rubric rather than scattering overrides here.
     """
-    contracts = plan.get("appContracts") or {}
-    if contracts.get("stateMachine"):
-        return True
-    if (contracts.get("cronBatching") or {}).get("required"):
-        return True
-    webhook_topics = (plan.get("shopifyPlan") or {}).get("webhookTopics") or []
-    if len(webhook_topics) >= 2:
-        return True
-    has_widget = bool(contracts.get("widgetApiCatalog"))
-    has_admin = bool(contracts.get("adminApiCatalog"))
-    if has_widget and has_admin:
-        return True
-    return False
+    complexity = (plan.get("appContracts") or {}).get("complexity", "low")
+    return complexity == "high"
 
 
 class Generator(ABC):

@@ -81,10 +81,30 @@ feasibility: Is this app BUILDABLE with the platform's capability surface?
 
 COMPLEXITY = """\
 complexity: "low" | "medium" | "high"
-  low:    single webhook or simple cron, no state machine, flat schema.
-  medium: multiple webhooks or cron+webhook, OR state machine, OR batch cron.
-  high:   state machine + multiple execution paths, complex joins, storefront widget
-          with non-trivial backend contract.\
+  Downstream code generators enable extended thinking when complexity="high".
+  Label the plan using concrete criteria — avoid subjective words like
+  "complex" or "non-trivial" without a structural anchor.
+
+  HIGH — set when ANY of:
+    - stateMachine is declared (tracked state + transitions)
+    - cronBatching.required is true (bulk-fetch discipline)
+    - 2+ entries in shopifyPlan.webhookTopics (multi-event coordination)
+    - BOTH widgetApiCatalog AND adminApiCatalog are present (cross-surface
+      contract the handler must keep consistent for two different callers)
+    - rare escape hatch: the feature has a genuinely intricate semantic
+      contract the structural signals miss (e.g. multi-step reconciliation,
+      non-obvious idempotency across multiple entities). Use sparingly —
+      only when the structural triggers clearly undersell real difficulty.
+
+  MEDIUM — single webhook OR single cron with a handler that must pre-fetch
+  Shopify data, enforce idempotency, or update multiple columns in one write.
+  No state machine, no bulk-fetch discipline, no cross-surface coordination.
+
+  LOW — single trigger, flat schema, straightforward CRUD-shaped write. No
+  state, no pre-fetch choreography, no cross-surface coupling.
+
+  When in doubt between two levels, choose the higher one — extended thinking
+  is cheap relative to a missed-constraint regen.\
 """
 
 PLATFORM_GAPS = """\
