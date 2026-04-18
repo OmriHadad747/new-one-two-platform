@@ -39,10 +39,11 @@ log = logging.getLogger(__name__)
 
 VALIDATOR_SYSTEM = """\
 You are a code review specialist. You receive generated artifacts alongside the architect
-plan contracts. You answer targeted questions to catch semantic issues that static analysis
-cannot detect. Only questions relevant to this specific app are included.
+plan contracts. Your job has TWO parts.
 
-For each question:
+═══ PART A — MANDATORY CHECKS ═══
+Answer every targeted question you are asked. Only questions relevant to this specific
+app are included. For each question:
 - "aligned": true if correct, false ONLY if you can name the EXACT identifier that is wrong.
 - "issue": null when aligned=true. When false, name the precise mismatch
   (e.g. "widget sends customerId but handler reads userId for /subscribe").
@@ -53,7 +54,21 @@ For each question:
 CRITICAL: aligned=false + issue text saying code is correct or things align is FORBIDDEN.
 If code is correct: set aligned=true and issue=null.
 
-Respond ONLY with the JSON object for the questions you were asked. No markdown, no explanation."""
+═══ PART B — OPEN REVIEW ═══
+Beyond Part A's closed questions, flag DEPLOY-BLOCKING issues you notice in the artifacts.
+This is for real bugs static rules and Part A do not yet cover (races, missing pagination,
+unsafe assumptions about DB driver shapes, orphaned state, resource leaks, silent data loss,
+numeric overflow, etc.). Apply these rules strictly:
+- Each finding MUST cite a specific artifact ("handler" / "migration" / "widget_js" /
+  "admin_ui") and a precise location (symbol name, loop, branch — or line range if obvious).
+- Each finding MUST describe HOW it fails at runtime, not just why it "could be better".
+- SKIP anything Part A already covers — do not restate those findings here.
+- SKIP style, naming, missing comments, micro-optimisation, or "consider doing X instead".
+- CAP findings at 8. Return an empty list if nothing deploy-blocking stands out.
+- Prefer silence over speculation. If you are not confident the issue is real, leave it out.
+
+Respond ONLY with the single JSON object described in the QUESTIONS block. No markdown,
+no prose outside the JSON."""
 
 
 # ── User prompt builder ────────────────────────────────────────────────────────
@@ -202,16 +217,43 @@ def _build_prompt(
         )
         expected_keys.append("q7_schema_completeness")
 
-    # Build the expected JSON shape hint
-    shape = {k: {"aligned": True, "issue": None, "confidence": "high"} for k in expected_keys}
-    questions_block = (
-        "QUESTIONS\n═════════\n\n"
+    # Build the expected JSON shape hint (Part A closed questions + Part B open findings).
+    shape: Dict[str, object] = {
+        k: {"aligned": True, "issue": None, "confidence": "high"} for k in expected_keys
+    }
+    shape["open_findings"] = [
+        {
+            "artifact": "handler | migration | widget_js | admin_ui",
+            "location": "symbol / loop / branch — or line range",
+            "issue": "what is wrong",
+            "failure_mode": "how this fails at runtime",
+            "confidence": "high | medium",
+        }
+    ]
+
+    part_a_block = (
+        "PART A — MANDATORY CHECKS\n═════════════════════════\n\n"
         + "\n\n".join(questions)
-        + f"\n\nRespond ONLY with this JSON shape (keys exactly as shown in parentheses):\n"
+    )
+
+    part_b_block = (
+        "PART B — OPEN REVIEW\n════════════════════\n\n"
+        "Flag deploy-blocking bugs you see in the artifacts that Part A does not already cover.\n"
+        "Follow the rubric in the system prompt: artifact + location + failure_mode required,\n"
+        "cap at 8, prefer silence over speculation, skip style/naming/micro-optimisation.\n"
+        "Return an empty list when nothing deploy-blocking stands out."
+    )
+
+    response_block = (
+        "RESPONSE FORMAT\n═══════════════\n\n"
+        "Respond ONLY with this JSON shape (Part A keys exactly as shown in parentheses;\n"
+        "open_findings is a list — empty if nothing to report):\n"
         + json.dumps(shape, indent=2)
     )
 
-    return "\n\n".join(filter(None, [artifacts_block, plan_block, questions_block]))
+    return "\n\n".join(
+        filter(None, [artifacts_block, plan_block, part_a_block, part_b_block, response_block])
+    )
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
