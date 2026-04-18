@@ -31,11 +31,28 @@ class Capability(NamedTuple):
                npm capability automatically becomes installable + declarable
                with zero edits to the validator. Store BARE names (no version);
                version pins live in ``docs``.
+    api_surface_usage_rule
+             — terse one-line discipline rendered into the revision agent's
+               compact HARNESS_API_SURFACE block via render_api_surface_rules().
+               Use this when a capability has a "do it this way, not the other
+               way" rule that the revision agent must see without re-reading
+               the full docs block (e.g. "use ctx.shopify.paginate — never
+               hand-roll since_id"). Empty when the capability has no such
+               discipline beyond what the API signature itself implies.
+    static_validation_anti_pattern_regex
+             — optional regex. When non-empty, static_validation iterates the
+               registry and rejects any handler whose code matches it,
+               attributing the error to this capability. Use for capabilities
+               that supersede a pattern the LLM might otherwise hand-roll
+               (e.g. paginate supersedes since_id URLs). Empty when the
+               capability has no machine-checkable anti-pattern.
     """
 
     short: str
     docs: str = ""
     packages: tuple[str, ...] = ()
+    api_surface_usage_rule: str = ""
+    static_validation_anti_pattern_regex: str = ""
 
 
 def render_registry(
@@ -51,3 +68,23 @@ def render_registry(
     return "\n".join(
         f'{indent}- "{name}" — {cap.short}' for name, cap in registry.items()
     )
+
+
+def render_api_surface_rules(
+    registry: Mapping[str, Capability],
+    indent: str = "  ",
+) -> str:
+    """
+    Render every capability's ``api_surface_usage_rule`` as a bulleted block
+    for inclusion in the revision agent's compact HARNESS_API_SURFACE prompt.
+
+    Entries without a rule are skipped. Returns an empty string when no
+    capability in the registry declares a rule, so the caller can include
+    the block unconditionally without producing a dangling header.
+    """
+    lines = [
+        f"{indent}- {cap.api_surface_usage_rule}"
+        for cap in registry.values()
+        if cap.api_surface_usage_rule
+    ]
+    return "\n".join(lines)

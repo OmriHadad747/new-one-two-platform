@@ -35,6 +35,7 @@ from templates.capabilities import (
     ALLOWED_NPM_PACKAGES,
     ALLOWED_WIDGET_CAPABILITIES,
 )
+from templates.capabilities.handler import HANDLER_CAPABILITY_REGISTRY
 
 # ── Webhook topic registry ────────────────────────────────────────────────────
 #
@@ -868,6 +869,21 @@ def validate_handler_artifact(
                 errors.append(f"{message} — found: '{snippet}'")
             else:
                 errors.append(message)
+
+    # 3b. Per-capability anti-pattern regexes — registry-owned. Each Capability
+    # that supersedes a pattern the LLM might hand-roll (e.g. paginate
+    # supersedes ?since_id= / ?page_info= URLs) declares a regex; a match means
+    # the handler bypassed the capability and is rejected. Registry is the
+    # single source of truth — no parallel list to maintain here.
+    for cap_name, cap in HANDLER_CAPABILITY_REGISTRY.items():
+        if not cap.static_validation_anti_pattern_regex:
+            continue
+        if re.search(cap.static_validation_anti_pattern_regex, code):
+            errors.append(
+                f"handler code hand-rolls a pattern that the '{cap_name}' capability "
+                f"already provides — use the capability's helper instead "
+                f"(see the capability's docs section)"
+            )
 
     # 4. Declared webhook topics must match the plan
     topic_match = re.search(r"webhookTopics\s*:\s*\[([^\]]*)\]", code)

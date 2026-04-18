@@ -61,6 +61,11 @@ export function buildShopifyAdminClient(
   // If no client credentials configured (e.g. backend-only apps), return a
   // stub that warns rather than failing hard.
   if (!clientId || !clientSecretName) {
+    async function* emptyPaginator(): AsyncGenerator<unknown[], void, unknown> {
+      callCount++;
+      console.warn(`[shopify stub] paginate — no client credentials configured`);
+      // yield nothing; async generator terminates immediately
+    }
     return {
       get: async (path: string) => {
         callCount++;
@@ -82,6 +87,8 @@ export function buildShopifyAdminClient(
         console.warn(`[shopify stub] graphql — no client credentials configured\n${query}`);
         return {};
       },
+      paginate: emptyPaginator,
+      paginateGql: emptyPaginator,
       get callCount() { return callCount; },
     };
   }
@@ -134,8 +141,155 @@ export function buildShopifyAdminClient(
       if (json.errors?.length) throw new Error(`Shopify GraphQL errors: ${JSON.stringify(json.errors)}`);
       return json.data;
     },
+    paginate(
+      path: string,
+      params: Record<string, string | number | boolean> = {},
+    ): AsyncGenerator<unknown[], void, unknown> {
+      return paginateRestImpl(path, params, shopDomain, clientId, clientSecretName, baseUrl, () => { callCount++; });
+    },
+    paginateGql(
+      query: string,
+      variables: Record<string, unknown>,
+      connectionPath: string,
+    ): AsyncGenerator<unknown[], void, unknown> {
+      return paginateGqlImpl(query, variables, connectionPath, shopDomain, clientId, clientSecretName, baseUrl, () => { callCount++; });
+    },
     get callCount() { return callCount; },
   };
+}
+
+// ─── REST cursor pagination (Link header) ────────────────────────────────────
+
+/**
+ * Parse a Shopify `Link` header and return the `page_info` cursor for
+ * rel="next", or null if there is no next page.
+ *
+ * Example header:
+ *   <https://x.myshopify.com/admin/api/2026-01/orders.json?limit=250&page_info=abc>; rel="next"
+ */
+function extractNextPageInfo(linkHeader: string | null): string | null {
+  if (!linkHeader) return null;
+  // Shopify returns comma-separated entries; find the one with rel="next"
+  for (const entry of linkHeader.split(",")) {
+    const match = entry.match(/<([^>]+)>;\s*rel="next"/);
+    if (match) {
+      try {
+        const url = new URL(match[1]!);
+        return url.searchParams.get("page_info");
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Derive the resource key from a Shopify REST list path.
+ *   /orders.json                         → "orders"
+ *   /products/123/variants.json          → "variants"
+ *   /customers.json?status=any           → "customers"
+ * The body shape for every list endpoint is `{ "<resource>": [...] }`.
+ */
+function resourceKeyFromPath(path: string): string {
+  const noQuery = path.split("?")[0] ?? path;
+  const last = noQuery.split("/").filter(Boolean).pop() ?? "";
+  return last.replace(/\.json$/, "");
+}
+
+function buildQueryString(params: Record<string, string | number | boolean>): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+async function* paginateRestImpl(
+  path: string,
+  params: Record<string, string | number | boolean>,
+  shopDomain: string,
+  clientId: string,
+  clientSecretName: string,
+  baseUrl: string,
+  bumpCallCount: () => void,
+): AsyncGenerator<unknown[], void, unknown> {
+  const resource = resourceKeyFromPath(path);
+  const limit = params.limit ?? 250;
+  // First request: caller's filter params + limit. Subsequent requests: ONLY
+  // limit + page_info — Shopify rejects filter params on cursor calls.
+  let url = `${baseUrl}${path.split("?")[0]}${buildQueryString({ ...params, limit })}`;
+  while (true) {
+    bumpCallCount();
+    const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+    const res = await fetch(url, {
+      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
+    });
+    if (!res.ok) throw new Error(`Shopify GET ${path} (paginate) failed: ${res.status}`);
+    const body = (await res.json()) as Record<string, unknown>;
+    const batch = (body[resource] as unknown[]) ?? [];
+    yield batch;
+
+    const nextPageInfo = extractNextPageInfo(res.headers.get("link"));
+    if (!nextPageInfo) return;
+    url = `${baseUrl}${path.split("?")[0]}${buildQueryString({ limit, page_info: nextPageInfo })}`;
+  }
+}
+
+// ─── GraphQL cursor pagination (pageInfo/endCursor) ──────────────────────────
+
+/**
+ * Walk a dot-path like "products" or "customer.orders" into a GraphQL response
+ * to locate the Relay connection node ({ edges, pageInfo }).
+ * Returns null if any segment is missing.
+ */
+function walkPath(obj: unknown, path: string): unknown {
+  let cur: unknown = obj;
+  for (const segment of path.split(".")) {
+    if (cur && typeof cur === "object" && segment in (cur as Record<string, unknown>)) {
+      cur = (cur as Record<string, unknown>)[segment];
+    } else {
+      return null;
+    }
+  }
+  return cur;
+}
+
+async function* paginateGqlImpl(
+  query: string,
+  variables: Record<string, unknown>,
+  connectionPath: string,
+  shopDomain: string,
+  clientId: string,
+  clientSecretName: string,
+  baseUrl: string,
+  bumpCallCount: () => void,
+): AsyncGenerator<unknown[], void, unknown> {
+  let cursor: string | null = null;
+  while (true) {
+    bumpCallCount();
+    const token = await getAccessToken(shopDomain, clientId, clientSecretName);
+    const res = await fetch(`${baseUrl}/graphql.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
+      body: JSON.stringify({ query, variables: { ...variables, cursor } }),
+    });
+    if (!res.ok) throw new Error(`Shopify GraphQL (paginateGql) failed: ${res.status}`);
+    const json = (await res.json()) as { data?: unknown; errors?: unknown[] };
+    if (json.errors?.length) throw new Error(`Shopify GraphQL errors: ${JSON.stringify(json.errors)}`);
+
+    const connection = walkPath(json.data, connectionPath) as
+      | { edges?: { node: unknown }[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } }
+      | null;
+    if (!connection) {
+      throw new Error(`paginateGql: connectionPath "${connectionPath}" not found in response`);
+    }
+    const nodes = (connection.edges ?? []).map((e) => e.node);
+    yield nodes;
+
+    if (!connection.pageInfo?.hasNextPage) return;
+    cursor = connection.pageInfo.endCursor ?? null;
+    if (!cursor) return;
+  }
 }
 
 // ─── Storefront API client ────────────────────────────────────────────────────

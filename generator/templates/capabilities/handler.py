@@ -31,13 +31,16 @@ HANDLER_SERVICES: "OrderedDict[str, Capability]" = OrderedDict(
         (
             "shopify_rest",
             Capability(
-                short="ctx.shopify.get / post / delete — Shopify Admin REST API at /admin/api/2026-01. Declare when the handler reads or mutates Shopify data via REST.",
+                short="ctx.shopify.get / post / delete / paginate — Shopify Admin REST API at /admin/api/2026-01. Declare when the handler reads or mutates Shopify data via REST.",
                 docs="""\
 ── Shopify REST ──────────────────────────────────────────────
 
 ctx.shopify.get(path: string) → Promise<any>
   Shopify Admin REST GET. Path is relative to /admin/api/2026-01.
   Example: await ctx.shopify.get('/orders.json?status=any&limit=10')
+  USE FOR: singular fetches (`/orders/123.json`), counts (`/orders/count.json`),
+  small batches whose result you KNOW fits in one page. For multi-page list
+  endpoints use ctx.shopify.paginate (see below) — never hand-roll pagination.
 
 ctx.shopify.post(path: string, body: object) → Promise<any>
   Shopify Admin REST POST/PUT. Use for REST mutations.
@@ -49,21 +52,41 @@ ctx.shopify.delete(path: string) → Promise<any>
   Returns {} on 204 No Content. Throws on non-2xx responses.
   Common uses: delete product images, metafields, webhook subscriptions, draft orders.
 
+ctx.shopify.paginate(path: string, params?: object) → AsyncGenerator<any[]>
+  Async generator over a REST list endpoint. Yields one page of resources
+  per iteration; handles Link-header cursor pagination internally. Filter
+  params are applied to the first request only (Shopify rejects filter
+  params on cursor follow-ups). Default limit 250.
+  Example:
+    for await (const batch of ctx.shopify.paginate('/orders.json', { status: 'any', updated_at_min: since })) {
+      for (const order of batch) { /* process */ }
+    }
+  DO NOT hand-roll `since_id`, `page_info`, `Link`-header parsing, or `?page=`
+  loops — ctx.shopify.get does NOT expose response headers, so hand-rolled
+  pagination will be silently broken.
+
 WHEN TO USE REST (vs ctx.shopify.graphql):
   • Simple CRUD on a single known entity (fetch order, update customer, create fulfillment)
   • Batch fetching one entity type with a batch endpoint (/products.json?ids=...,
     /inventory_levels.json?inventory_item_ids=...)
-  • Full-catalog scans — use since_id cursor pagination (HTTP Link headers are not exposed by ctx.shopify.get)
+  • Full-catalog / windowed scans → ctx.shopify.paginate
   • Deleting Shopify resources (product images, metafields, etc.)
 
 REST PUT endpoints use ctx.shopify.post() — there is no separate PUT method.\
 """,
+                api_surface_usage_rule=(
+                    "For Shopify REST list endpoints use `for await (const batch of ctx.shopify.paginate(path, params))` — "
+                    "never hand-roll since_id, page_info, Link-header parsing, or ?page= loops."
+                ),
+                static_validation_anti_pattern_regex=(
+                    r"""[?&`'"](since_id|page_info)\s*="""
+                ),
             ),
         ),
         (
             "shopify_graphql",
             Capability(
-                short="ctx.shopify.graphql — Shopify Admin GraphQL API. Declare when the handler issues GraphQL queries or mutations (bulk tags, metafields, discountCodeBulkAdd, or joins across entities).",
+                short="ctx.shopify.graphql / paginateGql — Shopify Admin GraphQL API. Declare when the handler issues GraphQL queries or mutations (bulk tags, metafields, discountCodeBulkAdd, or joins across entities).",
                 docs="""\
 ── Shopify GraphQL ───────────────────────────────────────────
 
@@ -102,29 +125,39 @@ WHEN TO USE GraphQL (vs ctx.shopify.get/post):
        { id: `gid://shopify/Order/${orderId}`, tags: ['VIP', 'high-value'] }
      )
 
-GraphQL cursor-based pagination — use this pattern when a query can return more
-than a page of results (typical first: 50, max first: 250). Loop on
-pageInfo.hasNextPage / endCursor until there are no more pages:
+ctx.shopify.paginateGql(query, variables, connectionPath) → AsyncGenerator<any[]>
+  Async generator over a Relay GraphQL connection. Yields `edges.map(e => e.node)`
+  at the given connectionPath per page; walks pageInfo.hasNextPage / endCursor
+  internally. Use this for any query that may return more than one page.
 
-  ✅ const PAGE_SIZE = 250
-     const collected = []
-     let cursor = null
-     do {
-       const result = await ctx.shopify.graphql(
-         `query OrdersByTag($cursor: String, $pageSize: Int!) {
-            orders(first: $pageSize, after: $cursor, query: "tag:backorder") {
-              pageInfo { hasNextPage endCursor }
-              nodes { id name createdAt }
-            }
-          }`,
-         { cursor, pageSize: PAGE_SIZE }
-       )
-       collected.push(...result.orders.nodes)
-       cursor = result.orders.pageInfo.hasNextPage ? result.orders.pageInfo.endCursor : null
-     } while (cursor)
-  ❌ Running one query with first: 50 and assuming the response is complete —
-     stores with many matches will silently miss records beyond the first page.\
+  REQUIREMENTS of the query:
+    • Declare $cursor: String and pass after: $cursor on the target connection.
+    • The connection must request pageInfo { hasNextPage endCursor } and
+      edges { node { ... } }.  (The helper pulls nodes out of edges.)
+  connectionPath is a dot-path into the response that locates the connection
+  (e.g. "orders", "customer.orders", "products.variants").
+
+  Example:
+    const query = `
+      query OrdersByTag($cursor: String, $pageSize: Int!) {
+        orders(first: $pageSize, after: $cursor, query: "tag:backorder") {
+          pageInfo { hasNextPage endCursor }
+          edges { node { id name createdAt } }
+        }
+      }`;
+    for await (const nodes of ctx.shopify.paginateGql(query, { pageSize: 100 }, 'orders')) {
+      for (const order of nodes) { /* process */ }
+    }
+
+  DO NOT hand-roll `do { cursor } while(cursor)` loops over ctx.shopify.graphql
+  for paged reads — use paginateGql instead.
+  DO still use ctx.shopify.graphql directly for single-page queries
+  (everything-in-first:50 reads, mutations, counts).\
 """,
+                api_surface_usage_rule=(
+                    "For paginated GraphQL reads use `for await (const nodes of ctx.shopify.paginateGql(query, vars, connectionPath))` — "
+                    "never hand-roll `do { cursor } while(cursor)` over ctx.shopify.graphql."
+                ),
             ),
         ),
         (
@@ -569,9 +602,10 @@ SHOPIFY_REST_VS_GRAPHQL_GUIDE = """\
 
 This handler uses BOTH REST and GraphQL. Pick per call:
   • Simple CRUD on a single known entity → REST (ctx.shopify.get / post / delete)
-  • Bulk tag / metafield mutation, cross-entity join, no-REST-equivalent op → GraphQL
-  • Full-catalog scan of a single resource → REST with since_id cursor pagination
-  • Paged query that may exceed 250 rows on a single entity → GraphQL cursor pagination
+  • Bulk tag / metafield mutation, cross-entity join, no-REST-equivalent op → GraphQL mutation (ctx.shopify.graphql)
+  • Full-catalog / windowed scan of a single resource → ctx.shopify.paginate (REST Link-cursor pagination)
+  • Paged cross-entity read that needs a GraphQL join → ctx.shopify.paginateGql
 Exact pagination patterns and examples are documented in the individual
-shopify_rest and shopify_graphql sections above.\
+shopify_rest and shopify_graphql sections above. Never hand-roll pagination
+loops — use the paginate helpers.\
 """

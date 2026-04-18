@@ -24,6 +24,35 @@ export interface ShopifyAdminClient {
   post(path: string, body: unknown): Promise<unknown>;
   delete(path: string): Promise<unknown>;
   graphql(query: string, variables?: Record<string, unknown>): Promise<unknown>;
+
+  /**
+   * REST list-endpoint pagination. Yields one page (array of resources) at a
+   * time; handles Link-header cursor pagination internally. Accepts the same
+   * path + filter params as get(); `limit` defaults to 250. Filter params are
+   * only applied to the first request — subsequent requests use only the
+   * cursor, as Shopify requires.
+   *
+   *   for await (const batch of ctx.shopify.paginate('/orders.json', { status: 'any' })) { ... }
+   */
+  paginate(
+    path: string,
+    params?: Record<string, string | number | boolean>,
+  ): AsyncGenerator<unknown[], void, unknown>;
+
+  /**
+   * GraphQL Relay-connection pagination. Yields `edges.map(e => e.node)` at
+   * the given connectionPath per page; handles pageInfo.hasNextPage / endCursor
+   * internally. The query MUST declare `$cursor: String` and use
+   * `after: $cursor` on the target connection, and the connection MUST include
+   * `pageInfo { hasNextPage endCursor }` and `edges { node { ... } }`.
+   *
+   *   for await (const nodes of ctx.shopify.paginateGql(query, vars, 'products')) { ... }
+   */
+  paginateGql(
+    query: string,
+    variables: Record<string, unknown>,
+    connectionPath: string,
+  ): AsyncGenerator<unknown[], void, unknown>;
 }
 
 export interface ShopifyStorefrontClient {
