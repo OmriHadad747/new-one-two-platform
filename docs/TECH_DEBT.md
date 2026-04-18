@@ -293,6 +293,45 @@ ergonomics (helper + consistent event taxonomy) is what takes the extra time.
 
 ---
 
+## TD-018 — `ctx.shopify` has no built-in 429 retry
+
+**Current state**
+`ctx.shopify.get/post` in `platform/packages/harness/src/shopify-client.ts` makes the HTTP call
+and returns — nothing handles a 429 response or the `Retry-After` header. Handlers that call
+Shopify in a loop (cron bulk-fetch, per-item enrichment) will surface 429s as raw failures the
+moment a store's bucket runs out. The LLM has no prompt guidance here either, so it sometimes
+invents half-right backoff (the `setTimeout`-in-a-loop regression on the abandoned-cart gen was
+exactly this shape before static validation caught it).
+
+**Why this is platform, not prompt**
+"Wait and try again" is infrastructure — nothing domain-specific. Every handler that hits
+Shopify needs it; putting it in the client fixes it once for every current and future app and
+removes a class of LLM-drift bugs.
+
+**What to do**
+In `shopify-client.ts`, wrap `get`/`post` with retry discipline:
+- Honour `Retry-After` when present (seconds or HTTP-date).
+- Exponential backoff + jitter when absent (e.g. 500ms → 1s → 2s → 4s, capped).
+- Cap at 3-4 retries total, then throw a typed `ShopifyRateLimitError` so handlers can log it.
+- Apply to 429 and 5xx (at least 502/503/504 — transient).
+
+Once landed, add a hard rule to the handler prompt: *"`ctx.shopify` handles 429/5xx retries
+internally. Never add `setTimeout`, sleep loops, or retry wrappers around `ctx.shopify` calls."*
+That stops the LLM from writing competing backoff logic.
+
+**MVP note**
+Deferrable until a real store hits the ceiling — current target is <250 items/run where no
+429 is expected. Log as platform work, not prompt work.
+
+**Affected files**
+- `platform/packages/harness/src/shopify-client.ts` — add retry wrapper around fetch.
+- `platform/packages/types/src/harness.ts` — add `ShopifyRateLimitError` if typed error is exposed.
+- `generator/subagents/prompts/handler/` — add the "do not retry" rule after the platform change ships.
+
+**Complexity:** Low — one file, well-defined contract (honour `Retry-After`, exponential fallback).
+
+---
+
 ## TD-015 — Revision failure artifacts saved to /tmp only
 
 **Current state**
