@@ -4,6 +4,8 @@ Migration Generator — produces tenant-scoped PostgreSQL DDL from dbContracts.
 The Architect's dbContracts are the authoritative column definitions — the migration
 generator produces DDL mechanically from those typed table definitions.
 
+System prompt lives in subagents/prompts/migration/ (MIGRATION_BASE).
+
 Rules enforced by both the system prompt and validate():
   - Every CREATE TABLE must include tenant_id UUID NOT NULL
   - Every table must have ALTER TABLE ENABLE ROW LEVEL SECURITY
@@ -15,48 +17,12 @@ Model: claude-sonnet-4-6 (via agent_models.py)
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
+from subagents.prompts.migration import MIGRATION_BASE
 from subagents.static_validation import validate_migration_artifact
-
-_SYSTEM_PROMPT = """You are a PostgreSQL database expert generating tenant-scoped migrations.
-
-The platform uses PostgreSQL Row Level Security (RLS) for multi-tenancy.
-Every table you create MUST follow the tenant isolation pattern exactly.
-
-REQUIRED PATTERN for every CREATE TABLE:
-```sql
-CREATE TABLE {table_name} (
-  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id  UUID NOT NULL,   -- REQUIRED on every table
-  -- ... other columns ...
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY {table_name}_tenant_isolation ON {table_name}
-  USING (tenant_id = current_setting('app.current_tenant_id')::UUID)
-  WITH CHECK (tenant_id = current_setting('app.current_tenant_id')::UUID);
-```
-
-ABSOLUTE RULES:
-1. Output ONLY the SQL — no markdown fences, no explanation
-2. Every CREATE TABLE must include tenant_id UUID NOT NULL
-3. Every CREATE TABLE must be followed by ALTER TABLE ENABLE ROW LEVEL SECURITY
-4. Every CREATE TABLE must have a CREATE POLICY for tenant isolation
-5. NO DROP TABLE, NO TRUNCATE. NO ALTER TABLE except:
-   - ALTER TABLE {name} ENABLE ROW LEVEL SECURITY  (required after CREATE TABLE)
-   - ALTER TABLE {name} ADD COLUMN IF NOT EXISTS ...  (revision runs only)
-6. If the feature doesn't need any new tables, output nothing at all — zero characters, no explanation
-7. Add useful indexes (tenant_id is always a candidate; avoid redundant standalone indexes
-   when a composite index already starts with tenant_id)
-8. Derive ALL table columns EXACTLY from the DB contracts in the user prompt.
-   Generate every column listed there with the exact name, type, and constraints specified.
-   Do not add or remove columns beyond what the contracts declare."""
 
 _SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMENT")
 
@@ -68,7 +34,7 @@ class MigrationGenerator(Generator):
     # ── Generator interface ────────────────────────────────────────────────────
 
     def system_prompt(self) -> str:
-        return _SYSTEM_PROMPT
+        return MIGRATION_BASE
 
     def user_prompt(self, ctx: CodegenContext) -> str:
         contracts_block = _format_db_contracts(ctx.plan)
@@ -120,7 +86,9 @@ class MigrationGenerator(Generator):
 
 def _extract_table_names(sql: str) -> List[str]:
     """Return all table names found in CREATE TABLE statements."""
-    return re.findall(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", sql, re.IGNORECASE)
+    return re.findall(
+        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", sql, re.IGNORECASE
+    )
 
 
 def _format_db_contracts(plan: Dict[str, Any]) -> str:
@@ -145,7 +113,9 @@ def _format_db_contracts(plan: Dict[str, Any]) -> str:
 
         parts.append(f"\nTable: {table}")
         for col in columns:
-            parts.append(f"  {col['name']}  {col['type']}  {col.get('constraints', '')}")
+            parts.append(
+                f"  {col['name']}  {col['type']}  {col.get('constraints', '')}"
+            )
         if unique:
             # Architect emits { "columns": ["col_a", "col_b"] }; tolerate a bare
             # list too in case an older plan shape sneaks through.
@@ -157,7 +127,6 @@ def _format_db_contracts(plan: Dict[str, Any]) -> str:
 
     parts.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     return "\n".join(parts) + "\n"
-
 
 
 def _format_prior_migration(prior_sql: Any) -> str:

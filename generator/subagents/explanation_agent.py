@@ -5,6 +5,9 @@ Receives the complete generated artifacts and writes:
   1. A merchant-facing explanation (2-3 paragraphs, zero jargon)
   2. A technical summary JSON for the platform dashboard
 
+System prompt and user template live in subagents/prompts/explanation/
+(EXPLANATION_BASE + EXPLANATION_USER_TEMPLATE).
+
 Model: claude-haiku (fast; writing task, no code generation).
 """
 
@@ -16,58 +19,7 @@ from typing import Any, Dict, Tuple
 
 from models.adapter import get_llm, invoke, extract_json
 from models.agent_models import get_agent_model
-
-
-EXPLANATION_SYSTEM = """You are writing feature explanations for non-technical Shopify merchants.
-
-Write two outputs:
-
-1. merchantFacing: A clear, friendly explanation (2-3 paragraphs).
-   LANGUAGE RULES — strictly no technical jargon:
-   - No "webhook", "database", "API", "Lambda", "cron", "GraphQL", "REST", "SQL", "JSON", "async"
-   - No "deploy", "trigger", "handler", "ctx", "module", "schema", "migration"
-   - Replace with plain language: "webhook" → "Shopify notification", "database" → "your store's records",
-     "cron job" → "automatic daily/hourly task", "deploy" → "activate"
-
-   CONTENT RULES — explain all three angles:
-   a) What happens automatically and when (triggers, schedule)
-   b) What the customer sees or does (for widget apps)
-   c) What the merchant can see, configure, or control in their admin dashboard (for admin apps)
-      — mention specific settings if the handler reads config from the DB (e.g. email subject, thresholds)
-      — if there's a "run now" button or manual trigger, mention it explicitly
-   d) Any known limitations — phrase as practical notes, not technical caveats:
-      - Email/SMS: "requires an email service to be connected" (not "ctx.services.email is stubbed")
-      - File upload: "files are saved and a download link is returned"
-      - If a feature is configurable, mention that the merchant can adjust settings from the dashboard
-
-2. technical: A JSON summary for the platform dashboard.
-
-OUTPUT FORMAT — respond ONLY with this JSON object (no markdown fences):
-{
-  "merchantFacing": "...",
-  "technical": {
-    "webhookTopics": ["..."],
-    "dbTables": ["..."],
-    "estimatedMonthlyExecutions": 200,
-    "estimatedMonthlyCost": "$0.002"
-  }
-}
-
-IMPORTANT: Ensure all double quotes inside string values are escaped as \\". Invalid JSON will be rejected."""
-
-EXPLANATION_USER_TEMPLATE = """Feature intent:
-{intent_json}
-
-Shopify API plan:
-{shopify_plan_json}
-
-Storefront widget: {widget_summary}
-Handler subscribes to: {webhook_topics}
-Cron schedule: {cron_schedule}
-Admin dashboard: {admin_summary}
-DB tables created: {db_tables}{platform_gaps_section}
-
-Write the merchant explanation and technical summary."""
+from subagents.prompts.explanation import EXPLANATION_BASE, EXPLANATION_USER_TEMPLATE
 
 
 def run_explanation_agent(
@@ -123,7 +75,7 @@ def run_explanation_agent(
     total_in = 0
     total_out = 0
     for attempt in range(2):
-        result = invoke(llm, EXPLANATION_SYSTEM, user)
+        result = invoke(llm, EXPLANATION_BASE, user)
         total_in += result.input_tokens
         total_out += result.output_tokens
         raw = extract_json(result.content)
