@@ -47,7 +47,21 @@ from typing import Dict, List, Tuple
 from models.adapter import extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
 from subagents.base import CodegenContext
-from subagents.prompts.validator import VALIDATOR_BASE
+from subagents.prompts.validator import (
+    PART_A_HEADER,
+    PART_B_BASE,
+    PART_B_QUALITY_BRIEF_COVERAGE,
+    Q1_TABLE_NAMES,
+    Q2_COLUMN_NAMES,
+    Q3_WIDGET_FIELDS,
+    Q4_ADMIN_FIELDS,
+    Q5_CRON_BULK_FETCH,
+    Q6_STATE_MACHINE_TEMPLATE,
+    Q7_SCHEMA_COMPLETENESS,
+    QUALITY_BRIEF_HEADER,
+    RESPONSE_FORMAT_HEADER,
+    VALIDATOR_BASE,
+)
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +91,7 @@ def _build_prompt(
     has_cron_batching = bool(cron_batching.get("required"))
     sm = contracts.get("stateMachine")
     has_state_machine = bool(sm and isinstance(sm, dict))
+    quality_brief = (ctx.intent or {}).get("qualityBrief") or ""
 
     handler = artifacts.get("handler", "(missing)")
     migration = artifacts.get("migration", "(missing)")
@@ -125,88 +140,43 @@ def _build_prompt(
         "PLAN CONTEXT\n════════════\n\n" + "\n\n".join(plan_parts) if plan_parts else ""
     )
 
+    # ── Quality brief (per-app intent) ────────────────────────────────────────
+    # Rendered as a standalone block. Validator checks that explicitly-stated
+    # quality criteria in the brief are reflected in the code — see Part B's
+    # quality-brief coverage guidance (appended only when this block is set).
+    quality_block = (
+        f"{QUALITY_BRIEF_HEADER}{quality_brief.strip()}"
+        if quality_brief.strip()
+        else ""
+    )
+
     # ── Questions (only relevant ones) ───────────────────────────────────────
-    questions: List[str] = []
-    expected_keys: List[str] = []
-
-    questions.append(
-        "Q1 — TABLE NAMES (q1_table_names)\n"
-        "Do all table names referenced in handler.js SQL (INSERT/SELECT/UPDATE/DELETE inside\n"
-        "ctx.db template literals) exactly match the CREATE TABLE names in migration.sql?\n"
-        "Flag only if you can name the specific table name that differs."
-    )
-    expected_keys.append("q1_table_names")
-
-    questions.append(
-        "Q2 — COLUMN NAMES (q2_column_names)\n"
-        "Do all column names used in handler.js SQL queries exactly match the column\n"
-        "definitions in migration.sql for those tables?\n"
-        "Flag only if you can name the specific column name that differs."
-    )
-    expected_keys.append("q2_column_names")
+    questions: List[str] = [Q1_TABLE_NAMES, Q2_COLUMN_NAMES]
+    expected_keys: List[str] = ["q1_table_names", "q2_column_names"]
 
     if is_storefront:
-        questions.append(
-            "Q3 — WIDGET FIELDS (q3_widget_fields)\n"
-            "For each route widget.js calls via host.call(path, body):\n"
-            "  Do the exact field names the widget sends match what the handler reads from\n"
-            "  ctx.widgetBody? Look for aliased keys, spread operators, or indirect reads\n"
-            "  that static regex can miss. Cross-check against widgetApiCatalog requestShape.\n"
-            "  Also verify host.context fields (e.g. customerId) the handler expects are\n"
-            "  actually read from host.context in the widget."
-        )
+        questions.append(Q3_WIDGET_FIELDS)
         expected_keys.append("q3_widget_fields")
 
     if is_admin_ui:
-        questions.append(
-            "Q4 — ADMIN FIELDS (q4_admin_fields)\n"
-            "For each route admin_ui.js calls via bridge.call(path, body):\n"
-            "  Do the exact field names the admin UI sends match what the handler reads from\n"
-            "  ctx.adminBody? Check for aliasing, spreads, or indirect reads.\n"
-            "  Cross-check against adminApiCatalog requestShape."
-        )
+        questions.append(Q4_ADMIN_FIELDS)
         expected_keys.append("q4_admin_fields")
 
     if has_cron_batching:
-        questions.append(
-            "Q5 — CRON BULK-FETCH PATTERN (q5_cron_bulk_fetch)\n"
-            "The plan declares cronBatching.required=true, meaning the cron handler MUST\n"
-            "bulk-fetch all needed Shopify data BEFORE iterating over items.\n"
-            "Does the cron branch in handler.js:\n"
-            "  a) Fetch all required Shopify data in one or a few batched API calls BEFORE\n"
-            "     the main iteration loop begins?\n"
-            "  b) Avoid making per-item Shopify API calls (ctx.shopify.get/post/graphql)\n"
-            "     inside the main loop body?\n"
-            "Set aligned=false if the handler makes Shopify API calls per-item inside the loop\n"
-            "instead of bulk-fetching first. Name the specific loop and API call pattern."
-        )
+        questions.append(Q5_CRON_BULK_FETCH)
         expected_keys.append("q5_cron_bulk_fetch")
 
     if has_state_machine:
         questions.append(
-            "Q6 — STATE MACHINE LOGIC (q6_state_machine)\n"
-            f"The plan declares a stateMachine tracking '{sm.get('trackedField', '?')}' on\n"
-            f"'{sm.get('entity', '?')}'. The handler must:\n"
-            "  a) Load the last-observed value from the DB snapshot table before comparing.\n"
-            "  b) Compare the incoming value against the prior value to detect a transition.\n"
-            "  c) Only act (send notifications, update records) when a genuine transition\n"
-            "     matches a declared transition pattern.\n"
-            "  d) Update the snapshot table with the new value after acting.\n"
-            "Set aligned=false if any of these steps is missing or out of order."
+            Q6_STATE_MACHINE_TEMPLATE.format(
+                entity=sm.get("entity", "?"),
+                tracked_field=sm.get("trackedField", "?"),
+            )
         )
         expected_keys.append("q6_state_machine")
 
     if db_contracts:
-        questions.append(
-            "Q7 — SCHEMA COMPLETENESS (q7_schema_completeness)\n"
-            "For each INSERT statement in handler.js SQL (inside ctx.db template literals):\n"
-            "  a) Do the inserted columns include ALL columns that are NOT NULL with no DEFAULT\n"
-            "     in migration.sql for that table? A missing required column causes a Postgres\n"
-            "     runtime error.\n"
-            "  b) Do the column names in migration.sql match what the architect specified in\n"
-            "     dbContracts? Flag if the migration added or dropped columns relative to the spec.\n"
-            "Set aligned=false only if you can name the specific table and missing/mismatched column."
-        )
+        questions.append(Q7_SCHEMA_COMPLETENESS)
         expected_keys.append("q7_schema_completeness")
 
     # Build the expected JSON shape hint (Part A closed questions + Part B open findings).
@@ -223,30 +193,25 @@ def _build_prompt(
         }
     ]
 
-    part_a_block = (
-        "PART A — MANDATORY CHECKS\n═════════════════════════\n\n"
-        + "\n\n".join(questions)
+    part_a_block = PART_A_HEADER + "\n\n".join(questions)
+
+    part_b_block = PART_B_BASE + (
+        PART_B_QUALITY_BRIEF_COVERAGE if quality_brief.strip() else ""
     )
 
-    part_b_block = (
-        "PART B — OPEN REVIEW\n════════════════════\n\n"
-        "Flag deploy-blocking bugs you see in the artifacts that Part A does not already cover.\n"
-        "Follow the rubric in the system prompt: artifact + location + failure_mode required,\n"
-        "cap at 8, prefer silence over speculation, skip style/naming/micro-optimisation.\n"
-        "Return an empty list when nothing deploy-blocking stands out."
-    )
-
-    response_block = (
-        "RESPONSE FORMAT\n═══════════════\n\n"
-        "Respond ONLY with this JSON shape (Part A keys exactly as shown in parentheses;\n"
-        "open_findings is a list — empty if nothing to report):\n"
-        + json.dumps(shape, indent=2)
-    )
+    response_block = RESPONSE_FORMAT_HEADER + json.dumps(shape, indent=2)
 
     return "\n\n".join(
         filter(
             None,
-            [artifacts_block, plan_block, part_a_block, part_b_block, response_block],
+            [
+                artifacts_block,
+                plan_block,
+                quality_block,
+                part_a_block,
+                part_b_block,
+                response_block,
+            ],
         )
     )
 
