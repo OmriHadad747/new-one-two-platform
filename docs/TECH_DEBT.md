@@ -332,6 +332,75 @@ Deferrable until a real store hits the ceiling — current target is <250 items/
 
 ---
 
+## TD-019 — Pre-revision validator scan of the prior bundle
+
+**Current state**
+On a revision run (`request.priorBundle` present), `crews/feature_generator/crew.py`
+goes straight from architect → `run_revision_agent` (on the prior code + new plan +
+merchant feedback) → static validation → LLM validator. The validator agent
+(`run_validator_agent`, Part A targeted checks + Part B open review) runs
+**only on the NEW artifacts** — the prior deployed bundle is never scanned
+for latent bugs before the revision starts.
+
+**Opportunity**
+Part B of the validator is designed to catch deploy-blocking bugs static
+rules don't already cover (races, missing pagination, numeric overflow,
+orphaned state, unsafe DB driver assumptions). Running it once on the
+**prior bundle** at the start of a revision pipeline, then feeding the
+HIGH-confidence findings into `run_revision_agent`'s user prompt under a
+"PRE-EXISTING ISSUES TO ALSO FIX" section, lets one revision cycle fix
+both the merchant's reported issue AND any latent bugs that would
+otherwise surface as the merchant's *next* revision request.
+
+**Why this is worth paying for**
+Revisions are unlimited on every plan, so the merchant doesn't pay per
+cycle — we do. Collapsing "merchant reports bug A → revision fixes A →
+merchant trips over bug B → revises again" into one cycle is a direct
+margin win on the unlimited-revision tier (see `docs/BILLING.md` —
+revisions are the dominant cost-of-service risk for Growth/Pro plans).
+
+**Costs**
+- One extra validator call per revision run (~$0.05–0.10 with Sonnet +
+  extended thinking; ~8s wall time). Negligible relative to the full
+  revision cost; clearly cheaper than a second revision round-trip.
+- Slight complexity: need to ensure merchant's explicit feedback still
+  takes priority over pre-scanned findings, so the revision agent never
+  "fixes" something the merchant intentionally left alone. Mitigation:
+  only HIGH-confidence Part B findings, labelled clearly as secondary
+  to merchant intent in the revision prompt.
+
+**What to do**
+1. In `crews/feature_generator/crew.py`, add a `_prerevision_validator_scan(base_ctx)`
+   helper that assembles the prior bundle as a pseudo-`artifacts` dict and
+   calls `run_validator_agent` on it. Filter results to Part B HIGH-confidence
+   open findings only.
+2. Wire it into `_phase_codegen` just before the `is_revision_first_attempt`
+   branch fires, capturing the findings once per run.
+3. In `subagents/revision_agent.py`, extend `_build_user_prompt` with a new
+   kwarg `pre_existing_issues: List[Dict] | None`. Render under a
+   `PRE-EXISTING ISSUES — fix alongside the merchant's request` header
+   between the merchant-feedback block and the validator-retry block, with
+   explicit priority ordering ("Merchant feedback takes priority; address
+   these only if compatible with the merchant's intent").
+4. Skip the scan when `base_ctx.prior_handler_code` is None (first-run
+   generation — nothing to scan).
+
+**Affected files**
+- `generator/crews/feature_generator/crew.py` — new helper + one call site.
+- `generator/subagents/revision_agent.py` — new kwarg + prompt section.
+- Possibly `generator/subagents/prompts/revision/_core.py` — a one-line
+  header constant if we want the section name to live there.
+
+**Complexity**
+Low — everything plugs into existing components (`run_validator_agent`
+already supports arbitrary artifact dicts; `_build_user_prompt` already
+composes multiple issue blocks). The hard part is the product call on
+how strictly the revision agent should prioritize merchant intent over
+pre-scanned findings — document that as a rule in the revision prompt,
+then measure.
+
+---
+
 ## TD-015 — Revision failure artifacts saved to /tmp only
 
 **Current state**
