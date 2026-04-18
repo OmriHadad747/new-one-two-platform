@@ -8,15 +8,15 @@ widgetCapabilities — they reference the AVAILABLE list above for the
 allowed values so the vocabulary is never duplicated in the prompt.
 
 Four exported sections:
-  HANDLER_CAPABILITIES  — always shown (every archetype has a handler).
+  HANDLER_CAPABILITIES_RULES  — always shown (every archetype has a handler).
                           Goes in the shared (archetype-independent) prefix.
   EMAIL_SPEC            — always shown; coupled to handlerCapabilities.
                           Required when "email" is declared. Lives in the
-                          shared prefix right after HANDLER_CAPABILITIES.
-  WIDGET_CAPABILITIES   — only shown for storefront archetypes. Goes in the
+                          shared prefix right after HANDLER_CAPABILITIES_RULES.
+  WIDGET_CAPABILITIES_RULES   — only shown for storefront archetypes. Goes in the
                           archetype tail alongside the other widget-specific
                           prompt sections.
-  ADMIN_CAPABILITIES    — only shown for admin archetypes. Goes in the
+  ADMIN_CAPABILITIES_RULES    — only shown for admin archetypes. Goes in the
                           archetype tail alongside ADMIN_API_CATALOG.
                           The registry is empty today (see
                           templates/capabilities/admin.py) so the section's
@@ -26,83 +26,65 @@ Four exported sections:
 """
 
 
-HANDLER_CAPABILITIES = """\
-handlerCapabilities: Closed-vocabulary list declaring which platform services
-  and npm packages the HANDLER will actually use at runtime. The handler
-  generator consumes this to include only the harness prompt sections and npm
-  package instructions it needs — undeclared capabilities mean the handler
-  will not see the relevant API documentation.
+HANDLER_CAPABILITIES_RULES = """\
+handlerCapabilities: Closed-vocabulary list of platform services and npm
+  packages the HANDLER will use at runtime. The handler generator JIT-injects
+  only the docs for declared capabilities — undeclared = the handler does
+  not see that API's docs.
 
   Allowed values: the "Handler platform services" and "Handler npm packages"
-  entries in the AVAILABLE capabilities list above. Do NOT invent values;
-  unknown strings fail validation.
+  entries in the AVAILABLE list above. Unknown strings fail validation.
 
   RULES:
-  - Declare ONLY what the handler will actually call or require(). Do not pad
-    with speculative items: an over-declaration wastes install time and
-    prompt budget; an under-declaration produces a handler missing the API
-    it needs.
+  - Declare ONLY what the handler will actually call or require(). Over-
+    declaration wastes prompt budget; under-declaration ships a handler
+    missing docs for the API it needs.
   - Declare "shopify_rest" and/or "shopify_graphql" based on which Shopify
-    APIs the handler actually calls. Most handlers declare at least one;
-    a DB-only admin panel with no Shopify reads declares neither.
-  - Declare "email" when the handler calls ctx.services.email.send. Email is
-    an AVAILABLE capability — do NOT list it in platformGaps. Same for "sms"
-    and "files": these are available services; platformGaps is for capabilities
-    the platform cannot deliver at all.
-  - Declare "files" when the handler produces any downloadable artefact
-    (CSV export, PDF receipt, XLSX report). Declaring a document-format npm
-    package (npm:pdfkit / npm:exceljs / npm:csv) without "files" is
-    inconsistent — the output still needs ctx.services.files.upload.
-  - Declare "http" only for calls to a non-Shopify third-party service. Do
-    NOT declare it for Shopify REST/GraphQL — those belong under
-    shopify_rest / shopify_graphql.
-  - Each npm:* entry implies that the handler's top-level npmPackages array
-    will include the corresponding package. Declare only what require()-d
-    code actually uses.
-  - Keep the array [] only when the handler truly needs nothing beyond the
-    always-on surface (ctx.db, ctx.logger, ctx.tenantId, ctx.trigger) —
-    rare in practice."""
+    API the handler calls. Most handlers declare at least one; a DB-only
+    admin panel with no Shopify reads declares neither.
+  - Declare "files" when the handler produces a downloadable artefact.
+    Declaring a document-format npm package (npm:pdfkit / npm:exceljs /
+    npm:csv) without "files" is inconsistent — the output still needs
+    ctx.services.files.upload.
+  - Declare "http" only for non-Shopify external services — never for
+    Shopify REST/GraphQL (those belong under shopify_rest / shopify_graphql).
+  - Each npm:* entry implies the corresponding package in top-level
+    npmPackages. Declare only what require()-d code actually uses.
+  - Keep [] only when the handler needs nothing beyond the always-on
+    surface (ctx.db, ctx.logger, ctx.tenantId, ctx.trigger) — rare."""
 
 
 EMAIL_SPEC = """\
-emailSpec: Structured spec for the email the handler will send. MUST be
-  non-null whenever "email" is declared in handlerCapabilities, and MUST be
-  null otherwise. Consumed downstream by the Email tab (to pre-select email
-  type) and by the Handler prompt (to guide starter-content generation).
+emailSpec: Architect output field describing the email the handler will send.
+  See the "email" entry in the AVAILABLE capabilities list above for what
+  ctx.services.email.send actually does — this field only captures the
+  architect's classification + intent for that send.
 
-  Shape when set:
-    {
-      "type": "transactional" | "marketing",
-      "purpose": "<one-line description of when this email is sent and why>"
-    }
+  Shape:
+    null if "email" is not in handlerCapabilities.
+    Otherwise: { "type": "transactional" | "marketing",
+                 "purpose": "<one present-tense sentence: what fires the email and when>" }
 
-  RULES:
-  - type = "transactional" when the email is triggered by a customer action
-    (order confirmation, abandoned-cart recovery, shipping update, receipt,
-    password reset, subscription confirmation, etc.). Transactional is the
-    default for app-driven Shopify automations.
-  - type = "marketing" only for unsolicited merchant-to-customer outreach
-    (newsletter, win-back campaign, promotional blast, announcement). These
-    require customer consent and unsubscribe handling — declare marketing
-    ONLY when the feature is explicitly a marketing send.
-  - purpose: one sentence, present tense. Describe WHAT the email is and
-    WHEN it fires. Example: "Sent when a customer abandons a cart with
-    items totalling $50+, one hour after cart last-updated timestamp."
-    This drives the handler's starter subject/body copy — the more concrete,
-    the better the starter content the merchant sees on first open.
-  - Keep this null if the handler does not send email. Do NOT invent an
-    emailSpec to document hypothetical future email sends.
-  - When emailSpec is set, the handlerMustProduce on whichever contract
-    feeds the send (webhookContract or cronContract) MUST enumerate every
-    piece of data the merchant will reference in the email template —
-    recipient display name for personalization, the full content the email
-    describes (not just an ID or a single sample), and any concrete action
-    URL the CTA will point to. Listing only what the DB needs leaves the
-    handler to improvise an impoverished variable set the merchant cannot
-    build a decent template from."""
+  type:
+    - "transactional" — triggered by a customer action (order confirmation,
+      cart recovery, shipping update, password reset). Default for Shopify
+      automation apps.
+    - "marketing" — unsolicited outreach (newsletter, win-back, promo blast).
+      Only when the feature IS explicitly a marketing send.
+
+  purpose: drives the handler's starter subject/body copy — the more
+  concrete, the better what the merchant sees on first open.
+
+  COUPLING — when emailSpec is set, the handlerMustProduce on whichever
+  contract feeds the send (webhookContract or cronContract) MUST enumerate
+  every data field the merchant will reference in the email template:
+  recipient display name for personalization, the full content the email
+  describes (not only an ID or sample), and any concrete action URL the CTA
+  will point to. Listing only what the DB needs leaves the handler with an
+  impoverished variable set."""
 
 
-WIDGET_CAPABILITIES = """\
+WIDGET_CAPABILITIES_RULES = """\
 widgetCapabilities: Closed-vocabulary list declaring which host.* APIs the
   storefront WIDGET uses beyond the always-on host.call(path, body) channel
   to the handler. null for non-storefront archetypes.
@@ -121,7 +103,7 @@ widgetCapabilities: Closed-vocabulary list declaring which host.* APIs the
     handler via host.call — the common case."""
 
 
-ADMIN_CAPABILITIES = """\
+ADMIN_CAPABILITIES_RULES = """\
 adminCapabilities: Closed-vocabulary list declaring which App Bridge / admin
   APIs the ADMIN UI uses beyond the always-on bridge.call(path, body) channel
   to the handler. null for non-admin archetypes.

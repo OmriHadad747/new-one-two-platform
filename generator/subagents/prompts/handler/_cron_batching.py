@@ -4,7 +4,8 @@ Cron rate-limit safety patterns.
 Injected by handler_agent.py's JIT when ``appContracts.cronBatching.required``
 is true. Forces the bulk-prefetch discipline — zero Shopify calls inside the
 per-item loop, map-keyed lookups with String() normalization on both sides,
-and bounded setTimeout pauses between unavoidable per-item writes.
+and bounded setTimeout pauses (≤500ms numeric literal) between unavoidable
+per-item writes. Other setTimeout shapes are rejected by static validation.
 """
 
 HARNESS_SECTION_CRON_BATCHING = """
@@ -58,18 +59,22 @@ customer_id, order_id, …) MUST be stored on the DB row. SELECT it alongside
 the primary entity ID; don't try to resolve it from Shopify inside the loop.
 
 ── Rule 4: Per-item WRITES — unavoidable, so throttle them ───────────────────
-Some resources have no batch write API (e.g. tag updates, metafield writes on
-per-entity basis, image replacement). When the loop must issue a per-item
-Shopify write, add a small pause between iterations to stay under the rate limit:
+Some resources have no batch write API (tag updates per order, metafield
+writes per entity, image replacement). When the loop must issue a per-item
+Shopify write, add a small bounded pause between iterations to stay under
+the rate limit. setTimeout is allowed for this ONLY with a numeric-literal
+delay ≤500ms — static validation rejects missing/non-literal/>500ms delays.
 
   ✅ for (const row of rows) {
        await ctx.shopify.post(`/<resource>/${row.id}.json`, { ... })
-       await new Promise(r => setTimeout(r, 200))   // 200 ms ≈ 5 req/s ceiling
+       await new Promise(r => setTimeout(r, 200))   // 200ms ≈ 5 req/s ceiling
      }
   ❌ Tight write loop with no delay → 429 throttle errors at scale.
+  ❌ Computed or >500ms delays are rejected — the 500ms cap is enforced.
 
-  When per-item writes are unavoidable, the architect plan records this as a
-  platformGaps entry — mention the reason in your implementation comment.
+  Prefer bulk APIs whenever one exists; fall back to this pattern only when
+  the architect plan has declared this as a platformGaps entry. Mention the
+  reason in your implementation comment.
 
 ── Rule 5: Resource-specific notes ───────────────────────────────────────────
   • Variants: there is NO batch variant-by-IDs endpoint. Batch via

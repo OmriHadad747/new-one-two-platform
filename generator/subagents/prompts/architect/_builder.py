@@ -4,10 +4,10 @@ Architect system prompt builder — assembles modular sections into a complete s
 Assembly rule:
   Shared (identical across every archetype, cacheable):
     _core + _state_machine + _cron_batching + _data_contracts
-    + handlerCapabilities docs (every app has a handler)
+    + HANDLER_CAPABILITIES_RULES (every app has a handler)
   Archetype tail (varies per archetype):
-    Widget:  _widget + widgetCapabilities docs  (storefront_backend, storefront_backend_admin)
-    Admin:   _admin  + adminCapabilities docs   (backend_admin, storefront_backend_admin)
+    Widget:  _widget + WIDGET_CAPABILITIES_RULES  (storefront_backend, storefront_backend_admin)
+    Admin:   _admin  + ADMIN_CAPABILITIES_RULES   (backend_admin, storefront_backend_admin)
     NON-NULL SHAPES header + state-machine/cron shape snippets
     _output_shape.build_output_shape(archetype)
 
@@ -18,10 +18,10 @@ prefix caches across archetype changes while the tail caches per-archetype
 """
 
 from ._capabilities import (
-    ADMIN_CAPABILITIES as ADMIN_CAPABILITIES_SECTION,
+    ADMIN_CAPABILITIES_RULES,
     EMAIL_SPEC,
-    HANDLER_CAPABILITIES,
-    WIDGET_CAPABILITIES as WIDGET_CAPABILITIES_SECTION,
+    HANDLER_CAPABILITIES_RULES,
+    WIDGET_CAPABILITIES_RULES,
 )
 from ._core import (
     INTRO,
@@ -74,7 +74,7 @@ def build_system_prompt(archetype: str) -> tuple[str, str]:
         COMPLEXITY,
         STATE_MACHINE,
         PLATFORM_GAPS,
-        HANDLER_CAPABILITIES,
+        HANDLER_CAPABILITIES_RULES,
         EMAIL_SPEC,
         CRON_BATCHING,
         EDGE_CASES,
@@ -89,10 +89,10 @@ def build_system_prompt(archetype: str) -> tuple[str, str]:
         tail_sections += [
             WIDGET_TARGET_TEMPLATES,
             WIDGET_API_CATALOG,
-            WIDGET_CAPABILITIES_SECTION,
+            WIDGET_CAPABILITIES_RULES,
         ]
     if has_admin:
-        tail_sections += [ADMIN_API_CATALOG, ADMIN_CAPABILITIES_SECTION]
+        tail_sections += [ADMIN_API_CATALOG, ADMIN_CAPABILITIES_RULES]
     tail_sections += [
         _NON_NULL_SHAPES_HEADER,
         STATE_MACHINE_SHAPE,

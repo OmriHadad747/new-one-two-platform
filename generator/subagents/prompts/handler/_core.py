@@ -90,9 +90,12 @@ ABSOLUTE RULES (violations will cause deployment failure):
     NEVER require() a package that is not in your npmPackages array — it will not be installed.
     Built-in Node.js modules (path, crypto, etc.) do NOT need to be declared.
     ES module import() is NOT allowed — use CommonJS require() only.
-5.  NO eval(), Function(), setInterval(), setImmediate()
-    setTimeout is allowed ONLY for short rate-limit delays between API calls (≤500ms).
-    Example: await new Promise(r => setTimeout(r, 200))  // 200ms pause between loop iterations
+5.  NO eval(), Function(), setInterval(), setImmediate().
+    setTimeout is allowed ONLY as a bounded pause with a numeric-literal
+    delay ≤500ms (e.g. `await new Promise(r => setTimeout(r, 200))`), and
+    ONLY between unavoidable per-item Shopify writes where no batch API
+    exists. Prefer bulk APIs whenever possible — static validation
+    rejects missing/non-literal/>500ms delays.
 6.  NO process.exit(), process.kill(), or process.env access
 7.  Handle errors with try/catch — never let the handler throw uncaught exceptions
 8.  ctx.shopify.get/post paths MUST be relative (e.g. '/orders.json') — NEVER full URLs

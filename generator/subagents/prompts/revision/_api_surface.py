@@ -69,7 +69,8 @@ Required module shape (CommonJS):
 
 Core rules:
   - No fetch(), eval(), Function, setInterval, setImmediate, process.env.
-    setTimeout allowed only for small rate-limit pauses (≤500 ms).
+    setTimeout allowed only with a numeric-literal delay ≤500ms (e.g.
+    `setTimeout(r, 200)`) — between unavoidable per-item Shopify writes.
   - require() only packages declared in npmPackages (+ Node built-ins).
   - Every INSERT into a tenant table must include tenant_id: ctx.tenantId.
   - Widget/admin routes: route on ctx.widgetPath / ctx.adminPath, return JSON.

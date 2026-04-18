@@ -609,12 +609,9 @@ FORBIDDEN_HANDLER_PATTERNS = [
     (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
     (r"\bsetInterval\s*\(", "setInterval is not allowed — handlers are short-lived invocations, not long-running processes"),
     (r"\bsetImmediate\s*\(", "setImmediate is not allowed"),
-    (
-        r"\bsetTimeout\s*\(",
-        "setTimeout is not allowed in handlers — handlers are short-lived cron/webhook invocations, "
-        "not UI code that needs debounce. Per-item sleeps inside loops burn cron runtime and risk "
-        "timeouts; rate limiting belongs in the harness, not the handler.",
-    ),
+    # setTimeout is allowed ONLY as a bounded pause (≤500ms numeric literal) —
+    # enforced via _find_setTimeout_violations() below, same rule widget/admin
+    # apply. Any other shape (no delay / non-literal / >500ms) is rejected.
     # ── Local-disk writes — always forbidden on Cloud Run ────────────────────
     # Cloud Run's filesystem is ephemeral and per-instance; anything written to
     # disk is unreachable by subsequent invocations and by the merchant. All
@@ -809,7 +806,8 @@ def validate_handler_artifact(
     Checks:
       1. Syntax completeness (balanced braces/parens/strings).
       2. module.exports, webhookTopics, handler present.
-      3. Forbidden patterns (fetch, eval, setInterval, setImmediate, setTimeout, process.env, etc.).
+      3. Forbidden patterns (fetch, eval, setInterval, setImmediate, process.env, etc.)
+         + bounded setTimeout check (≤500ms literal pause only; same rule as widget/admin).
       4. Declared webhookTopics match the architect plan.
       5. Every widgetApiCatalog path has a ctx.widgetPath === '/path' branch
          outside any admin block (widget trigger routing).
@@ -906,6 +904,13 @@ def validate_handler_artifact(
                 f"already provides — use the capability's helper instead "
                 f"(see the capability's docs section)"
             )
+
+    # 3c. setTimeout bounded-pause check — same rule widget/admin enforce.
+    # Allows `setTimeout(fn, <literal ms ≤500>)` for unavoidable per-item
+    # Shopify write throttling; rejects missing / non-literal / >500ms delays.
+    # Will tighten to a flat ban once TD-018 (ctx.shopify 429 retry in the
+    # harness) ships and handler-side sleeps become redundant.
+    errors.extend(_find_setTimeout_violations(code))
 
     # 4. Declared webhook topics must match the plan
     topic_match = re.search(r"webhookTopics\s*:\s*\[([^\]]*)\]", code)
