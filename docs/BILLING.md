@@ -16,18 +16,10 @@ invoice — no credit card collection or external payment provider needed.
 
 ## Plans
 
-### Pricing
-
-Annual plans offer ~17% discount — **pay for 10 months, get 12**. Annual billing uses the
-Shopify `ANNUAL` pricing interval, charged once per year via the merchant's Shopify invoice.
-Same plan limits apply — usage resets monthly (aligned with `billing_cycle_anchor`).
+### Plan Limits
 
 | | Free | Starter | Growth | Pro |
 |---|---|---|---|---|
-| **Monthly price** | $0 | $19/mo | $49/mo | $99/mo |
-| **Annual price** | — | $190/yr | $490/yr | $990/yr |
-| ↳ *Effective monthly* | — | *$15.83/mo* | *$40.83/mo* | *$82.50/mo* |
-| ↳ *Annual savings* | — | *$38/yr* | *$98/yr* | *$198/yr* |
 | **Trial** | — | 7 days | 7 days | 14 days |
 | **Active Apps** | 1 | 3 | 10 | 999 |
 | **Generations/mo** | 1 | 3 | 10 | 999 |
@@ -36,6 +28,9 @@ Same plan limits apply — usage resets monthly (aligned with `billing_cycle_anc
 | **App Executions/mo** | 1,000 | 10,000 | 50,000 | 200,000 |
 | **Emails/mo** | 100 | 1,000 | 5,000 | 20,000 |
 | **SMS/mo** | 0 | 0 | 100 | 500 |
+
+Pricing lives in the [Pricing](#pricing) section below — it's set downstream
+of the cost analysis so the numbers are grounded in current LLM + infra costs.
 
 ### Why revisions are unlimited
 
@@ -87,23 +82,6 @@ analytics and product improvement — but never for billing enforcement.
 ```
 
 ## Key Components
-
-### Files
-
-| File | Purpose |
-|------|---------|
-| `platform/packages/db/migrations/0023_billing.sql` | DB schema: usage_records, revision_classifications, billing_events, tenant billing columns |
-| `platform/packages/db/migrations/0024_annual_billing_and_dashboard.sql` | Adds `billing_interval` enum + column to tenants |
-| `platform/packages/types/src/billing.ts` | TypeScript types + plan definitions (PLANS, getPlanLimits, BillingInterval) — shared by all services |
-| `platform/apps/api/src/lib/plans.ts` | Re-exports plan config from types; adds isPlanAllowedCategory helper |
-| `platform/apps/api/src/lib/shopify-billing.ts` | Shopify Billing API client (GraphQL mutations, supports monthly + annual) |
-| `platform/apps/api/src/lib/plan-enforcement.ts` | Quota checks: canCreateApp, canStartGeneration, etc. |
-| `platform/apps/api/src/lib/usage-tracking.ts` | Atomic usage counter increments |
-| `platform/apps/api/src/routes/billing.ts` | Billing API endpoints (including dashboard) |
-| `platform/apps/webhook-gateway/src/routes/webhook.ts` | Execution quota enforcement (before enqueue) |
-| `platform/packages/harness/src/context-factory.ts` | Email/SMS quota enforcement (before send) |
-| `platform/packages/db/src/billing.ts` | Billing DB queries: usage records, checkUsageQuota, billing events, dashboard queries |
-| `generator/subagents/revision_classifier.py` | LLM classifier for revision type (analytics) |
 
 ### Database Tables
 
@@ -312,28 +290,82 @@ Merchant cancels manually
 
 ## Cost Analysis
 
+Numbers below reflect Claude 4.x pricing at time of writing (Sonnet 4.6: ~$3/MT
+input, ~$15/MT output; Haiku 4.5: ~$1/MT input, ~$5/MT output) and the current
+pipeline where 7 of 9 agents run on Sonnet, with extended thinking gated by
+`needs_extended_thinking()` in `generator/subagents/base.py` (stateMachine,
+cronBatching, 2+ webhook topics, or widget+admin combo).
+
 | Component | Cost per Unit | Notes |
 |-----------|--------------|-------|
-| LLM generation | ~$0.25 | 9-11 Claude calls (Haiku + Sonnet mix) |
-| LLM revision | ~$0.25 | Same pipeline as generation |
-| Cloud Run per app | ~$0.02/mo | 256Mi, ~200 executions/month |
-| Shared infra | ~$25-35/mo | PostgreSQL + Redis + Pub/Sub |
-| Revision classification | ~$0.001 | Single Haiku call (128 tokens) |
+| LLM generation (simple) | ~$0.30 | ~30k in / 12k out, no extended thinking |
+| LLM generation (typical) | ~$0.40 | ~40k in / 18k out, mixed Sonnet + Haiku |
+| LLM generation (high-complexity) | ~$0.55 | ~50k in / 25k out, extended thinking enabled |
+| LLM revision | ~$0.40 | Same pipeline as generation |
+| Revision classification | ~$0.001 | Single Haiku call (~200 in / 128 out) |
+| Cloud Run per generation | ~$0.02 | 2Gi generator container, 2-3 min runtime |
+| Cloud Run per app execution | ~$0.000005 | 256Mi handler, typical 50-200ms |
+| Email (via Resend) | ~$0.001 | Pay-as-you-go tier; lower on volume plans |
+| SMS (US, via Twilio) | ~$0.005 | Per outbound message |
+| Shared infra (amortized) | ~$0.50/tenant/mo | PostgreSQL + Redis + Pub/Sub at mid-stage scale (~100 tenants) |
 
 ### Margin by plan
 
-Annual plans are ~17% cheaper for merchants but cost the same to operate,
-so margins are slightly lower — but revenue is pre-committed for 12 months.
+Two columns below: **moderate usage** (realistic average merchant) and
+**worst case** (merchant exhausts the quota _and_ drives heavy revision
+traffic). Revisions are unlimited, so worst-case cost is unbounded in
+principle — the figure below assumes ~15 revisions/app (an aggressive but
+plausible power user) plus plan-capped email/SMS/execution usage.
 
-| Plan | Interval | Revenue | Est. Cost | Gross Margin |
-|------|----------|---------|-----------|--------------|
-| Free | — | $0/mo | ~$2.50/mo | -100% (loss leader) |
-| Starter | Monthly | $19/mo | ~$8/mo | ~57% |
-| Starter | Annual | $15.83/mo ($190/yr) | ~$8/mo | ~47% |
-| Growth | Monthly | $49/mo | ~$15/mo | ~69% |
-| Growth | Annual | $40.83/mo ($490/yr) | ~$15/mo | ~63% |
-| Pro | Monthly | $99/mo | ~$18/mo | ~82% |
-| Pro | Annual | $82.50/mo ($990/yr) | ~$18/mo | ~78% |
+Annual plans are ~17% cheaper for merchants but cost the same to operate,
+so margins are slightly lower on annual — but revenue is pre-committed
+for 12 months, which offsets the reduced monthly rate.
+
+| Plan | Interval | Revenue/mo | Moderate cost | Moderate margin | Worst-case cost | Worst-case margin |
+|------|----------|-----------|---------------|-----------------|-----------------|-------------------|
+| Free | — | $0 | ~$1.80 | loss leader | ~$5 (1 gen + many revisions) | loss leader |
+| Starter | Monthly | $29 | ~$5 | **~83%** | ~$20 | **~31%** |
+| Starter | Annual | $24.17 ($290/yr) | ~$5 | **~79%** | ~$20 | **~17%** |
+| Growth | Monthly | $59 | ~$16 | **~73%** | ~$49 | **~17%** |
+| Growth | Annual | $49.17 ($590/yr) | ~$16 | **~67%** | ~$49 | **~0%** |
+| Pro | Monthly | $109 | ~$36 | **~67%** | ~$100 | **~8%** |
+| Pro | Annual | $90.83 ($1,090/yr) | ~$36 | **~60%** | ~$100 | **~-10%** |
+
+Notes on worst-case:
+- Unlimited revisions remain the dominant cost-of-service risk. A Growth-plan
+  merchant running 10 apps × 10 revisions each = 100 revisions at ~$0.40 each
+  is ~$40 just on revisions. If you later start seeing margin compression in
+  a specific segment, the lever is revision classification + soft-caps on
+  revisions flagged as `new_capability` (those are billing-eligible if the
+  product decision changes) — not a new plan tier.
+- Pro annual worst case is slightly underwater at the ceiling; acceptable as
+  long as the power-user tail is small. Monitor `revision_classifications`
+  volume vs revenue on that cohort.
+- Free plan is intentionally underwater — treat as CAC, not a profit center.
+
+## Pricing
+
+Pricing is set downstream of the [Cost Analysis](#cost-analysis) above — each
+plan's price is calibrated against its moderate-usage cost and the worst-case
+margin it will tolerate. When the cost inputs change (LLM pricing, execution
+cost, infra), recompute the margins first and adjust the table below second.
+
+Annual plans offer ~17% discount — **pay for 10 months, get 12**. Annual billing
+uses the Shopify `ANNUAL` pricing interval, charged once per year via the
+merchant's Shopify invoice. Same plan limits apply — usage resets monthly
+(aligned with `billing_cycle_anchor`).
+
+| | Free | Starter | Growth | Pro |
+|---|---|---|---|---|
+| **Monthly price** | $0 | $29/mo | $59/mo | $109/mo |
+| **Annual price** | — | $290/yr | $590/yr | $1,090/yr |
+| ↳ *Effective monthly* | — | *$24.17/mo* | *$49.17/mo* | *$90.83/mo* |
+| ↳ *Annual savings* | — | *$58/yr* | *$118/yr* | *$218/yr* |
+
+Source of truth for these numbers is `platform/packages/types/src/billing.ts`
+(`priceMonthly` / `priceYearly` in cents). The platform-front plan picker at
+`platform-front/src/pages/SettingsPage.tsx` currently duplicates the values
+— update both when adjusting prices, or consolidate onto `billing.ts`.
 
 ## Testing
 
@@ -407,7 +439,7 @@ so margins are slightly lower — but revenue is pre-committed for 12 months.
      -H 'Content-Type: application/json' \
      -d '{"tenantId": "...", "plan": "growth", "interval": "annual"}'
    # → {"confirmationUrl": "https://mystore.myshopify.com/admin/charges/..."}
-   # The Shopify approval page will show $490/yr instead of $49/mo
+   # The Shopify approval page will show $590/yr instead of $59/mo
    ```
 
 7. **Test billing dashboard:**

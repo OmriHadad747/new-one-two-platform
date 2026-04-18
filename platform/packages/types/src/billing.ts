@@ -109,8 +109,8 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
   starter: {
     id: "starter",
     name: "Starter",
-    priceMonthly: 1900,
-    priceYearly: 19000,    // $190/yr ($15.83/mo effective — save ~17%)
+    priceMonthly: 2900,
+    priceYearly: 29000,    // $290/yr ($24.17/mo effective — save ~17%)
     limits: {
       maxApps: 3,
       maxGenerationsPerMonth: 3,
@@ -124,8 +124,8 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
   growth: {
     id: "growth",
     name: "Growth",
-    priceMonthly: 4900,
-    priceYearly: 49000,    // $490/yr ($40.83/mo effective — save ~17%)
+    priceMonthly: 5900,
+    priceYearly: 59000,    // $590/yr ($49.17/mo effective — save ~17%)
     limits: {
       maxApps: 10,
       maxGenerationsPerMonth: 10,
@@ -144,8 +144,8 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
   pro: {
     id: "pro",
     name: "Pro",
-    priceMonthly: 9900,
-    priceYearly: 99000,    // $990/yr ($82.50/mo effective — save ~17%)
+    priceMonthly: 10900,
+    priceYearly: 109000,   // $1090/yr ($90.83/mo effective — save ~17%)
     limits: {
       maxApps: 999,
       maxGenerationsPerMonth: 999,

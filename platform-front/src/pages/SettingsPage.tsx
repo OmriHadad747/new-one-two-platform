@@ -130,8 +130,8 @@ const PLAN_DEFS: Array<{
   {
     id: "starter",
     name: "Starter",
-    priceMonthly: 19,
-    priceYearly: 190,
+    priceMonthly: 29,
+    priceYearly: 290,
     apps: "3 active apps",
     builds: "3 generations/mo",
     executions: "10k invocations/mo",
@@ -140,8 +140,8 @@ const PLAN_DEFS: Array<{
   {
     id: "growth",
     name: "Growth",
-    priceMonthly: 49,
-    priceYearly: 490,
+    priceMonthly: 59,
+    priceYearly: 590,
     apps: "10 active apps",
     builds: "10 generations/mo",
     executions: "50k invocations/mo",
@@ -151,8 +151,8 @@ const PLAN_DEFS: Array<{
   {
     id: "pro",
     name: "Pro",
-    priceMonthly: 99,
-    priceYearly: 990,
+    priceMonthly: 109,
+    priceYearly: 1090,
     apps: "Unlimited active apps",
     builds: "Unlimited generations",
     executions: "200k invocations/mo",
