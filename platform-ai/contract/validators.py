@@ -172,6 +172,13 @@ class GenerationMeta(BaseModel):
 
 class FeatureBundleMessage(BaseModel):
     jobId: str
+    # tenantId + appId echo the fields from the originating GenerationRequest
+    # so the platform-back subscriber can persist a generations row keyed on
+    # (tenantId, appId, jobId) without a second round-trip to a request-
+    # tracking table. The generator sets these from the request — it never
+    # invents them.
+    tenantId: str
+    appId: str
     status: Literal["success", "failed"]
     error: Optional[str] = None
     # "platform_limitation" — architect detected the app requires a capability
@@ -182,7 +189,12 @@ class FeatureBundleMessage(BaseModel):
     meta: Optional[GenerationMeta] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        d: Dict[str, Any] = {"jobId": self.jobId, "status": self.status}
+        d: Dict[str, Any] = {
+            "jobId": self.jobId,
+            "tenantId": self.tenantId,
+            "appId": self.appId,
+            "status": self.status,
+        }
         if self.error:
             d["error"] = self.error
         if self.errorCode:

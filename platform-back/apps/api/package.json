@@ -18,6 +18,7 @@
     "@platform-back/email": "workspace:*",
     "@platform-back/logger": "workspace:*",
     "@platform-back/types": "workspace:*",
+    "@google-cloud/pubsub": "^4.7.0",
     "fastify": "^4.28.0",
     "fastify-raw-body": "^4.3.0",
     "google-auth-library": "^9.14.0",

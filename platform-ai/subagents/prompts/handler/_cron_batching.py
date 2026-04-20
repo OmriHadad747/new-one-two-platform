@@ -85,16 +85,4 @@ missing/non-literal/>500ms delays.
   Prefer bulk APIs whenever one exists; fall back to this pattern only
   when the architect plan has declared this as a platformGaps entry.
   Mention the reason in your implementation comment.
-
-── Rule 5: Resource-specific notes ───────────────────────────────────────────
-  • Variants: there is NO batch variant-by-IDs endpoint. Batch via
-    /products.json?ids=... and extract variants from each product — one
-    call returns up to 250 products and all their variants.
-  • Inventory level: /products.json#inventory_quantity is STALE for
-    multi-location stores. For accurate stock use
-    /inventory_levels.json?inventory_item_ids=... (max 50 per call) and
-    sum `available` across locations per inventory_item_id.
-  • Customers/Orders: support /customers.json?ids=... and
-    /orders.json?ids=... with limit=250 and since_id for full-catalog
-    scans.
 """

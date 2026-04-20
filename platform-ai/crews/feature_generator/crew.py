@@ -151,7 +151,13 @@ def _fail_and_abort(
 ) -> None:
     """Publish a failure progress event + completion failure, then raise _PipelineAbort."""
     _emit(request, agent, "failed", progress_msg)
-    payload: Dict = {"jobId": request.jobId, "status": "failed", "error": error}
+    payload: Dict = {
+        "jobId": request.jobId,
+        "tenantId": request.tenantId,
+        "appId": request.appId,
+        "status": "failed",
+        "error": error,
+    }
     if error_code:
         payload["errorCode"] = error_code
     _contract_publisher.publish_completed(FeatureBundleMessage(**payload))
@@ -327,6 +333,8 @@ def run_feature_generation(request: GenerationRequest) -> None:
             _contract_publisher.publish_completed(
                 FeatureBundleMessage(
                     jobId=request.jobId,
+                    tenantId=request.tenantId,
+                    appId=request.appId,
                     status="failed",
                     error=str(exc),
                 )
@@ -994,6 +1002,8 @@ def _publish_success(
     _contract_publisher.publish_completed(
         FeatureBundleMessage(
             jobId=request.jobId,
+            tenantId=request.tenantId,
+            appId=request.appId,
             status="success",
             bundle=bundle,
             meta=GenerationMeta(

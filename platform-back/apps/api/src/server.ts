@@ -13,6 +13,10 @@ import { emailServiceRoutes } from "./routes/services/email.js";
 import { shopifyServiceRoutes } from "./routes/services/shopify.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { resendWebhookRoutes } from "./routes/webhook/resend.js";
+import {
+  startCompletedSubscription,
+  stopCompletedSubscription,
+} from "./pubsub/subscriber.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3010", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -115,6 +119,9 @@ async function shutdown(
   } catch (err) {
     logger.error({ err }, "Fastify close error");
   }
+  // Drain the Pub/Sub subscription before closing the DB. stopCompletedSubscription
+  // swallows its own errors — it's best-effort drain, not a blocker.
+  await stopCompletedSubscription();
   await closeDb();
   process.exit(0);
 }
@@ -123,6 +130,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const app = await buildServer();
   process.on("SIGTERM", () => void shutdown("SIGTERM", app));
   process.on("SIGINT", () => void shutdown("SIGINT", app));
+
+  // Start the generation.completed subscriber BEFORE the HTTP server so
+  // any messages that were queued up while the container was down start
+  // draining immediately. Subscription stays alive for the lifetime of
+  // the process; shutdown closes it via stopCompletedSubscription.
+  await startCompletedSubscription();
 
   await app.listen({ port: PORT, host: HOST });
   logger.info(

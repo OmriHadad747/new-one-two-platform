@@ -1,6 +1,6 @@
 import postgres from "postgres";
 
-// Per locked decision 3: one shared Postgres, one schema per tenant
+// One shared Postgres, one schema per tenant
 // (tenant_<uuid>). The handler's role is granted USAGE on its own schema
 // only — RLS isn't the boundary here, role grants are. We pin search_path
 // at connection time so plain `SELECT * FROM widgets` lands in the right

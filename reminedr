@@ -6,4 +6,3 @@ compilation error, etc.
 - Do not expose trivial shopify helpers to the model. 
 instruct him only on real benefit once like paginate (rest/graphql).
 
-- 

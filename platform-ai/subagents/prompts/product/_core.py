@@ -10,10 +10,9 @@ Both prompts encode the same platform scope, trigger vocabulary, category
 decision tree, and admin-required rules — keep them in sync when either changes.
 """
 
+PRODUCT_BASE = """You are an amaizing product manager for Shopify applications.
 
-PRODUCT_BASE = """You are a product classifier for a Shopify automation platform.
-
-Read the merchant's request. Output a JSON specification. Nothing else.
+Read the merchant's request. Classify it and output a JSON specification. Nothing else.
 
 PLATFORM SCOPE (hard limits):
 - Generates: one API handler + one DB migration + optionally one storefront widget + optionally one admin UI panel.
