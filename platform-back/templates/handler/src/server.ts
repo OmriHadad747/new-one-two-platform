@@ -7,6 +7,11 @@ import { verifyPlatform } from "./middleware/verify-platform.js";
 import { adminRouter } from "./routes/admin.js";
 import { webhookRouter } from "./routes/webhook.js";
 import { widgetRouter } from "./routes/widget.js";
+import {
+  startCronRunner,
+  type CronRunnerHandle,
+  type JobsMap,
+} from "./lib/cron-runner.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "8080", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -47,9 +52,39 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`[handler] listening on ${HOST}:${PORT}`);
 });
 
+// Cron runner — only booted when the deployer set ENABLE_CRON_RUNNER=true
+// (happens when the architect declared `cronSchedule` at generation time).
+// src/routes/cron.ts is generator-authored; import it dynamically so apps
+// without cron don't need the file to exist.
+let cronHandle: CronRunnerHandle | null = null;
+if (process.env["ENABLE_CRON_RUNNER"] === "true") {
+  void (async () => {
+    try {
+      const mod = (await import("./routes/cron.js")) as { jobs?: JobsMap };
+      if (!mod.jobs || typeof mod.jobs !== "object") {
+        console.error(
+          "[handler] ENABLE_CRON_RUNNER=true but ./routes/cron.js did not export a jobs map; cron disabled",
+        );
+        return;
+      }
+      cronHandle = startCronRunner(mod.jobs);
+    } catch (err) {
+      console.error(
+        { err: String(err) },
+        "[handler] failed to load ./routes/cron.js; cron disabled",
+      );
+    }
+  })();
+}
+
 async function shutdown(signal: string): Promise<void> {
   console.log(`[handler] ${signal} received, shutting down`);
   server.close();
+  if (cronHandle) {
+    await cronHandle.stop().catch(() => {
+      // Best-effort — drainage deadline is internal to the runner.
+    });
+  }
   await closeDb();
   process.exit(0);
 }

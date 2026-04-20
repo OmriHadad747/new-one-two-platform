@@ -42,6 +42,14 @@ export interface PlatformContext {
   appId: string;
   shopDomain: string;
   requestId: string;
+  /**
+   * Shopify Admin API access token for this shop. Stamped by platform-back
+   * on every HTTP call so route handlers reach Shopify without a token-
+   * fetch round-trip. Absent on cron-runner invocations (no HTTP request);
+   * the Shopify helper falls back to /services/shopify/access-token with
+   * an in-memory cache in that case.
+   */
+  accessToken?: string;
 }
 
 declare global {
@@ -90,12 +98,19 @@ export async function verifyPlatform(
   const appId = req.header("x-app-id");
   const shopDomain = req.header("x-shop-domain");
   const requestId = req.header("x-request-id") ?? crypto.randomUUID();
+  const accessToken = req.header("x-shopify-access-token"); // optional
 
   if (!tenantId || !appId || !shopDomain) {
     res.status(400).json({ error: "missing_platform_headers" });
     return;
   }
 
-  req.platform = { tenantId, appId, shopDomain, requestId };
+  req.platform = {
+    tenantId,
+    appId,
+    shopDomain,
+    requestId,
+    ...(accessToken ? { accessToken } : {}),
+  };
   next();
 }

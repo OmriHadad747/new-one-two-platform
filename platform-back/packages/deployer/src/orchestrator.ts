@@ -295,6 +295,17 @@ function buildHandlerEnv(input: StartDeployInput): Record<string, string> {
   // Baseline env every handler needs. Caller can override / extend via
   // input.handlerEnv. TENANT_ID / APP_ID / SHOP_DOMAIN come from here so
   // the handler doesn't have to look them up at startup.
+  //
+  // ENABLE_CRON_RUNNER is derived from the bundle itself: if the generator
+  // emitted src/routes/cron.ts, cron is part of this app — start the
+  // runner on boot. Otherwise the template ships a stub cron.ts and the
+  // runner stays off. CRON_NOTIFY_CHANNEL is the Postgres LISTEN channel
+  // the runner subscribes to — keyed on the app id so pg_cron's per-tick
+  // NOTIFY only wakes the right handler.
+  const hasCronRoute = input.generatedFiles.some(
+    (f) => f.path === "src/routes/cron.ts",
+  );
+
   return {
     NODE_ENV: "production",
     PORT: "8080",
@@ -306,6 +317,8 @@ function buildHandlerEnv(input: StartDeployInput): Record<string, string> {
     PLATFORM_URL: requireEnv("PLATFORM_URL"),
     EXPECTED_AUDIENCE: requireEnv("PLATFORM_URL"),
     PLATFORM_SA_EMAIL: process.env["PLATFORM_BACK_SA_EMAIL"] ?? "",
+    ENABLE_CRON_RUNNER: hasCronRoute ? "true" : "false",
+    CRON_NOTIFY_CHANNEL: `cron_tick_${input.appId.replace(/-/g, "_")}`,
     ...(input.handlerEnv ?? {}),
   };
 }
