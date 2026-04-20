@@ -19,6 +19,7 @@ export const ErrorCode = {
   Unauthorized: "unauthorized",
   Forbidden: "forbidden",
   NotFound: "not_found",
+  Conflict: "conflict",
   Internal: "internal_error",
 
   TokenMissing: "token_missing",

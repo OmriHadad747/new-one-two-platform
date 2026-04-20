@@ -13,6 +13,7 @@ import { emailServiceRoutes } from "./routes/services/email.js";
 import { shopifyServiceRoutes } from "./routes/services/shopify.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { resendWebhookRoutes } from "./routes/webhook/resend.js";
+import { generationsRoutes } from "./routes/generations.js";
 import {
   startCompletedSubscription,
   stopCompletedSubscription,
@@ -73,6 +74,10 @@ export async function buildServer() {
   // /apps/:appId/deploy  +  /deploy/jobs/:jobId  (mounted at root because
   // the two paths don't share a common prefix)
   await app.register(deployRoutes);
+  // /apps/:appId/generations/:jobId + /apps/:appId/generations/:jobId/deploy
+  // (same flat shape — dashboard-facing read + deploy bridge for the
+  // persisted generations table).
+  await app.register(generationsRoutes);
 
   app.setNotFoundHandler((_req, reply) => {
     void reply
