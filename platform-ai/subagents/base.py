@@ -55,7 +55,12 @@ class CodegenContext:
                         which REST/GraphQL calls to make. None for non-handler agents.
     previous_errors     Validation errors from the prior attempt on THIS generator.
                         None on the first attempt. Used to build a retry prompt.
-    prior_handler_code  The currently deployed handler.js, present only on revision runs.
+    prior_handler_code  The currently deployed handler source, present only on revision runs.
+                        Accepts either a plain string (legacy CommonJS handler.js) or a
+                        List[{path, contents}] (new multi-file bundle from the
+                        platform-back era). _format_prior_handler in handler_agent.py
+                        handles both; typed as Any to avoid a circular dep on
+                        utils.file_bundle.
     prior_widget_code   The currently deployed widget ES module, present only on
                         revision runs for storefront apps.
     prior_migration_sql DDL already applied to the DB, present only on revision runs.
@@ -78,7 +83,7 @@ class CodegenContext:
     platform_api_catalog: List[Dict[str, str]] = field(default_factory=list)
     api_context: Optional[str] = None
     previous_errors: Optional[List[str]] = None
-    prior_handler_code: Optional[str] = None
+    prior_handler_code: Optional[Any] = None  # str | List[Dict[str, str]]
     prior_widget_code: Optional[str] = None
     prior_migration_sql: Optional[str] = None
     prior_admin_ui_code: Optional[str] = None

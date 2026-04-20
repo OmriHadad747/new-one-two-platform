@@ -246,6 +246,20 @@ def run_feature_generation(request: GenerationRequest) -> None:
         _check_deadline(request, start_ms, "architect")
 
         prior_bundle = request.priorBundle or {}
+        prior_handler_module = prior_bundle.get("handlerModule") or {}
+        # New shape: handlerModule.files = [{path, contents}, ...].
+        # Legacy shape: handlerModule.code = "<single CommonJS blob>".
+        # _format_prior_handler in handler_agent.py accepts both.
+        prior_handler = (
+            prior_handler_module.get("files")
+            or prior_handler_module.get("code")
+            or None
+        )
+        # New shape: dbMigration = {path, contents}.  Legacy: {sql}.
+        prior_migration = prior_bundle.get("dbMigration") or {}
+        prior_migration_sql = (
+            prior_migration.get("contents") or prior_migration.get("sql") or None
+        )
         base_ctx = CodegenContext(
             intent=intent,
             plan=plan,
@@ -254,13 +268,9 @@ def run_feature_generation(request: GenerationRequest) -> None:
             )
             or [],
             api_context=api_context,
-            prior_handler_code=(
-                (prior_bundle.get("handlerModule") or {}).get("code") or None
-            ),
+            prior_handler_code=prior_handler,
             prior_widget_code=(prior_bundle.get("widgetModule") or None),
-            prior_migration_sql=(
-                (prior_bundle.get("dbMigration") or {}).get("sql") or None
-            ),
+            prior_migration_sql=prior_migration_sql,
             prior_admin_ui_code=(prior_bundle.get("adminUiModule") or None),
         )
 
@@ -881,26 +891,51 @@ def _publish_success(
     app_email_configs row (merchant edits are not overwritten). See
     MEMORY notifications-center tech debt for the drift-surfacing plan.
     """
-    # Phase 2 bridge: handler_agent currently still returns a single code
-    # string (legacy shape); wrap it into one GeneratedFile so the new Bundle
-    # model constructs cleanly. Step 5 rewrites the generator to return a
-    # real List[GeneratedFile] and this bridge goes away.
-    handler_code = artifacts.get("handler", "")
-    handler_files = [
-        GeneratedFile(path="src/routes/generated.ts", contents=handler_code)
-    ]
+    # Handler output is a ===FILE:===/===END=== marker bundle; parse into
+    # {path, contents} entries. Fall back to a single pseudo-file when the
+    # model returned no markers (legacy shape or protocol violation — the
+    # static validator catches the latter and triggers a retry).
+    from utils.file_bundle import parse_file_bundle, ParseError
+
+    handler_raw = artifacts.get("handler", "")
+    try:
+        parsed_files = parse_file_bundle(handler_raw) if handler_raw else []
+    except ParseError as err:
+        log.warning(
+            "handler bundle malformed (%s) — falling back to single-file wrap",
+            err,
+        )
+        parsed_files = []
+    if parsed_files:
+        handler_files = [
+            GeneratedFile(path=f["path"], contents=f["contents"]) for f in parsed_files
+        ]
+    else:
+        # Either the model produced no markers or parsing failed — wrap the
+        # raw text so the Bundle still constructs. The static validator will
+        # fail this on the retry loop and produce a better next attempt.
+        handler_files = [
+            GeneratedFile(path="src/routes/handler.ts", contents=handler_raw)
+        ]
+
     migration_sql = artifacts.get("migration", "")
     shopify_plan = plan.get("shopifyPlan", {})
     technical = explanation.get("technical", {})
-
-    def _parse_npm_packages(code: str) -> list:
-        import re as _re
-        match = _re.search(r"npmPackages\s*:\s*\[([^\]]*)\]", code)
-        if not match:
-            return []
-        return _re.findall(r"""['"]([^'"]+)['"]""", match.group(1))
-
     app_contracts = plan.get("appContracts") or {}
+
+    # npm packages are derived from the architect's declared
+    # handlerCapabilities — each npm capability in templates/capabilities/
+    # handler.py carries a `packages` tuple. This replaces the legacy
+    # regex-over-handler-code approach which assumed a CommonJS module
+    # literal; the new multi-file TypeScript output has no single
+    # `npmPackages: [...]` source to parse.
+    from templates.capabilities.handler import HANDLER_NPM_PACKAGES
+    declared_caps = app_contracts.get("handlerCapabilities") or []
+    npm_packages_derived: List[str] = []
+    for cap_name in declared_caps:
+        cap = HANDLER_NPM_PACKAGES.get(cap_name)
+        if cap:
+            npm_packages_derived.extend(cap.packages)
 
     uses_email = "email" in (app_contracts.get("handlerCapabilities") or [])
     email_spec = app_contracts.get("emailSpec") or {}
@@ -928,7 +963,7 @@ def _publish_success(
             files=handler_files,
             webhookTopics=shopify_plan.get("webhookTopics", []),
             cronSchedule=shopify_plan.get("cronSchedule"),
-            npmPackages=_parse_npm_packages(handler_code),
+            npmPackages=npm_packages_derived,
         ),
         dbMigration=GeneratedFile(
             path="migrations/generated.sql",

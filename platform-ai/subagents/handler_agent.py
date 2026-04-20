@@ -1,27 +1,40 @@
 """
-Handler Generator — produces the CommonJS handler.js for the harness.
+Handler Generator — produces the TypeScript route / lib files that drop
+into the platform-back handler template.
 
-The Handler is the Shopify API authority: it receives the full MCP api_context
-and decides independently which REST/GraphQL calls to make. The Architect's
-contracts tell it WHAT data is needed; the api_context tells it WHAT is available
-in the Shopify schema.
+The handler is the Shopify API authority: it receives the full MCP
+api_context and decides independently which REST/GraphQL calls to make.
+The architect's contracts tell it WHAT data is needed; the api_context
+tells it WHAT is available in the Shopify schema.
 
-System prompt: HARNESS_BASE (always) — core-only (DB, trigger routing, logger,
-output format, absolute rules, loop rule). Per-API docs (ctx.shopify, ctx.services,
-ctx.http, ctx.storefront, npm packages) are JIT-injected into the USER prompt
-from templates/capabilities/handler.py based on appContracts.handlerCapabilities.
+System prompt: HARNESS_BASE (always) — core-only (file-bundle output
+format, req.platform, sql tagged template, callPlatformService, absolute
+rules, logging, cross-cutting Shopify loop rule).
+
+Per-API docs (@shopify/shopify-api client, platform /services/*, npm
+packages) are JIT-injected into the USER prompt from
+templates/capabilities/handler.py based on appContracts.handlerCapabilities.
 
 User-prompt JIT sections:
   - Capability docs for each entry in handlerCapabilities (registry-driven).
-  - SHOPIFY_REST_VS_GRAPHQL_GUIDE only when BOTH shopify_rest AND shopify_graphql
-    are declared — no point showing a choose-one guide if only one is used.
-  - Trigger-gated sections (unchanged):
+  - SHOPIFY_REST_VS_GRAPHQL_GUIDE only when BOTH shopify_rest AND
+    shopify_graphql are declared — no point showing a choose-one guide if
+    only one is used.
+  - Trigger-gated sections:
       HARNESS_SECTION_WEBHOOK        — when webhookTopics is non-empty
+      HARNESS_SECTION_CRON           — when shopifyPlan.cronSchedule is non-null
       HARNESS_SECTION_STATE_MACHINE  — when appContracts.stateMachine is non-null
       HARNESS_SECTION_CRON_BATCHING  — when appContracts.cronBatching.required is true
-      HARNESS_SECTION_WIDGET         — when platform_api_catalog is non-empty
-      HARNESS_SECTION_WIDGET_STOREFRONT — when widgetApiCatalog is [] (storefront app, no backend widget routes)
+      HARNESS_SECTION_WIDGET         — when widgetApiCatalog is non-empty
+      HARNESS_SECTION_WIDGET_STOREFRONT — when widgetApiCatalog is []
+                                         (storefront app, widget uses public
+                                         Shopify storefront API directly)
       HARNESS_SECTION_ADMIN          — when adminApiCatalog is non-empty
+
+Output shape: parse() returns the raw ===FILE:===/===END=== marker
+bundle as a string. Downstream consumers (crew.py, static_validation.py,
+validator/revision agents) call utils.file_bundle.parse_file_bundle
+to turn the string into [{path, contents}, ...].
 
 Model: claude-sonnet-4-6 (via agent_models.py)
 """
@@ -48,6 +61,7 @@ from templates.capabilities.handler import (
 from subagents.prompts.handler import (
     HARNESS_BASE,
     HARNESS_SECTION_ADMIN,
+    HARNESS_SECTION_CRON,
     HARNESS_SECTION_CRON_BATCHING,
     HARNESS_SECTION_STATE_MACHINE,
     HARNESS_SECTION_WEBHOOK,
@@ -57,10 +71,10 @@ from subagents.prompts.handler import (
 
 log = logging.getLogger(__name__)
 
-# Fence for the structured email-metadata sidecar the handler emits after the
-# JS code when it calls ctx.services.email.send. See
-# templates/capabilities/handler.py ("Email metadata sidecar") for the contract
-# shown to the model.
+# Fence for the structured email-metadata sidecar the handler emits
+# alongside the file bundle when it calls /services/email/send. See
+# templates/capabilities/handler.py ("Email metadata sidecar") for the
+# contract shown to the model.
 _EMAIL_META_FENCE_RE = re.compile(
     r"```email-metadata\s*\n(.*?)\n```",
     re.DOTALL,
@@ -74,7 +88,12 @@ class HandlerGenerator(Generator):
     # ── Generator interface ────────────────────────────────────────────────────
 
     def system_prompt(self) -> str:
-        return f"You are an expert Node.js backend developer writing server side shopify applications.\n\n{HARNESS_BASE}"
+        return (
+            "You are an expert TypeScript backend developer writing Shopify "
+            "app handlers that run inside the platform-back Express handler "
+            "template on Cloud Run.\n\n"
+            f"{HARNESS_BASE}"
+        )
 
     def user_prompt(self, ctx: CodegenContext) -> str:
         jit_sections = _build_jit_sections(ctx.plan, ctx.platform_api_catalog)
@@ -85,9 +104,10 @@ class HandlerGenerator(Generator):
         admin_catalog_block = _format_admin_catalog(ctx.plan)
         api_context_block = _format_api_context(ctx.api_context)
         prior_block = _format_prior_handler(ctx.prior_handler_code)
-        # db_contracts, routing_checklist, edge_cases, quality_checklist are placed
-        # at the END of the prompt — exact column names and required routes receive
-        # the highest model attention here, reducing "lost in the middle" misses.
+        # db_contracts, routing_checklist, edge_cases, quality_checklist are
+        # placed at the END of the prompt — exact column names and required
+        # routes receive the highest model attention here, reducing
+        # "lost in the middle" misses.
         db_contracts_block = _format_db_contracts(ctx.plan)
         routing_checklist = _format_routing_checklist(
             ctx.platform_api_catalog, ctx.plan
@@ -110,30 +130,49 @@ class HandlerGenerator(Generator):
             f"{routing_checklist}"
             f"{edge_cases_block}"
             f"{quality_checklist}"
-            "Generate the handler.js module. Output ONLY the JavaScript code."
+            "Emit every TypeScript file the handler needs using the "
+            "===FILE: <path>=== / ===END=== markers defined in the harness. "
+            "Output ONLY the file bundle (plus the email-metadata sidecar "
+            "when and only when the handler calls /services/email/send). "
+            "No prose, no markdown fences wrapping the whole response."
         )
 
     def parse(self, raw: str) -> str:
-        # Strip any email-metadata sidecar first so it doesn't leak into the
-        # code artifact. The sidecar is captured separately in generate().
+        """
+        Strip the email-metadata sidecar and any stray outer markdown fence,
+        and return the rest VERBATIM — the ===FILE:===/===END=== markers
+        MUST be preserved so downstream consumers (crew.py,
+        static_validation.py, validator_agent, revision_agent) can parse
+        individual files via utils.file_bundle.parse_file_bundle.
+
+        The email-metadata sidecar is captured separately in generate()
+        before this method runs; we also defensively strip it here so that
+        if parse() is called directly by tests, the returned bundle is
+        clean either way.
+        """
+        # 1. Remove the email-metadata sidecar (captured elsewhere).
         stripped = _EMAIL_META_FENCE_RE.sub("", raw).strip()
-        text = re.sub(r"^```(?:javascript|js)?\s*", "", stripped, flags=re.MULTILINE)
-        text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE)
-        return text.strip()
+        # 2. Strip a single outer ``` fence if the model wrapped the entire
+        #    response. The inner ===FILE:===/===END=== markers stay as-is.
+        stripped = re.sub(
+            r"^```(?:typescript|ts)?\s*\n", "", stripped, count=1
+        )
+        stripped = re.sub(r"\n```\s*$", "", stripped, count=1)
+        return stripped.strip()
 
     def generate(self, ctx: CodegenContext) -> Tuple[str, int, int]:
         """
         Overrides Generator.generate() to capture the email-metadata sidecar.
 
         The handler agent emits TWO things in its response when the handler
-        calls ctx.services.email.send: the JS code, and a fenced
+        calls /services/email/send: the file bundle and a fenced
         ```email-metadata``` JSON block declaring the `variables` it passed
         and the `starterContent` to seed the Email tab.
 
-        parse() handles the code path (and strips the sidecar out of the code
-        artifact). This override additionally extracts the sidecar JSON and
-        stashes it on ctx.handler_email_metadata — an OUTPUT slot on
-        CodegenContext the orchestrator reads after this future resolves.
+        parse() handles the code path (and strips the sidecar out of the
+        returned bundle). This override additionally extracts the sidecar
+        JSON and stashes it on ctx.handler_email_metadata — an OUTPUT slot
+        on CodegenContext the orchestrator reads after this future resolves.
         """
         from models.adapter import get_llm, invoke
         from models.agent_models import get_agent_model
@@ -159,6 +198,13 @@ class HandlerGenerator(Generator):
         return self.parse(result.content), result.input_tokens, result.output_tokens
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
+        # Phase 2 bridge: step 6 rewrites static_validation to operate on
+        # the parsed file bundle per-TS-file. Until then, pass the raw
+        # marker-delimited bundle through the legacy validator — which
+        # will mis-report a lot against TypeScript syntax, but keeps the
+        # pipeline callable end-to-end. The validator errors are used by
+        # the retry loop; step 6 replaces this block with real per-file
+        # checks.
         topics = ctx.plan.get("shopifyPlan", {}).get("webhookTopics", [])
         impl = ctx.plan.get("appContracts") or {}
         widget_catalog = impl.get("widgetApiCatalog") or []
@@ -182,14 +228,14 @@ class HandlerGenerator(Generator):
 
 def _extract_email_metadata(raw: str) -> Optional[Dict[str, Any]]:
     """
-    Pull the ```email-metadata``` fenced JSON block out of the handler agent's
-    raw response. Returns the parsed dict, or None when no sidecar was emitted
-    (handler does not call ctx.services.email.send) or the block could not
-    be parsed.
+    Pull the ```email-metadata``` fenced JSON block out of the handler
+    agent's raw response. Returns the parsed dict, or None when no sidecar
+    was emitted (handler does not call /services/email/send) or the block
+    could not be parsed.
 
     Parse failures are logged but do not raise — the pipeline falls back to
-    no starter content, which is recoverable (merchant fills in the Email tab
-    manually). A loud failure here would be worse than a soft one.
+    no starter content, which is recoverable (merchant fills in the Email
+    tab manually). A loud failure here would be worse than a soft one.
     """
     match = _EMAIL_META_FENCE_RE.search(raw)
     if not match:
@@ -223,13 +269,12 @@ def _build_jit_sections(
 
     Assembly order:
       1. Capability docs (registry-driven) — one block per declared
-         handlerCapabilities entry. This is where ctx.shopify.*, ctx.services.*,
-         ctx.http, ctx.storefront, and npm-package docs come from now.
-      2. SHOPIFY_REST_VS_GRAPHQL_GUIDE — injected only when BOTH shopify_rest
-         and shopify_graphql are declared. The choose-one decision guide has
-         no value for handlers that use only one.
-      3. Trigger-gated sections (webhook / state machine / cron batching /
-         widget / admin routing) — unchanged.
+         handlerCapabilities entry. This is where shopify.rest / graphql,
+         /services/* call patterns, and npm-package docs come from.
+      2. SHOPIFY_REST_VS_GRAPHQL_GUIDE — injected only when BOTH
+         shopify_rest and shopify_graphql are declared.
+      3. Trigger-gated sections (webhook / cron / state machine / cron
+         batching / widget / admin routing).
     """
     shopify = plan.get("shopifyPlan") or {}
     impl = plan.get("appContracts") or {}
@@ -249,9 +294,12 @@ def _build_jit_sections(
     if "shopify_rest" in declared and "shopify_graphql" in declared:
         sections.append(SHOPIFY_REST_VS_GRAPHQL_GUIDE)
 
-    # 3. Trigger-gated sections (unchanged).
+    # 3. Trigger-gated sections.
     if shopify.get("webhookTopics"):
         sections.append(HARNESS_SECTION_WEBHOOK)
+
+    if shopify.get("cronSchedule"):
+        sections.append(HARNESS_SECTION_CRON)
 
     if sm and isinstance(sm, dict):
         sections.append(HARNESS_SECTION_STATE_MACHINE)
@@ -262,8 +310,8 @@ def _build_jit_sections(
     if platform_api_catalog:
         sections.append(HARNESS_SECTION_WIDGET)
 
-    # widgetApiCatalog == [] means storefront app with no backend widget routes →
-    # widget reads exclusively from Shopify's public storefront API
+    # widgetApiCatalog == [] means storefront app with no backend widget
+    # routes → widget reads exclusively from Shopify's public storefront API
     if impl.get("widgetApiCatalog") is not None and not platform_api_catalog:
         sections.append(HARNESS_SECTION_WIDGET_STOREFRONT)
 
@@ -279,8 +327,8 @@ def _build_jit_sections(
 
 def _format_webhook_contract(plan: Dict[str, Any]) -> str:
     """
-    Show the webhookContract so the handler knows exactly what payload fields to
-    read and what data it must resolve before writing to the DB.
+    Show the webhookContract so the handler knows exactly what payload
+    fields to read and what data it must resolve before writing to the DB.
     """
     contract = (plan.get("appContracts") or {}).get("webhookContract")
     if not contract:
@@ -294,20 +342,22 @@ def _format_webhook_contract(plan: Dict[str, Any]) -> str:
     ]
     if payload_fields:
         lines.append(
-            f"Payload fields to read from ctx.payload: {', '.join(payload_fields)}"
+            "Payload fields to read from (req.body.payload as <yourShape>): "
+            + ", ".join(payload_fields)
         )
     if must_produce:
         lines.append(f"Handler must resolve before DB writes: {must_produce}")
     lines.append(
         "Use the Shopify API context below to decide which REST/GraphQL calls\n"
-        "to make in order to produce the required data.\n"
+        "to make via the shopify client (see capability docs above) to produce\n"
+        "the required data.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
     return "\n".join(lines)
 
 
 def _format_cron_contract(plan: Dict[str, Any]) -> str:
-    """Show the cronContract so the cron handler knows what to resolve per batch item."""
+    """Show the cronContract so the cron job knows what to resolve per item."""
     contract = (plan.get("appContracts") or {}).get("cronContract")
     if not contract:
         return ""
@@ -316,16 +366,17 @@ def _format_cron_contract(plan: Dict[str, Any]) -> str:
         return ""
     return (
         "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "CRON CONTRACT:\n"
+        "CRON CONTRACT (resolved inside the `jobs.main` body in src/routes/cron.ts):\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Handler must resolve per batch item: {must_produce}\n"
+        f"Each iteration must resolve: {must_produce}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
 
 
 def _format_db_contracts(plan: Dict[str, Any]) -> str:
     """
-    Show the DB schema so the handler uses exact table and column names in SQL.
+    Show the DB schema so the handler uses exact table and column names
+    in SQL.
     """
     contracts = (plan.get("appContracts") or {}).get("dbContracts") or []
     if not contracts:
@@ -345,35 +396,45 @@ def _format_db_contracts(plan: Dict[str, Any]) -> str:
 
 def _format_widget_catalog(catalog: List[Dict[str, Any]]) -> str:
     """
-    Show the widget API catalog with requestShape and responseShape so the handler
-    destructures ctx.widgetBody with the exact field names and returns the exact shape.
+    Show the widget API catalog with requestShape and responseShape so the
+    handler destructures req.body with the exact field names and returns
+    the exact shape.
     """
     if not catalog:
         return ""
-    lines = ["\nWidget API catalog (implement each route exactly as specified):"]
+    lines = [
+        "\nWidget API catalog (implement each route in src/routes/widget.ts):"
+    ]
     for e in catalog:
+        method = (e.get("method") or "POST").upper()
+        path = e.get("path", "")
         req = e.get("requestShape", "{}")
         resp = e.get("responseShape", "{}")
-        lines.append(f"  {e['method']} {e['path']}")
-        lines.append(f"    receive:  const {{ ... }} = ctx.widgetBody  →  {req}")
+        lines.append(f"  {method} /widget{path}")
+        lines.append(f"    receive:  const {{ ... }} = req.body  →  {req}")
         lines.append(f"    return:   {resp}")
     return "\n".join(lines) + "\n"
 
 
 def _format_admin_catalog(plan: Dict[str, Any]) -> str:
     """
-    Show the admin API catalog with requestShape and responseShape so the handler
-    destructures ctx.adminBody with the exact field names and returns the exact shape.
+    Show the admin API catalog with requestShape and responseShape so the
+    handler destructures req.body with the exact field names and returns
+    the exact shape.
     """
     catalog = (plan.get("appContracts") or {}).get("adminApiCatalog") or []
     if not catalog:
         return ""
-    lines = ["\nAdmin UI catalog (implement each route exactly as specified):"]
+    lines = [
+        "\nAdmin UI catalog (implement each route in src/routes/admin.ts):"
+    ]
     for e in catalog:
+        method = (e.get("method") or "POST").upper()
+        path = e.get("path", "")
         req = e.get("requestShape", "{}")
         resp = e.get("responseShape", "{}")
-        lines.append(f"  {e.get('method', 'POST')} {e['path']}")
-        lines.append(f"    receive:  const {{ ... }} = ctx.adminBody  →  {req}")
+        lines.append(f"  {method} /admin{path}")
+        lines.append(f"    receive:  const {{ ... }} = req.body  →  {req}")
         lines.append(f"    return:   {resp}")
     return "\n".join(lines) + "\n"
 
@@ -388,8 +449,9 @@ def _format_api_context(api_context: Any) -> str:
     return (
         "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "SHOPIFY API CONTEXT — webhook payload shapes and resource schemas.\n"
-        "Use this to decide which REST/GraphQL calls to make and how to\n"
-        "traverse the response to produce the data declared in the contracts above.\n"
+        "Use this to decide which REST/GraphQL calls to make (via the\n"
+        "shopify client from ../lib/shopify.js) and how to traverse the\n"
+        "response to produce the data declared in the contracts above.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{api_context}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -397,7 +459,7 @@ def _format_api_context(api_context: Any) -> str:
 
 
 def _format_platform_gaps(plan: Dict[str, Any]) -> str:
-    """Render platformGaps so the handler knows what to do instead of missing ctx capabilities."""
+    """Render platformGaps so the handler knows how to handle missing capabilities."""
     gaps = (plan.get("appContracts") or {}).get("platformGaps") or []
     if not gaps:
         return ""
@@ -407,19 +469,53 @@ def _format_platform_gaps(plan: Dict[str, Any]) -> str:
     return f"\nPlatform limitations (implement exactly as stated):\n{lines}\n"
 
 
-def _format_prior_handler(prior_code: Any) -> str:
-    """Inject the currently deployed handler.js for revision runs."""
-    if not prior_code:
+def _format_prior_handler(prior: Any) -> str:
+    """
+    Inject the currently deployed handler for revision runs.
+
+    Accepts either:
+      - str — legacy single-file handler.js (pre-phase-2 bundles). Rendered
+        as-is under a single pseudo-path.
+      - List[{path, contents}] — new file bundle. Rendered with each
+        file under its ===FILE:=== / ===END=== markers so the model sees
+        the exact shape it will re-emit.
+
+    Empty / None → no section (first-run generation, nothing to revise).
+    """
+    if not prior:
+        return ""
+    rendered = _render_prior_files(prior)
+    if not rendered:
         return ""
     return (
         "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "REVISION RUN — currently deployed handler.js:\n"
-        "(Apply the merchant feedback above as targeted changes to this code.\n"
-        " Preserve all logic that is NOT related to the reported issue.)\n"
+        "REVISION RUN — currently deployed handler source:\n"
+        "(Apply the merchant feedback above as targeted changes to these files.\n"
+        " Preserve all logic that is NOT related to the reported issue.\n"
+        " Re-emit every file via its own ===FILE:===/===END=== markers.)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{prior_code}\n"
+        f"{rendered}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
+
+
+def _render_prior_files(prior: Any) -> str:
+    """Render prior_handler_code as a marker-style file listing, or fall back."""
+    if isinstance(prior, list):
+        parts: List[str] = []
+        for entry in prior:
+            if not isinstance(entry, dict):
+                continue
+            path = entry.get("path") or "src/routes/handler.ts"
+            contents = entry.get("contents") or ""
+            parts.append(f"===FILE: {path}===\n{contents}\n===END===")
+        return "\n".join(parts)
+    if isinstance(prior, str):
+        # Legacy single-file bundle — show it as one pseudo-file. The model
+        # will still re-emit via the new marker format because the output-
+        # format section of HARNESS_BASE mandates it.
+        return f"===FILE: src/routes/legacy-handler.js===\n{prior}\n===END==="
+    return ""
 
 
 def _format_edge_cases(plan: Dict[str, Any]) -> str:
@@ -443,18 +539,30 @@ def _format_quality_checklist(plan: Dict[str, Any]) -> str:
     impl = plan.get("appContracts") or {}
 
     checks = [
-        "Every DB write handles the case where the record already exists (UPSERT or check-then-insert where appropriate)",
-        "Every customer-facing response includes meaningful data or error messages, not empty objects",
+        "Every DB write handles the case where the record already exists "
+        "(UPSERT or check-then-insert where appropriate)",
+        "Every customer-facing response includes meaningful data or error "
+        "messages, not empty objects",
     ]
 
     if shopify.get("webhookTopics"):
         checks.append(
-            "Webhook handler is idempotent — duplicate deliveries of the same event do not create duplicate records or actions"
+            "Webhook handler is idempotent — the template's processed_webhooks "
+            "gate dedupes the envelope, but business INSERTs still use "
+            "ON CONFLICT guards so partial-failure retries don't duplicate"
         )
 
     if impl.get("widgetApiCatalog"):
         checks.append(
-            "Widget routes return useful error responses (not just empty {}) when data is missing or the request is invalid"
+            "Widget routes return useful error responses (not just empty {}) "
+            "when data is missing or the request is invalid"
+        )
+
+    if shopify.get("cronSchedule"):
+        checks.append(
+            "Cron jobs are idempotent — the template runs each job up to 3 "
+            "times on failure; side effects must be guarded so a retry does "
+            "not double-execute work the previous attempt already completed"
         )
 
     lines = "\n".join(f"  ✓ {c}" for c in checks)
@@ -484,26 +592,34 @@ def _format_routing_checklist(
 
     lines = [
         "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "ROUTING CHECKLIST — your handler MUST include ALL of these branches:",
+        "ROUTING CHECKLIST — your handler MUST register ALL of these routes:",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
 
     if widget_catalog:
-        lines.append("Inside  if (ctx.trigger === 'widget') { ... }:")
+        lines.append("In src/routes/widget.ts:")
         for entry in widget_catalog:
+            method = (entry.get("method") or "POST").lower()
             path = entry.get("path", "")
             resp = entry.get("responseShape", "")
-            lines.append(f"  ✓ if (ctx.widgetPath === '{path}')  →  return {resp}")
+            lines.append(
+                f'  ✓ widgetRouter.{method}("{path}", async (req, res) => '
+                f"…)  →  res.json({resp})"
+            )
 
     if admin_catalog:
-        lines.append("Inside  if (ctx.trigger === 'admin') { ... }:")
+        lines.append("In src/routes/admin.ts:")
         for entry in admin_catalog:
+            method = (entry.get("method") or "POST").lower()
             path = entry.get("path", "")
             resp = entry.get("responseShape", "")
-            lines.append(f"  ✓ if (ctx.adminPath === '{path}')  →  return {resp}")
+            lines.append(
+                f'  ✓ adminRouter.{method}("{path}", async (req, res) => '
+                f"…)  →  res.json({resp})"
+            )
 
     lines.append(
-        "Validation rejects the handler if ANY of these branches is missing.\n"
+        "Validation rejects the handler if ANY of these routes is missing.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
     return "\n".join(lines) + "\n"
