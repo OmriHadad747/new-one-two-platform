@@ -147,9 +147,10 @@ def validate_architect_plan(
       13. stateMachine.unknownSentinel must be the string "null" when stateMachine is set.
       13b.stateMachine must have entity, trackedField, and transitions when non-null.
       13c.stateMachine transitions must not use numeric range labels (positive/negative/zero/high/low etc.).
-      14. dbContracts entries must include a tenant_id column. Money-holding
-          columns (names ending _cents/_amount/_price/_total/…) must use BIGINT,
-          not INTEGER — INTEGER overflows at ~$21.47M.
+      14. dbContracts entries must NOT include a tenant_id column (schema
+          isolation replaces RLS). Money-holding columns (names ending
+          _cents/_amount/_price/_total/…) must use BIGINT, not INTEGER —
+          INTEGER overflows at ~$21.47M.
       15. storefront apps must declare widgetTargetTemplates (at least one valid template).
       16. cronBatching, when non-null, must include required=true.
       17. handlerCapabilities, when present, must be an array of strings drawn
@@ -403,10 +404,17 @@ def validate_architect_plan(
         table = contract.get("table", "?")
         columns = contract.get("columns") or []
         col_names = {c.get("name", "").lower() for c in columns}
-        if "tenant_id" not in col_names:
+        # Schema isolation replaces RLS (each tenant has its own Postgres
+        # schema; the deployer pins search_path at runtime). A tenant_id
+        # column is drift from the new model — reject it early, before it
+        # reaches the migration generator or the platform-back SQL
+        # validator.
+        if "tenant_id" in col_names:
             errors.append(
-                f"dbContracts table '{table}' is missing tenant_id column — "
-                "every table must include tenant_id UUID NOT NULL for RLS tenant isolation"
+                f"dbContracts table '{table}' declares a tenant_id column — "
+                "schema isolation replaces row-level tenant_id. Drop the "
+                "column; bare names resolve into the tenant's schema via "
+                "search_path at deploy time."
             )
         for col in columns:
             name = (col.get("name") or "").lower()
@@ -426,7 +434,7 @@ def validate_architect_plan(
             if name in _SHOPIFY_ID_COLS and base == "UUID":
                 errors.append(
                     f"dbContracts table '{table}' column '{name}' is a Shopify entity ID — "
-                    f"use BIGINT (or TEXT), NEVER UUID. Only tenant_id and internal primary "
+                    f"use BIGINT (or TEXT), NEVER UUID. Internal primary "
                     f"keys use UUID."
                 )
             if base == "INTEGER" and any(name.endswith(s) for s in _MONEY_COL_SUFFIXES):

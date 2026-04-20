@@ -36,7 +36,7 @@ handlerCapabilities: Closed-vocabulary list of platform services and npm
   entries in the AVAILABLE list above. Unknown strings fail validation.
 
   RULES:
-  - Declare ONLY what the handler will actually call or require(). Over-
+  - Declare ONLY what the handler will actually call or import. Over-
     declaration wastes prompt budget; under-declaration ships a handler
     missing docs for the API it needs.
   - Declare "shopify_rest" and/or "shopify_graphql" based on which Shopify
@@ -45,20 +45,23 @@ handlerCapabilities: Closed-vocabulary list of platform services and npm
   - Declare "files" when the handler produces a downloadable artefact.
     Declaring a document-format npm package (npm:pdfkit / npm:exceljs /
     npm:csv) without "files" is inconsistent — the output still needs
-    ctx.services.files.upload.
+    the /services/files/upload service to hand the buffer to.
   - Declare "http" only for non-Shopify external services — never for
     Shopify REST/GraphQL (those belong under shopify_rest / shopify_graphql).
-  - Each npm:* entry implies the corresponding package in top-level
-    npmPackages. Declare only what require()-d code actually uses.
+  - npm:* entries gate whether the handler may import the package — all
+    packages are pre-installed in the handler template's package.json,
+    so the architect's declaration is the ONLY gate deciding which
+    imports are legal in the generated TypeScript.
   - Keep [] only when the handler needs nothing beyond the always-on
-    surface (ctx.db, ctx.logger, ctx.tenantId, ctx.trigger) — rare."""
+    surface (`sql`, `callPlatformService`, req.platform, console logging)
+    — rare."""
 
 
 EMAIL_SPEC = """\
 emailSpec: Architect output field describing the email the handler will send.
   See the "email" entry in the AVAILABLE capabilities list above for what
-  ctx.services.email.send actually does — this field only captures the
-  architect's classification + intent for that send.
+  the /services/email/send platform service actually does — this field
+  only captures the architect's classification + intent for that send.
 
   Shape:
     null if "email" is not in handlerCapabilities.

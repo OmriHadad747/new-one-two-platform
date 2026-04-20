@@ -31,10 +31,13 @@ dbContracts: Authoritative typed table definitions. The migration generator prod
   themselves.
 
   COLUMN RULES (violations cause validation failures at deploy time):
-  - Every table MUST include tenant_id UUID NOT NULL — no exceptions.
+  - Do NOT include a tenant_id column. Tenant isolation is schema-level
+    (each tenant has its own Postgres schema; migrations run with
+    search_path pinned to it) — a tenant_id column is redundant and
+    the validator rejects it as drift from the new isolation model.
   - Shopify entity IDs (variant_id, product_id, order_id, customer_id,
     inventory_item_id, location_id) are numeric — use BIGINT or TEXT, NEVER UUID.
-  - Only tenant_id and internal record primary keys (id) use UUID.
+  - Internal record primary keys (id) use UUID.
   - customer_id on storefront-facing tables MUST be BIGINT NULL (nullable).
     Storefront widget visitors can be guests; customerId is null for guests.
   - State-tracking columns MUST be NULLABLE when stateMachine.unknownSentinel is "null".
@@ -59,9 +62,11 @@ dbContracts: Authoritative typed table definitions. The migration generator prod
 WEBHOOK_CONTRACT = """\
 webhookContract: Required when webhookTopics is non-empty. Declares what the handler
   must have ready before writing to the DB.
-  - payloadFields: specific top-level fields from ctx.payload that the handler reads.
-    List ONLY fields the handler actually uses — every field listed must appear in
-    handlerMustProduce. Do not list fields that are read but then discarded.
+  - payloadFields: specific top-level fields from the Shopify webhook payload
+    (arriving as `req.body.payload` in src/routes/webhook.ts) that the handler
+    reads. List ONLY fields the handler actually uses — every field listed
+    must appear in handlerMustProduce. Do not list fields that are read but
+    then discarded.
   - handlerMustProduce: a plain English statement of what data the handler must resolve
     before executing DB writes. Every field named in payloadFields must be referenced here.
     State WHAT is needed — do NOT specify HOW to fetch it from Shopify. The Handler agent

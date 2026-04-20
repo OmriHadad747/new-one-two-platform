@@ -52,14 +52,22 @@ feasibility: Is this app BUILDABLE with the platform's capability surface?
   handlerCapabilities / widgetCapabilities / adminCapabilities:
 
     Always available (no declaration needed — every app gets these):
-      - PostgreSQL (ctx.db) — per-tenant relational state, full SQL, RLS-scoped to ctx.tenantId
-      - Structured logging (ctx.logger), tenant scoping (ctx.tenantId),
-        trigger routing (ctx.trigger, ctx.payload, ctx.widget*/ctx.admin*)
+      - PostgreSQL (`sql` tagged template from ../lib/db.js) — per-tenant
+        state, full SQL. Each tenant has its own schema; search_path is
+        pinned at deploy time so bare table names Just Work.
+      - Express trust-domain routers: /admin/*, /webhook/*, /widget/*.
+        req.platform carries { tenantId, appId, shopDomain, requestId,
+        accessToken? } on every verified call.
+      - Structured stdout logs (console.log/warn/error → Cloud Logging).
+      - Cron dispatcher: architect-declared cronSchedule becomes a
+        `jobs` map in src/routes/cron.ts; the template's cron runner
+        polls a queue, retries failures, and handles multi-instance
+        safety via FOR UPDATE SKIP LOCKED.
 
     Handler platform services — declare in handlerCapabilities when the handler uses them:
 """
     + render_registry(HANDLER_SERVICES, indent="      ")
-    + "\n\n    Handler npm packages — declare in handlerCapabilities when the handler require()s them:\n"
+    + "\n\n    Handler npm packages — declare in handlerCapabilities when the handler imports them:\n"
     + render_registry(HANDLER_NPM_PACKAGES, indent="      ")
     + "\n\n    Widget client-side APIs — declare in widgetCapabilities (storefront archetypes only):\n"
     + render_registry(WIDGET_CAPABILITIES, indent="      ")

@@ -91,14 +91,12 @@ def build_output_shape(archetype: str) -> str:
         '        "table": "<table_name>",\n'
         '        "columns": [\n'
         '          { "name": "id",               "type": "UUID",        "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()" },\n'
-        '          { "name": "tenant_id",        "type": "UUID",        "constraints": "NOT NULL" },\n'
         '          { "name": "<string_column>",  "type": "TEXT",        "constraints": "NOT NULL" },\n'
         '          { "name": "<numeric_column>", "type": "BIGINT",      "constraints": "NULL" },\n'
         '          { "name": "created_at",       "type": "TIMESTAMPTZ", "constraints": "NOT NULL DEFAULT now()" }\n'
         "        ],\n"
         '        "uniqueConstraint": null,\n'
-        '        "indexes": ["tenant_id"],\n'
-        '        "rls": true\n'
+        '        "indexes": ["<string_column>"]\n'
         "      }\n"
         "    ],\n"
         '    "webhookContract": null,\n'
