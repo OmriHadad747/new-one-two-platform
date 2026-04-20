@@ -1,9 +1,6 @@
 import { sql } from "@platform-back/db";
 import { logger } from "@platform-back/logger";
-import {
-  createServiceAccount,
-  grantCloudRunInvoker,
-} from "./iam-ops.js";
+import { createServiceAccount, grantCloudRunInvoker } from "./iam-ops.js";
 import {
   handlerSaEmail,
   handlerSaLocalPart,
@@ -132,7 +129,7 @@ export async function provisionHandlerSa(
  * deployToCloudRun returns.
  *
  * Source of platform-back's SA email:
- *   - Env: PLATFORM_BACK_SA_EMAIL (set in prod via Cloud Run service
+ *   - Env: PLATFORM_SA_EMAIL (set in prod via Cloud Run service
  *     account metadata, or explicitly in deploy/api.yaml)
  *   - In dev (DEPLOY_MODE=local): no-op, since local platform-back
  *     calls handlers without minting a real ID token.
@@ -148,10 +145,10 @@ export async function grantPlatformBackInvokerOnHandler(
     return;
   }
 
-  const platformSa = process.env["PLATFORM_BACK_SA_EMAIL"];
+  const platformSa = process.env["PLATFORM_SA_EMAIL"];
   if (!platformSa) {
     throw new Error(
-      "PLATFORM_BACK_SA_EMAIL is not set — cannot grant Cloud Run invoker " +
+      "PLATFORM_SA_EMAIL is not set — cannot grant Cloud Run invoker " +
         "to platform-back. In prod this is required so /admin/* and /webhook/* " +
         "proxy calls can authenticate to the handler.",
     );

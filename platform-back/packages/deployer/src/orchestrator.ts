@@ -380,7 +380,7 @@ function buildHandlerEnv(input: StartDeployInput): Record<string, string> {
     DATABASE_URL: requireEnv("DATABASE_URL"),
     PLATFORM_URL: requireEnv("PLATFORM_URL"),
     EXPECTED_AUDIENCE: requireEnv("PLATFORM_URL"),
-    PLATFORM_SA_EMAIL: process.env["PLATFORM_BACK_SA_EMAIL"] ?? "",
+    PLATFORM_SA_EMAIL: process.env["PLATFORM_SA_EMAIL"] ?? "",
     ENABLE_CRON_RUNNER: hasCronRoute ? "true" : "false",
     CRON_NOTIFY_CHANNEL: `cron_tick_${input.appId.replace(/-/g, "_")}`,
     ...(input.handlerEnv ?? {}),

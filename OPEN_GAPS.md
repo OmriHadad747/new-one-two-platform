@@ -19,21 +19,9 @@ None required for admin-only. Add when the first archetype that needs them lands
 
 ## Deployment / infra adjustments
 
-### Enable pg_cron at the Postgres instance level
-- The migration now runs `CREATE EXTENSION IF NOT EXISTS pg_cron`, but the extension itself requires `shared_preload_libraries` to include `pg_cron` at the server level. That cannot be set from SQL.
-- **Cloud SQL (Postgres):** set `cloudsql.enable_pg_cron=on` via gcloud or Terraform, then restart the instance. The extension goes live on restart; migration 0001 picks it up.
-- **Self-hosted:** edit `postgresql.conf`: `shared_preload_libraries = 'pg_cron'` and restart.
-- **Verification:** `SELECT * FROM pg_extension WHERE extname = 'pg_cron';` returns one row once the flag is on and the migration has run.
-- **Until this is enabled:** cron-archetype apps deploy successfully but never tick (the `schedule_cron` step will fail when `cron.schedule` is called against a DB without the extension).
-
-### Cloud Run handler ingress
-- Current: `INGRESS_TRAFFIC_ALL` with IAM-only authorization (Cloud Run checks invoker role on every request).
-- **Action:** add a one-line comment in `platform-back/packages/deployer/src/cloud-run-ops.ts` explaining why IAM alone is the security boundary, so future readers don't "tighten" it without understanding the model.
-- **Optional:** tighten to `ingress=internal` + VPC connector if handlers never need direct public callers. Not required for MVP.
-
 ### platform-back SA email env var
-- `platform-back/packages/deployer/src/orchestrator.ts:319` reads `PLATFORM_BACK_SA_EMAIL` from env and passes it to handlers as `PLATFORM_SA_EMAIL` (used by `verify-platform` middleware to enforce caller identity).
-- **Action:** document required prod env vars in `platform-back/README.md` — at minimum: `DATABASE_URL`, `PLATFORM_URL`, `PLATFORM_BACK_SA_EMAIL`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `JWT_SECRET`, `RESEND_API_KEY`, `EMAIL_UNSUBSCRIBE_SECRET`, `GCP_PROJECT`.
+- `platform-back/packages/deployer/src/orchestrator.ts` reads `PLATFORM_SA_EMAIL` from env and injects it into every handler (used by `verify-platform` middleware to check caller identity).
+- **Action:** document required prod env vars in `platform-back/README.md` — at minimum: `DATABASE_URL`, `PLATFORM_URL`, `PLATFORM_SA_EMAIL`, `WEBHOOK_GATEWAY_URL`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `JWT_SECRET`, `RESEND_API_KEY`, `EMAIL_UNSUBSCRIBE_SECRET`, `GCP_PROJECT`.
 - **Missing in prod = silent 403** on every `/services/*` call until it's set; fail-fast at boot (already done for a few vars, not all) would surface it earlier.
 
 ## Test coverage / CI
