@@ -1,6 +1,6 @@
-# Tech Debt
+# Tech Debt — Post-MVP
 
-Items that are known gaps but deliberately deferred. Each entry has the affected files and what needs to happen.
+Items that are known gaps but deliberately deferred until after MVP. Each entry has the affected files and what needs to happen.
 
 ---
 
@@ -121,27 +121,6 @@ Open one MCP session at the start of `_phase_architect` (or at the crew entry po
 - `generator/subagents/handler_agent.py` — use session context in `validate()`
 
 **Complexity:** Medium — requires threading a session handle through the pipeline without breaking the sync/async boundary that `_run_async` already manages.
-
----
-
-## TD-009 — Cron scheduling: Cloud Scheduler integration not yet implemented
-
-**Current state**
-`cronSchedule` is generated, stored in the DB, and passed through the deployer metadata — but
-nothing ever fires it. Cron apps deploy successfully but never execute.
-
-**What to do**
-In `platform/packages/deployer/src/index.ts`, after writing the deployed function, call
-`@google-cloud/scheduler` to create/update a Cloud Scheduler job pointing at
-`${functionUrl}/invoke` with a synthetic payload `{ topic: 'cron', tenantId, appId }`.
-On redeploy: update the existing job. On app delete: delete the job.
-Local dev (`DEPLOY_MODE=local`): skip Scheduler creation entirely — trigger `/invoke` manually.
-
-When this lands, the harness-runtime `InvokeRequestSchema` (apps/harness-runtime/src/server.ts) will need to accept the cron-synthetic shape — either as a schema union or by making the Shopify-specific fields (`shopifyWebhookId`, `rawBodyBase64`, `headers`, `receivedAt`) optional with `topic === "cron"` as the discriminator.
-
-**Scale ceiling:** Cloud Scheduler supports 4,000 jobs/project. Fine for MVP and growth.
-Beyond that, migrate to a single internal cron-dispatcher service that polls the DB and
-enqueues to the existing BullMQ queue — same worker, no new execution infrastructure.
 
 ---
 

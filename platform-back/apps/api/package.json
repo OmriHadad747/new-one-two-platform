@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@platform-back/crypto": "workspace:*",
     "@platform-back/db": "workspace:*",
     "@platform-back/email": "workspace:*",
     "@platform-back/logger": "workspace:*",

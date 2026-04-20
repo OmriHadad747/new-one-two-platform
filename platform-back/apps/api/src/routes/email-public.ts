@@ -1,8 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import {
-  getTenantBasics,
-  insertEmailSuppression,
-} from "@platform-back/db";
+import { getTenantBasics, insertEmailSuppression } from "@platform-back/db";
 import { verifyUnsubscribeToken } from "@platform-back/email";
 import { logger } from "@platform-back/logger";
 

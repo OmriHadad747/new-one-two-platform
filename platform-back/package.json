@@ -2,9 +2,9 @@
   "name": "platform-back",
   "private": true,
   "scripts": {
-    "build": "tsc -b apps/api packages/email",
-    "typecheck": "tsc -b apps/api packages/email",
-    "clean": "tsc -b apps/api packages/email --clean",
+    "build": "tsc -b apps/api packages/email packages/deployer",
+    "typecheck": "tsc -b apps/api packages/email packages/deployer",
+    "clean": "tsc -b apps/api packages/email packages/deployer --clean",
     "dev": "pnpm --filter @platform-back/api dev"
   },
   "devDependencies": {

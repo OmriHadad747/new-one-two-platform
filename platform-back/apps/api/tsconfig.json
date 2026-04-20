@@ -10,6 +10,7 @@
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"],
   "references": [
+    { "path": "../../packages/crypto" },
     { "path": "../../packages/db" },
     { "path": "../../packages/email" },
     { "path": "../../packages/logger" },

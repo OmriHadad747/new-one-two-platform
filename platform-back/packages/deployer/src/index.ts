@@ -1,0 +1,49 @@
+// Public surface of @platform-back/deployer. Each sub-phase adds to this
+// barrel; the orchestrator (sub-phase D) ties them together.
+
+export {
+  cloudRunServiceName,
+  cloudRunServicePath,
+  dockerImageName,
+  handlerSaEmail,
+  handlerSaLocalPart,
+  sanitizeShopPrefix,
+  GCP_PROJECT_VALUE,
+  GCP_REGION_VALUE,
+  DOCKER_REGISTRY_VALUE,
+} from "./service-namer.js";
+
+export {
+  deployToCloudRun,
+  deleteCloudRunService,
+  type CloudRunDeployInput,
+  type CloudRunDeployResult,
+} from "./cloud-run-ops.js";
+
+export {
+  buildAndPushImage,
+  type BuildImageInput,
+  type BuildImageResult,
+} from "./build-image.js";
+
+export {
+  writeHandlerSaEmail,
+  upsertDeployedFunction,
+  type UpsertDeployedFunctionInput,
+} from "./db-writer.js";
+
+export {
+  createServiceAccount,
+  deleteServiceAccount,
+  grantCloudRunInvoker,
+  type CreateServiceAccountInput,
+  type CreateServiceAccountResult,
+} from "./iam-ops.js";
+
+export {
+  provisionHandlerSa,
+  grantPlatformBackInvokerOnHandler,
+  nextHandlerSaCounter,
+  type ProvisionHandlerSaInput,
+  type ProvisionHandlerSaResult,
+} from "./sa-provisioner.js";

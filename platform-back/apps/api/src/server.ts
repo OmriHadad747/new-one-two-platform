@@ -9,6 +9,7 @@ import { adminRoutes } from "./routes/admin.js";
 import { emailRoutes } from "./routes/email.js";
 import { emailPublicRoutes } from "./routes/email-public.js";
 import { emailServiceRoutes } from "./routes/services/email.js";
+import { oauthRoutes } from "./routes/oauth.js";
 import { resendWebhookRoutes } from "./routes/webhook/resend.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3010", 10);
@@ -60,6 +61,7 @@ export async function buildServer() {
   await app.register(emailServiceRoutes, { prefix: "/services/email" });
   await app.register(emailRoutes, { prefix: "/email" });
   await app.register(emailPublicRoutes, { prefix: "/email/u" });
+  await app.register(oauthRoutes, { prefix: "/oauth" });
   await app.register(resendWebhookRoutes, { prefix: "/webhook" });
 
   app.setNotFoundHandler((_req, reply) => {

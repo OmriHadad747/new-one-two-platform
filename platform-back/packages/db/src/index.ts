@@ -5,7 +5,13 @@ export {
   type AppRecord,
   type ResolvedHandler,
 } from "./handlers.js";
-export { getTenantBasics, type TenantBasics } from "./tenants.js";
+export {
+  createTenant,
+  getTenantBasics,
+  getTenantByShopDomain,
+  updateTenantAccessToken,
+  type TenantBasics,
+} from "./tenants.js";
 export {
   getOrCreateUsageRecord,
   incrementUsage,
