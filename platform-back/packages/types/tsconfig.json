@@ -6,6 +6,5 @@
     "composite": true,
     "incremental": true
   },
-  "include": ["src"],
-  "references": [{ "path": "../logger" }, { "path": "../types" }]
+  "include": ["src"]
 }

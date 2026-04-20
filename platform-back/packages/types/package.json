@@ -1,5 +1,5 @@
 {
-  "name": "@platform-back/db",
+  "name": "@platform-back/types",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,10 +8,5 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
-  },
-  "dependencies": {
-    "@platform-back/logger": "workspace:*",
-    "@platform-back/types": "workspace:*",
-    "postgres": "^3.4.4"
   }
 }

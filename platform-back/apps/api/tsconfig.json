@@ -11,6 +11,8 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     { "path": "../../packages/db" },
-    { "path": "../../packages/logger" }
+    { "path": "../../packages/email" },
+    { "path": "../../packages/logger" },
+    { "path": "../../packages/types" }
   ]
 }

@@ -116,15 +116,13 @@ async function adminProxyHandler(
   }
 
   // ── 3. Build target URL and forward ──────────────────────────────────────
-  // Decision Q2=b: we forward the full /admin/<path> to the handler so the
+  // we forward the full /admin/<path> to the handler so the
   // handler can route inbound trust domains by URL prefix.
   const targetUrl = `${resolved.functionUrl}/admin/${subPath}`;
-  const rawBody =
-    request.body instanceof Buffer
-      ? request.body
-      : request.body === undefined || request.body === null
-        ? undefined
-        : Buffer.from(JSON.stringify(request.body));
+  // fastify-raw-body captures the original bytes before JSON parsing.
+  // Forwarding those verbatim preserves key order, whitespace, and any
+  // exact-wire-format expectations the handler may have.
+  const rawBody = (request as { rawBody?: Buffer }).rawBody;
   const contentType = request.headers["content-type"];
 
   log.debug(

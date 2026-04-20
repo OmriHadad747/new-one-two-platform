@@ -1,5 +1,5 @@
 {
-  "name": "@platform-back/db",
+  "name": "@platform-back/email",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@platform-back/db": "workspace:*",
     "@platform-back/logger": "workspace:*",
     "@platform-back/types": "workspace:*",
-    "postgres": "^3.4.4"
+    "mjml": "^4.15.3",
+    "resend": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/mjml": "^4.7.4"
   }
 }

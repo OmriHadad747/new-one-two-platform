@@ -1,9 +1,15 @@
 import Fastify from "fastify";
+import rawBodyPlugin from "fastify-raw-body";
 import { closeDb } from "@platform-back/db";
 import { logger } from "@platform-back/logger";
 import { ErrorCode, errorResponse } from "./lib/error-response.js";
 import { installCors, parseAllowedOrigins } from "./plugins/cors.js";
+import { registerAuthHook } from "./plugins/auth.js";
 import { adminRoutes } from "./routes/admin.js";
+import { emailRoutes } from "./routes/email.js";
+import { emailPublicRoutes } from "./routes/email-public.js";
+import { emailServiceRoutes } from "./routes/services/email.js";
+import { resendWebhookRoutes } from "./routes/webhook/resend.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3010", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -23,14 +29,17 @@ export async function buildServer() {
     genReqId: () => crypto.randomUUID(),
   });
 
-  // We forward request bodies byte-for-byte to handler containers, so we
-  // need the raw bytes — Fastify's default JSON parser would re-serialize
-  // and lose fidelity for handlers that care about exact wire format.
-  app.addContentTypeParser(
-    "*",
-    { parseAs: "buffer" },
-    (_req, body: Buffer, done) => done(null, body),
-  );
+  // Raw body capture — needed by routes that proxy bytes verbatim
+  // (admin edge → handler) and by routes that verify HMAC signatures
+  // over the original payload (Resend webhook). `runFirst: true` ensures
+  // the raw bytes are captured BEFORE Fastify's JSON parser turns them
+  // into objects. Other routes still get normal `request.body` parsing.
+  await app.register(rawBodyPlugin, {
+    field: "rawBody",
+    global: true,
+    encoding: false, // keep as Buffer
+    runFirst: true,
+  });
 
   const allowedOrigins = parseAllowedOrigins(process.env["ALLOWED_ORIGINS"]);
   if (NODE_ENV === "production" && allowedOrigins.length === 0) {
@@ -43,7 +52,15 @@ export async function buildServer() {
   // Health check — Cloud Run probes this; keep it before any auth.
   app.get("/health", async () => ({ ok: true }));
 
+  // Dashboard JWT auth hook (exempts /health, /admin, /services, /webhook,
+  // /oauth, /email/u — those have their own per-trust-domain auth).
+  registerAuthHook(app);
+
   await app.register(adminRoutes, { prefix: "/admin" });
+  await app.register(emailServiceRoutes, { prefix: "/services/email" });
+  await app.register(emailRoutes, { prefix: "/email" });
+  await app.register(emailPublicRoutes, { prefix: "/email/u" });
+  await app.register(resendWebhookRoutes, { prefix: "/webhook" });
 
   app.setNotFoundHandler((_req, reply) => {
     void reply
