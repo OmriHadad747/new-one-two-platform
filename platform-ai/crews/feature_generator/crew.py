@@ -35,10 +35,10 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 import contract.publisher as _contract_publisher
 from contract.validators import (
     Bundle,
-    DbMigration,
     EmailStarterContent,
     FeatureBundleMessage,
     FeatureExplanation,
+    GeneratedFile,
     GenerationMeta,
     GenerationRequest,
     HandlerModule,
@@ -881,17 +881,24 @@ def _publish_success(
     app_email_configs row (merchant edits are not overwritten). See
     MEMORY notifications-center tech debt for the drift-surfacing plan.
     """
-    import re
-
+    # Phase 2 bridge: handler_agent currently still returns a single code
+    # string (legacy shape); wrap it into one GeneratedFile so the new Bundle
+    # model constructs cleanly. Step 5 rewrites the generator to return a
+    # real List[GeneratedFile] and this bridge goes away.
     handler_code = artifacts.get("handler", "")
+    handler_files = [
+        GeneratedFile(path="src/routes/generated.ts", contents=handler_code)
+    ]
+    migration_sql = artifacts.get("migration", "")
     shopify_plan = plan.get("shopifyPlan", {})
     technical = explanation.get("technical", {})
 
     def _parse_npm_packages(code: str) -> list:
-        match = re.search(r"npmPackages\s*:\s*\[([^\]]*)\]", code)
+        import re as _re
+        match = _re.search(r"npmPackages\s*:\s*\[([^\]]*)\]", code)
         if not match:
             return []
-        return re.findall(r"""['"]([^'"]+)['"]""", match.group(1))
+        return _re.findall(r"""['"]([^'"]+)['"]""", match.group(1))
 
     app_contracts = plan.get("appContracts") or {}
 
@@ -918,12 +925,15 @@ def _publish_success(
             else None
         ),
         handlerModule=HandlerModule(
-            code=handler_code,
+            files=handler_files,
             webhookTopics=shopify_plan.get("webhookTopics", []),
             cronSchedule=shopify_plan.get("cronSchedule"),
             npmPackages=_parse_npm_packages(handler_code),
         ),
-        dbMigration=DbMigration(sql=artifacts.get("migration", "")),
+        dbMigration=GeneratedFile(
+            path="migrations/generated.sql",
+            contents=migration_sql,
+        ),
         explanation=FeatureExplanation(
             merchantFacing=explanation.get("merchantFacing", ""),
             technical=TechnicalExplanation(

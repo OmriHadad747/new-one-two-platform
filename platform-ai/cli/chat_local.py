@@ -947,13 +947,18 @@ def _build_bundle(
         "adminUiModule":         artifacts.get("admin_ui")  if is_admin_ui   else None,
         "widgetTargetTemplates": (app_contracts.get("widgetTargetTemplates") or None) if is_storefront else None,
         "handlerModule": {
-            "code":          handler_code,
+            # Phase 2 bridge: one-file wrapper around the legacy CommonJS blob.
+            # Step 5 replaces this with real multi-file output from handler_agent.
+            "files": [
+                {"path": "src/routes/generated.ts", "contents": handler_code},
+            ],
             "webhookTopics": shopify_plan.get("webhookTopics", []),
             "cronSchedule":  shopify_plan.get("cronSchedule"),
             "npmPackages":   _parse_npm(handler_code),
         },
         "dbMigration": {
-            "sql": artifacts.get("migration", ""),
+            "path": "migrations/generated.sql",
+            "contents": artifacts.get("migration", ""),
         },
         "explanation": {
             "merchantFacing": explanation.get("merchantFacing", ""),

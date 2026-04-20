@@ -1,9 +1,16 @@
 """
 Pydantic models mirroring the JSON Schema definitions in /contract/*.schema.json
-and the Zod schemas in platform/packages/pubsub-client/src/schemas.ts.
+and the Zod schemas in platform-back.
 
 Source of truth: /contract/*.schema.json
-When the contract changes, update this file, schemas.ts, and the JSON Schema files.
+When the contract changes, update this file and the JSON Schema files.
+
+Phase 2 shift (2026-04-20):
+  Generator output is now a file bundle ({path, contents}[]) matching the
+  platform-back deploy endpoint at POST /apps/:appId/deploy — instead of a
+  single CommonJS blob + ctx.* runtime harness. Field names kept in place so
+  the merchant-click-deploy flow (subscriber persists bundle, merchant clicks,
+  deployer reads) can adopt the new shape without cascading renames.
 """
 
 from __future__ import annotations
@@ -51,15 +58,37 @@ class ProgressEvent(BaseModel):
 # ─── FeatureBundleMessage ─────────────────────────────────────────────────────
 
 
+class GeneratedFile(BaseModel):
+    """
+    One file in the deploy bundle.
+
+    Mirrors GeneratedFileSchema in
+    platform-back/apps/api/src/routes/deploy.ts — deploy will reject anything
+    that doesn't fit these constraints, so generator static validation
+    enforces them up front:
+      - `path` is relative (no leading '/'), no '..' segments, ≤ 512 chars.
+      - `contents` ≤ 1 MiB (platform-back caps hard at this size).
+    """
+
+    path: str
+    contents: str
+
+
 class HandlerModule(BaseModel):
-    code: str
+    """
+    Handler artifact: TypeScript files layered onto the platform-back handler
+    template (src/routes/*.ts, optionally src/lib/*.ts) plus runtime metadata
+    the deployer consumes separately.
+
+    `files` contains ONLY generator-authored files — the template's hand-built
+    files (server.ts, middleware/, lib/db.ts, lib/platform-call.ts, etc.) ship
+    with every handler and MUST NOT appear here.
+    """
+
+    files: List[GeneratedFile]
     webhookTopics: List[str]
     cronSchedule: Optional[str] = None
     npmPackages: List[str] = []
-
-
-class DbMigration(BaseModel):
-    sql: str
 
 
 class TechnicalExplanation(BaseModel):
@@ -85,20 +114,20 @@ class EmailStarterContent(BaseModel):
 
 
 class Bundle(BaseModel):
-    widgetModule: Optional[str] = (
-        None  # storefront ES module (storefront_backend / storefront_backend_admin apps)
-    )
-    adminUiModule: Optional[str] = (
-        None  # admin panel ES module (storefront_backend_admin apps)
-    )
+    widgetModule: Optional[str] = None  # storefront ES module — Phase 4 rework
+    adminUiModule: Optional[str] = None  # admin panel ES module — Phase 4 rework
     widgetTargetTemplates: Optional[List[str]] = (
         None  # theme template pages the widget targets, e.g. ["product", "cart"]
     )
     handlerModule: HandlerModule
-    dbMigration: DbMigration
+    # dbMigration is a single .sql file under migrations/NNNN_*.sql — the
+    # deployer's SQL validator only accepts a narrow allow-list of constructs
+    # (CREATE TABLE/INDEX/POLICY, restricted ALTER TABLE, COMMENT ON,
+    # cron.schedule/unschedule). See platform-back/packages/deployer/src/sql-validator.ts.
+    dbMigration: GeneratedFile
     explanation: FeatureExplanation
 
-    # ─── Email metadata (set when handler calls ctx.email.send) ──────────────
+    # ─── Email metadata (set when handler calls /services/email/send) ───────
     usesEmail: bool = False
     emailVariables: List[str] = Field(default_factory=list)
     emailTypeSuggestion: Optional[Literal["transactional", "marketing"]] = None
@@ -141,8 +170,8 @@ class FeatureBundleMessage(BaseModel):
     status: Literal["success", "failed"]
     error: Optional[str] = None
     # "platform_limitation" — architect detected the app requires a capability
-    # that ctx cannot deliver and has no viable mitigation. Show a merchant-
-    # friendly message; do not suggest retrying (it won't help).
+    # that the platform cannot deliver and has no viable mitigation. Show a
+    # merchant-friendly message; do not suggest retrying (it won't help).
     errorCode: Optional[Literal["platform_limitation"]] = None
     bundle: Optional[Bundle] = None
     meta: Optional[GenerationMeta] = None
