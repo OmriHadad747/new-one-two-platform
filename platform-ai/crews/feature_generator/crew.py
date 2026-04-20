@@ -232,14 +232,31 @@ def run_feature_generation(request: GenerationRequest) -> None:
         _check_deadline(request, start_ms, "product")
 
         archetype = intent["appCategory"]
-        is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
-        is_admin_ui = archetype in ("storefront_backend_admin", "backend_admin")
+        archetype_is_storefront = archetype in (
+            "storefront_backend",
+            "storefront_backend_admin",
+        )
+        archetype_is_admin_ui = archetype in (
+            "storefront_backend_admin",
+            "backend_admin",
+        )
+        # Phase 2 gate: widget_js and admin_ui generators are out of the
+        # registry (see subagents/registry.py). Force the flags that drive
+        # progress emits, codegen orchestration, and cross-artifact
+        # validation to False so nothing downstream tries to run them.
+        # Phase 4 re-enables by removing this gate and reinstating the
+        # generators against the new widget/admin archetypes.
+        is_storefront = False
+        is_admin_ui = False
         log.info(
-            "job=%s archetype=%s is_storefront=%s is_admin_ui=%s",
+            "job=%s archetype=%s is_storefront=%s is_admin_ui=%s "
+            "(phase2_gate=true archetype_storefront=%s archetype_admin=%s)",
             request.jobId,
             archetype,
             is_storefront,
             is_admin_ui,
+            archetype_is_storefront,
+            archetype_is_admin_ui,
         )
 
         plan, api_context = _phase_architect(request, intent, agent_trace)
