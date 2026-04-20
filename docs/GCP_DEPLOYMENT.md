@@ -13,10 +13,13 @@ Internet
   └── webhooks.newonetwo.com   → Cloud Run: webhook-gateway (port 3001)
 
 Cloud Run services (all in us-central1, VPC connector: platform-connector)
-  api              — REST + OAuth + SSE
-  webhook-gateway  — Shopify webhook intake → Redis queue
-  worker           — BullMQ consumer → invokes per-tenant harness
-  generator        — Python/FastAPI, AI code generation
+  api              — REST + OAuth + SSE           (ingress: all, IAM auth)
+  webhook-gateway  — Shopify webhook intake        (ingress: all, IAM auth)
+  worker           — BullMQ consumer               (ingress: all, IAM auth)
+  generator        — Python/FastAPI, AI generation (ingress: all, IAM auth)
+  handlers         — per-tenant app backends       (ingress: internal, IAM auth)
+                     Handlers are VPC-internal only; no external party calls
+                     them directly. Security boundary: network edge + IAM invoker.
 
 Data layer
   Cloud SQL Postgres 16  — new-one-two-db (private IP + public IP for CI/local dev via Cloud SQL Proxy)
@@ -72,7 +75,15 @@ gcloud sql instances create new-one-two-db \
 
 gcloud sql databases create new_one_two --instance=new-one-two-db
 gcloud sql users create platform_user --instance=new-one-two-db --password=<password>
+
+# Enable pg_cron (required for cron-archetype apps; triggers an instance restart)
+gcloud sql instances patch new-one-two-db \
+  --database-flags=cloudsql.enable_pg_cron=on --quiet
 ```
+
+> **pg_cron note:** `cloudsql.enable_pg_cron=on` is set at the instance level and causes a restart.
+> The migration runs `CREATE EXTENSION IF NOT EXISTS pg_cron` — it will succeed only after this flag is on.
+> Verify: `SELECT * FROM pg_extension WHERE extname = 'pg_cron';` should return one row.
 
 > **CI note:** GitHub Actions runners have no VPC access. The migration job uses
 > Cloud SQL Proxy with `--assign-ip` (public IP enabled on the instance) and
@@ -154,7 +165,8 @@ for name_value in \
   "redis-password:<value>" \
   "anthropic-api-key:<value>" \
   "jwt-secret:$(openssl rand -base64 32)" \
-  "shopify-webhook-secret:<value>"; do
+  "shopify-webhook-secret:<value>" \
+  "email-unsubscribe-secret:$(openssl rand -base64 32)"; do
   name="${name_value%%:*}"
   value="${name_value#*:}"
   echo -n "$value" | gcloud secrets create "$name" --data-file=-
@@ -228,6 +240,10 @@ gcloud iam service-accounts keys create /tmp/ci-key.json \
 | `DB_PASSWORD` | Postgres password (migrations only) |
 | `DB_USER` | Postgres user (migrations only) |
 | `DB_NAME` | Postgres DB name (migrations only) |
+| `PLATFORM_SA_EMAIL` | platform-back SA email — injected into handlers so `verify-platform` can assert caller identity. Missing = silent 403 on all `/services/*` calls. Value: `api-sa@newonetwo-493019.iam.gserviceaccount.com` |
+| `RESEND_API_KEY` | Resend API key for email delivery |
+| `EMAIL_UNSUBSCRIBE_SECRET` | HMAC key for unsubscribe tokens (fail-fast in prod if missing) |
+| `WEBHOOK_GATEWAY_URL` | Public URL of webhook-gateway, used when registering Shopify webhooks. Value: `https://webhooks.newonetwo.com` |
 
 ### GitHub Variables (non-sensitive config)
 

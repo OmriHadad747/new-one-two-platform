@@ -66,14 +66,13 @@ function buildServiceSpec(input: CloudRunDeployInput) {
         maxInstanceCount: maxInstances,
       },
     },
-    // Network ingress is open (`INGRESS_TRAFFIC_ALL`) by design — the
-    // security boundary is IAM, not networking. Cloud Run enforces
-    // roles/run.invoker at its edge before any request reaches the
-    // container; only the platform-back SA holds invoker on each
-    // handler service (granted in sa-provisioner). Equivalent guarantee
-    // to ingress=internal, without forcing platform-back into the same
-    // VPC as every handler.
-    ingress: "INGRESS_TRAFFIC_ALL" as const,
+    // Handlers are internal-only: all callers (api, worker) run inside
+    // the platform-connector VPC. No external party ever calls a handler
+    // URL directly — Shopify hits webhook-gateway, browsers hit api.
+    // INGRESS_TRAFFIC_INTERNAL blocks internet traffic at Google's network
+    // edge before IAM even runs, giving us defence-in-depth on top of the
+    // roles/run.invoker check enforced per handler (see sa-provisioner).
+    ingress: "INGRESS_TRAFFIC_INTERNAL" as const,
   };
 }
 

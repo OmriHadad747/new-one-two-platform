@@ -1,0 +1,45 @@
+# ─── platform-ai tests ────────────────────────────────────────────────────────
+#
+# Runs on every PR that touches platform-ai/**. Installs Python deps and
+# runs pytest. Currently only test_mcp_gql_loop.py exists; add more tests
+# alongside new capabilities.
+
+name: platform-ai tests
+
+on:
+  pull_request:
+    paths:
+      - "platform-ai/**"
+      - ".github/workflows/platform-ai-tests.yml"
+  push:
+    branches: [main, staging]
+    paths:
+      - "platform-ai/**"
+
+concurrency:
+  group: platform-ai-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: platform-ai/requirements.txt
+
+      - name: Install dependencies
+        working-directory: platform-ai
+        run: pip install -r requirements.txt pytest
+
+      - name: Run tests
+        working-directory: platform-ai
+        run: pytest -v

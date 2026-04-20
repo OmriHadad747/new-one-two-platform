@@ -100,24 +100,24 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-          cache-dependency-path: platform/pnpm-lock.yaml
+          cache-dependency-path: platform-back/pnpm-lock.yaml
 
       - name: Install dependencies
-        working-directory: platform
+        working-directory: platform-back
         run: pnpm install --frozen-lockfile
 
       - name: Build all packages
-        working-directory: platform
-        run: pnpm -r build
+        working-directory: platform-back
+        run: pnpm build
 
       - name: Verify Docker is available for testcontainers
         run: docker version
 
-      - name: Run tests (vitest — all suites, including RLS integration)
-        working-directory: platform
+      - name: Run tests
+        working-directory: platform-back
         env:
           TESTCONTAINERS_RYUK_DISABLED: "true"
-        run: pnpm --filter @new-one-two/api --filter @new-one-two/deployer test
+        run: pnpm exec vitest run
 
   # ─── Build & Push Docker Images ─────────────────────────────────────────────
   build:
@@ -131,16 +131,16 @@ jobs:
       matrix:
         service:
           - name: api
-            context: ./platform
+            context: ./platform-back
             dockerfile: apps/api/Dockerfile
           - name: webhook-gateway
-            context: ./platform
+            context: ./platform-back
             dockerfile: apps/webhook-gateway/Dockerfile
           - name: worker
-            context: ./platform
+            context: ./platform-back
             dockerfile: apps/worker/Dockerfile
           - name: generator
-            context: ./generator
+            context: ./platform-ai
             dockerfile: Dockerfile
     steps:
       - uses: actions/checkout@v4
@@ -220,7 +220,7 @@ jobs:
             SCHEMA_EXISTS=$(psql "${PSQL_ARGS[@]}" -tAc "SELECT 1 FROM pg_type WHERE typname='tenant_status'")
             if [ "$SCHEMA_EXISTS" = "1" ]; then
               echo "Schema already exists but tracking table is empty — recording existing migrations as applied."
-              for migration in platform/packages/db/migrations/*.sql; do
+              for migration in platform-back/packages/db/migrations/*.sql; do
                 filename=$(basename "$migration")
                 psql "${PSQL_ARGS[@]}" -c "INSERT INTO _schema_migrations (filename) VALUES ('${filename}') ON CONFLICT DO NOTHING"
               done
@@ -228,7 +228,7 @@ jobs:
           fi
 
           # Run only NEW migration files in order
-          for migration in platform/packages/db/migrations/*.sql; do
+          for migration in platform-back/packages/db/migrations/*.sql; do
             filename=$(basename "$migration")
             already=$(psql "${PSQL_ARGS[@]}" -tAc "SELECT 1 FROM _schema_migrations WHERE filename = '${filename}'")
             if [ "$already" = "1" ]; then

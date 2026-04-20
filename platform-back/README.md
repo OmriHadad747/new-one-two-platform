@@ -39,16 +39,43 @@ HOST=0.0.0.0
 NODE_ENV=development|production
 LOG_LEVEL=info
 
-DATABASE_URL=postgres://...
+# Database
+DATABASE_URL=postgres://platform_user:<password>@<host>/new_one_two
 
+# Shopify OAuth
 SHOPIFY_CLIENT_ID=...
 SHOPIFY_CLIENT_SECRET=...
 
-# Outbound auth to handlers
-CLOUD_RUN_SKIP_AUTH=true   # local dev only; unset in prod
+# JWT signing (platform ↔ handler auth token)
+JWT_SECRET=...
+
+# This service's own public URL — used as OAuth redirect base and as the
+# EXPECTED_AUDIENCE when handlers verify inbound ID tokens.
+PLATFORM_URL=https://api.newonetwo.com
+
+# The platform-back service account email. Injected into every handler as
+# PLATFORM_SA_EMAIL so verify-platform middleware can assert the caller SA.
+# Missing in prod = silent 403 on every /services/* call.
+PLATFORM_SA_EMAIL=api-sa@newonetwo-493019.iam.gserviceaccount.com
+
+# Public URL of the webhook-gateway service (used when registering Shopify
+# webhooks for deployed handlers).
+WEBHOOK_GATEWAY_URL=https://webhooks.newonetwo.com
+
+# Email delivery (Resend)
+RESEND_API_KEY=re_...
+EMAIL_UNSUBSCRIBE_SECRET=...   # HMAC key for unsubscribe tokens; fail-fast in prod
+
+# GCP — deployer package
+GCP_PROJECT=newonetwo-493019
+GCP_REGION=us-central1                                          # default: us-central1
+DOCKER_REGISTRY=us-central1-docker.pkg.dev/newonetwo-493019/new-one-two
 
 # Edge CORS
 ALLOWED_ORIGINS=https://admin.shopify.com,https://*.myshopify.com
+
+# Outbound auth to handlers
+CLOUD_RUN_SKIP_AUTH=true   # local dev only; unset in prod
 ```
 
 ## Run locally

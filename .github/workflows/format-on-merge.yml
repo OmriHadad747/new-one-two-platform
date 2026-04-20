@@ -1,0 +1,57 @@
+# ─── Auto-format on merge ─────────────────────────────────────────────────────
+#
+# Runs after every merge to main. Formats all workspaces and commits any
+# changes back. A no-op if code is already formatted.
+#
+# Formatters:
+#   platform-back / platform-front  — Prettier
+
+name: Format on merge
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  format:
+    name: Auto-format
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── TypeScript: Prettier ─────────────────────────────────────────────
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Format platform-back
+        working-directory: platform-back
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec prettier --write "**/*.{ts,tsx,js,json}" \
+            --ignore-path .gitignore
+
+      - name: Format platform-front
+        working-directory: platform-front
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec prettier --write "**/*.{ts,tsx,js,json}" \
+            --ignore-path .gitignore
+
+      # ── Commit back if anything changed ──────────────────────────────────
+      - name: Commit formatting changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git diff --quiet && git diff --staged --quiet || \
+            git commit -am "style: auto-format [skip ci]" && git push

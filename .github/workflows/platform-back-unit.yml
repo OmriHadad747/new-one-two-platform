@@ -1,0 +1,60 @@
+name: platform-back — unit & integration tests
+
+on:
+  pull_request:
+    paths:
+      - "platform-back/**"
+      - ".github/workflows/platform-back-*.yml"
+  push:
+    branches: [main]
+    paths:
+      - "platform-back/**"
+
+jobs:
+  test:
+    name: Unit & route-integration tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform-back
+
+    env:
+      # Minimal set of env vars needed by the api test setup file.
+      # Tests mock all external I/O; these are just placeholder values so
+      # module-level guards don't throw at import time.
+      NODE_ENV: test
+      SHOPIFY_CLIENT_ID: ci-client-id
+      SHOPIFY_CLIENT_SECRET: ci-client-secret
+      JWT_SECRET: ci-jwt-secret
+      PLATFORM_URL: http://localhost:3002
+      DASHBOARD_URL: http://localhost:3000
+      WEBHOOK_GATEWAY_URL: http://localhost:3003
+      GCP_PROJECT: local
+      DEPLOY_MODE: local
+      API_AUTH_REQUIRED: "false"
+      CLOUD_RUN_SKIP_AUTH: "true"
+      EXPECTED_AUDIENCE: http://localhost:3002
+      PLATFORM_SA_EMAIL: ""
+      DATABASE_URL: postgresql://unused:unused@localhost/unused
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: platform-back/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages (so type imports resolve)
+        run: pnpm -r build
+
+      - name: Run tests
+        run: pnpm test
