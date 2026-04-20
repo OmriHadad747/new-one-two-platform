@@ -1,77 +1,97 @@
 """
 Widget-routing handler patterns.
 
-Two sibling sections, injected by handler_agent.py's JIT in mutually-exclusive
-situations:
+Two sibling sections, injected by handler_agent.py's JIT in mutually
+exclusive situations:
 
 - HARNESS_SECTION_WIDGET — when the handler serves backend routes for the
-  storefront widget (widgetApiCatalog non-empty). Covers ctx.widgetPath
-  routing, ctx.widgetBody destructuring, tenant scoping, and response-shape
+  storefront widget (widgetApiCatalog non-empty). Covers the /widget/:path
+  route shape, express path-to-catalog mapping, and response-shape
   contract adherence.
 
-- HARNESS_SECTION_WIDGET_STOREFRONT — when the widget reads Shopify's public
-  storefront API directly via host.storefront (widgetApiCatalog == []) and
-  does NOT call the handler. Tells the handler explicitly not to add code
-  proxying those reads.
+- HARNESS_SECTION_WIDGET_STOREFRONT — when the widget reads Shopify's
+  public storefront API directly (widgetApiCatalog == []) and does NOT
+  call the handler. Tells the handler explicitly not to add code proxying
+  those reads.
 """
 
 HARNESS_SECTION_WIDGET = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WIDGET ROUTING — this handler receives storefront requests from the widget:
+WIDGET ROUTER — src/routes/widget.ts
 
-When ctx.trigger === 'widget', the storefront called host.call(path, body).
-  ctx.widgetPath — the path the widget called (e.g. '/signup', '/status')
-  ctx.widgetBody — the body the widget sent (object)
+Requests arrive from storefront widgets via the Shopify App Proxy.
+platform-back has verified the App Proxy HMAC signature by the time your
+router runs; `req.platform` is populated (tenantId, shopDomain, etc.).
 
-Rule: Route on ctx.widgetPath inside the widget branch. Always return a value.
-  ✅ if (ctx.trigger === 'widget') {
-       if (ctx.widgetPath === '/signup') {
-         const { customerEmail, variantId, productId } = ctx.widgetBody
-         await ctx.db`INSERT INTO ... ON CONFLICT DO NOTHING`
-         return { ok: true }
-       }
-       if (ctx.widgetPath === '/status') {
-         const [row] = await ctx.db`SELECT ... WHERE tenant_id = ${ctx.tenantId} AND ...`
-         return { status: row ? row.status : 'not_signed_up' }
-       }
-       return { error: 'unknown path' }
-     }
-  ❌ if (!ctx.payload || Object.keys(ctx.payload).length === 0) { ... }
-     // NEVER use payload emptiness to detect cron or widget — use ctx.trigger
+Widget calls are typically UNAUTHENTICATED from the customer's
+perspective — there's no logged-in shopper identity. Any per-shopper
+state (cart, recently-viewed, etc.) must be derived from payload
+params, not from a session this handler holds.
 
-Rule: Use the exact field names from widgetApiCatalog requestShape — the Architect defines
-  the contract and both the widget and handler are generated from it. Do not rename fields.
+File skeleton:
 
-Rule: The widget can only send what host.context provides (variantId, productId, customerId)
-  plus user input. IDs not in host.context must be resolved server-side:
-  ✅ const { variant } = await ctx.shopify.get(`/variants/${variantId}.json`)
-     const inventoryItemId = variant.inventory_item_id
+  import { Router } from "express";
+  import { sql } from "../lib/db.js";
 
-Rule: Widget paths must match the platformApiCatalog exactly.
-  The catalog lists every path the widget may call. Do not handle paths not in the catalog.
-  Do not invent paths — only handle paths listed in the catalog provided.
+  export const widgetRouter = Router();
 
-Rule: Widget responses are returned directly to the storefront — keep them small and JSON-safe.
-  CRITICAL: Return EXACTLY the responseShape from the widget API catalog — never rename fields.
-  The widget generator sees the same catalog and checks the exact field names listed there.
-  Never return raw DB rows or internal state.
+  widgetRouter.post("/<path_1>", async (req, res) => {
+    // ... route body
+  });
+
+  widgetRouter.post("/<path_2>", async (req, res) => {
+    // ... route body
+  });
+
+CRITICAL: Every path listed in the architect's widgetApiCatalog MUST
+have a matching widgetRouter route with the exact method and path. Do
+not invent paths not in the catalog — the widget JS generator sees the
+same catalog and only calls paths the architect declared.
+
+  If the catalog declares `POST /<path>` with
+  requestShape { <field_1>, <field_2> } and
+  responseShape { <res_field_1>, <res_field_2> }, emit:
+
+    widgetRouter.post("/<path>", async (req, res) => {
+      const { <field_1>, <field_2> } = req.body;
+      // ... validate, insert, etc.
+      res.json({ <res_field_1>: ..., <res_field_2>: ... });
+    });
+
+  Use the EXACT field names from requestShape — no renaming. Return
+  EXACTLY the responseShape — no extra fields, no rewraps.
+
+Shopper-sourced fields: the widget can only send what
+window.Shopify.context provides (variantId, productId, customerId) plus
+user input. IDs NOT in that context must be resolved server-side from
+what IS there:
+  ✅ // widget only sends <shopify_id_col>; you resolve <other_id_col> server-side:
+     const { <shopify_resource_singular> } = await <shopify_client>.rest.get(
+       `/<shopify_resource>/${<shopify_id_col>}.json`,
+     );
+     const otherId = <shopify_resource_singular>.<other_id_col>;
+
+Response safety: widget responses are returned directly to the
+storefront browser. Keep them small and JSON-safe. Never return raw DB
+rows that include sensitive columns, stack traces, or internal IDs the
+widget doesn't need.
 """
 
 HARNESS_SECTION_WIDGET_STOREFRONT = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WIDGET STOREFRONT READS — widget fetches Shopify public data directly:
+WIDGET READS SHOPIFY STOREFRONT DIRECTLY — no /widget/* routes
 
-The widget uses host.storefront(relativePath) to read public Shopify storefront data
-without involving the backend handler. The handler is NOT called for these reads.
+The widget JS reads public Shopify storefront data directly from the
+shopper's browser (/products/<handle>.js, /cart.js, etc.) without
+involving the handler. The handler does NOT receive /widget/* calls for
+this app.
 
-  host.storefront(relativePath) → Promise<any>
-  Fetches public Shopify storefront endpoints (same-origin, no auth required).
-  Common paths:
-    '/products/${handle}.js'           → full product JSON including variants[].available
-    '/collections/${handle}.js'        → collection with products
-    '/cart.js'                         → current cart state
+Do NOT emit a src/routes/widget.ts file. The template's widget.ts
+(which serves a ping example) will remain and stay unreachable — that
+is the intended outcome; the deployer doesn't remove untouched template
+files.
 
-When ctx.trigger === 'widget', the handler only handles host.call() paths from the
-widgetApiCatalog. It does NOT handle host.storefront() requests — those go directly
-to Shopify. Do not add handler code to proxy storefront data.
+If you emit src/routes/widget.ts anyway, static validation will reject
+it — the architect declared `widgetApiCatalog: []`, which means the
+widget is NOT a client of this handler.
 """

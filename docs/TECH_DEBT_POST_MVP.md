@@ -474,3 +474,43 @@ The local CLI path (`chat_local.py`) already writes to
 - Possibly a new migration if the DB route is chosen
 
 **Complexity:** Low — the GCS upload pattern is already used elsewhere in the codebase.
+
+---
+
+## TD-021 — Architect supports only ONE cron schedule per app
+
+**Current state**
+The architect's plan carries `cronSchedule: str | None` — exactly one cron
+expression. The platform-back handler template's cron runner (added with
+Phase 2, Option D) polls `cron_queue` and dispatches on `job_name`, so the
+template already supports N named jobs. The generator is held to one
+(`jobs = { main: async (payload) => {...} }`) only because the architect
+has no field for a set.
+
+**What this blocks**
+Apps with legitimately multiple scheduled tasks must either (a) cram all
+logic behind a single cron tick and branch internally (awkward, one
+schedule fits all) or (b) be rejected at the architect stage as
+"unsupported." Both are compromises.
+
+**What to do**
+Replace `cronSchedule: str | None` with `cronJobs: List[{name, schedule}]`
+on the plan. Architect emits one entry per scheduled task; generator's
+jobs map gets one key per entry; migration emits one `cron.schedule(...)`
+row per entry (each inserting into `cron_queue` with the matching
+`job_name`).
+
+**Affected files** (when done)
+- `platform-ai/subagents/prompts/architect/_core.py` — cron section.
+- `platform-ai/subagents/prompts/architect/_output_shape.py` — plan schema.
+- `platform-ai/contract/validators.py` — architect plan validation.
+- `platform-ai/subagents/handler_agent.py` — pass jobs list to the handler
+  prompt instead of a single `cronSchedule`.
+- `platform-ai/subagents/prompts/handler/_cron.py` — jobs-map prompt
+  accepts multiple entries.
+- `platform-ai/subagents/migration_agent.py` — emit one schedule per job.
+- `platform-back/packages/deployer/...` — nothing if the template runner
+  is already name-keyed (expected).
+
+**Complexity:** Low — the runtime already supports N jobs; this is purely
+an architect-field + prompt expansion.

@@ -1,47 +1,82 @@
 """
 Admin-routing handler patterns.
 
-Injected by handler_agent.py's JIT when ``appContracts.adminApiCatalog`` is
-non-empty (storefront_backend_admin or backend_admin). Covers ctx.adminPath
-routing, ctx.adminBody destructuring, the adminCatalog-as-contract discipline,
-and the widget-vs-admin field disambiguation.
+Injected by handler_agent.py's JIT when ``appContracts.adminApiCatalog``
+is non-empty (storefront_backend_admin or backend_admin). Covers the
+src/routes/admin.ts file shape, express path-to-catalog mapping, and the
+three-branch callPlatformService discipline for /services/* calls.
 """
 
 HARNESS_SECTION_ADMIN = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ADMIN UI ROUTING — this handler receives requests from the Shopify Admin panel:
-  Applies to: storefront_backend_admin and backend_admin archetypes.
+ADMIN ROUTER — src/routes/admin.ts
 
-When ctx.trigger === 'admin', the embedded Admin UI panel called bridge.call(path, body).
-  ctx.adminPath — the path the panel called (e.g. '/list', '/run', '/config/save')
-  ctx.adminBody — the body the panel sent (object, or {} for body-less calls)
+Requests arrive from the embedded Shopify admin UI panel. The platform-back
+middleware has already verified the App Bridge session token by the time
+your router runs; `req.platform` is populated.
 
-CRITICAL RULE: Every path listed in the adminApiCatalog MUST have a corresponding
-  `ctx.adminPath === '<path>'` branch inside the `ctx.trigger === 'admin'` block.
-  Missing even one path is a validation error. The catalog is the contract — implement all of it.
+File skeleton:
 
-CRITICAL RULE: ALWAYS use ctx.adminPath and ctx.adminBody — NEVER ctx.widgetPath or ctx.widgetBody
-  inside the `ctx.trigger === 'admin'` branch. Those are for widget triggers only.
+  import { Router } from "express";
+  import { sql } from "../lib/db.js";
+  import { callPlatformService } from "../lib/platform-call.js";
 
-Rule: Log on every admin invocation entry so routing decisions appear in logs:
-  ctx.logger.info({ adminPath: ctx.adminPath }, 'admin invoke')
+  export const adminRouter = Router();
 
-Rule: Route on ctx.adminPath inside the admin branch. Always return a value.
-  ✅ if (ctx.trigger === 'admin') {
-       ctx.logger.info({ adminPath: ctx.adminPath }, 'admin invoke')
-       if (ctx.adminPath === '/list') {
-         const rows = await ctx.db`SELECT ... WHERE tenant_id = ${ctx.tenantId} LIMIT 50`
-         return { total: rows.length, rows }
-       }
-       if (ctx.adminPath === '/run') {
-         // perform the action
-         return { processed: N }
-       }
-       ctx.logger.warn({ adminPath: ctx.adminPath }, 'admin: unknown path')
-       return { error: 'unknown path' }
-     }
+  adminRouter.get("/<path_1>", async (req, res) => {
+    // ... route body
+  });
 
-Rule: Always scope DB reads in admin paths to ctx.tenantId.
-Rule: For write operations (trigger, config save), log the action with ctx.logger.info.
-Rule: Return the EXACT responseShape from the adminApiCatalog — never rename fields.
+  adminRouter.post("/<path_2>", async (req, res) => {
+    // ... route body
+  });
+
+CRITICAL: Every path listed in the architect's adminApiCatalog MUST have
+a matching adminRouter route — using the exact method and path from the
+catalog. Missing even one path is a validation error. The catalog is
+the contract; implement all of it.
+
+  If the catalog declares `POST /<path>`, emit:
+    adminRouter.post("/<path>", async (req, res) => { ... });
+  NOT adminRouter.get, NOT a different path.
+
+  Admin routes are mounted under /admin by the template's server.ts, so
+  the URL the UI calls is `/admin/<path>`. You write only the suffix
+  `/<path>`.
+
+Body & response contract:
+  - Read the request body from `req.body` — JSON already parsed.
+  - Return EXACTLY the responseShape declared in adminApiCatalog. Never
+    rename fields. Never add fields the catalog doesn't list.
+  - Use `res.json({...})` for success; `res.status(400|404|...).json({error: "..."})`
+    for client errors.
+
+CALLING PLATFORM SERVICES (email, etc.) — three-branch rule:
+
+  const { status, body } = await callPlatformService<{ ok: boolean; delivered: boolean }>({
+    path: "/services/<service_name>",
+    body: { <request_shape> },
+  });
+  if (status === 429) {
+    res.status(429).json({ ok: false, reason: "quota_exceeded" });
+    return;
+  }
+  if (status >= 400) {
+    res.status(502).json({ ok: false, reason: "platform_error" });
+    return;
+  }
+  res.json({ ...body, ok: true });
+
+NEVER hand-roll fetch() to reach /services/*. Auth plumbing only works
+through callPlatformService.
+
+DB READS — search_path is already pinned to this tenant's schema, so
+bare table names Just Work:
+  const rows = await sql`SELECT <field_1>, <field_2> FROM <table_1> ORDER BY created_at DESC LIMIT 50`;
+
+LOGGING — log every admin invocation entry:
+  console.log(
+    { requestId: req.platform!.requestId, path: req.path },
+    "admin invoke",
+  );
 """
