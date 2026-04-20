@@ -7,7 +7,9 @@ in `platform/packages/db/migrations/` (now reference-only).
 
 - **0001_initial_schema.sql** — full schema. Includes the platform-back
   addition `apps.handler_sa_email` (used by `/services/*` to map a
-  verified Cloud Run ID token's `email` claim back to `(tenantId, appId)`).
+  verified Cloud Run ID token's `email` claim back to `(tenantId, appId)`)
+  and the Phase 2 `generations` table (subscriber target for
+  `generation.completed`; read by the dashboard Deploy button).
 
 ## Applying
 

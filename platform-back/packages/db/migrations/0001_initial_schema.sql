@@ -243,54 +243,82 @@ CREATE POLICY webhook_inv_logs_tenant_isolation ON webhook_invocation_logs
   USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID);
 
 -- =============================================================================
--- GENERATION SESSIONS
+-- GENERATIONS
 --
--- ENABLE + FORCE (real RLS): prompts/bundles/chat history are the
--- highest-cross-tenant-leak target, so the policy applies even to the
--- table-owner role. All readers MUST wrap queries in withTenantContext.
+-- Phase 2 shape. One row per generator run. Written by platform-back's
+-- generation.completed Pub/Sub subscriber; read by the dashboard when the
+-- merchant clicks Deploy to reconstitute the deploy bundle. Replaces the
+-- legacy generation_sessions + generation_events pair from platform/ — the
+-- flat legacy columns (generated_code, explanation, webhook_topics,
+-- cron_schedule) are gone; `bundle` JSONB is the single source of truth
+-- (see platform-ai/contract/validators.py::Bundle for the shape).
+--
+-- No RLS on this table for Phase 2. platform-back's routes enforce
+-- (tenantId, appId) ownership via requireTenant before any generations
+-- read or write — mirrors the existing pattern on apps + app_versions.
+-- When TD-014 ships platform-wide FORCE RLS, generations joins that batch.
 -- =============================================================================
 
-CREATE TABLE generation_sessions (
-  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  app_id          UUID REFERENCES apps(id) ON DELETE CASCADE,
-  tenant_id       UUID REFERENCES tenants(id) ON DELETE CASCADE,
-  prompt          TEXT NOT NULL,
-  status          TEXT NOT NULL DEFAULT 'pending',
-  intent          JSONB,
-  api_plan        JSONB,
-  generated_code  TEXT,
-  explanation     TEXT,
-  webhook_topics  TEXT[] NOT NULL DEFAULT '{}',
-  cron_schedule   TEXT,
-  attempt_count   INTEGER NOT NULL DEFAULT 0,
-  app_version_id  UUID REFERENCES app_versions(id),
-  error_message   TEXT,
-  job_id          UUID,
-  bundle          JSONB,
-  chat_messages   JSONB,
-  meta            JSONB,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE generations (
+  job_id       UUID PRIMARY KEY,
+  tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  app_id       UUID NOT NULL REFERENCES apps(id)    ON DELETE CASCADE,
+  -- "success" | "failed" — mirrors FeatureBundleMessage.status on the wire.
+  status       TEXT NOT NULL,
+  -- Populated only on status='failed'.
+  error        TEXT,
+  -- Populated only on status='failed' when the architect decided the app
+  -- is structurally infeasible (e.g. requires a capability the platform
+  -- lacks). Dashboard surfaces 'platform_limitation' as a non-retryable
+  -- error.
+  error_code   TEXT,
+  -- Full Bundle shape. Null on failure. handlerModule.files + dbMigration
+  -- are what the deploy button stitches into a generatedFiles[] payload
+  -- for POST /apps/:appId/deploy.
+  bundle       JSONB,
+  -- GenerationMeta: totalInputTokens, totalOutputTokens, generationMs,
+  -- agentTrace[]. Null on failure when the generator aborted before
+  -- tallying. Used by ops for cost / latency analytics; dashboard doesn't
+  -- render it today.
+  meta         JSONB,
+  -- Deploy-button bookkeeping. Flipped to true (+ deployed_at set) when
+  -- the merchant clicks Deploy and the deploy job is registered. Not a
+  -- source of truth for deploy history — that's app_versions — just a
+  -- convenience flag so the dashboard can grey out the Deploy button on
+  -- subsequent loads without cross-referencing app_versions.
+  deployed     BOOLEAN     NOT NULL DEFAULT FALSE,
+  deployed_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_gen_sessions_app_id ON generation_sessions (app_id);
-CREATE INDEX idx_gen_sessions_tenant_id ON generation_sessions (tenant_id);
-CREATE INDEX idx_gen_sessions_status ON generation_sessions (status);
-CREATE INDEX idx_gen_sessions_job_id ON generation_sessions (job_id) WHERE job_id IS NOT NULL;
+-- Indexes
+-- -------
+-- (app_id, created_at DESC): dashboard "list generations for this app"
+--                            with newest-first pagination.
+-- tenant_id:                 cross-app admin queries.
+-- (status, created_at):      ops query "show me the last N failures".
+CREATE INDEX idx_generations_app_created_at ON generations (app_id, created_at DESC);
+CREATE INDEX idx_generations_tenant_id      ON generations (tenant_id);
+CREATE INDEX idx_generations_status_created ON generations (status, created_at DESC);
 
-ALTER TABLE generation_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE generation_sessions FORCE  ROW LEVEL SECURITY;
-CREATE POLICY generation_sessions_isolation ON generation_sessions
-  USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID);
-
-CREATE TRIGGER set_updated_at BEFORE UPDATE ON generation_sessions
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON generations
   FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
 
-COMMENT ON COLUMN generation_sessions.meta IS
-  'GenerationMeta blob from the completed Pub/Sub bundle: '
-  '{ totalInputTokens, totalOutputTokens, generationMs, agentTrace[] }. '
-  'Source of truth. The generation_events table is a queryable projection '
-  'of meta.agentTrace; both are written in the same transaction.';
+COMMENT ON TABLE generations IS
+  'Platform-back generation.completed subscriber target. bundle JSONB is '
+  'the source of truth; deploy button reads it, deployer stitches '
+  'handlerModule.files + dbMigration into POST /apps/:appId/deploy.';
+
+COMMENT ON COLUMN generations.bundle IS
+  'Full Bundle JSON per platform-ai/contract/validators.py::Bundle. Null '
+  'on failure. handlerModule.files is a List[{path, contents}]; '
+  'dbMigration is a single {path, contents}.';
+
+COMMENT ON COLUMN generations.meta IS
+  'GenerationMeta from the completed message: totalInputTokens, '
+  'totalOutputTokens, generationMs, agentTrace[]. Null when the '
+  'generator aborted before tally.';
 
 -- =============================================================================
 -- WIDGET INVOCATION LOGS
@@ -496,30 +524,10 @@ ALTER TABLE email_suppressions ENABLE ROW LEVEL SECURITY;
 CREATE POLICY email_suppressions_isolation ON email_suppressions
   USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID);
 
--- =============================================================================
--- GENERATION EVENTS (per-agent cost / latency projection of meta.agentTrace[])
---
--- ENABLE + FORCE (real RLS): same treatment as generation_sessions, since
--- this is a row-per-agent projection of the same data.
--- =============================================================================
-
-CREATE TABLE generation_events (
-  id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id    UUID        NOT NULL REFERENCES generation_sessions(id) ON DELETE CASCADE,
-  tenant_id     UUID        NOT NULL REFERENCES tenants(id)             ON DELETE CASCADE,
-  job_id        UUID        NOT NULL,
-  agent_name    TEXT        NOT NULL,
-  input_tokens  INTEGER     NOT NULL DEFAULT 0,
-  output_tokens INTEGER     NOT NULL DEFAULT 0,
-  latency_ms    INTEGER     NOT NULL DEFAULT 0,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_generation_events_session       ON generation_events (session_id);
-CREATE INDEX idx_generation_events_tenant_agent  ON generation_events (tenant_id, agent_name, created_at);
-CREATE INDEX idx_generation_events_created_at    ON generation_events (created_at DESC);
-
-ALTER TABLE generation_events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE generation_events FORCE  ROW LEVEL SECURITY;
-CREATE POLICY generation_events_isolation ON generation_events
-  USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID);
+-- NOTE (Phase 2): the legacy `generation_events` table — a per-agent
+-- projection of generation_sessions.meta.agentTrace — is gone along with
+-- generation_sessions. The agent-trace data still lives inside
+-- generations.meta.agentTrace[] as a JSONB array; queryable via
+-- jsonb_array_elements() when ops analytics need per-agent breakdowns.
+-- If a proper queryable projection is needed later, introduce a dedicated
+-- 0003_* migration — don't revive the legacy shape.
