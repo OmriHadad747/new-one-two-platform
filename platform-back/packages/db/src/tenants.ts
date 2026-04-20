@@ -63,6 +63,7 @@ export async function createTenant(params: {
   name: string;
   shopDomain: string;
   shopifyAccessTokenSecretName: string;
+  storefrontAccessTokenSecretName?: string;
   kmsKeyName?: string;
 }): Promise<{ id: string }> {
   const rows = await sql<Array<{ id: string }>>`
@@ -72,6 +73,7 @@ export async function createTenant(params: {
       status,
       shop_domain,
       shopify_access_token_secret_name,
+      storefront_access_token_secret_name,
       kms_key_name
     ) VALUES (
       ${params.slug},
@@ -79,6 +81,7 @@ export async function createTenant(params: {
       'active',
       ${params.shopDomain},
       ${params.shopifyAccessTokenSecretName},
+      ${params.storefrontAccessTokenSecretName ?? null},
       ${params.kmsKeyName ?? DEV_KMS_KEY_NAME}
     )
     RETURNING id
@@ -102,11 +105,16 @@ export async function getTenantByShopDomain(
 export async function updateTenantAccessToken(
   tenantId: string,
   shopifyAccessTokenSecretName: string,
+  storefrontAccessTokenSecretName?: string,
 ): Promise<void> {
   await sql`
     UPDATE tenants
     SET
       shopify_access_token_secret_name = ${shopifyAccessTokenSecretName},
+      storefront_access_token_secret_name = COALESCE(
+        ${storefrontAccessTokenSecretName ?? null},
+        storefront_access_token_secret_name
+      ),
       updated_at = NOW()
     WHERE id = ${tenantId}
   `;
@@ -123,6 +131,22 @@ export async function getTenantAccessTokenSecretName(
 ): Promise<string | null> {
   const rows = await sql<Array<{ secretName: string | null }>>`
     SELECT shopify_access_token_secret_name AS "secretName"
+    FROM tenants
+    WHERE id = ${tenantId} AND status = 'active'
+    LIMIT 1
+  `;
+  return rows[0]?.secretName ?? null;
+}
+
+/**
+ * Resolve the Secret Manager name holding this tenant's Shopify Storefront
+ * API access token. Used by /services/shopify/storefront-access-token.
+ */
+export async function getTenantStorefrontTokenSecretName(
+  tenantId: string,
+): Promise<string | null> {
+  const rows = await sql<Array<{ secretName: string | null }>>`
+    SELECT storefront_access_token_secret_name AS "secretName"
     FROM tenants
     WHERE id = ${tenantId} AND status = 'active'
     LIMIT 1

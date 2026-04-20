@@ -1,5 +1,8 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { getTenantAccessTokenSecretName } from "@platform-back/db";
+import {
+  getTenantAccessTokenSecretName,
+  getTenantStorefrontTokenSecretName,
+} from "@platform-back/db";
 import { getSecret } from "@platform-back/crypto";
 import { ErrorCode, errorResponse } from "../../lib/error-response.js";
 import { resolveAppFromSaEmail } from "../../lib/sa-to-app.js";
@@ -22,6 +25,7 @@ export async function shopifyServiceRoutes(
   app: FastifyInstance,
 ): Promise<void> {
   app.post("/access-token", accessTokenHandler);
+  app.post("/storefront-access-token", storefrontAccessTokenHandler);
 }
 
 // ─── POST /services/shopify/access-token ────────────────────────────────────
@@ -91,6 +95,71 @@ async function accessTokenHandler(
         errorResponse(
           ErrorCode.Internal,
           "Failed to fetch access token from secret store",
+        ),
+      );
+  }
+}
+
+// ─── POST /services/shopify/storefront-access-token ─────────────────────────
+
+async function storefrontAccessTokenHandler(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply | void> {
+  const verified = await verifyCallerIdToken(request.headers.authorization);
+  if (!verified.ok) {
+    const status = verified.reason === "missing_token" ? 401 : 403;
+    return reply
+      .code(status)
+      .send(errorResponse(ErrorCode.Unauthorized, verified.reason));
+  }
+
+  const identity = await resolveAppFromSaEmail(verified.caller.email);
+  if (!identity) {
+    request.log.warn(
+      { saEmail: verified.caller.email },
+      "/services/shopify/storefront-access-token: SA email not bound to any active app",
+    );
+    return reply
+      .code(403)
+      .send(
+        errorResponse(
+          ErrorCode.Forbidden,
+          "Caller service account is not bound to an active app",
+        ),
+      );
+  }
+
+  const secretName = await getTenantStorefrontTokenSecretName(identity.tenantId);
+  if (!secretName) {
+    request.log.warn(
+      { tenantId: identity.tenantId },
+      "/services/shopify/storefront-access-token: tenant has no storefront token on file",
+    );
+    return reply
+      .code(404)
+      .send(
+        errorResponse(
+          ErrorCode.NotFound,
+          "No Shopify Storefront access token registered for this tenant",
+        ),
+      );
+  }
+
+  try {
+    const storefrontAccessToken = await getSecret(secretName);
+    return reply.code(200).send({ storefrontAccessToken });
+  } catch (err) {
+    request.log.error(
+      { err, tenantId: identity.tenantId, secretName },
+      "/services/shopify/storefront-access-token: secret fetch failed",
+    );
+    return reply
+      .code(500)
+      .send(
+        errorResponse(
+          ErrorCode.Internal,
+          "Failed to fetch storefront access token from secret store",
         ),
       );
   }

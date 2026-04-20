@@ -9,7 +9,6 @@
  *     tenant + token, issues a platform JWT, redirects to dashboard.
  *
  * Phase-1 port. Deliberately omits (will return when their consumers land):
- *   - Storefront API token creation (widget archetype, phase 4)
  *   - Webhook re-registration (webhook archetype, phase 3)
  *   - Per-app provisioning (handler SA, schema, Cloud Run) — that's a
  *     separate generate-time flow, not install-time
@@ -172,11 +171,27 @@ async function callbackHandler(
     );
   }
 
-  // 5. Persist tenant + access token.
+  // 5. Persist tenant + access tokens.
   let tenantId: string;
   try {
     const secretName = await persistAccessToken(shop, accessToken);
-    tenantId = await upsertTenant(shop, secretName);
+
+    // Provision Storefront API token. Non-fatal on failure — widgets will
+    // error on first call but admin flows are unaffected. Re-install retries.
+    let storefrontSecretName: string | undefined;
+    try {
+      storefrontSecretName = await provisionStorefrontToken(
+        shop,
+        accessToken,
+      );
+    } catch (err) {
+      logger.warn(
+        { err, shop },
+        "Failed to provision Storefront API token — continuing without it",
+      );
+    }
+
+    tenantId = await upsertTenant(shop, secretName, storefrontSecretName);
     logger.info({ shop, tenantId }, "OAuth install complete");
   } catch (err) {
     logger.error({ err, shop }, "Failed to persist tenant after OAuth");
@@ -356,10 +371,15 @@ async function persistAccessToken(
 async function upsertTenant(
   shop: string,
   accessTokenSecretName: string,
+  storefrontSecretName?: string,
 ): Promise<string> {
   const existing = await getTenantByShopDomain(shop);
   if (existing) {
-    await updateTenantAccessToken(existing.id, accessTokenSecretName);
+    await updateTenantAccessToken(
+      existing.id,
+      accessTokenSecretName,
+      storefrontSecretName,
+    );
     return existing.id;
   }
 
@@ -373,6 +393,62 @@ async function upsertTenant(
     name: shop,
     shopDomain: shop,
     shopifyAccessTokenSecretName: accessTokenSecretName,
+    ...(storefrontSecretName !== undefined && {
+      storefrontAccessTokenSecretName: storefrontSecretName,
+    }),
   });
   return id;
+}
+
+/**
+ * Creates a Shopify Storefront API access token via the Admin REST API,
+ * persists it to Secret Manager, and returns the versioned secret name.
+ */
+async function provisionStorefrontToken(
+  shop: string,
+  adminAccessToken: string,
+): Promise<string> {
+  const res = await fetch(
+    `https://${shop}/admin/api/2024-01/storefront_access_tokens.json`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": adminAccessToken,
+      },
+      body: JSON.stringify({
+        storefront_access_token: { title: "platform-app" },
+      }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `Shopify Storefront token creation failed [${res.status}]: ${body}`,
+    );
+  }
+  const data = (await res.json()) as {
+    storefront_access_token?: { access_token?: string };
+  };
+  const token = data.storefront_access_token?.access_token;
+  if (!token) {
+    throw new Error("No access_token in Shopify Storefront token response");
+  }
+
+  if (process.env["NODE_ENV"] !== "production") {
+    const shopPrefix = shop.replace(".myshopify.com", "");
+    const secretName = `projects/local/secrets/${shopPrefix}-storefront-token/versions/latest`;
+    logger.info(
+      { shop, secretName },
+      "[dev] Storefront token not persisted to Secret Manager. " +
+        `Add to SM_DEV_SECRETS in platform-back/.env: ` +
+        `"${secretName}":"${token}"`,
+    );
+    return secretName;
+  }
+
+  const secretId = `${shop
+    .replace(".myshopify.com", "")
+    .replace(/[^a-z0-9]/g, "-")}-storefront-token`;
+  return storeSecret(secretId, token);
 }
