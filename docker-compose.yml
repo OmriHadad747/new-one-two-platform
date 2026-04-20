@@ -179,15 +179,15 @@ services:
   # Python CrewAI generator (consumes generation.requested, publishes progress + completed)
   generator-python:
     build:
-      context: ./generator
+      context: ./platform-ai
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       - "8001:8001"
     env_file:
-      - path: ./generator/envs/.env.local
+      - path: ./platform-ai/envs/.env.local
         required: false
-      - path: ./generator/envs/.env.docker
+      - path: ./platform-ai/envs/.env.docker
         required: false
     depends_on:
       pubsub-init:
@@ -195,7 +195,7 @@ services:
     develop:
       watch:
         - action: sync+restart
-          path: ./generator
+          path: ./platform-ai
           target: /app
 
   # ── Bull Board (queue UI) ────────────────────────────────────────────────────
