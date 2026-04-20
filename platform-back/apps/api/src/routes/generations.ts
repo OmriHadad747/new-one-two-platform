@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import {
   getAppById,
+  getAppSlugs,
   getGenerationByJobId,
   markGenerationDeployed,
 } from "@platform-back/db";
@@ -81,8 +82,11 @@ async function deployGenerationHandler(
 ): Promise<FastifyReply | void> {
   const { appId, jobId } = req.params;
 
-  const appRecord = await getAppById(appId);
-  if (!appRecord) {
+  const [appRecord, slugs] = await Promise.all([
+    getAppById(appId),
+    getAppSlugs(appId),
+  ]);
+  if (!appRecord || !slugs) {
     return reply
       .code(404)
       .send(errorResponse(ErrorCode.NotFound, "App not found"));
@@ -152,6 +156,12 @@ async function deployGenerationHandler(
       ? bundle.handlerModule.cronSchedule
       : null;
 
+  const webhookTopics: string[] = Array.isArray(bundle?.handlerModule?.webhookTopics)
+    ? (bundle.handlerModule.webhookTopics as unknown[]).filter(
+        (t): t is string => typeof t === "string",
+      )
+    : [];
+
   // appVersionId — stable per generation (we re-use the jobId as the
   // version id so every re-deploy of the same generation hits the same
   // row in app_versions). Version label is a short hash of the jobId so
@@ -170,9 +180,12 @@ async function deployGenerationHandler(
       appVersion,
       tenantId: appRecord.tenantId,
       shopDomain: appRecord.shopDomain,
+      appSlug: slugs.appSlug,
+      tenantSlug: slugs.tenantSlug,
       tenantSchema,
       generatedFiles,
       cronSchedule,
+      webhookTopics,
     });
 
     // Mark the generation as deployed so the dashboard can grey the Deploy

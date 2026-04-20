@@ -62,6 +62,72 @@ export async function resolveWebhookContext(
   };
 }
 
+// ─── Webhook subscription management (deploy-time) ───────────────────────────
+
+export interface WebhookSubscriptionRow {
+  appId: string;
+  tenantId: string;
+  deployedFunctionId: string;
+  topic: string;
+  shopifyWebhookId: string;
+  callbackUrl: string;
+}
+
+/**
+ * Upserts webhook subscriptions for the just-deployed function.
+ * ON CONFLICT (app_id, topic) updates the deployed_function_id and
+ * shopify_webhook_id so re-deploys stay consistent without creating duplicates.
+ */
+export async function upsertWebhookSubscriptions(
+  rows: WebhookSubscriptionRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  for (const row of rows) {
+    await sql`
+      INSERT INTO webhook_subscriptions (
+        app_id, tenant_id, deployed_function_id,
+        topic, shopify_webhook_id, callback_url, active
+      ) VALUES (
+        ${row.appId}, ${row.tenantId}, ${row.deployedFunctionId},
+        ${row.topic}, ${row.shopifyWebhookId}, ${row.callbackUrl}, TRUE
+      )
+      ON CONFLICT (app_id, topic) DO UPDATE SET
+        deployed_function_id = EXCLUDED.deployed_function_id,
+        shopify_webhook_id   = EXCLUDED.shopify_webhook_id,
+        callback_url         = EXCLUDED.callback_url,
+        active               = TRUE,
+        updated_at           = NOW()
+    `;
+  }
+}
+
+/**
+ * Marks webhook subscriptions as inactive for any topic that is no longer in
+ * activeTopics. Returns the Shopify webhook IDs of the deactivated rows so
+ * the caller can delete them from Shopify.
+ */
+export async function deactivateRemovedWebhookSubscriptions(
+  appId: string,
+  activeTopics: string[],
+): Promise<Array<{ shopifyWebhookId: string }>> {
+  if (activeTopics.length === 0) {
+    return sql<Array<{ shopifyWebhookId: string }>>`
+      UPDATE webhook_subscriptions
+         SET active = FALSE, updated_at = NOW()
+       WHERE app_id = ${appId} AND active = TRUE
+      RETURNING shopify_webhook_id AS "shopifyWebhookId"
+    `;
+  }
+  return sql<Array<{ shopifyWebhookId: string }>>`
+    UPDATE webhook_subscriptions
+       SET active = FALSE, updated_at = NOW()
+     WHERE app_id = ${appId}
+       AND active = TRUE
+       AND topic != ALL(${activeTopics}::text[])
+    RETURNING shopify_webhook_id AS "shopifyWebhookId"
+  `;
+}
+
 // ─── Invocation log ────────────────────────────────────────────────────────────
 
 export interface CreateWebhookInvocationLogInput {

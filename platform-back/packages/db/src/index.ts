@@ -1,6 +1,7 @@
 export { sql, closeDb } from "./connection.js";
 export {
   getAppById,
+  getAppSlugs,
   resolveAppHandler,
   type AppRecord,
   type ResolvedHandler,
@@ -29,7 +30,10 @@ export {
   resolveWebhookContext,
   createWebhookInvocationLog,
   updateWebhookInvocationLog,
+  upsertWebhookSubscriptions,
+  deactivateRemovedWebhookSubscriptions,
   type WebhookContext,
+  type WebhookSubscriptionRow,
   type CreateWebhookInvocationLogInput,
   type UpdateWebhookInvocationLogInput,
 } from "./webhooks.js";

@@ -19,6 +19,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import {
   getAppById,
+  getAppSlugs,
   createPendingGeneration,
   getGenerationByJobId,
   getLatestGenerationForApp,
@@ -224,8 +225,17 @@ async function approveHandler(
     return reply.code(500).send(errorResponse(ErrorCode.Internal, "Bundle malformed"));
   }
 
-  const appRecord = await getAppById(row.appId);
-  if (!appRecord) return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
+  const [appRecord, slugs] = await Promise.all([
+    getAppById(row.appId),
+    getAppSlugs(row.appId),
+  ]);
+  if (!appRecord || !slugs) return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
+
+  const webhookTopics: string[] = Array.isArray(bundle?.handlerModule?.webhookTopics)
+    ? (bundle.handlerModule.webhookTopics as unknown[]).filter(
+        (t): t is string => typeof t === "string",
+      )
+    : [];
 
   const tenantSchema = `tenant_${appRecord.tenantId.replace(/-/g, "_")}`;
   const deployJobId = await startDeploy({
@@ -235,8 +245,11 @@ async function approveHandler(
     appVersion: `gen-${jobId.slice(0, 8)}`,
     tenantId: appRecord.tenantId,
     shopDomain: appRecord.shopDomain,
+    appSlug: slugs.appSlug,
+    tenantSlug: slugs.tenantSlug,
     tenantSchema,
     generatedFiles: [...handlerFiles, migrationFile],
+    webhookTopics,
   });
 
   await markGenerationDeployed(jobId).catch(() => {});

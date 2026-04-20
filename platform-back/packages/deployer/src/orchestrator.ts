@@ -5,7 +5,9 @@ import { buildAndPushImage } from "./build-image.js";
 import { assembleBuildContext, type GeneratedFile } from "./build-context.js";
 import { deployToCloudRun } from "./cloud-run-ops.js";
 import { scheduleAppCron, unscheduleAppCron } from "./cron-scheduler.js";
+import { registerWebhooks } from "./webhook-registrar.js";
 import { upsertDeployedFunction } from "./db-writer.js";
+import { deactivateRemovedWebhookSubscriptions } from "@platform-back/db";
 import { runMigrations } from "./migration-runner.js";
 import {
   grantPlatformBackInvokerOnHandler,
@@ -29,6 +31,7 @@ export const DEPLOY_STEPS = [
   "deploy_cloud_run",
   "grant_invoker",
   "db_writes",
+  "register_webhooks",
   "schedule_cron",
 ] as const;
 
@@ -75,11 +78,20 @@ export interface StartDeployInput {
   existingHandlerSaEmail?: string | null;
   /**
    * Cron expression from handlerModule.cronSchedule, or null for apps
-   * that don't have a scheduled tick. When set, step 8 registers a
+   * that don't have a scheduled tick. When set, step 9 registers a
    * pg_cron job; when null and a schedule already exists for this app
-   * (re-deploy that dropped cron), step 8 unschedules it.
+   * (re-deploy that dropped cron), step 9 unschedules it.
    */
   cronSchedule?: string | null;
+  /** Human-readable slugs used to build the webhook-gateway callback URL. */
+  appSlug: string;
+  tenantSlug: string;
+  /**
+   * Topics from handlerModule.webhookTopics. Step 8 registers/reconciles
+   * Shopify subscriptions and syncs webhook_subscriptions in DB. Pass an
+   * empty array (or omit) for apps with no webhook handler.
+   */
+  webhookTopics?: string[];
 }
 
 interface JobContext {
@@ -254,7 +266,7 @@ async function runDeploy(
     );
 
     // 7. DB writes — record the active deployment.
-    await runStep(ctx, "db_writes", () =>
+    const dbResult = await runStep(ctx, "db_writes", () =>
       upsertDeployedFunction({
         appVersionId: input.appVersionId,
         appId: input.appId,
@@ -266,7 +278,29 @@ async function runDeploy(
       }),
     );
 
-    // 8. Register (or remove) the pg_cron schedule for this app.
+    // 8. Reconcile Shopify webhook subscriptions for this deploy. When
+    //    webhookTopics is non-empty, registers any missing topics with
+    //    Shopify and syncs the webhook_subscriptions table pointing at
+    //    the new deployed_function row. When empty, deactivates stale
+    //    subscriptions so the gateway stops routing to a dead function.
+    await runStep(ctx, "register_webhooks", async () => {
+      const topics = input.webhookTopics ?? [];
+      if (topics.length > 0) {
+        await registerWebhooks({
+          appId: input.appId,
+          appSlug: input.appSlug,
+          tenantId: input.tenantId,
+          tenantSlug: input.tenantSlug,
+          shopDomain: input.shopDomain,
+          deployedFunctionId: dbResult.id,
+          webhookTopics: topics,
+        });
+      } else {
+        await deactivateRemovedWebhookSubscriptions(input.appId, []);
+      }
+    });
+
+    // 9. Register (or remove) the pg_cron schedule for this app.
     //    When cronSchedule is set: create/replace the per-app tick.
     //    When null: unschedule any prior registration so a re-deploy
     //    that dropped cron stops ticking the (now-dead) queue.

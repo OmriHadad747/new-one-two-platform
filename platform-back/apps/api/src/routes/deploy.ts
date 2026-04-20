@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { getAppById } from "@platform-back/db";
+import { getAppById, getAppSlugs } from "@platform-back/db";
 import {
   getDeployJob,
   startDeploy,
@@ -42,10 +42,15 @@ const DeployBodySchema = z.object({
   handlerEnv: z.record(z.string()).optional(),
   /**
    * Cron expression from the architect plan (handlerModule.cronSchedule).
-   * Orchestrator step 8 registers the pg_cron tick when set, unschedules
+   * Orchestrator step 9 registers the pg_cron tick when set, unschedules
    * any stale registration when null / absent.
    */
   cronSchedule: z.string().min(1).max(80).nullable().optional(),
+  /**
+   * Webhook topics from handlerModule.webhookTopics. Orchestrator step 8
+   * reconciles Shopify subscriptions and syncs webhook_subscriptions in DB.
+   */
+  webhookTopics: z.array(z.string().min(1).max(100)).max(20).optional(),
 });
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
@@ -75,8 +80,11 @@ async function deployHandler(
 ): Promise<FastifyReply | void> {
   const { appId } = req.params;
 
-  const appRecord = await getAppById(appId);
-  if (!appRecord) {
+  const [appRecord, slugs] = await Promise.all([
+    getAppById(appId),
+    getAppSlugs(appId),
+  ]);
+  if (!appRecord || !slugs) {
     return reply
       .code(404)
       .send(errorResponse(ErrorCode.NotFound, "App not found"));
@@ -108,12 +116,15 @@ async function deployHandler(
       appVersion: parsed.data.appVersion,
       tenantId: appRecord.tenantId,
       shopDomain: appRecord.shopDomain,
+      appSlug: slugs.appSlug,
+      tenantSlug: slugs.tenantSlug,
       tenantSchema,
       generatedFiles: parsed.data.generatedFiles,
       ...(parsed.data.handlerEnv === undefined
         ? {}
         : { handlerEnv: parsed.data.handlerEnv }),
       cronSchedule: parsed.data.cronSchedule ?? null,
+      webhookTopics: parsed.data.webhookTopics ?? [],
     });
 
     return reply.code(202).send({ jobId });

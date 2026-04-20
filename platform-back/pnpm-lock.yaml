@@ -154,6 +154,9 @@ importers:
       '@google-cloud/run':
         specifier: ^1.5.0
         version: 1.5.1
+      '@platform-back/crypto':
+        specifier: workspace:*
+        version: link:../crypto
       '@platform-back/db':
         specifier: workspace:*
         version: link:../db

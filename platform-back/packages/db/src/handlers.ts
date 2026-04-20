@@ -32,6 +32,22 @@ export interface ResolvedHandler {
 }
 
 /**
+ * Slugs needed to build webhook callback URLs and SA names at deploy time.
+ */
+export async function getAppSlugs(
+  appId: string,
+): Promise<{ appSlug: string; tenantSlug: string } | null> {
+  const rows = await sql<Array<{ appSlug: string; tenantSlug: string }>>`
+    SELECT a.slug AS "appSlug", t.slug AS "tenantSlug"
+    FROM apps a
+    JOIN tenants t ON t.id = a.tenant_id
+    WHERE a.id = ${appId}
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
+/**
  * Active Cloud Run handler URL + tenant id for a (shop, app) pair.
  * Returns null when the app isn't found, isn't active, or hasn't
  * been deployed yet — callers map null to the appropriate HTTP status.

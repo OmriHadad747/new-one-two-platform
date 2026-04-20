@@ -3,22 +3,6 @@
 Snapshot as of `853923f`. Items are grouped by what they block; each entry
 names the concrete next action.
 
-## Archetype-blocking gaps
-
-These block specific handler archetypes from being deployable end-to-end.
-The first admin-only app (with email + optional cron) is NOT blocked by
-anything in this section.
-
-### Widget archetype — storefront token provisioning
-- **Where:** `platform-back/apps/api/src/routes/oauth.ts` explicitly defers this (commit `00cb7da`: *"Deferred: storefront API token (widget archetype, phase 4)"*).
-- **What's missing:** OAuth install flow must exchange for a Shopify Storefront API access token and store it under a Secret Manager name recorded on the tenant row. The handler's `shopifyClientFor(...)` already knows how to read it for storefront calls; it just has nothing to read.
-- **Impact:** widgets that hit the Storefront API (cart read, product lookups, etc.) will fail with a missing-token error until this lands.
-
-### Webhook archetype — Shopify webhook re-registration
-- **Where:** same OAuth commit defers *"webhook re-registration (webhook archetype, phase 3)"*.
-- **What's missing:** on install and on every app version change that alters `handlerModule.webhookTopics`, the platform must (re)register the topics with Shopify so events actually arrive at the webhook-gateway. Today the gateway is ready to receive; nothing tells Shopify to send.
-- **Impact:** webhook-archetype handlers deploy cleanly but receive zero traffic.
-
 ## Non-blocking gaps
 
 ### Platform services not yet built
@@ -89,7 +73,7 @@ refactor branch.
 4. **`/services/email/send-batch`** — 207 Multi-Status; per-item 200/429/500; quota hits stop further sends with accurate `{limit, current}`.
 5. **Resend bounce webhook** — Svix HMAC validated, suppression row inserted, delivery status updated.
 6. **OAuth install → callback** — full flow writes `tenants` + mints platform JWT + redirects.
-7. **Deploy pipeline** — stub Cloud Run + Docker; orchestrator runs all 8 steps; state transitions visible via SSE; `deployed_functions` row written; cron registration attempted when `cronSchedule` is set.
+7. **Deploy pipeline** — stub Cloud Run + Docker; orchestrator runs all 9 steps; state transitions visible via SSE; `deployed_functions` row written; webhook subscriptions reconciled when `webhookTopics` is set; cron registration attempted when `cronSchedule` is set.
 8. **Webhook worker → handler** — enqueue a job via webhook-gateway, worker dequeues, calls handler's `/webhook/:topic` with the new envelope, idempotency gate (`processed_webhooks ON CONFLICT`) blocks the duplicate.
 9. **pg_cron smoke** — `scheduleAppCron` against a real Postgres with pg_cron enabled; assert `cron.job` row appears; assert a `cron_queue` row arrives after a tick (requires waiting one cron cycle, so gate this test behind an env flag for selective runs).
 
@@ -121,7 +105,7 @@ Unblocked today. Validation checklist:
 1. Start fresh: DB migrated, pg_cron flag on, platform-back deployed, generator running.
 2. Install the app on a test Shopify store → OAuth completes → tenant row exists.
 3. Generate an admin-only app (e.g. image-review scan) via the dashboard.
-4. Click Deploy → watch `/deploy/jobs/:jobId` SSE → all 8 steps succeed.
+4. Click Deploy → watch `/deploy/jobs/:jobId` SSE → all 9 steps succeed.
 5. Open the app in Shopify admin → iframe hits `/admin/:appId/*` → handler responds.
 6. Trigger an action that calls `/services/email/send` → email arrives at test inbox → `email_deliveries` row in `sent` state.
 

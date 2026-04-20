@@ -84,3 +84,8 @@ export {
   type ScheduleAppCronInput,
   type UnscheduleAppCronInput,
 } from "./cron-scheduler.js";
+
+export {
+  registerWebhooks,
+  type RegisterWebhooksInput,
+} from "./webhook-registrar.js";
