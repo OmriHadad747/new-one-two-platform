@@ -6,6 +6,7 @@ import { ErrorCode, errorResponse } from "./lib/error-response.js";
 import { installCors, parseAllowedOrigins } from "./plugins/cors.js";
 import { registerAuthHook } from "./plugins/auth.js";
 import { adminRoutes } from "./routes/admin.js";
+import { widgetRoutes } from "./routes/widget.js";
 import { deployRoutes } from "./routes/deploy.js";
 import { emailRoutes } from "./routes/email.js";
 import { emailPublicRoutes } from "./routes/email-public.js";
@@ -70,6 +71,7 @@ export async function buildServer() {
   registerAuthHook(app);
 
   await app.register(adminRoutes, { prefix: "/admin" });
+  await app.register(widgetRoutes, { prefix: "/widget" });
   await app.register(emailServiceRoutes, { prefix: "/services/email" });
   await app.register(shopifyServiceRoutes, { prefix: "/services/shopify" });
   await app.register(emailRoutes, { prefix: "/email" });

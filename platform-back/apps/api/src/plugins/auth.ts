@@ -9,6 +9,7 @@
  * The auth hook is GLOBAL but exempts:
  *   - /health           (Cloud Run probes)
  *   - /admin/*          (Shopify App Bridge JWT — verified by routes/admin.ts)
+ *   - /widget/*         (Shopify App Proxy HMAC — verified by routes/widget.ts)
  *   - /services/*       (Cloud Run SA ID token — verified by routes/services/*)
  *   - /webhook/*        (provider HMAC — verified by per-route logic)
  *   - /email/u/*        (public unsubscribe pages)
@@ -110,6 +111,7 @@ export function verifyJwt(token: string): TenantAuth | null {
 const EXEMPT_PREFIXES = [
   "/health",
   "/admin",
+  "/widget",
   "/services",
   "/webhook",
   "/oauth",

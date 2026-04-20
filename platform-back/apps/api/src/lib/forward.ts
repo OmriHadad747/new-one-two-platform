@@ -27,6 +27,12 @@ export interface ForwardInput {
   log: Logger;
   /** Total budget for the upstream call (default 25s — under Cloud Run's 30s). */
   timeoutMs?: number;
+  /**
+   * Extra headers to forward to the handler on top of the standard set.
+   * Used by widget edge to pass X-Customer-Id. Cannot override core
+   * context headers or Authorization — those are set after this merge.
+   */
+  extraHeaders?: Record<string, string>;
 }
 
 export interface ForwardResult {
@@ -72,12 +78,13 @@ export async function forwardToHandler(
     );
   }
 
-  const headers: Record<string, string> = {
-    "X-Tenant-Id": ctx.tenantId,
-    "X-Shop-Domain": ctx.shopDomain,
-    "X-App-Id": ctx.appId,
-    "X-Request-Id": ctx.requestId,
-  };
+  const headers: Record<string, string> = { ...(input.extraHeaders ?? {}) };
+  // Core context headers are set AFTER the extraHeaders merge so callers
+  // can't accidentally (or maliciously) override them via extraHeaders.
+  headers["X-Tenant-Id"] = ctx.tenantId;
+  headers["X-Shop-Domain"] = ctx.shopDomain;
+  headers["X-App-Id"] = ctx.appId;
+  headers["X-Request-Id"] = ctx.requestId;
   if (contentType) headers["Content-Type"] = contentType;
   if (authHeader) headers["Authorization"] = authHeader;
 
