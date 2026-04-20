@@ -1,9 +1,12 @@
-import express, { type ErrorRequestHandler, type RequestHandler } from "express";
+import express, {
+  type ErrorRequestHandler,
+  type RequestHandler,
+} from "express";
 import { closeDb } from "./lib/db.js";
 import { verifyPlatform } from "./middleware/verify-platform.js";
 import { adminRouter } from "./routes/admin.js";
-import { platformAdminRouter } from "./routes/admin-platform.js";
 import { webhookRouter } from "./routes/webhook.js";
+import { widgetRouter } from "./routes/widget.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "8080", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -23,11 +26,9 @@ app.get("/health", (_req, res) => {
 // Every other route requires a verified platform call.
 app.use(verifyPlatform);
 
-// Reserved /_platform namespace mounted before the merchant admin router
-// so a generated route at `/admin/_platform/anything` can never shadow it.
-app.use("/admin/_platform", platformAdminRouter);
 app.use("/admin", adminRouter);
 app.use("/webhook", webhookRouter);
+app.use("/widget", widgetRouter);
 
 // 404 — anything that fell through.
 const notFound: RequestHandler = (_req, res) => {

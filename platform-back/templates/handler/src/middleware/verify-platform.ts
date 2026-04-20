@@ -35,9 +35,7 @@ if (!SKIP_AUTH) {
 // signature failures, so this is allocated once per process.
 const GOOGLE_JWKS = SKIP_AUTH
   ? null
-  : createRemoteJWKSet(
-      new URL("https://www.googleapis.com/oauth2/v3/certs"),
-    );
+  : createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 
 export interface PlatformContext {
   tenantId: string;

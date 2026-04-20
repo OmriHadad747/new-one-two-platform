@@ -13,8 +13,8 @@ src/
                                   reads X-Tenant-Id / X-App-Id / X-Shop-Domain
   routes/
     admin.ts                      Example merchant-facing admin routes
-    admin-platform.ts             /admin/_platform/* — purge etc.
     webhook.ts                    /webhook/:topic — idempotent dispatch
+    widget.ts                     /widget/:path — storefront-facing routes
   lib/
     db.ts                         Tenant-scoped Postgres (search_path)
     platform-call.ts              Outbound /services/* call w/ ID-token mint
@@ -33,7 +33,10 @@ migrations/
   into `webhook.ts`.
 - **Decision 9** — migrations run via `pnpm migrate` (a Cloud Run pre-deploy job),
   never on container start.
-- **Decision 10** — `/admin/_platform/purge` drops the schema; idempotent.
+- **Decision 10 (amended)** — uninstall teardown is owned by the platform
+  provisioner: it drops the tenant schema, deletes the Cloud Run service,
+  Docker image, and Secret Manager entries. Handler exposes no purge
+  endpoint, so an unreachable handler cannot block uninstall.
 
 ## Auth
 
