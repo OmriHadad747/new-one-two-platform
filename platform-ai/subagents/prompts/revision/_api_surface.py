@@ -9,16 +9,17 @@ absolute rules that matter most when editing code.
 
 Capability content is fully registry-driven — no hardcoded signature or
 rule prose lives in this file:
-  - Per-capability signatures render from HANDLER_SERVICES via render_registry()
-    (uses each Capability.short line).
+  - Per-capability signatures render from HANDLER_SERVICES via
+    render_registry() (uses each Capability.short line).
   - Per-capability usage rules render from HANDLER_CAPABILITY_REGISTRY via
     render_usage_rules() (uses each Capability.usage_rule line, if set).
-Adding a new ctx.* service or rule is a single registry edit in
+
+Adding a new platform service or rule is a single registry edit in
 templates/capabilities/handler.py; both blocks below update automatically.
 
-Hardcoded blocks below (Database, Trigger routing, Required module shape,
-Core rules) are platform invariants that are not capability-scoped and have
-no registry counterpart.
+Hardcoded blocks below (Database, Request context, Required file shape,
+Core rules) are platform invariants that are not capability-scoped and
+have no registry counterpart.
 
 Not used by the handler generator itself — initial handler generation uses
 HARNESS_BASE (see prompts/handler/_core.py) plus capability-gated docs
@@ -30,9 +31,10 @@ from templates.capabilities import render_registry, render_usage_rules
 from templates.capabilities.handler import HANDLER_CAPABILITY_REGISTRY, HANDLER_SERVICES
 
 
-# Per-capability signatures — rendered from HANDLER_SERVICES (ctx.* platform
-# services only; npm packages are library declarations, not APIs callable
-# through ctx, so they belong in the handler's full docs JIT, not here).
+# Per-capability signatures — rendered from HANDLER_SERVICES (platform
+# services + shopify client surface; npm packages are library declarations,
+# not APIs callable through a single object, so they belong in the handler's
+# full docs JIT, not here).
 _SERVICE_SIGNATURES = render_registry(HANDLER_SERVICES, indent="  ")
 
 # Per-capability usage rules — one-liner disciplines for capabilities that
@@ -43,36 +45,62 @@ _CAPABILITY_RULES_BLOCK = (
 )
 
 HARNESS_API_SURFACE = f"""
-HARNESS API SURFACE — the only APIs available inside handler():
+HARNESS API SURFACE — the APIs available inside generated handler files:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Handler platform services (ctx.*) — declared per-app in handlerCapabilities:
+Handler platform services — declared per-app in handlerCapabilities:
 {_SERVICE_SIGNATURES}
 
-Database (postgres.js tagged template, RLS-scoped to ctx.tenantId):
-  await ctx.db`SELECT ... WHERE tenant_id = ${{ctx.tenantId}} AND ...`
-  Always pass ctx.tenantId in every INSERT; never String()-wrap IDs.
+Database (postgres.js tagged template, search_path pinned to this tenant's
+schema at connection time):
+  import {{ sql }} from "../lib/db.js";
+  await sql`SELECT ... FROM <table> WHERE <col> = ${{value}}`;
+  No tenant_id column — schema isolation replaces RLS. No schema
+  qualifiers on table names — bare names resolve into the tenant schema.
 
-Trigger routing:
-  ctx.trigger           — 'webhook' | 'cron' | 'widget' | 'admin'
-  ctx.payload           — Shopify webhook body (object)
-  ctx.widgetPath / ctx.widgetBody   — when trigger === 'widget'
-  ctx.adminPath  / ctx.adminBody    — when trigger === 'admin'
-  ctx.shop.domain       — myshopify.com domain
-  ctx.logger.info / warn / error
+Request context (inside an Express route — webhook / admin / widget):
+  req.platform.tenantId    — UUID string
+  req.platform.appId       — UUID of the deployed app
+  req.platform.shopDomain  — <shop>.myshopify.com
+  req.platform.requestId   — per-request id for log correlation
+  req.platform.accessToken — Shopify access token (optional, stamped on
+                             HTTP calls; absent on cron ticks)
 
-Required module shape (CommonJS):
-  module.exports = {{
-    webhookTopics: [...], cronSchedule: null | '...',
-    npmPackages: [...], handler: async function(ctx) {{ ... }}
-  }}
+Cron jobs (src/routes/cron.ts) run OUTSIDE a request — no req.platform.
+A job function receives only (payload: unknown) and imports `sql` /
+`callPlatformService` / `shopifyClientFor` the same way routes do.
+
+Platform services (email, sms, files, shopify access-token):
+  import {{ callPlatformService }} from "../lib/platform-call.js";
+  const {{ status, body }} = await callPlatformService({{ path, body }});
+  Three-branch response: 429 → quota; status ≥ 400 → platform error;
+  else → success. Never hand-roll fetch() to reach /services/*.
+
+Shopify admin REST / GraphQL / storefront:
+  import {{ shopifyClientFor }} from "../lib/shopify.js";
+  const shopify = await shopifyClientFor(req.platform!);
+  await shopify.rest.get("/<resource>.json?...");
+  await shopify.graphql(query, variables);
+  for await (const page of shopify.rest.paginate("<resource>.json")) ...
+
+Required file shape:
+  src/routes/webhook.ts  — exports const webhookRouter (Express Router)
+  src/routes/admin.ts    — exports const adminRouter
+  src/routes/widget.ts   — exports const widgetRouter
+  src/routes/cron.ts     — exports const jobs: Record<string, JobFn>
+                           (Phase 2 convention: one job named "main")
 
 Core rules:
-  - No fetch(), eval(), Function, setInterval, setImmediate, process.env.
-    setTimeout allowed only with a numeric-literal delay ≤500ms (e.g.
-    `setTimeout(r, 200)`) — between unavoidable per-item Shopify writes.
-  - require() only packages declared in npmPackages (+ Node built-ins).
-  - Every INSERT into a tenant table must include tenant_id: ctx.tenantId.
-  - Widget/admin routes: route on ctx.widgetPath / ctx.adminPath, return JSON.
+  - ESM only. No require(), no module.exports.
+  - No ctx.* anywhere — that's pre-Phase-2 vocabulary.
+  - No eval(), new Function(), setInterval, setImmediate,
+    process.exit/kill. setTimeout allowed only with a numeric-literal
+    delay ≤500ms — between unavoidable per-item Shopify writes.
+  - Package imports are architect-gated via handlerCapabilities: all
+    authorized packages ship in the template's package.json, but the
+    declaration is the gate.
   - GraphQL IDs MUST be GID-formatted — never raw numeric.
+  - Never overwrite template-owned files (server.ts, middleware/*,
+    lib/{{db,platform-call,shopify,cron-runner}}.ts, the baseline
+    migration, package.json, tsconfig.json, Dockerfile).
 {_CAPABILITY_RULES_BLOCK}"""
