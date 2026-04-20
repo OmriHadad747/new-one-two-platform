@@ -1,0 +1,6 @@
+# This file marks templates/handler/ as its own pnpm workspace root, so
+# `pnpm install` here installs the handler's own deps and does NOT walk
+# up into platform-back's workspace. The handler is a *template* that
+# gets copied into generated tenant containers — it shares no code or
+# dependencies with platform-back at runtime.
+packages: []

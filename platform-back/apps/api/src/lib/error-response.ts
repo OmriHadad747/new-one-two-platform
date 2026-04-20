@@ -1,0 +1,33 @@
+export interface ErrorBody {
+  error: string;
+  code: string;
+  details?: unknown;
+}
+
+export function errorResponse(
+  code: string,
+  message: string,
+  details?: unknown,
+): ErrorBody {
+  const body: ErrorBody = { error: message, code };
+  if (details !== undefined) body.details = details;
+  return body;
+}
+
+export const ErrorCode = {
+  InvalidRequest: "invalid_request",
+  Unauthorized: "unauthorized",
+  Forbidden: "forbidden",
+  NotFound: "not_found",
+  Internal: "internal_error",
+
+  TokenMissing: "token_missing",
+  TokenInvalid: "token_invalid",
+  ShopMismatch: "shop_mismatch",
+
+  BackendNotDeployed: "backend_not_deployed",
+  BadGateway: "bad_gateway",
+  UpstreamTimeout: "upstream_timeout",
+} as const;
+
+export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

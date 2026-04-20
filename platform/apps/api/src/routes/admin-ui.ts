@@ -1,6 +1,10 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { resolveAdminUiJs, resolveAppFunctionUrl, getAdminUiAppsByShop } from "@new-one-two/db";
+import {
+  resolveAdminUiJs,
+  resolveAppFunctionUrl,
+  getAdminUiAppsByShop,
+} from "@new-one-two/db";
 import { createRequestLogger } from "@new-one-two/logger";
 import { trackAppExecution } from "@new-one-two/db";
 import { parseBody } from "../lib/validate-body.js";
@@ -53,9 +57,10 @@ export async function adminUiRoutes(app: FastifyInstance) {
       log.debug({ shop, count: apps.length }, "Admin UI apps listed");
 
       // Return only the metadata the sidebar needs — never expose JS code here
-      return reply
-        .send(apps.map((a) => ({ id: a.id, name: a.name, slug: a.slug })));
-    }
+      return reply.send(
+        apps.map((a) => ({ id: a.id, name: a.name, slug: a.slug })),
+      );
+    },
   );
 
   // ── GET /admin-ui/:shop/:appId.js ─────────────────────────────────────────
@@ -76,7 +81,7 @@ export async function adminUiRoutes(app: FastifyInstance) {
         },
       },
     },
-    adminUiJsHandler
+    adminUiJsHandler,
   );
 
   // ── POST /admin-ui/:shop/:appId/admin/* ───────────────────────────────────
@@ -93,7 +98,7 @@ async function adminUiJsHandler(
   request: FastifyRequest<{
     Params: { shop: string; appId: string };
   }>,
-  reply: FastifyReply
+  reply: FastifyReply,
 ) {
   const { shop, appId } = request.params;
   const log = createRequestLogger({ requestId: request.id });
@@ -102,9 +107,7 @@ async function adminUiJsHandler(
 
   if (!result) {
     log.debug({ shop, appId }, "No admin UI JS found");
-    return reply
-      .code(404)
-      .send("// Admin UI not found");
+    return reply.code(404).send("// Admin UI not found");
   }
 
   log.debug({ shop, appId }, "Admin UI JS resolved");
@@ -123,7 +126,7 @@ async function adminProxyHandler(
   request: FastifyRequest<{
     Params: { shop: string; appId: string; "*": string };
   }>,
-  reply: FastifyReply
+  reply: FastifyReply,
 ) {
   const { shop, appId } = request.params;
   const path = request.params["*"];
@@ -135,29 +138,43 @@ async function adminProxyHandler(
     log.warn({ shop, appId }, "Admin proxy: missing Authorization header");
     return reply
       .code(401)
-      .send(errorResponse(ErrorCode.TokenMissing, "Missing Authorization header"));
+      .send(
+        errorResponse(ErrorCode.TokenMissing, "Missing Authorization header"),
+      );
   }
 
   const token = authHeader.slice(7);
-  const verified = await verifyShopifySessionToken(token, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET);
+  const verified = await verifyShopifySessionToken(
+    token,
+    SHOPIFY_CLIENT_ID,
+    SHOPIFY_CLIENT_SECRET,
+  );
 
   if (!verified) {
     log.warn({ shop, appId }, "Admin proxy: invalid or expired session token");
     return reply
       .code(401)
-      .send(errorResponse(ErrorCode.TokenInvalid, "Invalid or expired session token"));
+      .send(
+        errorResponse(
+          ErrorCode.TokenInvalid,
+          "Invalid or expired session token",
+        ),
+      );
   }
 
   // The token's `dest` must match the shop this request claims to be for
   if (verified.shop !== shop) {
-    log.warn({ shop, appId, tokenShop: verified.shop }, "Admin proxy: token shop mismatch");
+    log.warn(
+      { shop, appId, tokenShop: verified.shop },
+      "Admin proxy: token shop mismatch",
+    );
     return reply
       .code(403)
       .send(
         errorResponse(
           ErrorCode.ShopMismatch,
-          "Session token does not match the shop in the URL"
-        )
+          "Session token does not match the shop in the URL",
+        ),
       );
   }
 
@@ -169,7 +186,10 @@ async function adminProxyHandler(
     return reply
       .code(503)
       .send(
-        errorResponse(ErrorCode.BackendNotDeployed, "App backend is not deployed")
+        errorResponse(
+          ErrorCode.BackendNotDeployed,
+          "App backend is not deployed",
+        ),
       );
   }
 
@@ -198,19 +218,27 @@ async function adminProxyHandler(
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      log.error({ shop, appId, path, status: res.status, data }, "Admin proxy: harness returned error");
+      log.error(
+        { shop, appId, path, status: res.status, data },
+        "Admin proxy: harness returned error",
+      );
     } else {
       void trackAppExecution(tenantId);
     }
 
     return reply
-      .header("Content-Type", res.headers.get("content-type") || "application/json")
+      .header(
+        "Content-Type",
+        res.headers.get("content-type") || "application/json",
+      )
       .code(res.status)
       .send(data);
-
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    log.error({ message, shop, appId, path, targetUrl }, "Admin proxy: fetch failed");
+    log.error(
+      { message, shop, appId, path, targetUrl },
+      "Admin proxy: fetch failed",
+    );
 
     return reply
       .code(502)
@@ -225,7 +253,7 @@ async function adminProxyHandler(
 async function verifyShopifySessionToken(
   token: string,
   clientId: string,
-  clientSecret: string
+  clientSecret: string,
 ): Promise<{ shop: string; sub: string } | null> {
   if (!clientId || !clientSecret) return null;
 
@@ -241,20 +269,20 @@ async function verifyShopifySessionToken(
       new TextEncoder().encode(clientSecret),
       { name: "HMAC", hash: "SHA-256" },
       false,
-      ["verify"]
+      ["verify"],
     );
     const signature = base64UrlToBytes(sigB64);
     const isValid = await crypto.subtle.verify(
       "HMAC",
       key,
       signature,
-      new TextEncoder().encode(signingInput)
+      new TextEncoder().encode(signingInput),
     );
     if (!isValid) return null;
 
     // Decode and validate claims
     const payload = JSON.parse(
-      Buffer.from(payloadB64, "base64url").toString("utf-8")
+      Buffer.from(payloadB64, "base64url").toString("utf-8"),
     ) as {
       iss?: string;
       dest?: string;

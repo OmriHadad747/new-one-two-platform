@@ -1,0 +1,20 @@
+{
+  "name": "platform-back",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b apps/api",
+    "typecheck": "tsc -b apps/api",
+    "clean": "tsc -b apps/api --clean",
+    "dev": "pnpm --filter @platform-back/api dev"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.9"
+}

@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "paths": {},
+    "composite": true,
+    "incremental": true
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../../packages/db" },
+    { "path": "../../packages/logger" }
+  ]
+}
