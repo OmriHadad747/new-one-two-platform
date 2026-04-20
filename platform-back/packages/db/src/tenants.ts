@@ -111,3 +111,21 @@ export async function updateTenantAccessToken(
     WHERE id = ${tenantId}
   `;
 }
+
+/**
+ * Resolve the Secret Manager name holding this tenant's Shopify Admin
+ * access token. Used by /services/shopify/access-token when a handler's
+ * cron runner needs the token (no inbound request to read the header
+ * off).
+ */
+export async function getTenantAccessTokenSecretName(
+  tenantId: string,
+): Promise<string | null> {
+  const rows = await sql<Array<{ secretName: string | null }>>`
+    SELECT shopify_access_token_secret_name AS "secretName"
+    FROM tenants
+    WHERE id = ${tenantId} AND status = 'active'
+    LIMIT 1
+  `;
+  return rows[0]?.secretName ?? null;
+}

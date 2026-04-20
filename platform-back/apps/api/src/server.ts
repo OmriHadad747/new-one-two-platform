@@ -10,6 +10,7 @@ import { deployRoutes } from "./routes/deploy.js";
 import { emailRoutes } from "./routes/email.js";
 import { emailPublicRoutes } from "./routes/email-public.js";
 import { emailServiceRoutes } from "./routes/services/email.js";
+import { shopifyServiceRoutes } from "./routes/services/shopify.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { resendWebhookRoutes } from "./routes/webhook/resend.js";
 
@@ -60,6 +61,7 @@ export async function buildServer() {
 
   await app.register(adminRoutes, { prefix: "/admin" });
   await app.register(emailServiceRoutes, { prefix: "/services/email" });
+  await app.register(shopifyServiceRoutes, { prefix: "/services/shopify" });
   await app.register(emailRoutes, { prefix: "/email" });
   await app.register(emailPublicRoutes, { prefix: "/email/u" });
   await app.register(oauthRoutes, { prefix: "/oauth" });

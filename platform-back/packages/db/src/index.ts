@@ -9,6 +9,7 @@ export {
   createTenant,
   getTenantBasics,
   getTenantByShopDomain,
+  getTenantAccessTokenSecretName,
   updateTenantAccessToken,
   type TenantBasics,
 } from "./tenants.js";
