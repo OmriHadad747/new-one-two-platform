@@ -83,12 +83,17 @@ class HandlerModule(BaseModel):
     `files` contains ONLY generator-authored files — the template's hand-built
     files (server.ts, middleware/, lib/db.ts, lib/platform-call.ts, etc.) ship
     with every handler and MUST NOT appear here.
+
+    npm packages are all pre-installed in the template's package.json;
+    which ones a handler may actually import is gated at generation time by
+    the architect's handlerCapabilities declaration (see
+    static_validation._build_import_allowlist). No per-bundle package
+    metadata is carried — the deployer does not do a per-deploy npm install.
     """
 
     files: List[GeneratedFile]
     webhookTopics: List[str]
     cronSchedule: Optional[str] = None
-    npmPackages: List[str] = []
 
 
 class TechnicalExplanation(BaseModel):

@@ -919,13 +919,6 @@ def _build_bundle(
     technical    = explanation.get("technical", {})
     app_contracts = plan.get("appContracts") or {}
 
-    # Parse npmPackages from the handler's module.exports
-    def _parse_npm(code: str) -> List[str]:
-        m = re.search(r"npmPackages\s*:\s*\[([^\]]*)\]", code)
-        if not m:
-            return []
-        return re.findall(r"""['"]([^'"]+)['"]""", m.group(1))
-
     uses_email = "email" in (app_contracts.get("handlerCapabilities") or [])
     email_spec = app_contracts.get("emailSpec") or {}
     sidecar = handler_email_metadata or {}
@@ -947,14 +940,17 @@ def _build_bundle(
         "adminUiModule":         artifacts.get("admin_ui")  if is_admin_ui   else None,
         "widgetTargetTemplates": (app_contracts.get("widgetTargetTemplates") or None) if is_storefront else None,
         "handlerModule": {
-            # Phase 2 bridge: one-file wrapper around the legacy CommonJS blob.
-            # Step 5 replaces this with real multi-file output from handler_agent.
+            # Phase 2 bridge: one-file wrapper around whatever the handler
+            # agent returned. Step 5 made handler_agent emit a real file
+            # bundle; CLI local-testing still calls the older single-string
+            # path so this wrap keeps it convertible until chat_local is
+            # ported. No npmPackages — packages are template-shipped (see
+            # platform-back/templates/handler/package.json).
             "files": [
                 {"path": "src/routes/generated.ts", "contents": handler_code},
             ],
             "webhookTopics": shopify_plan.get("webhookTopics", []),
             "cronSchedule":  shopify_plan.get("cronSchedule"),
-            "npmPackages":   _parse_npm(handler_code),
         },
         "dbMigration": {
             "path": "migrations/generated.sql",

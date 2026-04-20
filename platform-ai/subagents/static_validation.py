@@ -646,48 +646,56 @@ def _extract_js_fields(obj_literal: str) -> List[str]:
 # ── Handler ───────────────────────────────────────────────────────────────────
 
 FORBIDDEN_HANDLER_PATTERNS = [
-    (
-        r"\bfetch\s*\(",
-        "raw fetch() calls are not allowed — use ctx.shopify or ctx.http.json/.buffer/.text",
-    ),
-    (
-        r"\brequire\s*\(\s*['\"]https?['\"]",
-        "Node.js native http/https modules are not allowed — use ctx.shopify for Shopify API, ctx.http.json/.buffer/.text for external HTTP calls (pick by response type)",
-    ),
+    # Structural — always forbidden regardless of file role.
     (r"\beval\s*\(", "eval() is not allowed"),
-    (r"\bprocess\.exit\b", "process.exit is not allowed"),
-    (r"\bprocess\.kill\b", "process.kill is not allowed"),
-    (r"\bprocess\.env\b", "process.env access is not allowed"),
     (r"\bnew\s+Function\s*\(", "new Function() is not allowed"),
     (
         r"\bsetInterval\s*\(",
-        "setInterval is not allowed — handlers are short-lived invocations, not long-running processes",
+        "setInterval is not allowed — handlers are short-lived; use the "
+        "cron runner (src/routes/cron.ts) for scheduled work",
     ),
     (r"\bsetImmediate\s*\(", "setImmediate is not allowed"),
-    # setTimeout is allowed ONLY as a bounded pause (≤500ms numeric literal) —
-    # enforced via _find_setTimeout_violations() below, same rule widget/admin
-    # apply. Any other shape (no delay / non-literal / >500ms) is rejected.
-    # ── Local-disk writes — always forbidden on Cloud Run ────────────────────
-    # Cloud Run's filesystem is ephemeral and per-instance; anything written to
-    # disk is unreachable by subsequent invocations and by the merchant. All
-    # generated files MUST be handed to ctx.services.files.upload as a Buffer.
-    # These patterns catch the three npm-producer call shapes the LLM reliably
-    # hand-rolls when it copies disk-writing examples from generic tutorials.
+    (r"\bprocess\.exit\b", "process.exit is not allowed"),
+    (r"\bprocess\.kill\b", "process.kill is not allowed"),
+    # Legacy CommonJS surface — generator output is ESM TypeScript.
+    (
+        r"\brequire\s*\(",
+        "require() is not allowed — use ESM `import` syntax (this is "
+        "TypeScript, tsc compiles to ESM for Node 20)",
+    ),
+    (
+        r"\bmodule\.exports\b",
+        "module.exports is not allowed — use ESM `export` / `export const` "
+        "syntax",
+    ),
+    # Legacy ctx.* surface — prompt has been retargeted to req.platform + sql
+    # + callPlatformService. Any ctx.* reference is carry-over from the
+    # pre-Phase-2 prompt set and the model is regressing.
+    (
+        r"\bctx\.(?:db|tenantId|shopify|payload|trigger|widgetPath|widgetBody|adminPath|adminBody|logger|shop|services|http|storefront)\b",
+        "ctx.* references are no longer available — use req.platform, `sql` "
+        "from ../lib/db.js, `callPlatformService` from "
+        "../lib/platform-call.js, or the shopify client from ../lib/shopify.js",
+    ),
+    # Local-disk writes — always forbidden on Cloud Run (ephemeral FS).
+    # Rewritten to point at the new /services/files/upload path.
     (
         r"\bsharp\s*\([^)]*\)[\s\S]*?\.toFile\s*\(",
-        "sharp(...).toFile(path) writes to the local filesystem which is ephemeral on Cloud Run — "
-        "use sharp(...).toBuffer() and hand the Buffer to ctx.services.files.upload instead.",
+        "sharp(...).toFile(path) writes to the local filesystem which is "
+        "ephemeral on Cloud Run — use sharp(...).toBuffer() and hand the "
+        "Buffer (base64) to /services/files/upload instead.",
     ),
     (
         r"\.pipe\s*\(\s*fs\.createWriteStream\s*\(",
-        ".pipe(fs.createWriteStream(...)) writes to the local filesystem which is ephemeral on Cloud Run — "
-        "buffer the stream in memory (e.g. collect chunks via the 'data' event, then Buffer.concat) "
-        "and hand the Buffer to ctx.services.files.upload.",
+        ".pipe(fs.createWriteStream(...)) writes to the local filesystem "
+        "which is ephemeral on Cloud Run — buffer the stream in memory and "
+        "hand the Buffer (base64) to /services/files/upload.",
     ),
     (
         r"\.xlsx\.writeFile\s*\(",
-        "wb.xlsx.writeFile(path) writes to the local filesystem which is ephemeral on Cloud Run — "
-        "use wb.xlsx.writeBuffer() and hand the Buffer to ctx.services.files.upload.",
+        "wb.xlsx.writeFile(path) writes to the local filesystem which is "
+        "ephemeral on Cloud Run — use wb.xlsx.writeBuffer() and hand the "
+        "Buffer (base64) to /services/files/upload.",
     ),
 ]
 
@@ -698,6 +706,49 @@ FORBIDDEN_HANDLER_PATTERNS = [
 # Only { to, data } are allowed.
 _DEPRECATED_EMAIL_FIELDS = frozenset(
     {"subject", "templateId", "template_id", "html", "body", "from"}
+)
+
+# Template-owned files — the generator MUST NOT emit replacements. If it
+# tries, the deployer would silently overwrite a hand-written component
+# with model-generated code. Rejected at this static-validator layer so
+# the retry loop produces better output.
+_RESERVED_TEMPLATE_FILES = frozenset(
+    {
+        "src/server.ts",
+        "src/middleware/verify-platform.ts",
+        "src/lib/db.ts",
+        "src/lib/platform-call.ts",
+        "src/lib/shopify.ts",
+        "src/lib/cron-runner.ts",
+        "src/migrate.ts",
+        "package.json",
+        "tsconfig.json",
+        "Dockerfile",
+    }
+)
+
+# Node 20 builtins — always allowed in ESM imports (no npm declaration
+# needed). Mirrored from the legacy validator's CJS list; TS imports the
+# same set via `import ... from "node:X"` or the bare specifier.
+_NODE_BUILTINS = frozenset(
+    {
+        "assert", "buffer", "child_process", "crypto", "events", "fs",
+        "http", "https", "net", "os", "path", "process", "querystring",
+        "stream", "string_decoder", "url", "util", "zlib",
+    }
+)
+
+# Packages the handler template ships in package.json — always available
+# without an npmPackages declaration. Keep in sync with
+# platform-back/templates/handler/package.json.
+_TEMPLATE_PACKAGES = frozenset(
+    {
+        "express",
+        "postgres",
+        "google-auth-library",
+        "jose",
+        "@shopify/shopify-api",
+    }
 )
 
 
@@ -848,248 +899,423 @@ def _js_is_syntactically_complete(code: str) -> bool:
 
 
 def validate_handler_artifact(
-    code: str,
+    artifact: str,
     api_plan_topics: List[str],
     widget_catalog: Optional[List[Dict[str, Any]]] = None,
     admin_catalog: Optional[List[Dict[str, Any]]] = None,
     cron_batching_required: bool = False,
     has_state_machine: bool = False,
+    cron_schedule: Optional[str] = None,
+    declared_capabilities: Optional[List[str]] = None,
 ) -> List[str]:
     """
-    Validate the generated CommonJS handler.js.
+    Validate the generated handler file bundle.
 
-    Checks:
-      1. Syntax completeness (balanced braces/parens/strings).
-      2. module.exports, webhookTopics, handler present.
-      3. Forbidden patterns (fetch, eval, setInterval, setImmediate, process.env, etc.)
-         + bounded setTimeout check (≤500ms literal pause only; same rule as widget/admin).
-      4. Declared webhookTopics match the architect plan.
-      5. Every widgetApiCatalog path has a ctx.widgetPath === '/path' branch
-         outside any admin block (widget trigger routing).
-      6. Every adminApiCatalog path has a ctx.adminPath === '/path' branch
-         inside the ctx.trigger === 'admin' block.
-      7. When cronBatching.required: handler has a cron trigger branch.
-      8. When stateMachine is set: handler loads prior state from DB before writing.
+    The generator now emits a marker-delimited bundle of TypeScript files
+    (===FILE: <path>=== / ===END===) that drop into the platform-back
+    handler template. This validator parses the bundle, applies per-file
+    TS rules, and verifies the required files + routes are present.
+
+    Checks
+    ------
+    1. Bundle markers parse cleanly (no unclosed / nested ===FILE:===).
+    2. No file path writes to a template-reserved path (server.ts,
+       middleware, lib/{db,platform-call,shopify,cron-runner}.ts, etc.).
+    3. Required files present based on the architect plan:
+         - src/routes/webhook.ts when webhookTopics non-empty
+         - src/routes/admin.ts   when adminApiCatalog non-empty
+         - src/routes/widget.ts  when widgetApiCatalog non-empty
+         - src/routes/cron.ts    when cronSchedule is set
+       And NOT present when the plan says no (widgetApiCatalog == []
+       means storefront-direct; widget.ts must not be emitted).
+    4. Per-file TS rules (every file):
+         - Syntax completeness (balanced braces/strings).
+         - Forbidden patterns (require, module.exports, ctx.*, eval,
+           setInterval, setImmediate, process.exit/kill, disk-writes).
+         - setTimeout bounded-pause check (≤500ms literal, same as legacy).
+         - Imports limited to: Node builtins, template-shipped packages,
+           architect-approved npm capabilities, or relative ../lib/* paths.
+    5. webhook.ts: exports `webhookRouter`; idempotency gate present;
+       every planned topic has a `case "<topic>":` arm; no webhook topics
+       outside the plan.
+    6. admin.ts: exports `adminRouter`; every adminApiCatalog path has a
+       matching `adminRouter.<method>("<path>", ...)` registration.
+    7. widget.ts: exports `widgetRouter`; every widgetApiCatalog path
+       registered.
+    8. cron.ts: exports `jobs`; has at least one entry (Phase 2 = "main").
+    9. State-machine flag: any file contains a `sql\`SELECT` before any
+       INSERT/UPDATE of the state column (soft-verified; validator_agent
+       in step 10 does the full semantic check).
     """
     errors: List[str] = []
 
-    # 1. Syntax completeness — fail fast, further checks are meaningless on broken code
-    if not _js_is_syntactically_complete(code):
+    # 1. Parse the file bundle.
+    from utils.file_bundle import parse_file_bundle, is_file_bundle, ParseError
+
+    if not is_file_bundle(artifact):
         errors.append(
-            "code is syntactically incomplete (truncated output) — "
-            "unbalanced braces, unclosed string, or unmatched brackets"
+            "handler output is missing the ===FILE: <path>=== / ===END=== "
+            "marker bundle. Emit every file between explicit markers — see "
+            "the 'REQUIRED OUTPUT FORMAT' section of the system prompt."
         )
         return errors
 
-    # 2. Shape checks
-    if "module.exports" not in code:
-        errors.append("module.exports not found")
-    if "webhookTopics" not in code:
-        errors.append("webhookTopics not found in exports")
-    if "npmPackages" not in code:
+    try:
+        files = parse_file_bundle(artifact)
+    except ParseError as err:
+        errors.append(f"handler bundle malformed: {err}")
+        return errors
+
+    if not files:
+        errors.append("handler bundle parsed to zero files")
+        return errors
+
+    files_by_path: Dict[str, str] = {f["path"]: f["contents"] for f in files}
+
+    # 2. No file may target a template-reserved path. Also reject
+    # absolute paths and ".." traversal (the deployer re-checks, but
+    # catching here gives a better retry error).
+    for path in files_by_path.keys():
+        if path.startswith("/"):
+            errors.append(f"file path '{path}' is absolute — paths must be relative")
+            continue
+        if ".." in path.split("/"):
+            errors.append(f"file path '{path}' contains '..' — traversal not allowed")
+            continue
+        if path in _RESERVED_TEMPLATE_FILES:
+            errors.append(
+                f"file path '{path}' is template-owned and must not be emitted by "
+                f"the generator — remove it from the output"
+            )
+        elif not (path.startswith("src/routes/") or path.startswith("src/lib/")):
+            errors.append(
+                f"file path '{path}' is outside the allowed generator scope — "
+                f"emit only src/routes/*.ts and src/lib/*.ts"
+            )
+
+    # 3. Required files gate.
+    widget_declared = widget_catalog is not None
+    widget_used = bool(widget_catalog)
+    admin_used = bool(admin_catalog)
+
+    if api_plan_topics and "src/routes/webhook.ts" not in files_by_path:
         errors.append(
-            "npmPackages not found in exports — add npmPackages: [] even if empty"
+            "webhookTopics is non-empty but src/routes/webhook.ts is missing — "
+            "emit the webhookRouter file"
         )
-    if "handler" not in code:
-        errors.append("handler function not found in exports")
-
-    # 2b. Every require('pkg') call must be declared in npmPackages,
-    #     and every npmPackages entry must be from the approved list.
-    #     Built-in Node modules are always exempt.
-    BUILTIN_MODULES = {
-        "path",
-        "fs",
-        "os",
-        "crypto",
-        "stream",
-        "util",
-        "events",
-        "buffer",
-        "url",
-        "http",
-        "https",
-        "net",
-        "querystring",
-        "string_decoder",
-        "child_process",
-        "process",
-        "zlib",
-    }
-
-    def _pkg_base(name: str) -> str:
-        """Strip version from a package name, handling scoped packages."""
-        if name.startswith("@"):
-            # @scope/pkg@version → @scope/pkg
-            parts = name[1:].split("@")
-            return "@" + parts[0]
-        return name.split("@")[0]
-
-    npm_match = re.search(r"npmPackages\s*:\s*\[([^\]]*)\]", code)
-    declared_packages: set = set()
-    if npm_match:
-        raw = npm_match.group(1)
-        for pkg in re.findall(r"""['"]([^'"]+)['"]""", raw):
-            base = _pkg_base(pkg)
-            declared_packages.add(base)
-            if base not in ALLOWED_NPM_PACKAGES:
-                errors.append(
-                    f"npmPackages contains unsupported package '{pkg}' — "
-                    f"only these packages are available: {sorted(ALLOWED_NPM_PACKAGES)}"
-                )
-
-    for req_match in re.finditer(r"""\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)""", code):
-        pkg_name = req_match.group(1)
-        # Allow sub-path imports like 'csv-parse/sync' — base is still 'csv-parse'
-        base = _pkg_base(
-            pkg_name.split("/")[0]
-            if not pkg_name.startswith("@")
-            else "/".join(pkg_name.split("/")[:2])
+    if admin_used and "src/routes/admin.ts" not in files_by_path:
+        errors.append(
+            "adminApiCatalog is non-empty but src/routes/admin.ts is missing — "
+            "emit the adminRouter file"
         )
-        if base in BUILTIN_MODULES:
-            continue
-        if base not in declared_packages:
-            errors.append(
-                f"require('{pkg_name}') used but '{pkg_name}' is not declared in npmPackages — "
-                f"add it to the npmPackages array in module.exports"
-            )
+    if widget_used and "src/routes/widget.ts" not in files_by_path:
+        errors.append(
+            "widgetApiCatalog is non-empty but src/routes/widget.ts is missing — "
+            "emit the widgetRouter file"
+        )
+    if cron_schedule and "src/routes/cron.ts" not in files_by_path:
+        errors.append(
+            "cronSchedule is set but src/routes/cron.ts is missing — "
+            "emit the jobs map file"
+        )
+    # Storefront-direct widget apps explicitly must NOT emit widget.ts.
+    if widget_declared and not widget_used and "src/routes/widget.ts" in files_by_path:
+        errors.append(
+            "widgetApiCatalog is [] (storefront-direct) but src/routes/widget.ts "
+            "was emitted — do not emit that file; the template's placeholder is fine"
+        )
 
-    # 3. Forbidden patterns
-    for pattern, message in FORBIDDEN_HANDLER_PATTERNS:
-        match = re.search(pattern, code)
-        if match:
-            if "URL" in message or "http" in message.lower():
-                start = max(0, match.start() - 20)
-                snippet = code[start : match.start() + 60].replace("\n", " ").strip()
-                errors.append(f"{message} — found: '{snippet}'")
-            else:
-                errors.append(message)
+    # 4. Per-file TS rules.
+    declared_caps = set(declared_capabilities or [])
+    allowed_import_specifiers = _build_import_allowlist(declared_caps)
 
-    # 3b. Per-capability anti-pattern regexes — registry-owned. Each Capability
-    # that supersedes a pattern the LLM might hand-roll (e.g. paginate
-    # supersedes ?since_id= / ?page_info= URLs) declares a regex; a match means
-    # the handler bypassed the capability and is rejected. Registry is the
-    # single source of truth — no parallel list to maintain here.
-    for cap_name, cap in HANDLER_CAPABILITY_REGISTRY.items():
-        if not cap.static_validation_anti_pattern_regex:
-            continue
-        if re.search(cap.static_validation_anti_pattern_regex, code):
-            errors.append(
-                f"handler code hand-rolls a pattern that the '{cap_name}' capability "
-                f"already provides — use the capability's helper instead "
-                f"(see the capability's docs section)"
-            )
+    for path, code in files_by_path.items():
+        errors.extend(_validate_ts_file(path, code, allowed_import_specifiers))
 
-    # 3c. setTimeout bounded-pause check — same rule widget/admin enforce.
-    # Allows `setTimeout(fn, <literal ms ≤500>)` for unavoidable per-item
-    # Shopify write throttling; rejects missing / non-literal / >500ms delays.
-    # Will tighten to a flat ban once TD-018 (ctx.shopify 429 retry in the
-    # harness) ships and handler-side sleeps become redundant.
-    errors.extend(_find_setTimeout_violations(code))
-
-    # 4. Declared webhook topics must match the plan
-    topic_match = re.search(r"webhookTopics\s*:\s*\[([^\]]*)\]", code)
-    if topic_match:
-        raw_topics = topic_match.group(1)
-        declared = set(re.findall(r"""['"]([^'"]+)['"]""", raw_topics))
-
-        unknown = declared - _get_valid_webhook_topics()
-        if unknown:
-            errors.append(f"unknown webhook topics: {sorted(unknown)}")
-
-        planned = set(api_plan_topics)
-        if declared and not planned:
-            # Handler invented topics when the plan has none (cron-only / backend app)
-            errors.append(
-                f"handler declares webhook topics {sorted(declared)} but the plan has none — "
-                f"set webhookTopics to [] for cron-only or backend apps"
-            )
-        elif planned:
-            mismatch = declared.symmetric_difference(planned)
-            if mismatch:
-                errors.append(
-                    f"webhook topics don't match API plan — "
-                    f"declared: {sorted(declared)}, planned: {sorted(planned)}"
-                )
-
-    # 5. Every widget catalog path must have a route branch somewhere in the handler.
-    #    We search the entire code rather than trying to slice a "widget region" by
-    #    position — ordering of trigger blocks varies and position-based slicing
-    #    produces false negatives when the admin block appears before the widget block.
-    #    Widget and admin catalog paths are always distinct slugs (by architect design),
-    #    so a widget path match can't be a false positive from the admin block.
-    for entry in widget_catalog or []:
-        path = entry.get("path", "")
-        if not path:
-            continue
-        route_present = bool(
-            re.search(
-                rf"ctx\.widgetPath\s*===\s*['\"]{ re.escape(path) }['\"]",
-                code,
+    # 5-8. Per-role checks.
+    if "src/routes/webhook.ts" in files_by_path:
+        errors.extend(
+            _validate_webhook_router(
+                files_by_path["src/routes/webhook.ts"], api_plan_topics
             )
         )
-        if not route_present:
-            errors.append(
-                f"handler missing widget route for '{path}' — "
-                f"add: if (ctx.widgetPath === '{path}') {{ ... }} "
-                f"inside the widget trigger block. "
-                f"Every widgetApiCatalog path MUST be handled."
-            )
-
-    # 6. Every admin catalog path must have a route branch inside the admin block
-    admin_block = ""
-    admin_block_match = re.search(r"ctx\.trigger\s*===\s*['\"]admin['\"]", code)
-    if admin_block_match:
-        admin_block = code[admin_block_match.start() :]
-
-    for entry in admin_catalog or []:
-        path = entry.get("path", "")
-        if not path:
-            continue
-        if not admin_block:
-            errors.append(
-                f"handler has no ctx.trigger === 'admin' block but adminApiCatalog "
-                f"requires path '{path}' — add an admin trigger block that routes on ctx.adminPath"
-            )
-            continue
-        route_present = bool(
-            re.search(
-                rf"ctx\.adminPath\s*===\s*['\"]{ re.escape(path) }['\"]",
-                admin_block,
+    if "src/routes/admin.ts" in files_by_path:
+        errors.extend(
+            _validate_admin_router(
+                files_by_path["src/routes/admin.ts"], admin_catalog or []
             )
         )
-        if not route_present:
-            errors.append(
-                f"handler missing admin route for '{path}' — "
-                f"add: if (ctx.adminPath === '{path}') {{ ... }} "
-                f"inside the ctx.trigger === 'admin' block. "
-                f"Every adminApiCatalog path MUST be handled."
+    if "src/routes/widget.ts" in files_by_path and widget_used:
+        errors.extend(
+            _validate_widget_router(
+                files_by_path["src/routes/widget.ts"], widget_catalog or []
             )
+        )
+    if "src/routes/cron.ts" in files_by_path:
+        errors.extend(_validate_cron_router(files_by_path["src/routes/cron.ts"]))
 
-    # 7. When cronBatching.required: handler must have a cron trigger branch.
-    #    This is a structural gate — whether the bulk-fetch is correctly implemented
-    #    inside that branch is verified by the agentic validator (Q7).
-    if cron_batching_required:
-        has_cron_branch = bool(re.search(r"ctx\.trigger\s*===\s*['\"]cron['\"]", code))
-        if not has_cron_branch:
-            errors.append(
-                "cronBatching.required is true but handler has no ctx.trigger === 'cron' branch — "
-                "add a cron branch that bulk-fetches all Shopify data before iterating"
-            )
-
-    # 8. When stateMachine is set: handler must read prior state from DB before writing.
-    #    Ensures the snapshot read (ctx.db`SELECT...`) precedes any INSERT/UPDATE that
-    #    would record the new state — the agentic validator checks correctness of the logic.
+    # 9. State-machine soft check — every file combined.
     if has_state_machine:
-        has_db_read = bool(re.search(r"ctx\.db`\s*SELECT", code, re.IGNORECASE))
-        if not has_db_read:
+        any_select = any(
+            re.search(r"\bsql\s*(?:<[^>]*>)?\s*`\s*SELECT", c, re.IGNORECASE)
+            for c in files_by_path.values()
+        )
+        if not any_select:
             errors.append(
-                "stateMachine is declared but handler never reads prior state from DB "
-                "(no ctx.db`SELECT` found) — load the last-observed value before comparing "
-                "to the incoming event and writing the new state"
+                "stateMachine is declared but no sql`SELECT` read appears in any "
+                "handler file — load the last-observed value before comparing to the "
+                "incoming event and writing the new state"
             )
 
-    # 9. ctx.services.email.send() must use the { to, data } shape only.
-    errors.extend(_find_email_send_violations(code))
+    return errors
+
+
+# ── Per-file helpers ──────────────────────────────────────────────────────────
+
+
+def _build_import_allowlist(declared_caps: set) -> frozenset:
+    """
+    Union of (a) template-shipped packages + (b) npm capability packages
+    the architect declared. A capability that's declared grants the
+    handler permission to import its package(s); a capability that's NOT
+    declared keeps the package unreachable even though it's present in
+    the template's package.json.
+
+    Keeps the architect-vs-handler layering tight: the ARCHITECT decides
+    what this app needs, the HANDLER writes code against that set.
+    """
+    allowed = set(_TEMPLATE_PACKAGES)
+    for cap_name in declared_caps:
+        cap = HANDLER_CAPABILITY_REGISTRY.get(cap_name)
+        if cap and cap.packages:
+            allowed.update(cap.packages)
+    return frozenset(allowed)
+
+
+def _validate_ts_file(
+    path: str, code: str, allowed_import_specifiers: frozenset
+) -> List[str]:
+    """Generic per-TypeScript-file checks applied to every emitted file."""
+    errors: List[str] = []
+
+    # Syntax completeness — catches truncated output.
+    if not _js_is_syntactically_complete(code):
+        errors.append(
+            f"[{path}] code is syntactically incomplete (truncated?) — "
+            "unbalanced braces, unclosed string, or unmatched brackets"
+        )
+        return errors  # further checks meaningless on broken code
+
+    # Forbidden structural patterns.
+    for pattern, message in FORBIDDEN_HANDLER_PATTERNS:
+        m = re.search(pattern, code)
+        if m:
+            errors.append(f"[{path}] {message}")
+
+    # setTimeout bounded-pause check.
+    for err in _find_setTimeout_violations(code):
+        errors.append(f"[{path}] {err}")
+
+    # Per-capability anti-pattern regexes (still owned by the registry).
+    for cap_name, cap in HANDLER_CAPABILITY_REGISTRY.items():
+        if cap.static_validation_anti_pattern_regex and re.search(
+            cap.static_validation_anti_pattern_regex, code
+        ):
+            errors.append(
+                f"[{path}] code hand-rolls a pattern that the '{cap_name}' "
+                f"capability already provides — use the capability's helper instead"
+            )
+
+    # Import allowlist. Supports:
+    #   import x from "specifier"
+    #   import { a, b } from "specifier"
+    #   import "side-effect-only"
+    #   import * as x from "specifier"
+    for m in re.finditer(r"""import\s+(?:[^'"]+?\s+from\s+)?['"]([^'"]+)['"]""", code):
+        spec = m.group(1)
+        if spec.startswith("./") or spec.startswith("../"):
+            continue  # relative imports are always fine
+        base = _pkg_base(spec)
+        if base in _NODE_BUILTINS or base.removeprefix("node:") in _NODE_BUILTINS:
+            continue
+        if base not in allowed_import_specifiers:
+            errors.append(
+                f"[{path}] import from '{spec}' is not allowed — the architect "
+                f"did not declare the capability that would authorize it. "
+                f"Allowed package imports for this handler: "
+                f"{sorted(allowed_import_specifiers)}"
+            )
+
+    return errors
+
+
+def _pkg_base(specifier: str) -> str:
+    """
+    Reduce an import specifier to its base package name:
+      "qrcode"          → "qrcode"
+      "csv-parse/sync"  → "csv-parse"
+      "@shopify/shopify-api" → "@shopify/shopify-api"
+      "@xmldom/xmldom/lib/foo" → "@xmldom/xmldom"
+    """
+    if specifier.startswith("@"):
+        parts = specifier.split("/")
+        if len(parts) >= 2:
+            return "/".join(parts[:2])
+        return specifier
+    return specifier.split("/")[0]
+
+
+def _validate_webhook_router(code: str, plan_topics: List[str]) -> List[str]:
+    errors: List[str] = []
+
+    if not re.search(r"\bexport\s+const\s+webhookRouter\b", code):
+        errors.append(
+            "[src/routes/webhook.ts] must export a named const `webhookRouter` — "
+            "the template's server.ts imports by that exact name"
+        )
+
+    # Idempotency gate — INSERT INTO processed_webhooks with ON CONFLICT.
+    has_gate = bool(
+        re.search(r"INSERT\s+INTO\s+processed_webhooks", code, re.IGNORECASE)
+    ) and bool(re.search(r"ON\s+CONFLICT\s*\(\s*webhook_id", code, re.IGNORECASE))
+    if not has_gate:
+        errors.append(
+            "[src/routes/webhook.ts] missing idempotency gate — the first "
+            "statement in the router MUST be `INSERT INTO processed_webhooks "
+            "(webhook_id) VALUES (...) ON CONFLICT (webhook_id) DO NOTHING` "
+            "followed by an early-return on duplicate"
+        )
+
+    # Plan topics must match declared switch cases.
+    case_topics = set(
+        re.findall(r"""case\s+['"]([^'"]+)['"]\s*:""", code)
+    )
+    # "_cron/*" topics are legacy (pre-Option D fold-in) — flag if they
+    # appear, they belong in src/routes/cron.ts now.
+    bogus_cron = {t for t in case_topics if t.startswith("_cron/")}
+    if bogus_cron:
+        errors.append(
+            f"[src/routes/webhook.ts] switch arms {sorted(bogus_cron)} look "
+            f"like cron dispatch — cron ticks arrive via src/routes/cron.ts "
+            f"(jobs map), not the webhook switch"
+        )
+    real_cases = case_topics - bogus_cron
+
+    valid_topics = _get_valid_webhook_topics()
+    unknown = real_cases - valid_topics - {t for t in real_cases if "/" not in t}
+    unknown &= real_cases  # keep only keys that looked topic-ish
+    if unknown:
+        errors.append(
+            f"[src/routes/webhook.ts] unknown webhook topics in switch: "
+            f"{sorted(unknown)}"
+        )
+
+    planned = set(plan_topics)
+    if planned:
+        missing = planned - real_cases
+        if missing:
+            errors.append(
+                f"[src/routes/webhook.ts] missing switch arm for planned "
+                f"topics: {sorted(missing)}"
+            )
+        extra = real_cases - planned
+        if extra:
+            errors.append(
+                f"[src/routes/webhook.ts] switch arm for topic(s) not in the "
+                f"architect plan: {sorted(extra)}"
+            )
+    elif real_cases:
+        errors.append(
+            f"[src/routes/webhook.ts] router declares topic arms "
+            f"{sorted(real_cases)} but the plan has no webhookTopics — remove "
+            f"the file or align the plan"
+        )
+
+    return errors
+
+
+def _validate_admin_router(
+    code: str, admin_catalog: List[Dict[str, Any]]
+) -> List[str]:
+    errors: List[str] = []
+
+    if not re.search(r"\bexport\s+const\s+adminRouter\b", code):
+        errors.append(
+            "[src/routes/admin.ts] must export a named const `adminRouter`"
+        )
+
+    for entry in admin_catalog:
+        method = (entry.get("method") or "POST").lower()
+        path = entry.get("path", "")
+        if not path:
+            continue
+        # adminRouter.<method>("<path>", ...) OR  adminRouter[<method>]("<path>", ...)
+        pattern = (
+            rf"""adminRouter\s*\.\s*{re.escape(method)}\s*\(\s*['"]{re.escape(path)}['"]"""
+        )
+        if not re.search(pattern, code):
+            errors.append(
+                f"[src/routes/admin.ts] missing route {method.upper()} "
+                f"'{path}' — register via "
+                f"adminRouter.{method}(\"{path}\", ...). Every "
+                f"adminApiCatalog entry MUST be registered."
+            )
+
+    return errors
+
+
+def _validate_widget_router(
+    code: str, widget_catalog: List[Dict[str, Any]]
+) -> List[str]:
+    errors: List[str] = []
+
+    if not re.search(r"\bexport\s+const\s+widgetRouter\b", code):
+        errors.append(
+            "[src/routes/widget.ts] must export a named const `widgetRouter`"
+        )
+
+    for entry in widget_catalog:
+        method = (entry.get("method") or "POST").lower()
+        path = entry.get("path", "")
+        if not path:
+            continue
+        pattern = (
+            rf"""widgetRouter\s*\.\s*{re.escape(method)}\s*\(\s*['"]{re.escape(path)}['"]"""
+        )
+        if not re.search(pattern, code):
+            errors.append(
+                f"[src/routes/widget.ts] missing route {method.upper()} "
+                f"'{path}' — register via "
+                f"widgetRouter.{method}(\"{path}\", ...). Every "
+                f"widgetApiCatalog entry MUST be registered."
+            )
+
+    return errors
+
+
+def _validate_cron_router(code: str) -> List[str]:
+    errors: List[str] = []
+
+    if not re.search(r"\bexport\s+const\s+jobs\b", code):
+        errors.append(
+            "[src/routes/cron.ts] must export a named const `jobs` "
+            "(Record<string, JobFn>) — the template's cron runner imports "
+            "by that exact name"
+        )
+        return errors
+
+    # Phase 2 convention: exactly one job named "main".
+    # Pattern matches both `jobs: ... = { main: ... }` and
+    # `jobs = { main: ... }`. The typing form is flexible.
+    has_main = bool(
+        re.search(r"""\bjobs\b[^=]*=\s*\{[^}]*\bmain\s*:""", code, re.DOTALL)
+    )
+    if not has_main:
+        errors.append(
+            "[src/routes/cron.ts] jobs map must include a `main` entry — "
+            "Phase 2 convention is one job per app named 'main' "
+            "(multi-job support is tech-debt TD-021)"
+        )
 
     return errors
 

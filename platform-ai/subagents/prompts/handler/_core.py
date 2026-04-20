@@ -178,10 +178,12 @@ ABSOLUTE RULES (violations cause deployment failure):
 
 1.  TypeScript only. Use `import` (ESM-style — the template's tsconfig
     compiles to ESM for Node 20). `require()` is forbidden.
-2.  Imports only from: (a) node builtins, (b) packages listed in the
-    template's package.json or explicitly declared by the architect in
-    handlerCapabilities, (c) relative imports `../lib/*` and `./*`.
-    Do NOT import arbitrary npm packages — they will not be installed.
+2.  Imports only from: (a) node builtins, (b) packages the architect
+    authorized for this app via handlerCapabilities (all such packages
+    ship pre-installed in the template's package.json — no per-handler
+    install step), (c) relative imports `../lib/*` and `./*`. Importing
+    a package the architect did not declare fails static validation even
+    if the package is technically available — declaration is the gate.
 3.  NO eval(), Function(), setInterval(), setImmediate(), process.exit(),
     process.kill(). Read process.env only at module init — never
     per-request. setTimeout is allowed ONLY as a bounded pause with a

@@ -923,20 +923,6 @@ def _publish_success(
     technical = explanation.get("technical", {})
     app_contracts = plan.get("appContracts") or {}
 
-    # npm packages are derived from the architect's declared
-    # handlerCapabilities — each npm capability in templates/capabilities/
-    # handler.py carries a `packages` tuple. This replaces the legacy
-    # regex-over-handler-code approach which assumed a CommonJS module
-    # literal; the new multi-file TypeScript output has no single
-    # `npmPackages: [...]` source to parse.
-    from templates.capabilities.handler import HANDLER_NPM_PACKAGES
-    declared_caps = app_contracts.get("handlerCapabilities") or []
-    npm_packages_derived: List[str] = []
-    for cap_name in declared_caps:
-        cap = HANDLER_NPM_PACKAGES.get(cap_name)
-        if cap:
-            npm_packages_derived.extend(cap.packages)
-
     uses_email = "email" in (app_contracts.get("handlerCapabilities") or [])
     email_spec = app_contracts.get("emailSpec") or {}
     sidecar = handler_email_metadata or {}
@@ -963,7 +949,6 @@ def _publish_success(
             files=handler_files,
             webhookTopics=shopify_plan.get("webhookTopics", []),
             cronSchedule=shopify_plan.get("cronSchedule"),
-            npmPackages=npm_packages_derived,
         ),
         dbMigration=GeneratedFile(
             path="migrations/generated.sql",

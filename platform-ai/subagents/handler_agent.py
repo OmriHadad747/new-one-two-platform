@@ -198,26 +198,24 @@ class HandlerGenerator(Generator):
         return self.parse(result.content), result.input_tokens, result.output_tokens
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
-        # Phase 2 bridge: step 6 rewrites static_validation to operate on
-        # the parsed file bundle per-TS-file. Until then, pass the raw
-        # marker-delimited bundle through the legacy validator — which
-        # will mis-report a lot against TypeScript syntax, but keeps the
-        # pipeline callable end-to-end. The validator errors are used by
-        # the retry loop; step 6 replaces this block with real per-file
-        # checks.
-        topics = ctx.plan.get("shopifyPlan", {}).get("webhookTopics", [])
+        shopify = ctx.plan.get("shopifyPlan", {})
         impl = ctx.plan.get("appContracts") or {}
-        widget_catalog = impl.get("widgetApiCatalog") or []
+        topics = shopify.get("webhookTopics") or []
+        cron_schedule = shopify.get("cronSchedule")
+        widget_catalog = impl.get("widgetApiCatalog")
         admin_catalog = impl.get("adminApiCatalog") or []
         batching = impl.get("cronBatching") or {}
         sm = impl.get("stateMachine")
+        declared_caps = impl.get("handlerCapabilities") or []
         errors = validate_handler_artifact(
             artifact,
-            topics,
-            widget_catalog,
-            admin_catalog,
+            api_plan_topics=topics,
+            widget_catalog=widget_catalog,
+            admin_catalog=admin_catalog,
             cron_batching_required=bool(batching.get("required")),
             has_state_machine=bool(sm and isinstance(sm, dict)),
+            cron_schedule=cron_schedule,
+            declared_capabilities=declared_caps,
         )
         errors += validate_handler_graphql(artifact)
         return errors
