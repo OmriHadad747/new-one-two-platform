@@ -1,0 +1,364 @@
+{
+  "prompt": "I'm losing a lot of sales from people who add stuff to their cart and just disappear. I want to automatically follow up with them by email after they've been gone for a while. Just something simple that reminds them what they left behind and brings them back to finish the purchase.",
+  "intent": {
+    "triggerTypes": [
+      "cron",
+      "admin"
+    ],
+    "resources": [
+      "orders"
+    ],
+    "desiredOutcome": "Automatically send abandoned cart reminder emails to customers after a configurable period of inactivity to recover lost sales.",
+    "cronSchedule": "0 */6 * * *",
+    "appCategory": "backend_admin"
+  },
+  "plan": {
+    "shopifyPlan": {
+      "webhookTopics": [],
+      "cronSchedule": "0 */6 * * *"
+    },
+    "appContracts": {
+      "feasibility": "feasible",
+      "blockedReason": null,
+      "complexity": "high",
+      "stateMachine": {
+        "states": [
+          "pending",
+          "emailed",
+          "recovered",
+          "expired"
+        ],
+        "unknownSentinel": "null",
+        "skipWhenUnknown": false
+      },
+      "platformGaps": [],
+      "cronBatching": {
+        "description": "Each cron run queries all tenants' abandoned checkouts via the Shopify Admin REST API (GET /admin/api/checkouts.json with updated_at_max and created_at_min filters). All eligible checkouts per tenant are bulk-fetched before the per-item email loop begins to avoid per-item API calls."
+      },
+      "dbContracts": [
+        {
+          "table": "abandoned_cart_settings",
+          "columns": [
+            {
+              "name": "id",
+              "type": "UUID",
+              "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"
+            },
+            {
+              "name": "tenant_id",
+              "type": "UUID",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "delay_hours",
+              "type": "INTEGER",
+              "constraints": "NOT NULL DEFAULT 4"
+            },
+            {
+              "name": "email_subject",
+              "type": "TEXT",
+              "constraints": "NOT NULL DEFAULT 'You left something behind!'"
+            },
+            {
+              "name": "email_body_template",
+              "type": "TEXT",
+              "constraints": "NOT NULL DEFAULT ''"
+            },
+            {
+              "name": "max_followups",
+              "type": "INTEGER",
+              "constraints": "NOT NULL DEFAULT 1"
+            },
+            {
+              "name": "expiry_hours",
+              "type": "INTEGER",
+              "constraints": "NOT NULL DEFAULT 168"
+            },
+            {
+              "name": "is_enabled",
+              "type": "BOOLEAN",
+              "constraints": "NOT NULL DEFAULT true"
+            },
+            {
+              "name": "created_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            },
+            {
+              "name": "updated_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": [
+            "tenant_id"
+          ],
+          "indexes": [
+            "tenant_id"
+          ],
+          "rls": true
+        },
+        {
+          "table": "abandoned_carts",
+          "columns": [
+            {
+              "name": "id",
+              "type": "UUID",
+              "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"
+            },
+            {
+              "name": "tenant_id",
+              "type": "UUID",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "checkout_token",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "customer_id",
+              "type": "BIGINT",
+              "constraints": "NULL"
+            },
+            {
+              "name": "customer_email",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "customer_first_name",
+              "type": "TEXT",
+              "constraints": "NULL"
+            },
+            {
+              "name": "cart_total",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "currency",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "checkout_url",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "line_items_json",
+              "type": "JSONB",
+              "constraints": "NOT NULL DEFAULT '[]'"
+            },
+            {
+              "name": "abandoned_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "constraints": "NOT NULL DEFAULT 'pending'"
+            },
+            {
+              "name": "followup_count",
+              "type": "INTEGER",
+              "constraints": "NOT NULL DEFAULT 0"
+            },
+            {
+              "name": "last_emailed_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NULL"
+            },
+            {
+              "name": "recovered_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NULL"
+            },
+            {
+              "name": "created_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": [
+            "tenant_id",
+            "checkout_token"
+          ],
+          "indexes": [
+            "tenant_id",
+            "status",
+            "abandoned_at"
+          ],
+          "rls": true
+        },
+        {
+          "table": "abandoned_cart_emails",
+          "columns": [
+            {
+              "name": "id",
+              "type": "UUID",
+              "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"
+            },
+            {
+              "name": "tenant_id",
+              "type": "UUID",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "abandoned_cart_id",
+              "type": "UUID",
+              "constraints": "NOT NULL REFERENCES abandoned_carts(id)"
+            },
+            {
+              "name": "customer_email",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "subject",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "body_snapshot",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "sent_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NULL"
+            },
+            {
+              "name": "created_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": null,
+          "indexes": [
+            "tenant_id",
+            "abandoned_cart_id"
+          ],
+          "rls": true
+        }
+      ],
+      "webhookContract": null,
+      "cronContract": {
+        "schedule": "0 */6 * * *",
+        "description": "Every 6 hours, for each enabled tenant: bulk-fetch all abandoned checkouts from Shopify Admin REST API that fall within the configured delay_hours and expiry_hours window and have a customer email. Cross-reference against the abandoned_carts table to upsert new carts and skip already-recovered or expired ones. For each cart in 'pending' status that has waited at least delay_hours since abandoned_at and whose followup_count is below max_followups, send a reminder email and update status/followup tracking.",
+        "handlerMustProduce": "Per tenant: the full list of open Shopify checkouts (token, email, first name, line items with titles and images, subtotal price, currency, abandoned checkout URL, updated_at) fetched in bulk via a single Shopify API call before the per-cart processing loop begins. Additionally, the tenant's settings row and the existing abandoned_carts rows for those checkout tokens, so recovery detection (checkout no longer present = completed order) and deduplication can be performed without further Shopify API calls per item."
+      },
+      "widgetTargetTemplates": null,
+      "widgetApiCatalog": null,
+      "adminApiCatalog": [
+        {
+          "path": "/settings",
+          "method": "GET",
+          "requestShape": {},
+          "responseShape": {
+            "delay_hours": "number",
+            "email_subject": "string",
+            "email_body_template": "string",
+            "max_followups": "number",
+            "expiry_hours": "number",
+            "is_enabled": "boolean"
+          }
+        },
+        {
+          "path": "/settings",
+          "method": "POST",
+          "requestShape": {
+            "delay_hours": "number",
+            "email_subject": "string",
+            "email_body_template": "string",
+            "max_followups": "number",
+            "expiry_hours": "number",
+            "is_enabled": "boolean"
+          },
+          "responseShape": {
+            "success": "boolean"
+          }
+        },
+        {
+          "path": "/carts",
+          "method": "GET",
+          "requestShape": {
+            "status": "string | null",
+            "page": "number",
+            "limit": "number"
+          },
+          "responseShape": {
+            "carts": [
+              {
+                "id": "string",
+                "checkout_token": "string",
+                "customer_email": "string",
+                "customer_first_name": "string | null",
+                "cart_total": "string",
+                "currency": "string",
+                "checkout_url": "string",
+                "line_items_json": "array",
+                "abandoned_at": "string",
+                "status": "string",
+                "followup_count": "number",
+                "last_emailed_at": "string | null",
+                "recovered_at": "string | null"
+              }
+            ],
+            "total": "number",
+            "page": "number",
+            "limit": "number"
+          }
+        },
+        {
+          "path": "/carts/stats",
+          "method": "GET",
+          "requestShape": {},
+          "responseShape": {
+            "total_abandoned": "number",
+            "total_emailed": "number",
+            "total_recovered": "number",
+            "total_expired": "number",
+            "recovery_rate_percent": "number"
+          }
+        },
+        {
+          "path": "/emails",
+          "method": "GET",
+          "requestShape": {
+            "abandoned_cart_id": "string | null",
+            "page": "number",
+            "limit": "number"
+          },
+          "responseShape": {
+            "emails": [
+              {
+                "id": "string",
+                "abandoned_cart_id": "string",
+                "customer_email": "string",
+                "subject": "string",
+                "sent_at": "string | null",
+                "created_at": "string"
+              }
+            ],
+            "total": "number"
+          }
+        },
+        {
+          "path": "/run",
+          "method": "POST",
+          "requestShape": {},
+          "responseShape": {
+            "success": "boolean",
+            "carts_processed": "number",
+            "emails_sent": "number"
+          }
+        }
+      ]
+    }
+  },
+  "validation_errors": []
+}

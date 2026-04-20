@@ -1,0 +1,199 @@
+{
+  "prompt": "Award points to customers on order completion and display their balance on the account dashboard.",
+  "intent": {
+    "triggerTypes": [
+      "webhook"
+    ],
+    "resources": [
+      "Order"
+    ],
+    "desiredOutcome": "Award points to customers on order completion and display their balance on the account dashboard.",
+    "cronSchedule": null,
+    "appCategory": "storefront_backend"
+  },
+  "plan": {
+    "shopifyPlan": {
+      "webhookTopics": [
+        "orders/paid"
+      ],
+      "cronSchedule": null
+    },
+    "appContracts": {
+      "feasibility": "feasible",
+      "blockedReason": null,
+      "complexity": "medium",
+      "stateMachine": null,
+      "platformGaps": [],
+      "cronBatching": null,
+      "dbContracts": [
+        {
+          "table": "loyalty_accounts",
+          "columns": [
+            {
+              "name": "id",
+              "type": "UUID",
+              "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"
+            },
+            {
+              "name": "tenant_id",
+              "type": "UUID",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "customer_id",
+              "type": "BIGINT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "points",
+              "type": "INTEGER",
+              "constraints": "NOT NULL DEFAULT 0"
+            },
+            {
+              "name": "created_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            },
+            {
+              "name": "updated_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "indexes": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "rls": true
+        },
+        {
+          "table": "loyalty_transactions",
+          "columns": [
+            {
+              "name": "id",
+              "type": "UUID",
+              "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"
+            },
+            {
+              "name": "tenant_id",
+              "type": "UUID",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "customer_id",
+              "type": "BIGINT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "order_id",
+              "type": "BIGINT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "points",
+              "type": "INTEGER",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "reason",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "created_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": [
+            "tenant_id",
+            "order_id"
+          ],
+          "indexes": [
+            "tenant_id",
+            "customer_id",
+            "order_id"
+          ],
+          "rls": true
+        },
+        {
+          "table": "loyalty_settings",
+          "columns": [
+            {
+              "name": "id",
+              "type": "UUID",
+              "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"
+            },
+            {
+              "name": "tenant_id",
+              "type": "UUID",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "points_per_dollar",
+              "type": "INTEGER",
+              "constraints": "NOT NULL DEFAULT 1"
+            },
+            {
+              "name": "created_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            },
+            {
+              "name": "updated_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": [
+            "tenant_id"
+          ],
+          "indexes": [
+            "tenant_id"
+          ],
+          "rls": true
+        }
+      ],
+      "webhookContract": {
+        "payloadFields": [
+          "id",
+          "customer",
+          "total_price",
+          "financial_status"
+        ],
+        "handlerMustProduce": "From the payload: order id (id), customer object including customer.id, and order total_price. Handler must verify financial_status is 'paid' before proceeding. Handler must look up the tenant's points_per_dollar from loyalty_settings, compute points awarded as floor(total_price * points_per_dollar), upsert loyalty_accounts incrementing points for the customer, and insert a loyalty_transactions record for the order \u2014 skipping if a transaction for this order_id already exists to ensure idempotency."
+      },
+      "cronContract": null,
+      "widgetTargetTemplates": [
+        "page"
+      ],
+      "widgetApiCatalog": [
+        {
+          "path": "/loyalty/balance",
+          "method": "GET",
+          "requestShape": {
+            "customerId": "string"
+          },
+          "responseShape": {
+            "customerId": "string",
+            "points": "number",
+            "transactions": [
+              {
+                "orderId": "string",
+                "points": "number",
+                "reason": "string",
+                "createdAt": "string"
+              }
+            ]
+          }
+        }
+      ],
+      "adminApiCatalog": null
+    }
+  },
+  "validation_errors": []
+}

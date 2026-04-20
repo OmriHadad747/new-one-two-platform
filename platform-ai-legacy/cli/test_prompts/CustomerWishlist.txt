@@ -1,0 +1,1 @@
+Add a Save to Wishlist button on product pages so customers can bookmark items they want to buy later. Customers should be able to view all their saved items from their account page.

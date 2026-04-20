@@ -1,0 +1,1 @@
+Let customers submit questions on product pages. In my Shopify admin I want to see all submitted questions and write answers. Once I answer a question, it should appear on the product page so other shoppers can read it.

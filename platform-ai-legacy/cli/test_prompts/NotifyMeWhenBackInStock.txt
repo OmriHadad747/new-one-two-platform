@@ -1,0 +1,1 @@
+Develop a Notify Me When Back In Stock Shopify app with admin interface for managing subscriptions and notifications.

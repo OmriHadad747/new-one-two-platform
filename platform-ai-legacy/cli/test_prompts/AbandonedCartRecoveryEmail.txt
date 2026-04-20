@@ -1,0 +1,1 @@
+I'm losing a lot of sales from people who add stuff to their cart and just disappear. I want to automatically follow up with them by email after they've been gone for a while. Just something simple that reminds them what they left behind and brings them back to finish the purchase.

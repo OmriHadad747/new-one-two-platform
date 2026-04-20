@@ -1,0 +1,352 @@
+{
+  "prompt": "Enable customers to receive timely email notifications when out-of-stock products return, with merchant control over manual sends and subscription management.",
+  "intent": {
+    "triggerTypes": [
+      "webhook",
+      "admin",
+      "widget"
+    ],
+    "resources": [
+      "Product",
+      "Inventory",
+      "Customer"
+    ],
+    "desiredOutcome": "Enable customers to receive timely email notifications when out-of-stock products return, with merchant control over manual sends and subscription management.",
+    "cronSchedule": null,
+    "appCategory": "storefront_backend_admin"
+  },
+  "plan": {
+    "shopifyPlan": {
+      "webhookTopics": [
+        "inventory_levels/update"
+      ],
+      "cronSchedule": null
+    },
+    "appContracts": {
+      "feasibility": "feasible",
+      "blockedReason": null,
+      "complexity": "high",
+      "stateMachine": {
+        "entity": "inventory_level",
+        "trackedField": "available",
+        "unknownSentinel": "null",
+        "skipWhenUnknown": true,
+        "transitions": [
+          {
+            "from": "zero_or_negative",
+            "to": "positive",
+            "action": "send_back_in_stock_emails"
+          }
+        ]
+      },
+      "platformGaps": [
+        {
+          "gap": "stateMachine trackedField 'available' is numeric \u2014 standard stateMachine enum tracking cannot be used directly",
+          "mitigation": "Store last_known_available (BIGINT NULL) in inventory_level_snapshots table. Handler compares prior value <= 0 to new value > 0 as a numeric threshold check, not a discrete enum transition. The stateMachine entry above documents intent; handler implements as numeric comparison."
+        },
+        {
+          "gap": "No batch write API for sending per-subscriber emails \u2014 each subscriber requires an individual email send",
+          "mitigation": "Pre-fetch all subscribers for affected inventory_item_id in bulk from DB before the loop; per-subscriber email calls inside the loop are unavoidable for this resource type"
+        }
+      ],
+      "cronBatching": null,
+      "dbContracts": [
+        {
+          "table": "back_in_stock_subscriptions",
+          "columns": [
+            {
+              "name": "id",
+              "type": "UUID",
+              "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"
+            },
+            {
+              "name": "tenant_id",
+              "type": "UUID",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "customer_id",
+              "type": "BIGINT",
+              "constraints": "NULL"
+            },
+            {
+              "name": "email",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "product_id",
+              "type": "BIGINT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "variant_id",
+              "type": "BIGINT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "inventory_item_id",
+              "type": "BIGINT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "constraints": "NOT NULL DEFAULT 'active'"
+            },
+            {
+              "name": "notified_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NULL"
+            },
+            {
+              "name": "created_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": [
+            "tenant_id",
+            "email",
+            "variant_id"
+          ],
+          "indexes": [
+            "tenant_id",
+            "inventory_item_id",
+            "status",
+            "variant_id"
+          ],
+          "rls": true
+        },
+        {
+          "table": "inventory_level_snapshots",
+          "columns": [
+            {
+              "name": "id",
+              "type": "UUID",
+              "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"
+            },
+            {
+              "name": "tenant_id",
+              "type": "UUID",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "inventory_item_id",
+              "type": "BIGINT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "location_id",
+              "type": "BIGINT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "last_known_available",
+              "type": "BIGINT",
+              "constraints": "NULL"
+            },
+            {
+              "name": "updated_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": [
+            "tenant_id",
+            "inventory_item_id",
+            "location_id"
+          ],
+          "indexes": [
+            "tenant_id",
+            "inventory_item_id"
+          ],
+          "rls": true
+        },
+        {
+          "table": "notification_log",
+          "columns": [
+            {
+              "name": "id",
+              "type": "UUID",
+              "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"
+            },
+            {
+              "name": "tenant_id",
+              "type": "UUID",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "subscription_id",
+              "type": "UUID",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "variant_id",
+              "type": "BIGINT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "email",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "trigger",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "sent_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": null,
+          "indexes": [
+            "tenant_id",
+            "subscription_id",
+            "variant_id"
+          ],
+          "rls": true
+        }
+      ],
+      "webhookContract": {
+        "payloadFields": [
+          "inventory_item_id",
+          "location_id",
+          "available"
+        ],
+        "handlerMustProduce": "Using inventory_item_id and location_id, look up the last_known_available value from inventory_level_snapshots. If last_known_available was <= 0 (or NULL/unknown \u2014 skip when unknown) and the incoming available > 0, resolve all active back_in_stock_subscriptions rows matching inventory_item_id with status='active' and notified_at IS NULL. For each subscriber, also resolve the variant title and product title from Shopify Admin API using the variant_id on the subscription record, to populate the notification email. Then send emails, write notification_log entries, update notified_at on each subscription, and upsert the new available value into inventory_level_snapshots."
+      },
+      "cronContract": null,
+      "widgetTargetTemplates": [
+        "product"
+      ],
+      "widgetApiCatalog": [
+        {
+          "path": "/subscribe",
+          "method": "POST",
+          "requestShape": {
+            "email": "string",
+            "product_id": "string",
+            "variant_id": "string",
+            "customer_id": "string | null"
+          },
+          "responseShape": {
+            "success": "boolean",
+            "message": "string",
+            "subscription_id": "string"
+          }
+        },
+        {
+          "path": "/subscription/status",
+          "method": "POST",
+          "requestShape": {
+            "email": "string",
+            "variant_id": "string"
+          },
+          "responseShape": {
+            "subscribed": "boolean",
+            "subscription_id": "string | null"
+          }
+        },
+        {
+          "path": "/unsubscribe",
+          "method": "POST",
+          "requestShape": {
+            "email": "string",
+            "variant_id": "string"
+          },
+          "responseShape": {
+            "success": "boolean"
+          }
+        }
+      ],
+      "adminApiCatalog": [
+        {
+          "path": "/admin/subscriptions/list",
+          "method": "POST",
+          "requestShape": {
+            "page": "number",
+            "page_size": "number",
+            "status": "string | null",
+            "product_id": "string | null",
+            "search_email": "string | null"
+          },
+          "responseShape": {
+            "subscriptions": [
+              {
+                "id": "string",
+                "email": "string",
+                "customer_id": "string | null",
+                "product_id": "string",
+                "variant_id": "string",
+                "status": "string",
+                "notified_at": "string | null",
+                "created_at": "string"
+              }
+            ],
+            "total": "number",
+            "page": "number",
+            "page_size": "number"
+          }
+        },
+        {
+          "path": "/admin/subscriptions/delete",
+          "method": "POST",
+          "requestShape": {
+            "subscription_id": "string"
+          },
+          "responseShape": {
+            "success": "boolean"
+          }
+        },
+        {
+          "path": "/admin/subscriptions/notify",
+          "method": "POST",
+          "requestShape": {
+            "variant_id": "string"
+          },
+          "responseShape": {
+            "success": "boolean",
+            "emails_sent": "number"
+          }
+        },
+        {
+          "path": "/admin/notification-log/list",
+          "method": "POST",
+          "requestShape": {
+            "page": "number",
+            "page_size": "number",
+            "variant_id": "string | null"
+          },
+          "responseShape": {
+            "logs": [
+              {
+                "id": "string",
+                "email": "string",
+                "variant_id": "string",
+                "trigger": "string",
+                "sent_at": "string"
+              }
+            ],
+            "total": "number"
+          }
+        },
+        {
+          "path": "/admin/subscriptions/stats",
+          "method": "GET",
+          "requestShape": {},
+          "responseShape": {
+            "total_active": "number",
+            "total_notified": "number",
+            "total_all_time": "number"
+          }
+        }
+      ]
+    }
+  },
+  "validation_errors": [],
+  "arch_prompt": "Merchant request: Enable customers to receive timely email notifications when out-of-stock products return, with merchant control over manual sends and subscription management.\n\nFeature intent:\n{\n  \"triggerTypes\": [\n    \"webhook\",\n    \"admin\",\n    \"widget\"\n  ],\n  \"resources\": [\n    \"Product\",\n    \"Inventory\",\n    \"Customer\"\n  ],\n  \"desiredOutcome\": \"Enable customers to receive timely email notifications when out-of-stock products return, with merchant control over manual sends and subscription management.\",\n  \"cronSchedule\": null,\n  \"appCategory\": \"storefront_backend_admin\"\n}\n\nApp archetype: storefront_backend_admin\n\nProduce the structural plan and binding contracts."
+}

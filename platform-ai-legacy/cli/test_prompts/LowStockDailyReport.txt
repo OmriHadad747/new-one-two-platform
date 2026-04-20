@@ -1,0 +1,1 @@
+Every morning, email me a list of all product variants with fewer than 5 units in stock so I can reorder before they sell out. I want to be able to set the threshold and see a history of past reports in my admin.
