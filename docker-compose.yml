@@ -108,19 +108,19 @@ services:
 
   webhook-gateway:
     build:
-      context: ./platform
+      context: ./platform-back
       dockerfile: apps/webhook-gateway/Dockerfile
     restart: unless-stopped
     ports:
       - "3001:3001"
     env_file:
-      - path: ./platform/.env
-        required: false
-      - path: ./platform/envs/.env.docker
+      - path: ./platform-back/.env
         required: false
     environment:
       PORT: 3001
-      SERVICE_NAME: webhook-gateway
+      DATABASE_URL: postgresql://new_one_two_u:paas_dev_password@postgres:5432/new_one_two
+      REDIS_HOST: redis
+      CLOUD_RUN_SKIP_AUTH: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,24 +129,24 @@ services:
     develop:
       watch:
         - action: sync+restart
-          path: ./platform/apps/webhook-gateway/src
+          path: ./platform-back/apps/webhook-gateway/src
           target: /app/apps/webhook-gateway/src
         - action: sync+restart
-          path: ./platform/packages
+          path: ./platform-back/packages
           target: /app/packages
 
   worker:
     build:
-      context: ./platform
+      context: ./platform-back
       dockerfile: apps/worker/Dockerfile
     restart: unless-stopped
     env_file:
-      - path: ./platform/.env
-        required: false
-      - path: ./platform/envs/.env.docker
+      - path: ./platform-back/.env
         required: false
     environment:
-      SERVICE_NAME: worker
+      DATABASE_URL: postgresql://new_one_two_u:paas_dev_password@postgres:5432/new_one_two
+      REDIS_HOST: redis
+      CLOUD_RUN_SKIP_AUTH: "true"
     depends_on:
       postgres:
         condition: service_healthy

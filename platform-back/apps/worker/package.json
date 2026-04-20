@@ -1,0 +1,25 @@
+{
+  "name": "@platform-back/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/worker.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/worker.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@platform-back/db": "workspace:*",
+    "@platform-back/logger": "workspace:*",
+    "@platform-back/types": "workspace:*",
+    "bullmq": "^5.10.0",
+    "google-auth-library": "^9.14.0",
+    "ioredis": "^5.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.15.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,5 +1,5 @@
 import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 
 // ─── Secret Manager ──────────────────────────────────────────────────────────
 //
@@ -111,4 +111,9 @@ export function validateShopifyHmac(
   }
   if (computed.length !== provided.length) return false;
   return timingSafeEqual(computed, provided);
+}
+
+/** SHA-256 hex hash of rawBody — used for webhook idempotency dedup. */
+export function hashPayload(rawBody: Buffer): string {
+  return createHash("sha256").update(rawBody).digest("hex");
 }

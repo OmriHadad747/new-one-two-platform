@@ -95,3 +95,8 @@ export async function checkUsageQuota(
   const current = (usage[keyMap[counter]!] as number) ?? 0;
   return { allowed: current < planLimit, current, limit: planLimit };
 }
+
+/** Convenience wrapper: increment the app_executions counter by 1. */
+export async function trackAppExecution(tenantId: string): Promise<void> {
+  await incrementUsage(tenantId, "app_executions");
+}
