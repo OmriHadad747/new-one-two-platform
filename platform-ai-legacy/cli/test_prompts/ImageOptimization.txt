@@ -1,1 +1,0 @@
-build image store optimization app that analayze all store images and optimize them if resoulotion is up to 400x400 pixels, it will optimize them to 400x400 and change the stores images with the optimization ones.

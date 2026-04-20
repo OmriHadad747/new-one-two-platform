@@ -1,1 +1,0 @@
-Whenever a customer places an order over $100, automatically tag both the order and the customer with "high-value". No UI needed — just runs silently in the background.

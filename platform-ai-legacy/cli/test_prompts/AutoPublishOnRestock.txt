@@ -1,1 +1,0 @@
-When a product variant goes out of stock, automatically hide it from the online store so customers don't see it as available. When inventory comes back, automatically re-publish it. I want a log in my admin showing what was hidden and re-published.

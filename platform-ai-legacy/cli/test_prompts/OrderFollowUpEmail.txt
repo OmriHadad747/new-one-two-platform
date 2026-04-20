@@ -1,1 +1,0 @@
-Whenever someone buys from my store I want to send them a follow up a few days later. Just something personal, like checking in and maybe asking them to leave a review. I don't want to bother people who already replied or came back.
