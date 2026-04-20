@@ -124,3 +124,97 @@ export async function markGenerationDeployed(jobId: string): Promise<void> {
      WHERE job_id = ${jobId}
   `;
 }
+
+/**
+ * Create a row in 'pending' status when a generation request is dispatched.
+ * Updated to 'success' or 'failed' by the completed-subscriber later.
+ */
+export async function createPendingGeneration(input: {
+  jobId: string;
+  tenantId: string;
+  appId: string;
+}): Promise<void> {
+  await sql`
+    INSERT INTO generations (job_id, tenant_id, app_id, status)
+    VALUES (${input.jobId}, ${input.tenantId}, ${input.appId}, 'pending')
+    ON CONFLICT (job_id) DO NOTHING
+  `;
+}
+
+/** Latest generation for an app (any status). */
+export async function getLatestGenerationForApp(
+  appId: string,
+): Promise<GenerationRow | null> {
+  const rows = await sql<Array<GenerationRow>>`
+    SELECT
+      job_id       AS "jobId",
+      tenant_id    AS "tenantId",
+      app_id       AS "appId",
+      status,
+      error,
+      error_code   AS "errorCode",
+      bundle,
+      meta,
+      deployed,
+      deployed_at  AS "deployedAt",
+      created_at   AS "createdAt",
+      updated_at   AS "updatedAt"
+    FROM generations
+    WHERE app_id = ${appId}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
+/** Latest COMPLETED (status='success') generation for an app. */
+export async function getLatestCompletedGenerationForApp(
+  appId: string,
+): Promise<GenerationRow | null> {
+  const rows = await sql<Array<GenerationRow>>`
+    SELECT
+      job_id       AS "jobId",
+      tenant_id    AS "tenantId",
+      app_id       AS "appId",
+      status,
+      error,
+      error_code   AS "errorCode",
+      bundle,
+      meta,
+      deployed,
+      deployed_at  AS "deployedAt",
+      created_at   AS "createdAt",
+      updated_at   AS "updatedAt"
+    FROM generations
+    WHERE app_id = ${appId} AND status = 'success'
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
+/** List recent generations for an app (newest-first, limit 20). */
+export async function listGenerationsForApp(
+  appId: string,
+  limit = 20,
+): Promise<GenerationRow[]> {
+  return sql<Array<GenerationRow>>`
+    SELECT
+      job_id       AS "jobId",
+      tenant_id    AS "tenantId",
+      app_id       AS "appId",
+      status,
+      error,
+      error_code   AS "errorCode",
+      bundle,
+      meta,
+      deployed,
+      deployed_at  AS "deployedAt",
+      created_at   AS "createdAt",
+      updated_at   AS "updatedAt"
+    FROM generations
+    WHERE app_id = ${appId}
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+}

@@ -126,14 +126,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    develop:
-      watch:
-        - action: sync+restart
-          path: ./platform-back/apps/webhook-gateway/src
-          target: /app/apps/webhook-gateway/src
-        - action: sync+restart
-          path: ./platform-back/packages
-          target: /app/packages
 
   worker:
     build:
@@ -153,22 +145,21 @@ services:
       redis:
         condition: service_healthy
 
-  # Node.js API (replaced TypeScript generator — handles generation lifecycle via Pub/Sub)
   api:
     build:
-      context: ./platform
+      context: ./platform-back
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     ports:
       - "3002:3002"
     env_file:
-      - path: ./platform/.env
-        required: false
-      - path: ./platform/envs/.env.docker
+      - path: ./platform-back/.env
         required: false
     environment:
       PORT: 3002
-      SERVICE_NAME: api
+      DATABASE_URL: postgresql://new_one_two_u:paas_dev_password@postgres:5432/new_one_two
+      PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
+      GOOGLE_CLOUD_PROJECT: local
     depends_on:
       postgres:
         condition: service_healthy
@@ -179,10 +170,10 @@ services:
     develop:
       watch:
         - action: sync+restart
-          path: ./platform/apps/api/src
+          path: ./platform-back/apps/api/src
           target: /app/apps/api/src
         - action: sync+restart
-          path: ./platform/packages
+          path: ./platform-back/packages
           target: /app/packages
 
   # Python CrewAI generator (consumes generation.requested, publishes progress + completed)

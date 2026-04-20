@@ -29,6 +29,12 @@ export function getPubSubClient(): PubSub {
 /** Generator publishes the completed bundle here on every generation run. */
 export const TOPIC_GENERATION_COMPLETED = "generation.completed";
 
+/** platform-back publishes a GenerationRequest here; the Python generator subscribes. */
+export const TOPIC_GENERATION_REQUESTED = "generation.requested";
+
+/** Generator publishes live per-agent progress events here. */
+export const TOPIC_GENERATION_PROGRESS = "generation.progress";
+
 // ─── Subscription names ─────────────────────────────────────────────────────
 
 /**
@@ -41,3 +47,6 @@ export const TOPIC_GENERATION_COMPLETED = "generation.completed";
  * consumer would starve the other).
  */
 export const SUB_PLATFORM_BACK_COMPLETED = "api-completed-sub";
+
+/** platform-back subscribes here to fan out progress events to SSE clients. */
+export const SUB_API_PROGRESS = "api-progress-sub";

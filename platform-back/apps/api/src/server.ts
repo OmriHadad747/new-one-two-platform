@@ -14,10 +14,15 @@ import { shopifyServiceRoutes } from "./routes/services/shopify.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { resendWebhookRoutes } from "./routes/webhook/resend.js";
 import { generationsRoutes } from "./routes/generations.js";
+import { generationLifecycleRoutes } from "./routes/generation.js";
 import {
   startCompletedSubscription,
   stopCompletedSubscription,
 } from "./pubsub/subscriber.js";
+import {
+  startProgressSubscription,
+  stopProgressSubscription,
+} from "./pubsub/progress-subscriber.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3010", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -78,6 +83,8 @@ export async function buildServer() {
   // (same flat shape — dashboard-facing read + deploy bridge for the
   // persisted generations table).
   await app.register(generationsRoutes);
+  // Legacy-compatible /generation/* routes for dashboard compatibility.
+  await app.register(generationLifecycleRoutes);
 
   app.setNotFoundHandler((_req, reply) => {
     void reply
@@ -127,6 +134,7 @@ async function shutdown(
   // Drain the Pub/Sub subscription before closing the DB. stopCompletedSubscription
   // swallows its own errors — it's best-effort drain, not a blocker.
   await stopCompletedSubscription();
+  await stopProgressSubscription();
   await closeDb();
   process.exit(0);
 }
@@ -141,6 +149,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // draining immediately. Subscription stays alive for the lifetime of
   // the process; shutdown closes it via stopCompletedSubscription.
   await startCompletedSubscription();
+  await startProgressSubscription();
 
   await app.listen({ port: PORT, host: HOST });
   logger.info(

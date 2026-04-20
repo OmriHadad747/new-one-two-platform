@@ -17,6 +17,10 @@ export {
   upsertGeneration,
   getGenerationByJobId,
   markGenerationDeployed,
+  createPendingGeneration,
+  getLatestGenerationForApp,
+  getLatestCompletedGenerationForApp,
+  listGenerationsForApp,
   type UpsertGenerationInput,
   type GenerationRow,
 } from "./generations.js";
