@@ -1,0 +1,124 @@
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
+import postgres from "postgres";
+import { logger } from "@platform-back/logger";
+
+// Runs handler-template + generator-emitted SQL migrations against the
+// tenant's Postgres schema.
+//
+// Per locked decision 9 the canonical place for these is a Cloud Run
+// pre-deploy *job* (separate resource type, runs the same image with
+// `node dist/migrate.js` as CMD). For phase 1 we cut that corner: the
+// deployer connects to the same Postgres directly and runs the SQL
+// itself. Same outcome (schema applied before service traffic), one
+// fewer resource type in the loop.
+//
+// Switch to a real Cloud Run Job before we have customers — captured as
+// follow-up tech debt. The handler container's own dist/migrate.js is
+// still the contract; this module just shortcuts the invocation.
+
+const TENANT_SCHEMA_RE = /^tenant_[a-z0-9_]{1,60}$/;
+
+export interface RunMigrationsInput {
+  /** Absolute path to the assembled build context (contains migrations/). */
+  buildContextDir: string;
+  /** Tenant DB schema name — `tenant_<uuid>`. Created here if missing. */
+  tenantSchema: string;
+  /** Postgres connection string. Same DATABASE_URL the handler will use. */
+  databaseUrl: string;
+}
+
+export async function runMigrations(input: RunMigrationsInput): Promise<{
+  applied: string[];
+  skipped: string[];
+}> {
+  if (!TENANT_SCHEMA_RE.test(input.tenantSchema)) {
+    throw new Error(
+      `runMigrations: refusing schema "${input.tenantSchema}" — must match ${TENANT_SCHEMA_RE}`,
+    );
+  }
+
+  const migrationsDir = join(input.buildContextDir, "migrations");
+  const files = await loadMigrations(migrationsDir);
+  if (files.length === 0) {
+    logger.info(
+      { migrationsDir },
+      "runMigrations: no .sql files in migrations/ — nothing to apply",
+    );
+    return { applied: [], skipped: [] };
+  }
+
+  const sql = postgres(input.databaseUrl, {
+    max: 1,
+    prepare: false,
+    onnotice: () => {},
+  });
+
+  const applied: string[] = [];
+  const skipped: string[] = [];
+
+  try {
+    // Idempotent schema create — the orchestrator may call into us
+    // before any handler has ever run, so the schema may not exist yet.
+    await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${input.tenantSchema}`);
+    await sql.unsafe(
+      `SET search_path TO ${input.tenantSchema}, public`,
+    );
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        name        TEXT PRIMARY KEY,
+        applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `;
+
+    const alreadyApplied = new Set(
+      (
+        await sql<Array<{ name: string }>>`SELECT name FROM schema_migrations`
+      ).map((r) => r.name),
+    );
+
+    for (const file of files) {
+      if (alreadyApplied.has(file.name)) {
+        skipped.push(file.name);
+        continue;
+      }
+      logger.info({ name: file.name, schema: input.tenantSchema }, "Applying migration");
+      await sql.begin(async (tx) => {
+        await tx.unsafe(
+          `SET LOCAL search_path TO ${input.tenantSchema}, public`,
+        );
+        await tx.unsafe(file.sql);
+        await tx`INSERT INTO schema_migrations (name) VALUES (${file.name})`;
+      });
+      applied.push(file.name);
+    }
+
+    logger.info(
+      { schema: input.tenantSchema, applied: applied.length, skipped: skipped.length },
+      "Migrations complete",
+    );
+    return { applied, skipped };
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+async function loadMigrations(
+  migrationsDir: string,
+): Promise<Array<{ name: string; sql: string }>> {
+  let entries: string[];
+  try {
+    entries = await readdir(migrationsDir);
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === "ENOENT") return [];
+    throw err;
+  }
+  const sqlFiles = entries.filter((f) => f.endsWith(".sql")).sort();
+  return Promise.all(
+    sqlFiles.map(async (name) => ({
+      name,
+      sql: await readFile(join(migrationsDir, name), "utf-8"),
+    })),
+  );
+}

@@ -6,6 +6,7 @@ import { ErrorCode, errorResponse } from "./lib/error-response.js";
 import { installCors, parseAllowedOrigins } from "./plugins/cors.js";
 import { registerAuthHook } from "./plugins/auth.js";
 import { adminRoutes } from "./routes/admin.js";
+import { deployRoutes } from "./routes/deploy.js";
 import { emailRoutes } from "./routes/email.js";
 import { emailPublicRoutes } from "./routes/email-public.js";
 import { emailServiceRoutes } from "./routes/services/email.js";
@@ -63,6 +64,9 @@ export async function buildServer() {
   await app.register(emailPublicRoutes, { prefix: "/email/u" });
   await app.register(oauthRoutes, { prefix: "/oauth" });
   await app.register(resendWebhookRoutes, { prefix: "/webhook" });
+  // /apps/:appId/deploy  +  /deploy/jobs/:jobId  (mounted at root because
+  // the two paths don't share a common prefix)
+  await app.register(deployRoutes);
 
   app.setNotFoundHandler((_req, reply) => {
     void reply

@@ -47,3 +47,28 @@ export {
   type ProvisionHandlerSaInput,
   type ProvisionHandlerSaResult,
 } from "./sa-provisioner.js";
+
+export {
+  assembleBuildContext,
+  type AssembleBuildContextInput,
+  type AssembleBuildContextResult,
+  type GeneratedFile,
+} from "./build-context.js";
+
+export {
+  runMigrations,
+  type RunMigrationsInput,
+} from "./migration-runner.js";
+
+export {
+  startDeploy,
+  getDeployJob,
+  subscribeDeployJob,
+  DEPLOY_STEPS,
+  type DeployStep,
+  type DeployStepStatus,
+  type DeployStepState,
+  type DeployJobStatus,
+  type DeployJobEvent,
+  type StartDeployInput,
+} from "./orchestrator.js";

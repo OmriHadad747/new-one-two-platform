@@ -1,0 +1,304 @@
+import { rm } from "node:fs/promises";
+import { EventEmitter } from "node:events";
+import { logger } from "@platform-back/logger";
+import { buildAndPushImage } from "./build-image.js";
+import { assembleBuildContext, type GeneratedFile } from "./build-context.js";
+import { deployToCloudRun } from "./cloud-run-ops.js";
+import { upsertDeployedFunction } from "./db-writer.js";
+import { runMigrations } from "./migration-runner.js";
+import {
+  grantPlatformBackInvokerOnHandler,
+  provisionHandlerSa,
+} from "./sa-provisioner.js";
+
+// End-to-end deploy orchestrator. Sequences every sub-phase A-C piece
+// in the right order, emits per-step progress events for the SSE route,
+// returns terminal state.
+//
+// Job state lives in-process (Map keyed by jobId). Lost on restart —
+// fine for phase 1 single-instance deploys; not fine once platform-back
+// scales horizontally. Captured as follow-up: persist to a deploy_jobs
+// table once we hit that.
+
+export const DEPLOY_STEPS = [
+  "provision_sa",
+  "assemble_build_context",
+  "build_image",
+  "run_migrations",
+  "deploy_cloud_run",
+  "grant_invoker",
+  "db_writes",
+] as const;
+
+export type DeployStep = (typeof DEPLOY_STEPS)[number];
+export type DeployStepStatus = "pending" | "running" | "done" | "failed";
+export type DeployJobStatus = "running" | "succeeded" | "failed";
+
+export interface DeployStepState {
+  step: DeployStep;
+  status: DeployStepStatus;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+export interface DeployJobEvent {
+  jobId: string;
+  appId: string;
+  tenantId: string;
+  status: DeployJobStatus;
+  steps: DeployStepState[];
+  /** Populated on terminal success. */
+  functionUrl?: string;
+  /** Populated on terminal failure. */
+  error?: string;
+  updatedAt: string;
+}
+
+export interface StartDeployInput {
+  appId: string;
+  appName: string;
+  appVersionId: string;
+  tenantId: string;
+  shopDomain: string;
+  /** tenant_<uuid> Postgres schema. */
+  tenantSchema: string;
+  /** Bundle of generator-emitted files slotted on top of handler-template. */
+  generatedFiles: GeneratedFile[];
+  /** Image tag — typically the app version semver or git sha. */
+  appVersion: string;
+  /** Env vars to inject into the deployed Cloud Run service. */
+  handlerEnv?: Record<string, string>;
+  /** SA email if the app already has one (re-deploy); null on first deploy. */
+  existingHandlerSaEmail?: string | null;
+}
+
+interface JobContext {
+  jobId: string;
+  state: DeployJobEvent;
+  emitter: EventEmitter;
+}
+
+const jobs = new Map<string, JobContext>();
+
+export function getDeployJob(jobId: string): DeployJobEvent | null {
+  return jobs.get(jobId)?.state ?? null;
+}
+
+/**
+ * Subscribe to live events for a job. The first emission is the current
+ * state so late subscribers don't miss earlier transitions. Returns an
+ * unsubscribe function.
+ */
+export function subscribeDeployJob(
+  jobId: string,
+  onEvent: (event: DeployJobEvent) => void,
+): (() => void) | null {
+  const job = jobs.get(jobId);
+  if (!job) return null;
+  // Snapshot first so SSE clients see something on initial connect.
+  onEvent(structuredClone(job.state));
+  job.emitter.on("event", onEvent);
+  return () => job.emitter.off("event", onEvent);
+}
+
+/**
+ * Kicks off a deploy. Returns the jobId immediately; the actual work
+ * runs asynchronously and emits events on each step transition.
+ *
+ * The promise returned by this function resolves once the job is
+ * REGISTERED (not finished). Callers should subscribe via
+ * subscribeDeployJob to learn about progress / completion.
+ */
+export async function startDeploy(input: StartDeployInput): Promise<string> {
+  const jobId = crypto.randomUUID();
+  const initialSteps: DeployStepState[] = DEPLOY_STEPS.map((step) => ({
+    step,
+    status: "pending",
+  }));
+  const ctx: JobContext = {
+    jobId,
+    emitter: new EventEmitter(),
+    state: {
+      jobId,
+      appId: input.appId,
+      tenantId: input.tenantId,
+      status: "running",
+      steps: initialSteps,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+  jobs.set(jobId, ctx);
+
+  // Fire-and-forget — orchestration runs in the background and pushes
+  // events. Wrap in a `void` IIFE so the unhandled-rejection trap fires
+  // on bugs (vs. swallowing inside the EventEmitter).
+  void (async () => {
+    try {
+      await runDeploy(ctx, input);
+    } catch (err) {
+      logger.error({ err, jobId, appId: input.appId }, "Deploy job crashed");
+    }
+  })();
+
+  return jobId;
+}
+
+// ─── Internal orchestration ──────────────────────────────────────────────────
+
+function pushEvent(ctx: JobContext): void {
+  ctx.state.updatedAt = new Date().toISOString();
+  ctx.emitter.emit("event", structuredClone(ctx.state));
+}
+
+async function runStep<T>(
+  ctx: JobContext,
+  step: DeployStep,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const stepState = ctx.state.steps.find((s) => s.step === step)!;
+  stepState.status = "running";
+  stepState.startedAt = new Date().toISOString();
+  pushEvent(ctx);
+  try {
+    const result = await fn();
+    stepState.status = "done";
+    stepState.finishedAt = new Date().toISOString();
+    pushEvent(ctx);
+    return result;
+  } catch (err) {
+    stepState.status = "failed";
+    stepState.finishedAt = new Date().toISOString();
+    stepState.error = err instanceof Error ? err.message : String(err);
+    pushEvent(ctx);
+    throw err;
+  }
+}
+
+async function runDeploy(
+  ctx: JobContext,
+  input: StartDeployInput,
+): Promise<void> {
+  let buildDir: string | undefined;
+
+  try {
+    // 1. Provision (or look up) the per-handler SA.
+    const sa = await runStep(ctx, "provision_sa", () =>
+      provisionHandlerSa({
+        shopDomain: input.shopDomain,
+        appId: input.appId,
+        appName: input.appName,
+        existingEmail: input.existingHandlerSaEmail ?? null,
+      }),
+    );
+
+    // 2. Assemble the docker build context.
+    buildDir = (
+      await runStep(ctx, "assemble_build_context", () =>
+        assembleBuildContext({
+          generatedFiles: input.generatedFiles,
+          tenantId: input.tenantId,
+          appId: input.appId,
+          appVersion: input.appVersion,
+        }),
+      )
+    ).buildDir;
+
+    // 3. Build + push image.
+    const image = await runStep(ctx, "build_image", () =>
+      buildAndPushImage({
+        appId: input.appId,
+        version: input.appVersion,
+        buildContextDir: buildDir!,
+      }),
+    );
+
+    // 4. Run migrations against the tenant schema.
+    await runStep(ctx, "run_migrations", () =>
+      runMigrations({
+        buildContextDir: buildDir!,
+        tenantSchema: input.tenantSchema,
+        databaseUrl: requireEnv("DATABASE_URL"),
+      }),
+    );
+
+    // 5. Deploy to Cloud Run with the per-handler SA bound.
+    const cloudRun = await runStep(ctx, "deploy_cloud_run", () =>
+      deployToCloudRun({
+        appId: input.appId,
+        imageName: image.imageName,
+        serviceAccountEmail: sa.email,
+        envVars: buildHandlerEnv(input),
+      }),
+    );
+
+    // 6. Grant platform-back's SA invoker on the new service.
+    await runStep(ctx, "grant_invoker", () =>
+      grantPlatformBackInvokerOnHandler(input.appId),
+    );
+
+    // 7. DB writes — record the active deployment.
+    await runStep(ctx, "db_writes", () =>
+      upsertDeployedFunction({
+        appVersionId: input.appVersionId,
+        appId: input.appId,
+        tenantId: input.tenantId,
+        functionUrl: cloudRun.functionUrl,
+        runtime: "nodejs20",
+        memoryMb: 256,
+        timeoutSec: 30,
+      }),
+    );
+
+    ctx.state.status = "succeeded";
+    ctx.state.functionUrl = cloudRun.functionUrl;
+    pushEvent(ctx);
+    logger.info(
+      {
+        jobId: ctx.jobId,
+        appId: input.appId,
+        functionUrl: cloudRun.functionUrl,
+      },
+      "Deploy succeeded",
+    );
+  } catch (err) {
+    ctx.state.status = "failed";
+    ctx.state.error = err instanceof Error ? err.message : String(err);
+    pushEvent(ctx);
+    logger.error(
+      { err, jobId: ctx.jobId, appId: input.appId },
+      "Deploy failed",
+    );
+  } finally {
+    if (buildDir) {
+      await rm(buildDir, { recursive: true, force: true }).catch((err) => {
+        logger.warn({ err, buildDir }, "Failed to clean up build context");
+      });
+    }
+  }
+}
+
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`${name} is not set`);
+  return v;
+}
+
+function buildHandlerEnv(input: StartDeployInput): Record<string, string> {
+  // Baseline env every handler needs. Caller can override / extend via
+  // input.handlerEnv. TENANT_ID / APP_ID / SHOP_DOMAIN come from here so
+  // the handler doesn't have to look them up at startup.
+  return {
+    NODE_ENV: "production",
+    PORT: "8080",
+    TENANT_ID: input.tenantId,
+    APP_ID: input.appId,
+    SHOP_DOMAIN: input.shopDomain,
+    TENANT_SCHEMA: input.tenantSchema,
+    DATABASE_URL: requireEnv("DATABASE_URL"),
+    PLATFORM_URL: requireEnv("PLATFORM_URL"),
+    EXPECTED_AUDIENCE: requireEnv("PLATFORM_URL"),
+    PLATFORM_SA_EMAIL: process.env["PLATFORM_BACK_SA_EMAIL"] ?? "",
+    ...(input.handlerEnv ?? {}),
+  };
+}

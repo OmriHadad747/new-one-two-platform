@@ -189,7 +189,10 @@ async function sendBatchHandler(
     | { index: number; status: 500; error: "send_failed" };
 
   const results: BatchItemResult[] = [];
-  let quotaHit = false;
+  // First QuotaExceededError observed in the batch — its limit/current
+  // values get reused for every subsequent item so the caller can see
+  // the real numbers, not zeros.
+  let quotaHit: { limit: number; current: number } | null = null;
 
   for (let i = 0; i < parsed.data.items.length; i++) {
     const item = parsed.data.items[i]!;
@@ -198,8 +201,8 @@ async function sendBatchHandler(
         index: i,
         status: 429,
         error: "quota_exceeded",
-        limit: 0,
-        current: 0,
+        limit: quotaHit.limit,
+        current: quotaHit.current,
       });
       continue;
     }
@@ -217,7 +220,7 @@ async function sendBatchHandler(
       results.push({ index: i, status: 200, result });
     } catch (err) {
       if (err instanceof QuotaExceededError) {
-        quotaHit = true;
+        quotaHit = { limit: err.limit, current: err.current };
         results.push({
           index: i,
           status: 429,

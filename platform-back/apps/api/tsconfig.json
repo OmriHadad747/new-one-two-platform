@@ -12,6 +12,7 @@
   "references": [
     { "path": "../../packages/crypto" },
     { "path": "../../packages/db" },
+    { "path": "../../packages/deployer" },
     { "path": "../../packages/email" },
     { "path": "../../packages/logger" },
     { "path": "../../packages/types" }

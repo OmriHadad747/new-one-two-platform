@@ -14,6 +14,7 @@
   "dependencies": {
     "@platform-back/crypto": "workspace:*",
     "@platform-back/db": "workspace:*",
+    "@platform-back/deployer": "workspace:*",
     "@platform-back/email": "workspace:*",
     "@platform-back/logger": "workspace:*",
     "@platform-back/types": "workspace:*",

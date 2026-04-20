@@ -51,7 +51,12 @@ export async function resolveAppFromSaEmail(
   return identity;
 }
 
-/** Eagerly invalidate a cache entry (uninstall hook). */
+/**
+ * Eagerly invalidate a cache entry. Currently UNCALLED — wire this from
+ * the uninstall flow when it's built (TD-019-style: when an app is
+ * deleted/uninstalled, also drop its SA email from the cache so a new
+ * app reusing the same SA name doesn't hit a stale tenantId mapping).
+ */
 export function invalidateSaCache(saEmail: string): void {
   cache.delete(saEmail);
 }
