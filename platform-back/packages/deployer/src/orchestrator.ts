@@ -4,6 +4,7 @@ import { logger } from "@platform-back/logger";
 import { buildAndPushImage } from "./build-image.js";
 import { assembleBuildContext, type GeneratedFile } from "./build-context.js";
 import { deployToCloudRun } from "./cloud-run-ops.js";
+import { scheduleAppCron, unscheduleAppCron } from "./cron-scheduler.js";
 import { upsertDeployedFunction } from "./db-writer.js";
 import { runMigrations } from "./migration-runner.js";
 import {
@@ -28,6 +29,7 @@ export const DEPLOY_STEPS = [
   "deploy_cloud_run",
   "grant_invoker",
   "db_writes",
+  "schedule_cron",
 ] as const;
 
 export type DeployStep = (typeof DEPLOY_STEPS)[number];
@@ -71,6 +73,13 @@ export interface StartDeployInput {
   handlerEnv?: Record<string, string>;
   /** SA email if the app already has one (re-deploy); null on first deploy. */
   existingHandlerSaEmail?: string | null;
+  /**
+   * Cron expression from handlerModule.cronSchedule, or null for apps
+   * that don't have a scheduled tick. When set, step 8 registers a
+   * pg_cron job; when null and a schedule already exists for this app
+   * (re-deploy that dropped cron), step 8 unschedules it.
+   */
+  cronSchedule?: string | null;
 }
 
 interface JobContext {
@@ -256,6 +265,27 @@ async function runDeploy(
         timeoutSec: 30,
       }),
     );
+
+    // 8. Register (or remove) the pg_cron schedule for this app.
+    //    When cronSchedule is set: create/replace the per-app tick.
+    //    When null: unschedule any prior registration so a re-deploy
+    //    that dropped cron stops ticking the (now-dead) queue.
+    //    Either way, idempotent and safe.
+    await runStep(ctx, "schedule_cron", async () => {
+      if (input.cronSchedule) {
+        await scheduleAppCron({
+          appId: input.appId,
+          tenantSchema: input.tenantSchema,
+          cronExpression: input.cronSchedule,
+          databaseUrl: requireEnv("DATABASE_URL"),
+        });
+      } else {
+        await unscheduleAppCron({
+          appId: input.appId,
+          databaseUrl: requireEnv("DATABASE_URL"),
+        });
+      }
+    });
 
     ctx.state.status = "succeeded";
     ctx.state.functionUrl = cloudRun.functionUrl;

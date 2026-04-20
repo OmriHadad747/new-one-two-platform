@@ -144,6 +144,13 @@ async function deployGenerationHandler(
       );
   }
   const generatedFiles = [...handlerFiles, migrationFile];
+  // Pull the cron expression straight off the bundle when present.
+  // Null / undefined → the orchestrator's schedule_cron step unschedules
+  // any stale registration; absence is authoritative.
+  const cronSchedule: string | null =
+    typeof bundle?.handlerModule?.cronSchedule === "string"
+      ? bundle.handlerModule.cronSchedule
+      : null;
 
   // appVersionId — stable per generation (we re-use the jobId as the
   // version id so every re-deploy of the same generation hits the same
@@ -165,6 +172,7 @@ async function deployGenerationHandler(
       shopDomain: appRecord.shopDomain,
       tenantSchema,
       generatedFiles,
+      cronSchedule,
     });
 
     // Mark the generation as deployed so the dashboard can grey the Deploy

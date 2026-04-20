@@ -11,8 +11,15 @@
 -- =============================================================================
 
 -- ── Extensions ───────────────────────────────────────────────────────────────
+-- pg_cron requires shared_preload_libraries to include 'pg_cron' at the
+-- instance level (Cloud SQL: set cloudsql.enable_pg_cron=on and restart).
+-- Once the flag is enabled, CREATE EXTENSION is a no-op if already installed.
+-- Cron scheduling itself lives in the `cron` schema; the deployer calls
+-- cron.schedule()/cron.unschedule() at deploy time (see
+-- @platform-back/deployer/src/cron-scheduler.ts).
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS pg_cron;
 
 -- ── Enums ────────────────────────────────────────────────────────────────────
 CREATE TYPE tenant_status AS ENUM ('active', 'suspended', 'pending');

@@ -40,6 +40,12 @@ const DeployBodySchema = z.object({
   generatedFiles: z.array(GeneratedFileSchema).min(1).max(500),
   /** Optional handler env-var overrides (merged on top of orchestrator defaults). */
   handlerEnv: z.record(z.string()).optional(),
+  /**
+   * Cron expression from the architect plan (handlerModule.cronSchedule).
+   * Orchestrator step 8 registers the pg_cron tick when set, unschedules
+   * any stale registration when null / absent.
+   */
+  cronSchedule: z.string().min(1).max(80).nullable().optional(),
 });
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
@@ -107,6 +113,7 @@ async function deployHandler(
       ...(parsed.data.handlerEnv === undefined
         ? {}
         : { handlerEnv: parsed.data.handlerEnv }),
+      cronSchedule: parsed.data.cronSchedule ?? null,
     });
 
     return reply.code(202).send({ jobId });
