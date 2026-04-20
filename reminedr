@@ -1,0 +1,2 @@
+- Ability to to complie the backend during generation and feedback the chain with
+compilation error, etc. 

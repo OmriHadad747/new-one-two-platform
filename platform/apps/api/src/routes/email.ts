@@ -41,7 +41,8 @@ import { ErrorCode, errorResponse } from "../lib/error-response.js";
 
 const RESEND_API_KEY = process.env["RESEND_API_KEY"] ?? "";
 const RESEND_FROM_TRANSACTIONAL =
-  process.env["RESEND_FROM_TRANSACTIONAL"] ?? "notifications@mail.ton-platform.com";
+  process.env["RESEND_FROM_TRANSACTIONAL"] ??
+  "notifications@mail.ton-platform.com";
 
 /**
  * Sample values for common variable names, used when rendering test emails.
@@ -63,7 +64,9 @@ const SAMPLE_VARIABLES: Record<string, unknown> = {
   storeName: "Sample Store",
 };
 
-function buildSampleVariables(variableNames: string[]): Record<string, unknown> {
+function buildSampleVariables(
+  variableNames: string[],
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const name of variableNames) {
     out[name] = SAMPLE_VARIABLES[name] ?? `[${name}]`;
@@ -76,14 +79,22 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
 
   app.get<{ Params: { appId: string } }>(
     "/apps/:appId/config",
-    async (req: FastifyRequest<{ Params: { appId: string } }>, reply: FastifyReply) => {
+    async (
+      req: FastifyRequest<{ Params: { appId: string } }>,
+      reply: FastifyReply,
+    ) => {
       const { appId } = req.params;
 
       const config = await getAppEmailConfig(appId);
       if (!config) {
         return reply
           .status(404)
-          .send(errorResponse(ErrorCode.NotFound, "Email config not found for this app"));
+          .send(
+            errorResponse(
+              ErrorCode.NotFound,
+              "Email config not found for this app",
+            ),
+          );
       }
       if (!requireTenant(req, reply, config.tenantId)) return;
 
@@ -99,7 +110,7 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       const variables = appRows[0]?.emailVariables ?? [];
 
       return reply.send({ config, brand, variables });
-    }
+    },
   );
 
   // ─── PUT /email/apps/:appId/config ─────────────────────────────────────────
@@ -114,59 +125,69 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       ctaUrlTemplate: string | null;
       emailType: EmailType;
     };
-  }>(
-    "/apps/:appId/config",
-    async (req, reply) => {
-      const { appId } = req.params;
+  }>("/apps/:appId/config", async (req, reply) => {
+    const { appId } = req.params;
 
-      // Authorize: verify caller owns this app's tenant
-      const appRecord = await getAppByIdUnsafe(appId);
-      if (!appRecord) return reply
+    // Authorize: verify caller owns this app's tenant
+    const appRecord = await getAppByIdUnsafe(appId);
+    if (!appRecord)
+      return reply
         .status(404)
         .send(errorResponse(ErrorCode.NotFound, "App not found"));
-      if (!requireTenant(req, reply, appRecord.tenantId)) return;
+    if (!requireTenant(req, reply, appRecord.tenantId)) return;
 
-      const body = req.body;
+    const body = req.body;
 
-      if (!body.subjectTemplate?.trim()) {
-        return reply
-          .status(400)
-          .send(errorResponse(ErrorCode.InvalidRequest, "subjectTemplate is required"));
-      }
-      if (!body.bodyTemplate?.trim()) {
-        return reply
-          .status(400)
-          .send(errorResponse(ErrorCode.InvalidRequest, "bodyTemplate is required"));
-      }
-      if (body.emailType !== "transactional" && body.emailType !== "marketing") {
-        return reply
-          .status(400)
-          .send(
-            errorResponse(
-              ErrorCode.InvalidRequest,
-              "emailType must be 'transactional' or 'marketing'"
-            )
-          );
-      }
-
-      try {
-        const config = await updateAppEmailConfig(appId, {
-          subjectTemplate: body.subjectTemplate,
-          headingTemplate: body.headingTemplate,
-          bodyTemplate: body.bodyTemplate,
-          ctaLabel: body.ctaLabel,
-          ctaUrlTemplate: body.ctaUrlTemplate,
-          emailType: body.emailType,
-        });
-        return reply.send({ config });
-      } catch (err) {
-        logger.error({ err, appId }, "failed to update app email config");
-        return reply
-          .status(404)
-          .send(errorResponse(ErrorCode.NotFound, "Email config not found for this app"));
-      }
+    if (!body.subjectTemplate?.trim()) {
+      return reply
+        .status(400)
+        .send(
+          errorResponse(
+            ErrorCode.InvalidRequest,
+            "subjectTemplate is required",
+          ),
+        );
     }
-  );
+    if (!body.bodyTemplate?.trim()) {
+      return reply
+        .status(400)
+        .send(
+          errorResponse(ErrorCode.InvalidRequest, "bodyTemplate is required"),
+        );
+    }
+    if (body.emailType !== "transactional" && body.emailType !== "marketing") {
+      return reply
+        .status(400)
+        .send(
+          errorResponse(
+            ErrorCode.InvalidRequest,
+            "emailType must be 'transactional' or 'marketing'",
+          ),
+        );
+    }
+
+    try {
+      const config = await updateAppEmailConfig(appId, {
+        subjectTemplate: body.subjectTemplate,
+        headingTemplate: body.headingTemplate,
+        bodyTemplate: body.bodyTemplate,
+        ctaLabel: body.ctaLabel,
+        ctaUrlTemplate: body.ctaUrlTemplate,
+        emailType: body.emailType,
+      });
+      return reply.send({ config });
+    } catch (err) {
+      logger.error({ err, appId }, "failed to update app email config");
+      return reply
+        .status(404)
+        .send(
+          errorResponse(
+            ErrorCode.NotFound,
+            "Email config not found for this app",
+          ),
+        );
+    }
+  });
 
   // ─── POST /email/apps/:appId/test ──────────────────────────────────────────
   //
@@ -184,7 +205,12 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       if (!config) {
         return reply
           .status(404)
-          .send(errorResponse(ErrorCode.NotFound, "Email config not found for this app"));
+          .send(
+            errorResponse(
+              ErrorCode.NotFound,
+              "Email config not found for this app",
+            ),
+          );
       }
       if (!requireTenant(req, reply, config.tenantId)) return;
 
@@ -218,7 +244,7 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       // Render the email using the harness renderer for consistency.
       const unsubscribeUrl = `https://ton-platform.com/u/${signUnsubscribeToken(
         config.tenantId,
-        recipient
+        recipient,
       )}`;
       const rendered = renderEmail({
         config,
@@ -250,8 +276,12 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
             "X-Ton-Delivery-Id": deliveryId,
           },
         });
-        const providerMsgId = (result as { data?: { id?: string } })?.data?.id ?? null;
-        await updateEmailDeliveryStatus(deliveryId, { status: "sent", providerMsgId });
+        const providerMsgId =
+          (result as { data?: { id?: string } })?.data?.id ?? null;
+        await updateEmailDeliveryStatus(deliveryId, {
+          status: "sent",
+          providerMsgId,
+        });
         return reply.send({ success: true, deliveryId, recipient });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -262,9 +292,13 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
         logger.error({ err: message, appId, recipient }, "test send failed");
         return reply
           .status(502)
-          .send(errorResponse(ErrorCode.UpstreamFailure, "Test send failed", { message }));
+          .send(
+            errorResponse(ErrorCode.UpstreamFailure, "Test send failed", {
+              message,
+            }),
+          );
       }
-    }
+    },
   );
 
   // ─── GET /email/apps/:appId/stats ──────────────────────────────────────────
@@ -274,14 +308,15 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const { appId } = req.params;
       const appRecord = await getAppByIdUnsafe(appId);
-      if (!appRecord) return reply
-        .status(404)
-        .send(errorResponse(ErrorCode.NotFound, "App not found"));
+      if (!appRecord)
+        return reply
+          .status(404)
+          .send(errorResponse(ErrorCode.NotFound, "App not found"));
       if (!requireTenant(req, reply, appRecord.tenantId)) return;
 
       const stats = await getAppEmailStats(appId);
       return reply.send(stats);
-    }
+    },
   );
 
   // ─── GET /email/tenants/:tenantId/brand ────────────────────────────────────
@@ -293,7 +328,7 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       if (!tenantId) return;
       const brand = await getTenantBrand(tenantId);
       return reply.send({ brand });
-    }
+    },
   );
 
   // ─── PUT /email/tenants/:tenantId/brand ────────────────────────────────────
@@ -306,15 +341,12 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
       footerText?: string | null;
       supportEmail?: string | null;
     };
-  }>(
-    "/tenants/:tenantId/brand",
-    async (req, reply) => {
-      const tenantId = requireTenant(req, reply, req.params.tenantId);
-      if (!tenantId) return;
-      const brand = await upsertTenantBrand({ tenantId, ...req.body });
-      return reply.send({ brand });
-    }
-  );
+  }>("/tenants/:tenantId/brand", async (req, reply) => {
+    const tenantId = requireTenant(req, reply, req.params.tenantId);
+    if (!tenantId) return;
+    const brand = await upsertTenantBrand({ tenantId, ...req.body });
+    return reply.send({ brand });
+  });
 
   // ─── GET /email/u/:token (PUBLIC) ──────────────────────────────────────────
   //
@@ -322,32 +354,27 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
   // confirmation HTML page. The merchant cannot intercept or skin this page
   // in MVP — deliverability matters more than customization.
 
-  app.get<{ Params: { token: string } }>(
-    "/u/:token",
-    async (req, reply) => {
-      const parsed = verifyUnsubscribeToken(req.params.token);
-      if (!parsed) {
-        return reply
-          .type("text/html")
-          .status(400)
-          .send(renderUnsubscribePage({ state: "invalid" }));
-      }
-
-      const tenant = await getTenantById(parsed.tenantId);
-      const merchantName = tenant?.name ?? "this merchant";
-
+  app.get<{ Params: { token: string } }>("/u/:token", async (req, reply) => {
+    const parsed = verifyUnsubscribeToken(req.params.token);
+    if (!parsed) {
       return reply
         .type("text/html")
-        .send(
-          renderUnsubscribePage({
-            state: "confirm",
-            merchantName,
-            email: parsed.email,
-            token: req.params.token,
-          })
-        );
+        .status(400)
+        .send(renderUnsubscribePage({ state: "invalid" }));
     }
-  );
+
+    const tenant = await getTenantById(parsed.tenantId);
+    const merchantName = tenant?.name ?? "this merchant";
+
+    return reply.type("text/html").send(
+      renderUnsubscribePage({
+        state: "confirm",
+        merchantName,
+        email: parsed.email,
+        token: req.params.token,
+      }),
+    );
+  });
 
   // ─── POST /email/u/:token/confirm (PUBLIC) ─────────────────────────────────
 
@@ -373,19 +400,17 @@ export const emailRoute: FastifyPluginAsync = async (app) => {
 
       logger.info(
         { tenantId: parsed.tenantId, email: parsed.email },
-        "customer unsubscribed via public page"
+        "customer unsubscribed via public page",
       );
 
-      return reply
-        .type("text/html")
-        .send(
-          renderUnsubscribePage({
-            state: "done",
-            merchantName,
-            email: parsed.email,
-          })
-        );
-    }
+      return reply.type("text/html").send(
+        renderUnsubscribePage({
+          state: "done",
+          merchantName,
+          email: parsed.email,
+        }),
+      );
+    },
   );
 };
 
@@ -395,7 +420,7 @@ function renderUnsubscribePage(
   opts:
     | { state: "invalid" }
     | { state: "confirm"; merchantName: string; email: string; token: string }
-    | { state: "done"; merchantName: string; email: string }
+    | { state: "done"; merchantName: string; email: string },
 ): string {
   const base = `<!DOCTYPE html>
 <html><head>
@@ -422,12 +447,12 @@ function renderUnsubscribePage(
 
   if (opts.state === "done") {
     return `${base}<h1>You're unsubscribed</h1><p><strong>${escape(
-      opts.email
+      opts.email,
     )}</strong> will no longer receive emails from <strong>${escape(opts.merchantName)}</strong>.</p><p class="muted">It can take a few minutes for the change to take effect.</p>${close}`;
   }
 
   return `${base}<h1>Unsubscribe from ${escape(opts.merchantName)}</h1><p>You are about to stop receiving emails sent to <strong>${escape(
-    opts.email
+    opts.email,
   )}</strong> from <strong>${escape(opts.merchantName)}</strong>.</p>
   <form method="POST" action="/api/email/u/${encodeURIComponent(opts.token)}/confirm">
     <button type="submit">Confirm unsubscribe</button>
