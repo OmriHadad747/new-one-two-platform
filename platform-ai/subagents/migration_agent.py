@@ -1,16 +1,27 @@
 """
-Migration Generator — produces tenant-scoped PostgreSQL DDL from dbContracts.
+Migration Generator — produces PostgreSQL DDL from dbContracts.
 
-The Architect's dbContracts are the authoritative column definitions — the migration
-generator produces DDL mechanically from those typed table definitions.
+The architect's dbContracts are the authoritative column definitions — the
+migration generator produces DDL mechanically from those typed table
+definitions.
 
 System prompt lives in subagents/prompts/migration/ (MIGRATION_BASE).
 
-Rules enforced by both the system prompt and validate():
-  - Every CREATE TABLE must include tenant_id UUID NOT NULL
-  - Every table must have ALTER TABLE ENABLE ROW LEVEL SECURITY
-  - Every table must have a CREATE POLICY for tenant isolation
-  - No DROP TABLE, no DROP COLUMN, no TRUNCATE
+Isolation model (see MIGRATION_BASE): each tenant has its own Postgres
+schema; the deployer runs migrations with search_path pinned to that
+schema, so `CREATE TABLE foo` lands at `tenant_<uuid>.foo` automatically.
+Generator-emitted SQL therefore has no tenant_id column, no RLS, no
+CREATE POLICY — those belong to the previous (row-level) architecture.
+
+Validator allow-list (enforced by both platform-ai's
+static_validation.validate_migration_artifact and platform-back's
+packages/deployer/src/sql-validator.ts):
+  Allowed:     CREATE TABLE, CREATE INDEX (incl. UNIQUE),
+               ALTER TABLE ADD COLUMN IF NOT EXISTS, COMMENT ON.
+  Forbidden:   DROP*, TRUNCATE, DELETE FROM, UPDATE SET, GRANT/REVOKE,
+               ENABLE RLS / CREATE POLICY, CREATE FUNCTION / TRIGGER /
+               EXTENSION, DO $$ blocks, CONCURRENTLY, COPY FROM PROGRAM,
+               SELECT cron.schedule(...)  (deployer owns — see TD-023).
 
 Model: claude-sonnet-4-6 (via agent_models.py)
 """
@@ -49,17 +60,16 @@ class MigrationGenerator(Generator):
             closing = (
                 "Generate ONLY the incremental DDL needed for this revision.\n"
                 "Do NOT recreate tables that already exist (listed above).\n"
-                "Do NOT emit ALTER TABLE ENABLE ROW LEVEL SECURITY for existing tables.\n"
-                "Do NOT emit CREATE POLICY for existing tables.\n"
                 "Use ALTER TABLE ... ADD COLUMN IF NOT EXISTS for new columns on existing tables.\n"
-                "New tables must still follow the full tenant isolation pattern.\n"
                 "If no schema change is needed, output nothing at all — zero characters.\n"
                 "Output ONLY raw SQL (no markdown fences)."
             )
         else:
             closing = (
                 "Generate the PostgreSQL DDL migration for this feature.\n"
-                "Follow the tenant isolation pattern exactly.\n"
+                "Plain CREATE TABLE / CREATE INDEX against unqualified names.\n"
+                "No tenant_id, no RLS, no CREATE POLICY — see the isolation\n"
+                "model in the system prompt.\n"
                 "Output ONLY raw SQL (no markdown fences)."
             )
 

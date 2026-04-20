@@ -72,6 +72,31 @@ const FORBIDDEN_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
     pattern: /\bCREATE\s+(OR\s+REPLACE\s+)?TRIGGER\b/i,
     reason: "CREATE TRIGGER",
   },
+
+  // Schema-isolation architecture (decision 3): each tenant has its own
+  // Postgres schema; RLS is gone. Generator migrations MUST NOT emit
+  // ENABLE RLS or CREATE POLICY — those are carry-over from the legacy
+  // row-level model. The template's baseline migration
+  // (0001_processed_webhooks.sql) ships processed_webhooks + cron_queue
+  // and bypasses the validator so its own DDL is unaffected.
+  {
+    pattern: /\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b/i,
+    reason: "ENABLE ROW LEVEL SECURITY (schema isolation replaces RLS)",
+  },
+  {
+    pattern: /\bCREATE\s+POLICY\b/i,
+    reason: "CREATE POLICY (schema isolation replaces RLS)",
+  },
+
+  // Cron scheduling is deployer-owned (TD-023): pg_cron's metadata lives
+  // in a different database than the tenant schema, so the generator
+  // can't emit these cleanly. The deployer calls cron.schedule(...)
+  // directly after migrations run, with the fully qualified tenant
+  // schema substituted in the body.
+  {
+    pattern: /\bcron\.(schedule|unschedule)\b/i,
+    reason: "cron.schedule / cron.unschedule (deployer-owned)",
+  },
 ];
 
 /**
@@ -94,17 +119,17 @@ export function validateMigrationSql(migrationSql: string): void {
     }
   }
 
-  // ALTER TABLE allowed only for ENABLE ROW LEVEL SECURITY or
-  // ADD COLUMN IF NOT EXISTS.
+  // ALTER TABLE allowed only for ADD COLUMN IF NOT EXISTS. ENABLE RLS is
+  // rejected by the FORBIDDEN_PATTERNS block above — the ALTER TABLE
+  // gate here just confirms the only legitimate shape.
   const alterMatches = migrationSql.match(/\bALTER\s+TABLE\b[^;]+;/gi);
   if (alterMatches) {
     for (const stmt of alterMatches) {
-      const isRls = /\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b/i.test(stmt);
       const isAddCol = /\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b/i.test(stmt);
-      if (!isRls && !isAddCol) {
+      if (!isAddCol) {
         throw new Error(
-          "ALTER TABLE is only allowed for ENABLE ROW LEVEL SECURITY or " +
-            `ADD COLUMN IF NOT EXISTS. Forbidden statement: ${stmt.substring(0, 120)}`,
+          "ALTER TABLE is only allowed for ADD COLUMN IF NOT EXISTS. " +
+            `Forbidden statement: ${stmt.substring(0, 120)}`,
         );
       }
     }

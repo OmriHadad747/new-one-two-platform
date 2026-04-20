@@ -1326,11 +1326,24 @@ def _validate_cron_router(code: str) -> List[str]:
 def validate_migration_artifact(
     sql: str, prior_tables: List[str] | None = None
 ) -> List[str]:
-    """Validate the generated PostgreSQL DDL migration.
+    """
+    Validate the generated PostgreSQL DDL migration.
 
-    prior_tables: table names already applied in a previous deploy. RLS and
-    CREATE POLICY checks are skipped for these — they already exist in the DB
-    and the runner will make the policy creation idempotent.
+    Mirrors the platform-back deployer's sql-validator.ts so a migration
+    that passes here also passes the deployer's pre-run gate. Allowed:
+      CREATE TABLE (incl. IF NOT EXISTS)
+      CREATE INDEX / CREATE UNIQUE INDEX (incl. IF NOT EXISTS)
+      ALTER TABLE … ADD COLUMN IF NOT EXISTS
+      COMMENT ON TABLE / COLUMN
+    Forbidden: everything else — see MIGRATION_BASE prompt for the full
+    list. tenant_id / RLS / CREATE POLICY are forbidden because tenant
+    isolation is now schema-level, not row-level. cron.schedule is
+    forbidden because it's deployer-owned (pg_cron metadata lives in a
+    different database; see TD-023).
+
+    prior_tables: table names already deployed in a previous revision.
+    A CREATE TABLE for such a table is flagged so the revision flow uses
+    ADD COLUMN IF NOT EXISTS for schema evolution instead of recreating.
     """
     errors: List[str] = []
     _prior = {t.lower() for t in (prior_tables or [])}
@@ -1338,102 +1351,102 @@ def validate_migration_artifact(
     if not sql.strip():
         return errors  # empty migration is valid
 
-    forbidden_ddl = [
+    # Mirrors sql-validator.ts FORBIDDEN_PATTERNS (fail-closed, matches
+    # inside comments/strings too — MIGRATION_BASE warns about this).
+    forbidden: List[tuple[str, str]] = [
         (r"\bDROP\s+TABLE\b", "DROP TABLE"),
         (r"\bDROP\s+COLUMN\b", "DROP COLUMN"),
+        (r"\bDROP\s+INDEX\b", "DROP INDEX"),
+        (r"\bDROP\s+POLICY\b", "DROP POLICY"),
+        (r"\bDROP\s+SCHEMA\b", "DROP SCHEMA"),
+        (r"\bDROP\s+DATABASE\b", "DROP DATABASE"),
+        (r"\bDROP\s+TYPE\b", "DROP TYPE"),
+        (r"\bDROP\s+FUNCTION\b", "DROP FUNCTION"),
+        (r"\bDROP\s+TRIGGER\b", "DROP TRIGGER"),
+        (r"\bDROP\s+ROLE\b", "DROP ROLE"),
+        (r"\bDROP\s+USER\b", "DROP USER"),
         (r"\bTRUNCATE\b", "TRUNCATE"),
+        (r"\bDELETE\s+FROM\b", "DELETE FROM"),
+        (r"\bUPDATE\s+[\w.\"]+\s+SET\b", "UPDATE … SET"),
+        (r"\bGRANT\b", "GRANT"),
+        (r"\bREVOKE\b", "REVOKE"),
+        (r"\bSET\s+ROLE\b", "SET ROLE"),
+        (r"\bSET\s+SESSION\s+AUTHORIZATION\b", "SET SESSION AUTHORIZATION"),
+        (
+            r"\bALTER\s+(POLICY|ROLE|USER|DEFAULT\s+PRIVILEGES|SYSTEM)\b",
+            "ALTER POLICY/ROLE/USER/DEFAULT PRIVILEGES/SYSTEM",
+        ),
+        (r"\bCONCURRENTLY\b", "CONCURRENTLY"),
+        (r"\bCOPY\b[^;]*\bFROM\s+PROGRAM\b", "COPY … FROM PROGRAM"),
+        (r"\bDO\s*\$", "DO $$ / DO $tag$ PL/pgSQL block"),
+        (r"\bCREATE\s+EXTENSION\b", "CREATE EXTENSION"),
+        (r"\bCREATE\s+(OR\s+REPLACE\s+)?FUNCTION\b", "CREATE FUNCTION"),
+        (r"\bCREATE\s+(OR\s+REPLACE\s+)?TRIGGER\b", "CREATE TRIGGER"),
+        # Schema-isolation architecture: row-level security is off the table.
+        (
+            r"\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b",
+            "ENABLE ROW LEVEL SECURITY (schema isolation replaces RLS — drop it)",
+        ),
+        (
+            r"\bCREATE\s+POLICY\b",
+            "CREATE POLICY (schema isolation replaces RLS — drop it)",
+        ),
+        # Cron scheduling is deployer-owned (pg_cron meta lives elsewhere).
+        (
+            r"\bcron\.(schedule|unschedule)\b",
+            "cron.schedule / cron.unschedule (deployer-owned — see TD-023)",
+        ),
     ]
-    for pattern, name in forbidden_ddl:
+    for pattern, name in forbidden:
         if re.search(pattern, sql, re.IGNORECASE):
-            errors.append(f"forbidden SQL operation: {name}")
+            errors.append(f"forbidden SQL construct: {name}")
 
-    # ALTER TABLE is allowed only for:
-    #   - ENABLE ROW LEVEL SECURITY
-    #   - ADD COLUMN IF NOT EXISTS  (safe incremental DDL for revision runs)
-    alter_stmts = re.findall(r"\bALTER\s+TABLE\b[^;]+;", sql, re.IGNORECASE)
-    for stmt in alter_stmts:
-        is_rls = bool(
-            re.search(r"\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b", stmt, re.IGNORECASE)
+    # ALTER TABLE is allowed only for `ADD COLUMN IF NOT EXISTS` — matches
+    # sql-validator.ts (the ENABLE RLS case is already forbidden above).
+    for stmt in re.findall(r"\bALTER\s+TABLE\b[^;]+;", sql, re.IGNORECASE):
+        if not re.search(r"\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b", stmt, re.IGNORECASE):
+            errors.append(
+                "ALTER TABLE is only allowed for ADD COLUMN IF NOT EXISTS. "
+                f"Forbidden statement: {stmt[:120].strip()}"
+            )
+
+    # tenant_id column is now forbidden — schema isolation replaces it. Flag
+    # any column named tenant_id inside a CREATE TABLE body so a drifted
+    # generation doesn't silently add it.
+    for stmt in re.findall(r"CREATE\s+TABLE[^;]+\([\s\S]*?\);", sql, re.IGNORECASE):
+        if re.search(r"\btenant_id\b", stmt, re.IGNORECASE):
+            errors.append(
+                "CREATE TABLE must NOT declare a tenant_id column — each tenant "
+                "has its own schema (search_path is pinned at deploy time); "
+                "tenant_id is redundant and marks a drift from the new isolation model"
+            )
+
+    # Template-owned table names — rejecting recreate attempts.
+    created_tables = {
+        t.lower()
+        for t in re.findall(
+            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", sql, re.IGNORECASE
         )
-        is_add_col = bool(
-            re.search(r"\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b", stmt, re.IGNORECASE)
+    }
+    template_owned = {"processed_webhooks", "cron_queue"} & created_tables
+    for name in sorted(template_owned):
+        errors.append(
+            f"CREATE TABLE {name} is template-owned — the handler template "
+            "ships this table unconditionally (migrations/"
+            "0001_processed_webhooks.sql). Emitting it here causes a duplicate-"
+            "name conflict even with idempotency wrappers."
         )
-        if not is_rls and not is_add_col:
-            errors.append("forbidden SQL operation: ALTER TABLE on existing tables")
 
-    create_table_stmts = re.findall(
-        r"CREATE\s+TABLE\s+\w+\s*\([\s\S]*?\);", sql, re.IGNORECASE
-    )
-    for stmt in create_table_stmts:
-        if "tenant_id" not in stmt.lower():
-            errors.append(
-                f"CREATE TABLE missing tenant_id column: {stmt[:80].strip()}..."
-            )
-        if re.search(r"\bcustomer_id\b[^,\n]*\bNOT\s+NULL\b", stmt, re.IGNORECASE):
-            errors.append(
-                "customer_id column must be nullable (BIGINT without NOT NULL) — "
-                "storefront widget visitors can be guests with customerId = null"
-            )
-
-    # RLS is required per table — a single file-level check would pass when only
-    # one of multiple tables has a policy. Check each created table individually.
-    created_tables = re.findall(
-        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", sql, re.IGNORECASE
-    )
-    for table_name in created_tables:
-        # Skip RLS/policy checks for tables that already exist from a prior deploy —
-        # the migration runner wraps CREATE POLICY in an idempotent DO block.
-        if table_name.lower() in _prior:
-            continue
-        has_enable_rls = bool(
-            re.search(
-                rf"ALTER\s+TABLE\s+{re.escape(table_name)}\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",
-                sql,
-                re.IGNORECASE,
-            )
+    # Revision-run gate: re-emitting CREATE TABLE for an already-deployed
+    # table isn't a SQL error (the deployer adds IF NOT EXISTS), but it's a
+    # generator mistake — use ADD COLUMN IF NOT EXISTS for schema evolution
+    # instead so the diff is explicit and reviewable.
+    for name in created_tables & _prior:
+        errors.append(
+            f"CREATE TABLE {name} repeats a table from the prior deploy — "
+            "this is a revision run; for schema evolution use "
+            "ALTER TABLE … ADD COLUMN IF NOT EXISTS … instead"
         )
-        has_policy = bool(
-            re.search(
-                rf"CREATE\s+POLICY\s+\w+\s+ON\s+{re.escape(table_name)}\b",
-                sql,
-                re.IGNORECASE,
-            )
-        )
-        missing_stmts = []
-        if not has_enable_rls:
-            missing_stmts.append(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY")
-        if not has_policy:
-            missing_stmts.append(
-                f"CREATE POLICY ... ON {table_name} USING (tenant_id = auth.uid()) WITH CHECK (tenant_id = auth.uid())"
-            )
-        if missing_stmts:
-            errors.append(
-                f"table '{table_name}' is missing row-level security — add: "
-                + "; ".join(missing_stmts)
-            )
-
-    policy_stmts = re.findall(
-        r"CREATE\s+POLICY\b[^;]+;", sql, re.IGNORECASE | re.DOTALL
-    )
-    for stmt in policy_stmts:
-        name_match = re.search(r"CREATE\s+POLICY\s+(\w+)", stmt, re.IGNORECASE)
-        policy_name = name_match.group(1) if name_match else "unknown"
-
-        if "with check" not in stmt.lower():
-            errors.append(
-                f"policy '{policy_name}' missing WITH CHECK clause — "
-                "INSERT operations bypass tenant isolation without it"
-            )
-
-        # The USING and WITH CHECK expressions must reference tenant_id to actually
-        # enforce isolation. A policy with USING (true) would pass the clause check
-        # above but allow cross-tenant reads.
-        if "tenant_id" not in stmt.lower():
-            errors.append(
-                f"policy '{policy_name}' does not reference tenant_id — "
-                "USING and WITH CHECK expressions must filter by tenant_id "
-                "(e.g. USING (tenant_id = auth.uid()) WITH CHECK (tenant_id = auth.uid()))"
-            )
 
     return errors
 

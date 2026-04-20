@@ -514,3 +514,60 @@ row per entry (each inserting into `cron_queue` with the matching
 
 **Complexity:** Low — the runtime already supports N jobs; this is purely
 an architect-field + prompt expansion.
+
+---
+
+## TD-023 — Deployer-owned pg_cron schedule emission
+
+**Current state**
+Phase 2 committed to Option D for cron: pg_cron in the shared Postgres
+INSERTs rows into each tenant's `cron_queue` table; the handler's
+template-owned cron runner polls that queue and dispatches jobs. The
+runtime pieces are all in place (cron-runner.ts, ENABLE_CRON_RUNNER
+env var, `cron_queue` table shipped by the template's
+`0001_processed_webhooks.sql` migration).
+
+What's missing: the `SELECT cron.schedule(...)` call that registers
+the schedule with pg_cron. The generator CANNOT emit it directly —
+pg_cron's metadata lives in a different Postgres database (usually
+`postgres`) than the tenant schema, and the SQL body needs the
+fully-qualified tenant schema name which the generator doesn't know at
+generation time.
+
+**What to do**
+Deployer adds a new step after migrations run:
+
+1. If `plan.shopifyPlan.cronSchedule` is null → skip.
+2. Otherwise, open a connection to the `postgres` database on the same
+   cluster (the one pg_cron is installed in).
+3. Execute:
+   ```sql
+   SELECT cron.schedule(
+     'tenant_<uuid>_main',
+     '<cron_expression>',
+     $$INSERT INTO tenant_<uuid>.cron_queue (job_name, payload) VALUES ('main', '{}'::jsonb)$$
+   );
+   ```
+4. On uninstall / app deletion: `SELECT cron.unschedule('tenant_<uuid>_main')`.
+
+**Gating**
+pg_cron must be installed on the shared Postgres. Production DB image
+needs either Cloud SQL with `cloudsql.enable_pg_cron=on` flag, or a
+Postgres container with the extension baked in (e.g.
+`citusdata/pg_cron`). Local dev doesn't need it — cron_queue rows can
+be inserted manually by tests.
+
+**Affected files** (when done)
+- `platform-back/packages/deployer/src/orchestrator.ts` — add a new
+  `register_cron` step between deploy_cloud_run and db_writes; uses
+  the tenant_schema + plan.cronSchedule derived earlier.
+- `platform-back/packages/deployer/src/cron-ops.ts` — new; owns the
+  second-connection logic + schedule/unschedule helpers.
+- `platform-back/apps/api/src/routes/deploy.ts` — thread cronSchedule
+  through StartDeployInput (presently the deployer reads it from
+  generatedFiles; cronSchedule per se isn't in the input shape).
+- Uninstall flow — `cron.unschedule(...)` before Cloud Run deletion.
+
+**Complexity:** Medium — extension of deploy orchestration, two-
+database connection management, plus uninstall parity. Smoke test
+gates it end-to-end.
