@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import postgres from "postgres";
 import { logger } from "@platform-back/logger";
+import { makeIdempotent, validateMigrationSql } from "./sql-validator.js";
 
 // Runs handler-template + generator-emitted SQL migrations against the
 // tenant's Postgres schema.
@@ -16,6 +17,13 @@ import { logger } from "@platform-back/logger";
 // Switch to a real Cloud Run Job before we have customers — captured as
 // follow-up tech debt. The handler container's own dist/migrate.js is
 // still the contract; this module just shortcuts the invocation.
+//
+// Validator gate: any migration whose filename appears in
+// `generatorAuthoredNames` is treated as LLM output — it MUST pass
+// validateMigrationSql + be rewritten through makeIdempotent before
+// running. Migrations shipped by handler-template (e.g.
+// 0001_processed_webhooks.sql) are hand-written by us and skip the
+// gate; they're trusted by construction.
 
 const TENANT_SCHEMA_RE = /^tenant_[a-z0-9_]{1,60}$/;
 
@@ -26,6 +34,12 @@ export interface RunMigrationsInput {
   tenantSchema: string;
   /** Postgres connection string. Same DATABASE_URL the handler will use. */
   databaseUrl: string;
+  /**
+   * Filenames (basename, e.g. "0002_widgets.sql") of generator-emitted
+   * migrations. Each gets validated + rewritten before applying.
+   * Empty/omitted = treat all migrations as platform-trusted.
+   */
+  generatorAuthoredNames?: string[];
 }
 
 export async function runMigrations(input: RunMigrationsInput): Promise<{
@@ -78,17 +92,34 @@ export async function runMigrations(input: RunMigrationsInput): Promise<{
       ).map((r) => r.name),
     );
 
+    const validatorGate = new Set(input.generatorAuthoredNames ?? []);
     for (const file of files) {
       if (alreadyApplied.has(file.name)) {
         skipped.push(file.name);
         continue;
       }
-      logger.info({ name: file.name, schema: input.tenantSchema }, "Applying migration");
+
+      // Validate + rewrite generator-emitted migrations. Hand-written
+      // template migrations bypass the gate.
+      let sqlToApply = file.sql;
+      if (validatorGate.has(file.name)) {
+        validateMigrationSql(file.sql);
+        sqlToApply = makeIdempotent(file.sql);
+        logger.debug(
+          { name: file.name },
+          "Migration passed LLM-author validation gate",
+        );
+      }
+
+      logger.info(
+        { name: file.name, schema: input.tenantSchema },
+        "Applying migration",
+      );
       await sql.begin(async (tx) => {
         await tx.unsafe(
           `SET LOCAL search_path TO ${input.tenantSchema}, public`,
         );
-        await tx.unsafe(file.sql);
+        await tx.unsafe(sqlToApply);
         await tx`INSERT INTO schema_migrations (name) VALUES (${file.name})`;
       });
       applied.push(file.name);

@@ -61,6 +61,11 @@ export {
 } from "./migration-runner.js";
 
 export {
+  validateMigrationSql,
+  makeIdempotent,
+} from "./sql-validator.js";
+
+export {
   startDeploy,
   getDeployJob,
   subscribeDeployJob,

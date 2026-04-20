@@ -19,15 +19,24 @@ import { requireTenant } from "../plugins/auth.js";
 // expects auth via `?token=` — handled transparently by plugins/auth.ts.
 
 // ─── Body schema ─────────────────────────────────────────────────────────────
+//
+// Size caps are defence-in-depth. Fastify's per-route bodyLimit (set
+// below in deployRoutes) rejects oversized requests before Zod even
+// sees them; the per-file Zod cap protects against many-small-files
+// payloads that slip under the body limit but still bloat the build
+// context.
+
+const MAX_FILE_BYTES = 1 * 1024 * 1024; // 1 MiB per generated file
+const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MiB total request
 
 const GeneratedFileSchema = z.object({
-  path: z.string().min(1),
-  contents: z.string(),
+  path: z.string().min(1).max(512),
+  contents: z.string().max(MAX_FILE_BYTES),
 });
 
 const DeployBodySchema = z.object({
   appVersionId: z.string().uuid(),
-  appVersion: z.string().min(1),
+  appVersion: z.string().min(1).max(128),
   generatedFiles: z.array(GeneratedFileSchema).min(1).max(500),
   /** Optional handler env-var overrides (merged on top of orchestrator defaults). */
   handlerEnv: z.record(z.string()).optional(),
@@ -36,7 +45,16 @@ const DeployBodySchema = z.object({
 // ─── Routes ─────────────────────────────────────────────────────────────────
 
 export async function deployRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Params: { appId: string } }>("/apps/:appId/deploy", deployHandler);
+  app.post<{ Params: { appId: string } }>(
+    "/apps/:appId/deploy",
+    {
+      // Override the global 1 MiB bodyLimit — deploy bundles can carry
+      // up to MAX_BODY_BYTES of generator-emitted files. Per-file size
+      // is also capped in the Zod schema above.
+      bodyLimit: MAX_BODY_BYTES,
+    },
+    deployHandler,
+  );
   app.get<{ Params: { jobId: string } }>(
     "/deploy/jobs/:jobId",
     deployStreamHandler,

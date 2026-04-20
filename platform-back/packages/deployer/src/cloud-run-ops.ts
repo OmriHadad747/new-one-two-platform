@@ -66,10 +66,13 @@ function buildServiceSpec(input: CloudRunDeployInput) {
         maxInstanceCount: maxInstances,
       },
     },
-    // Per locked decision (Cloud Run IAM auth): deploy as
-    // `--no-allow-unauthenticated`. Cloud Run's "no-public-access" is
-    // expressed by NOT granting roles/run.invoker to allUsers; the
-    // platform-back SA grant is added separately by sa-provisioner.
+    // Network ingress is open (`INGRESS_TRAFFIC_ALL`) by design — the
+    // security boundary is IAM, not networking. Cloud Run enforces
+    // roles/run.invoker at its edge before any request reaches the
+    // container; only the platform-back SA holds invoker on each
+    // handler service (granted in sa-provisioner). Equivalent guarantee
+    // to ingress=internal, without forcing platform-back into the same
+    // VPC as every handler.
     ingress: "INGRESS_TRAFFIC_ALL" as const,
   };
 }

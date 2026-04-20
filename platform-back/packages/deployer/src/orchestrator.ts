@@ -213,12 +213,19 @@ async function runDeploy(
       }),
     );
 
-    // 4. Run migrations against the tenant schema.
+    // 4. Run migrations against the tenant schema. The validator gate
+    //    runs only on generator-emitted .sql files (i.e. those in
+    //    input.generatedFiles whose path is under migrations/).
+    const generatorAuthoredMigrations = input.generatedFiles
+      .filter((f) => /^migrations\/[^/]+\.sql$/.test(f.path))
+      .map((f) => f.path.replace(/^migrations\//, ""));
+
     await runStep(ctx, "run_migrations", () =>
       runMigrations({
         buildContextDir: buildDir!,
         tenantSchema: input.tenantSchema,
         databaseUrl: requireEnv("DATABASE_URL"),
+        generatorAuthoredNames: generatorAuthoredMigrations,
       }),
     );
 
