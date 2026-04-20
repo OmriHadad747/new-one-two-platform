@@ -28,11 +28,6 @@ None required for admin-only. Add when the first archetype that needs them lands
 8. **Webhook worker → handler** — enqueue a job via webhook-gateway, worker dequeues, calls handler's `/webhook/:topic` with the new envelope, idempotency gate (`processed_webhooks ON CONFLICT`) blocks the duplicate.
 9. **pg_cron smoke** — `scheduleAppCron` against a real Postgres with pg_cron enabled; assert `cron.job` row appears; assert a `cron_queue` row arrives after a tick (requires waiting one cron cycle, so gate this test behind an env flag for selective runs).
 
-### Coverage targets (guidance, not blocking)
-
-- Unit: 70%+ line coverage on the deployer + auth + sa-to-app + email packages.
-- Integration: every public `/services/*`, `/admin/*`, `/widget/*`, `/webhook/*` route must have at least one happy-path + one error-path test.
-
 ## First end-to-end milestone (admin-only)
 
 Unblocked today. Validation checklist:
