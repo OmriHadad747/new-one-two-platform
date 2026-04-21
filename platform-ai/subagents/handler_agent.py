@@ -204,6 +204,9 @@ class HandlerGenerator(Generator):
             declared_capabilities=declared_caps,
         )
         errors += validate_handler_graphql(artifact)
+        errors += _validate_email_metadata(
+            ctx.handler_email_metadata, declared_caps, artifact
+        )
         return errors
 
 
@@ -239,6 +242,141 @@ def _extract_email_metadata(raw: str) -> Optional[Dict[str, Any]]:
         )
         return None
     return parsed
+
+
+# ── Email-metadata sidecar validation ──────────────────────────────────────────
+
+# Mirrors the regex used by the merchant dashboard when it seeds the
+# app_email_configs row — { {variable} } / {{variable}} tokens inside the
+# starter subject / heading / body / ctaUrl.
+_EMAIL_TOKEN_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+_EMAIL_USES_RE = re.compile(r"\bplatform\.email\.")
+
+
+def _handler_uses_email(declared_caps: List[str], artifact: str) -> bool:
+    """
+    Email sidecar is required when EITHER the architect declared the `email`
+    capability OR the handler bundle references `platform.email.*` anywhere
+    (covers the case where the generator added an email send without the
+    architect updating the capability list — still wrong, but we catch the
+    missing sidecar rather than letting it ship).
+    """
+    if "email" in (declared_caps or []):
+        return True
+    return bool(_EMAIL_USES_RE.search(artifact))
+
+
+def _validate_email_metadata(
+    meta: Optional[Dict[str, Any]],
+    declared_caps: List[str],
+    artifact: str,
+) -> List[str]:
+    """
+    Enforce the email-metadata sidecar contract documented in
+    prompts/capabilities/email.py. Runs as part of handler static validation
+    so a missing or malformed sidecar surfaces as a retry error instead of
+    silently shipping with a blank Email tab.
+
+    Rules (matching the prompt):
+      - If the handler uses email, a sidecar MUST exist and be valid JSON.
+      - `variables` is a non-empty list of camelCase strings.
+      - `starterContent.subject` and `starterContent.body` are non-empty.
+      - Every {{token}} referenced in starterContent.* is in `variables`.
+      - Every declared variable appears in at least one starterContent field.
+      - If any `*Url` variable is present, ctaLabel + ctaUrl are both set.
+    """
+    errors: List[str] = []
+    uses_email = _handler_uses_email(declared_caps, artifact)
+
+    # Case 1: email used, sidecar missing. Downstream would seed a blank
+    # email config — the merchant opens the Email tab and sees nothing.
+    if uses_email and meta is None:
+        errors.append(
+            "handler uses platform.email.* (or 'email' is declared) but the "
+            "```email-metadata``` sidecar block is missing — emit it after the "
+            "file bundle. See the 'Email metadata sidecar' section of the system prompt."
+        )
+        return errors
+
+    # Case 2: sidecar present but handler doesn't use email. Probably stale
+    # output from a prior revision; harmless but noisy, flag as cleanup.
+    if meta is not None and not uses_email:
+        errors.append(
+            "```email-metadata``` sidecar was emitted but the handler does not "
+            "use platform.email.* — remove the sidecar unless the handler is "
+            "supposed to send email"
+        )
+        return errors
+
+    if meta is None:
+        return errors  # neither used nor emitted — fine.
+
+    # Case 3: sidecar present and email used. Structural checks.
+    variables = meta.get("variables")
+    if not isinstance(variables, list) or not variables:
+        errors.append(
+            "email-metadata.variables must be a non-empty list of camelCase strings"
+        )
+        variables = []
+    else:
+        bad = [v for v in variables if not isinstance(v, str) or not v.strip()]
+        if bad:
+            errors.append(
+                "email-metadata.variables contains non-string or empty entries: "
+                f"{bad!r}"
+            )
+
+    starter = meta.get("starterContent")
+    if not isinstance(starter, dict):
+        errors.append(
+            "email-metadata.starterContent must be an object with subject + body"
+        )
+        return errors
+
+    for required in ("subject", "body"):
+        val = starter.get(required)
+        if not isinstance(val, str) or not val.strip():
+            errors.append(
+                f"email-metadata.starterContent.{required} must be a non-empty string"
+            )
+
+    # Token / variable consistency. Only run when variables parsed cleanly —
+    # otherwise the errors above are the real story.
+    if isinstance(variables, list) and all(isinstance(v, str) for v in variables):
+        declared_vars = {v for v in variables if isinstance(v, str)}
+        referenced_vars: set[str] = set()
+        for field in ("subject", "heading", "body", "ctaLabel", "ctaUrl"):
+            val = starter.get(field)
+            if isinstance(val, str):
+                referenced_vars.update(_EMAIL_TOKEN_RE.findall(val))
+
+        undeclared = referenced_vars - declared_vars
+        if undeclared:
+            errors.append(
+                "email-metadata.starterContent references {{tokens}} not in "
+                f"variables[]: {sorted(undeclared)!r}"
+            )
+        unused = declared_vars - referenced_vars
+        if unused:
+            errors.append(
+                "email-metadata.variables declares entries not referenced in "
+                f"starterContent with {{tokens}}: {sorted(unused)!r}"
+            )
+
+        # CTA pairing: if any variable hints at a URL, both ctaLabel and
+        # ctaUrl must be set. Mirrors the prompt's RULES section.
+        url_like = {v for v in declared_vars if v.lower().endswith("url")}
+        cta_label = starter.get("ctaLabel")
+        cta_url = starter.get("ctaUrl")
+        if url_like and not (isinstance(cta_label, str) and cta_label.strip()
+                             and isinstance(cta_url, str) and cta_url.strip()):
+            errors.append(
+                "email-metadata.variables includes URL-like entries "
+                f"({sorted(url_like)!r}) so starterContent.ctaLabel + ctaUrl "
+                "are both required"
+            )
+
+    return errors
 
 
 # ── JIT harness section builder ────────────────────────────────────────────────
