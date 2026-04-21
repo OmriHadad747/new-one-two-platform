@@ -23,7 +23,7 @@ import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
-from subagents.prompts.admin import ADMIN_BASE
+from subagents.prompts.core.admin import ADMIN_BASE
 from subagents.static_validation import validate_admin_ui_artifact
 
 
@@ -104,10 +104,7 @@ def _format_quality_brief(intent: Dict[str, Any]) -> str:
     brief = intent.get("qualityBrief", "")
     if not brief:
         return ""
-    return (
-        "Quality brief — what makes a good version of this app:\n"
-        f"{brief}\n\n"
-    )
+    return "Quality brief — what makes a good version of this app:\n" f"{brief}\n\n"
 
 
 def _format_ux_expectations(plan: Dict[str, Any]) -> str:
@@ -116,10 +113,7 @@ def _format_ux_expectations(plan: Dict[str, Any]) -> str:
     admin = ux.get("admin")
     if not admin:
         return ""
-    return (
-        "UX expectations for this admin panel:\n"
-        f"{admin}\n\n"
-    )
+    return "UX expectations for this admin panel:\n" f"{admin}\n\n"
 
 
 def _format_state_machine(plan: Dict[str, Any]) -> str:
@@ -185,7 +179,9 @@ def _format_gaps(plan: Dict[str, Any]) -> str:
     gaps = (plan.get("appContracts") or {}).get("platformGaps") or []
     if not gaps:
         return ""
-    lines = "\n".join(f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps)
+    lines = "\n".join(
+        f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps
+    )
     return f"\nBackend limitations the admin UI should surface:\n{lines}\n"
 
 

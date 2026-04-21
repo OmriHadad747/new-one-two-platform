@@ -19,7 +19,7 @@ from typing import Any, Dict, Tuple
 
 from models.adapter import get_llm, invoke, extract_json
 from models.agent_models import get_agent_model
-from subagents.prompts.explanation import EXPLANATION_BASE, EXPLANATION_USER_TEMPLATE
+from subagents.prompts.core.explanation import EXPLANATION_BASE, EXPLANATION_USER_TEMPLATE
 
 
 def run_explanation_agent(
@@ -45,19 +45,19 @@ def run_explanation_agent(
         else "none (backend-only app)"
     )
 
-    # Summarize admin UI presence from intent
-    app_category = intent.get("appCategory", "")
-    has_admin = "admin" in app_category or "admin" in intent.get("triggerTypes", [])
+    admin_catalog = impl_spec.get("adminApiCatalog") or []
     admin_summary = (
         "yes — merchant dashboard embedded in Shopify Admin"
-        if has_admin
+        if admin_catalog
         else "none"
     )
 
     platform_gaps_section = ""
     gaps = impl_spec.get("platformGaps") or []
     if gaps:
-        lines = "\n".join(f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps)
+        lines = "\n".join(
+            f"  - {g.get('gap', '')}: {g.get('mitigation', '')}" for g in gaps
+        )
         platform_gaps_section = f"\n\nKnown platform limitations:\n{lines}"
 
     user = EXPLANATION_USER_TEMPLATE.format(

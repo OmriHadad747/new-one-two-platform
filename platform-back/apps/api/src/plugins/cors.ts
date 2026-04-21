@@ -24,10 +24,7 @@ export function parseAllowedOrigins(raw: string | undefined): string[] {
     .filter((s) => s.length > 0);
 }
 
-export function installCors(
-  app: FastifyInstance,
-  opts: { extraAllowedOrigins: string[] },
-): void {
+export function installCors(app: FastifyInstance, opts: { extraAllowedOrigins: string[] }): void {
   const extra = opts.extraAllowedOrigins;
 
   app.addHook("onRequest", async (req: FastifyRequest, reply: FastifyReply) => {
@@ -41,8 +38,7 @@ export function installCors(
 
     if (req.method === "OPTIONS") {
       const reqHeaders =
-        req.headers["access-control-request-headers"] ??
-        "authorization,content-type";
+        req.headers["access-control-request-headers"] ?? "authorization,content-type";
       void reply
         .header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         .header("Access-Control-Allow-Headers", reqHeaders)

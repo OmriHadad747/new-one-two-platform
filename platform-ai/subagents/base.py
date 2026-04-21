@@ -92,7 +92,6 @@ class CodegenContext:
     handler_email_metadata: Optional[Dict[str, Any]] = None
 
 
-
 # Thinking token budget for high-complexity features.
 # Thinking tokens count against max_tokens in Anthropic's API, so get_llm()
 # increases the ceiling by this amount to preserve the intended output budget.
@@ -226,5 +225,7 @@ class Generator(ABC):
             thinking_budget=thinking_budget,
         )
         retry_suffix = self._format_retry_suffix(ctx.previous_errors)
-        result = invoke(llm, self.system_prompt(), self.user_prompt(ctx), retry_suffix=retry_suffix)
+        result = invoke(
+            llm, self.system_prompt(), self.user_prompt(ctx), retry_suffix=retry_suffix
+        )
         return self.parse(result.content), result.input_tokens, result.output_tokens

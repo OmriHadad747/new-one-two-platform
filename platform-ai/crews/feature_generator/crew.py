@@ -238,31 +238,20 @@ def run_feature_generation(request: GenerationRequest) -> None:
         _check_deadline(request, start_ms, "product")
 
         archetype = intent["appCategory"]
-        archetype_is_storefront = archetype in (
+        is_storefront = archetype in (
             "storefront_backend",
             "storefront_backend_admin",
         )
-        archetype_is_admin_ui = archetype in (
+        is_admin_ui = archetype in (
             "storefront_backend_admin",
             "backend_admin",
         )
-        # Phase 2 gate: widget_js and admin_ui generators are out of the
-        # registry (see subagents/registry.py). Force the flags that drive
-        # progress emits, codegen orchestration, and cross-artifact
-        # validation to False so nothing downstream tries to run them.
-        # Phase 4 re-enables by removing this gate and reinstating the
-        # generators against the new widget/admin archetypes.
-        is_storefront = False
-        is_admin_ui = False
         log.info(
-            "job=%s archetype=%s is_storefront=%s is_admin_ui=%s "
-            "(phase2_gate=true archetype_storefront=%s archetype_admin=%s)",
+            "job=%s archetype=%s is_storefront=%s is_admin_ui=%s",
             request.jobId,
             archetype,
             is_storefront,
             is_admin_ui,
-            archetype_is_storefront,
-            archetype_is_admin_ui,
         )
 
         plan, api_context = _phase_architect(request, intent, agent_trace)
@@ -958,7 +947,9 @@ def _publish_success(
     starter_raw = sidecar.get("starterContent")
     email_starter = (
         EmailStarterContent(**starter_raw)
-        if isinstance(starter_raw, dict) and starter_raw.get("subject") and starter_raw.get("body")
+        if isinstance(starter_raw, dict)
+        and starter_raw.get("subject")
+        and starter_raw.get("body")
         else None
     )
 
@@ -1211,8 +1202,7 @@ def run_codegen_parallel(
     }
     with ThreadPoolExecutor(max_workers=len(to_run)) as pool:
         futures = {
-            gen.name: pool.submit(gen.generate, ctx_by_gen[gen.name])
-            for gen in to_run
+            gen.name: pool.submit(gen.generate, ctx_by_gen[gen.name]) for gen in to_run
         }
         for name, future in futures.items():
             # Generator.generate() returns (artifact, in_tokens, out_tokens)

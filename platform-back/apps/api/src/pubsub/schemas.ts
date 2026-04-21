@@ -8,14 +8,12 @@ import { z } from "zod";
 // channel revalidate incoming payloads so a schema drift surfaces as a
 // nack rather than a silent corruption.
 //
-// Phase 2 shape (post-ctx.* rewrite):
-//   handlerModule.files — List[{path, contents}]; generator-authored
-//     TypeScript files that drop into the platform-back handler template.
-//   dbMigration — single {path, contents}; plain feature DDL, no RLS,
-//     no tenant_id.
-//   widgetModule / adminUiModule — always null in Phase 2 (gated off at
-//     the registry layer). Kept on the contract for forward-compat with
-//     Phase 4 reintroduction.
+// handlerModule.files — [{path, contents}]; generator-authored TypeScript
+//   files that drop into the platform-back handler template.
+// dbMigration — single {path, contents}; plain feature DDL, no RLS,
+//   no tenant_id.
+// widgetModule / adminUiModule — ES module strings for storefront widget
+//   and admin panel; null for backend-only apps.
 
 // ─── GeneratedFile ──────────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 import type { Message, Subscription } from "@google-cloud/pubsub";
 import { logger as baseLogger } from "@platform-back/logger";
 import { upsertGeneration } from "@platform-back/db";
+import { saveBundles } from "../lib/bundle-storage.js";
 import { getPubSubClient, SUB_PLATFORM_BACK_COMPLETED } from "./client.js";
 import { FeatureBundleMessageSchema } from "./schemas.js";
 
@@ -54,6 +55,13 @@ async function handleMessage(msg: Message): Promise<void> {
       bundle: parsed.bundle ?? null,
       meta: parsed.meta ?? null,
     });
+
+    const widgetJs = parsed.bundle?.widgetModule ?? null;
+    const adminUiJs = parsed.bundle?.adminUiModule ?? null;
+    if (widgetJs || adminUiJs) {
+      await saveBundles(parsed.appId, { widgetJs, adminUiJs });
+    }
+
     msg.ack();
     logger.info(
       { jobId: parsed.jobId, appId: parsed.appId, status: parsed.status },

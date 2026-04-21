@@ -5,12 +5,10 @@ and the Zod schemas in platform-back.
 Source of truth: /contract/*.schema.json
 When the contract changes, update this file and the JSON Schema files.
 
-Phase 2 shift (2026-04-20):
-  Generator output is now a file bundle ({path, contents}[]) matching the
-  platform-back deploy endpoint at POST /apps/:appId/deploy — instead of a
-  single CommonJS blob + ctx.* runtime harness. Field names kept in place so
-  the merchant-click-deploy flow (subscriber persists bundle, merchant clicks,
-  deployer reads) can adopt the new shape without cascading renames.
+Generator output is a file bundle ({path, contents}[]) matching the
+platform-back deploy endpoint at POST /apps/:appId/deploy. Field names kept
+in place so the merchant-click-deploy flow (subscriber persists bundle, merchant
+clicks, deployer reads) can adopt the new shape without cascading renames.
 """
 
 from __future__ import annotations
@@ -119,8 +117,8 @@ class EmailStarterContent(BaseModel):
 
 
 class Bundle(BaseModel):
-    widgetModule: Optional[str] = None  # storefront ES module — Phase 4 rework
-    adminUiModule: Optional[str] = None  # admin panel ES module — Phase 4 rework
+    widgetModule: Optional[str] = None
+    adminUiModule: Optional[str] = None
     widgetTargetTemplates: Optional[List[str]] = (
         None  # theme template pages the widget targets, e.g. ["product", "cart"]
     )

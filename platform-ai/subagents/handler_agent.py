@@ -13,7 +13,7 @@ rules, logging, cross-cutting Shopify loop rule).
 
 Per-API docs (@shopify/shopify-api client, platform /services/*, npm
 packages) are JIT-injected into the USER prompt from
-templates/capabilities/handler.py based on appContracts.handlerCapabilities.
+subagents/prompts/capabilities/handler.py based on appContracts.handlerCapabilities.
 
 User-prompt JIT sections:
   - Capability docs for each entry in handlerCapabilities (registry-driven).
@@ -54,26 +54,14 @@ from subagents.base import (
     needs_extended_thinking,
 )
 from subagents.static_validation import validate_handler_artifact
-from templates.capabilities.handler import (
-    HANDLER_CAPABILITY_REGISTRY,
-    SHOPIFY_REST_VS_GRAPHQL_GUIDE,
-)
-from subagents.prompts.handler import (
-    HARNESS_BASE,
-    HARNESS_SECTION_ADMIN,
-    HARNESS_SECTION_CRON,
-    HARNESS_SECTION_CRON_BATCHING,
-    HARNESS_SECTION_STATE_MACHINE,
-    HARNESS_SECTION_WEBHOOK,
-    HARNESS_SECTION_WIDGET,
-    HARNESS_SECTION_WIDGET_STOREFRONT,
-)
+from subagents.jit.handler import build_handler_jit_sections
+from subagents.prompts.topics.handler import HANDLER as HARNESS_BASE
 
 log = logging.getLogger(__name__)
 
 # Fence for the structured email-metadata sidecar the handler emits
 # alongside the file bundle when it calls /services/email/send. See
-# templates/capabilities/handler.py ("Email metadata sidecar") for the
+# subagents/prompts/capabilities/handler.py ("Email metadata sidecar") for the
 # contract shown to the model.
 _EMAIL_META_FENCE_RE = re.compile(
     r"```email-metadata\s*\n(.*?)\n```",
@@ -154,9 +142,7 @@ class HandlerGenerator(Generator):
         stripped = _EMAIL_META_FENCE_RE.sub("", raw).strip()
         # 2. Strip a single outer ``` fence if the model wrapped the entire
         #    response. The inner ===FILE:===/===END=== markers stay as-is.
-        stripped = re.sub(
-            r"^```(?:typescript|ts)?\s*\n", "", stripped, count=1
-        )
+        stripped = re.sub(r"^```(?:typescript|ts)?\s*\n", "", stripped, count=1)
         stripped = re.sub(r"\n```\s*$", "", stripped, count=1)
         return stripped.strip()
 
@@ -261,63 +247,8 @@ def _extract_email_metadata(raw: str) -> Optional[Dict[str, Any]]:
 def _build_jit_sections(
     plan: Dict[str, Any], platform_api_catalog: List[Dict[str, str]]
 ) -> str:
-    """
-    Inject only the harness pattern sections relevant to this specific plan.
-    Irrelevant sections are omitted so the model focuses on what applies.
-
-    Assembly order:
-      1. Capability docs (registry-driven) — one block per declared
-         handlerCapabilities entry. This is where shopify.rest / graphql,
-         /services/* call patterns, and npm-package docs come from.
-      2. SHOPIFY_REST_VS_GRAPHQL_GUIDE — injected only when BOTH
-         shopify_rest and shopify_graphql are declared.
-      3. Trigger-gated sections (webhook / cron / state machine / cron
-         batching / widget / admin routing).
-    """
-    shopify = plan.get("shopifyPlan") or {}
-    impl = plan.get("appContracts") or {}
-    sm = impl.get("stateMachine") or {}
-    batching = impl.get("cronBatching") or {}
-
-    sections: List[str] = []
-
-    # 1. Capability docs, preserving the registry's declared order so the
-    #    assembled prompt is stable (cache-friendly) for the same cap set.
-    declared = set(impl.get("handlerCapabilities") or [])
-    for cap_name, cap in HANDLER_CAPABILITY_REGISTRY.items():
-        if cap_name in declared and cap.docs:
-            sections.append(cap.docs)
-
-    # 2. REST vs GraphQL joint decision guide — only when both are declared.
-    if "shopify_rest" in declared and "shopify_graphql" in declared:
-        sections.append(SHOPIFY_REST_VS_GRAPHQL_GUIDE)
-
-    # 3. Trigger-gated sections.
-    if shopify.get("webhookTopics"):
-        sections.append(HARNESS_SECTION_WEBHOOK)
-
-    if shopify.get("cronSchedule"):
-        sections.append(HARNESS_SECTION_CRON)
-
-    if sm and isinstance(sm, dict):
-        sections.append(HARNESS_SECTION_STATE_MACHINE)
-
-    if batching.get("required"):
-        sections.append(HARNESS_SECTION_CRON_BATCHING)
-
-    if platform_api_catalog:
-        sections.append(HARNESS_SECTION_WIDGET)
-
-    # widgetApiCatalog == [] means storefront app with no backend widget
-    # routes → widget reads exclusively from Shopify's public storefront API
-    if impl.get("widgetApiCatalog") is not None and not platform_api_catalog:
-        sections.append(HARNESS_SECTION_WIDGET_STOREFRONT)
-
-    admin_catalog = impl.get("adminApiCatalog") or []
-    if admin_catalog:
-        sections.append(HARNESS_SECTION_ADMIN)
-
-    return "\n\n".join(sections) + ("\n\n" if sections else "")
+    """Thin wrapper — delegates to the shared handler JIT assembler."""
+    return build_handler_jit_sections(plan, platform_api_catalog)
 
 
 # ── Prompt-building helpers ────────────────────────────────────────────────────
@@ -340,8 +271,8 @@ def _format_webhook_contract(plan: Dict[str, Any]) -> str:
     ]
     if payload_fields:
         lines.append(
-            "Payload fields to read from (req.body.payload as <yourShape>): "
-            + ", ".join(payload_fields)
+            "Payload fields available on the `payload` argument "
+            "(cast as `(payload ?? {}) as <YourShape>`): " + ", ".join(payload_fields)
         )
     if must_produce:
         lines.append(f"Handler must resolve before DB writes: {must_produce}")
@@ -400,9 +331,7 @@ def _format_widget_catalog(catalog: List[Dict[str, Any]]) -> str:
     """
     if not catalog:
         return ""
-    lines = [
-        "\nWidget API catalog (implement each route in src/routes/widget.ts):"
-    ]
+    lines = ["\nWidget API catalog (implement each route in src/routes/widget.ts):"]
     for e in catalog:
         method = (e.get("method") or "POST").upper()
         path = e.get("path", "")
@@ -423,9 +352,7 @@ def _format_admin_catalog(plan: Dict[str, Any]) -> str:
     catalog = (plan.get("appContracts") or {}).get("adminApiCatalog") or []
     if not catalog:
         return ""
-    lines = [
-        "\nAdmin UI catalog (implement each route in src/routes/admin.ts):"
-    ]
+    lines = ["\nAdmin UI catalog (implement each route in src/routes/admin.ts):"]
     for e in catalog:
         method = (e.get("method") or "POST").upper()
         path = e.get("path", "")

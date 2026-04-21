@@ -4,6 +4,7 @@ import { createRequestLogger } from "@platform-back/logger";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import { ForwardError, forwardToHandler } from "../lib/forward.js";
 import { verifyShopifyAppProxy } from "../lib/shopify-app-proxy.js";
+import { getWidgetBundle } from "../lib/bundle-storage.js";
 
 const SHOPIFY_CLIENT_SECRET = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
 if (!SHOPIFY_CLIENT_SECRET) {
@@ -38,11 +39,49 @@ interface WidgetRouteParams {
 }
 
 export async function widgetRoutes(app: FastifyInstance): Promise<void> {
+  // Serve the generated widget ES module. Must be registered before the
+  // wildcard proxy route so Fastify picks the more-specific path first.
+  app.get<{ Params: { appId: string } }>(
+    "/:appId/bundle.js",
+    widgetBundleHandler,
+  );
+
   app.route<{ Params: WidgetRouteParams }>({
     method: ["GET", "POST", "OPTIONS"],
     url: "/:appId/*",
     handler: widgetProxyHandler,
   });
+}
+
+async function widgetBundleHandler(
+  request: FastifyRequest<{ Params: { appId: string } }>,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const { appId } = request.params;
+  const log = createRequestLogger({ requestId: request.id });
+
+  let bundle: string | null;
+  try {
+    bundle = await getWidgetBundle(appId);
+  } catch (err) {
+    log.error({ err, appId }, "widget bundle: storage read failed");
+    return reply
+      .code(500)
+      .send(errorResponse(ErrorCode.Internal, "Failed to retrieve widget bundle"));
+  }
+
+  if (!bundle) {
+    log.info({ appId }, "widget bundle: not found");
+    return reply
+      .code(404)
+      .send(errorResponse(ErrorCode.NotFound, "Widget bundle not found"));
+  }
+
+  return reply
+    .code(200)
+    .header("Content-Type", "application/javascript; charset=utf-8")
+    .header("Cache-Control", "public, max-age=300")
+    .send(bundle);
 }
 
 async function widgetProxyHandler(

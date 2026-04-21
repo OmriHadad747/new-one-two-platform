@@ -11,24 +11,27 @@ Per-run Q1–Q7 strings and the response-shape JSON are built dynamically below
 Questions and their unique value over static checks:
   Q1  table names     migration DDL ↔ handler SQL      — static can't parse SQL inside template literals
   Q2  column names    migration DDL ↔ handler SQL      — same reason as Q1
-  Q3  widget fields   host.call() body ↔ ctx.widgetBody — static misses aliasing, spreads, indirect reads
-  Q4  admin fields    bridge.call() body ↔ ctx.adminBody — same as Q3
+  Q3  widget fields   widgetApiCatalog requestShape ↔ req.body destructuring in src/routes/widget.ts — static misses aliasing, spreads
+  Q4  admin fields    adminApiCatalog requestShape ↔ req.body destructuring in src/routes/admin.ts — same as Q3
   Q5  cron batching   when declared: no per-item Shopify calls inside loop — cannot be reliably static-checked
   Q6  state machine   when declared: handler reads prior DB state before comparing — verifies logic, not just presence
   Q7  schema completeness — handler INSERT omits NOT NULL/no-DEFAULT columns → Postgres runtime error
 
+Q3 fires when widgetApiCatalog is non-empty; Q4 fires when adminApiCatalog is non-empty.
+Widget and admin routes live inside the handler bundle (src/routes/widget.ts and
+src/routes/admin.ts) — Q3/Q4 check those files against the architect's catalogs.
 Q3/Q4 differ from static cross-artifact checks: static uses regex on catalog shapes,
 this catches semantic mismatches (aliased field names, spread operators, indirect reads).
 Q5/Q6 are only asked when the plan declares cronBatching/stateMachine.
 Q7 always runs: catches the inverse of Q2 — not "wrong column name" but "missing required column".
 
-Part B — open review (new):
+Part B — open review:
   The validator also flags deploy-blocking bugs it sees in the artifacts that
   Part A and static rules do not already cover (races, pagination, numeric
   overflow, orphaned state, etc.). Each Part B finding is scoped to a specific
   artifact and merged into the same issues list as Part A with a synthetic
   question key `open_review[<artifact>]`; the `artifact` field drives revision
-  locking (handler/migration → backend unlock, widget_js/admin_ui → frontend only).
+  locking (handler/migration → backend unlock).
 
 Only HIGH confidence issues trigger an automatic revision. MEDIUM issues are
 logged but not acted upon (false positive mitigation). Runs on Sonnet with
@@ -47,7 +50,7 @@ from typing import Dict, List, Tuple
 from models.adapter import extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
 from subagents.base import CodegenContext
-from subagents.prompts.validator import (
+from subagents.prompts.core.validator import (
     PART_A_HEADER,
     PART_B_BASE,
     PART_B_QUALITY_BRIEF_COVERAGE,
@@ -55,13 +58,13 @@ from subagents.prompts.validator import (
     Q2_COLUMN_NAMES,
     Q3_WIDGET_FIELDS,
     Q4_ADMIN_FIELDS,
-    Q5_CRON_BULK_FETCH,
-    Q6_STATE_MACHINE_TEMPLATE,
     Q7_SCHEMA_COMPLETENESS,
     QUALITY_BRIEF_HEADER,
     RESPONSE_FORMAT_HEADER,
     VALIDATOR_BASE,
 )
+from subagents.prompts.topics.shopify_loop import VALIDATOR as Q5_CRON_BULK_FETCH
+from subagents.prompts.topics.state_machine import VALIDATOR as Q6_STATE_MACHINE_TEMPLATE
 
 log = logging.getLogger(__name__)
 
@@ -71,7 +74,7 @@ log = logging.getLogger(__name__)
 # suspected issues end-to-end without blowing the per-call latency ceiling.
 _VALIDATOR_THINKING_BUDGET = 8192
 
-_VALID_OPEN_ARTIFACTS = {"handler", "migration", "widget_js", "admin_ui"}
+_VALID_OPEN_ARTIFACTS = {"handler", "migration"}
 
 
 # ── User prompt builder ────────────────────────────────────────────────────────
@@ -128,9 +131,9 @@ def _build_prompt(
             f"dbContracts (architect-specified schema — source of truth for tables and columns):\n"
             f"{json.dumps(db_contracts, indent=2)}"
         )
-    if is_storefront:
+    if widget_catalog:
         plan_parts.append(f"widgetApiCatalog:\n{json.dumps(widget_catalog, indent=2)}")
-    if is_admin_ui:
+    if admin_catalog:
         plan_parts.append(f"adminApiCatalog:\n{json.dumps(admin_catalog, indent=2)}")
     if has_cron_batching:
         plan_parts.append(f"cronBatching:\n{json.dumps(cron_batching, indent=2)}")
@@ -154,11 +157,11 @@ def _build_prompt(
     questions: List[str] = [Q1_TABLE_NAMES, Q2_COLUMN_NAMES]
     expected_keys: List[str] = ["q1_table_names", "q2_column_names"]
 
-    if is_storefront:
+    if widget_catalog:
         questions.append(Q3_WIDGET_FIELDS)
         expected_keys.append("q3_widget_fields")
 
-    if is_admin_ui:
+    if admin_catalog:
         questions.append(Q4_ADMIN_FIELDS)
         expected_keys.append("q4_admin_fields")
 
@@ -185,7 +188,7 @@ def _build_prompt(
     }
     shape["open_findings"] = [
         {
-            "artifact": "handler | migration | widget_js | admin_ui",
+            "artifact": "handler | migration",
             "location": "symbol / loop / branch — or line range",
             "issue": "what is wrong",
             "failure_mode": "how this fails at runtime",

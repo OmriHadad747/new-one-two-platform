@@ -20,9 +20,9 @@ import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
-from subagents.prompts.widget import WIDGET_BASE
+from subagents.prompts.core.widget import WIDGET_BASE
 from subagents.static_validation import validate_widget_artifact
-from templates.capabilities.widget import WIDGET_CAPABILITIES
+from subagents.prompts.capabilities import WIDGET_CAPABILITY_DOCS
 
 
 class WidgetJsGenerator(Generator):
@@ -110,9 +110,9 @@ def _build_jit_sections(plan: Dict[str, Any]) -> str:
     impl = plan.get("appContracts") or {}
     declared = set(impl.get("widgetCapabilities") or [])
     sections: List[str] = []
-    for cap_name, cap in WIDGET_CAPABILITIES.items():
-        if cap_name in declared and cap.docs:
-            sections.append(cap.docs)
+    for cap_name, docs in WIDGET_CAPABILITY_DOCS.items():
+        if cap_name in declared and docs:
+            sections.append(docs)
     return "\n\n".join(sections) + ("\n\n" if sections else "")
 
 

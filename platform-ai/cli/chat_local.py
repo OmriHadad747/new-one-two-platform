@@ -875,7 +875,7 @@ def _email_metadata_md_lines(meta: Dict[str, Any]) -> List[str]:
     Render the handler's email-metadata sidecar for the test-results report.
 
     Makes sidecar presence, declared variables, and starter content inspectable
-    at a glance — matches the contract in templates/capabilities/handler.py
+    at a glance — matches the contract in subagents/prompts/capabilities/handler.py
     ("Email metadata sidecar"). Empty/None metadata produces nothing.
     """
     if not meta:

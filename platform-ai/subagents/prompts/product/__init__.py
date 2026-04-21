@@ -1,3 +1,0 @@
-from ._core import PRODUCT_BASE, PRODUCT_ANALYZE_BASE
-
-__all__ = ["PRODUCT_BASE", "PRODUCT_ANALYZE_BASE"]

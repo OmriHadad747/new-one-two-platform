@@ -22,7 +22,112 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from models.adapter import get_llm, invoke, extract_json
 from models.agent_models import get_agent_model
-from subagents.prompts.architect import build_system_prompt
+from subagents.prompts.core.architect import (
+    INTRO,
+    FEASIBILITY,
+    COMPLEXITY,
+    PLATFORM_GAPS,
+    EDGE_CASES,
+    build_output_shape,
+)
+from subagents.prompts.capabilities.email import ARCHITECT_SPEC as EMAIL_SPEC
+from subagents.prompts.topics.admin_ui import (
+    ARCHITECT as ADMIN_API_CATALOG,
+    ARCHITECT_CAPABILITIES as ADMIN_CAPABILITIES_RULES,
+)
+from subagents.prompts.topics.cron import ARCHITECT as CRON_RULES
+from subagents.prompts.topics.db_contracts import ARCHITECT as DB_CONTRACTS
+from subagents.prompts.topics.handler import ARCHITECT_CAPABILITIES as HANDLER_CAPABILITIES_RULES
+from subagents.prompts.topics.shopify_loop import (
+    ARCHITECT as CRON_BATCHING,
+    ARCHITECT_SHAPE as CRON_BATCHING_SHAPE,
+)
+from subagents.prompts.topics.state_machine import (
+    ARCHITECT as STATE_MACHINE,
+    ARCHITECT_SHAPE as STATE_MACHINE_SHAPE,
+)
+from subagents.prompts.topics.webhook import ARCHITECT as WEBHOOK_RULES
+from subagents.prompts.topics.widget import (
+    ARCHITECT_CAPABILITIES as WIDGET_CAPABILITIES_RULES,
+    ARCHITECT_CATALOG as WIDGET_API_CATALOG,
+    ARCHITECT_TEMPLATES as WIDGET_TARGET_TEMPLATES,
+)
+
+
+_SHOPIFY_PLAN_HEADER = """\
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1 — shopifyPlan
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\
+"""
+
+_CONTRACTS_HEADER = """\
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONTRACTS — binding interfaces between components
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\
+"""
+
+_NON_NULL_SHAPES_HEADER = """\
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NON-NULL SHAPES — use exactly when these fields are set:\
+"""
+
+
+def _build_system_prompt(archetype: str) -> tuple[str, str]:
+    """
+    Assemble the architect system prompt for the given archetype.
+
+    Returns (shared, tail) where shared is byte-identical across all archetypes
+    (cache-friendly) and tail carries the archetype-specific widget/admin sections
+    plus the output format example.
+    """
+    has_widget = "storefront" in archetype
+    has_admin = "admin" in archetype
+
+    # Split each topic's architect block so the webhookTopics / cronSchedule
+    # field rules sit under SECTION 1 (shopifyPlan) and the *Contract rules
+    # sit under the CONTRACTS block. Each topic's ARCHITECT string is
+    # "<fieldRule>\n\n<contractRule>" — one split() yields both halves.
+    webhook_topics_rule, webhook_contract_rule = WEBHOOK_RULES.split("\n\n", 1)
+    cron_schedule_rule, cron_contract_rule = CRON_RULES.split("\n\n", 1)
+
+    shared_sections = [
+        INTRO,
+        _SHOPIFY_PLAN_HEADER,
+        webhook_topics_rule,
+        cron_schedule_rule,
+        FEASIBILITY,
+        COMPLEXITY,
+        STATE_MACHINE,
+        PLATFORM_GAPS,
+        HANDLER_CAPABILITIES_RULES,
+        EMAIL_SPEC,
+        CRON_BATCHING,
+        EDGE_CASES,
+        _CONTRACTS_HEADER,
+        DB_CONTRACTS,
+        webhook_contract_rule,
+        cron_contract_rule,
+    ]
+
+    tail_sections: list[str] = []
+    if has_widget:
+        tail_sections += [
+            WIDGET_TARGET_TEMPLATES,
+            WIDGET_API_CATALOG,
+            WIDGET_CAPABILITIES_RULES,
+        ]
+    if has_admin:
+        tail_sections += [ADMIN_API_CATALOG, ADMIN_CAPABILITIES_RULES]
+    tail_sections += [
+        _NON_NULL_SHAPES_HEADER,
+        STATE_MACHINE_SHAPE,
+        CRON_BATCHING_SHAPE,
+        build_output_shape(archetype),
+    ]
+
+    shared = "\n\n".join(shared_sections) + "\n\n"
+    tail = "\n\n".join(tail_sections)
+    return shared, tail
 
 
 _ARCHITECT_USER_TEMPLATE = """{error_block}Merchant request: {prompt}
@@ -115,7 +220,7 @@ def run_architect_agent(
         api_context_section=api_context_section,
     )
 
-    system_shared, system_tail = build_system_prompt(app_archetype)
+    system_shared, system_tail = _build_system_prompt(app_archetype)
     system_segments = [system_shared, system_tail]
     llm = get_llm(model=get_agent_model("architect"), max_tokens=4000)
     current_user = user

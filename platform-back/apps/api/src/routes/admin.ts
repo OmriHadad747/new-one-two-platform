@@ -4,6 +4,7 @@ import { createRequestLogger } from "@platform-back/logger";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import { ForwardError, forwardToHandler } from "../lib/forward.js";
 import { verifyShopifySessionToken } from "../lib/shopify-session-token.js";
+import { getAdminBundle } from "../lib/bundle-storage.js";
 
 const SHOPIFY_CLIENT_ID = process.env["SHOPIFY_CLIENT_ID"] ?? "";
 const SHOPIFY_CLIENT_SECRET = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
@@ -37,11 +38,49 @@ interface AdminRouteParams {
 }
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
+  // Serve the generated admin panel ES module. Must be registered before the
+  // wildcard proxy route so Fastify picks the more-specific path first.
+  app.get<{ Params: { appId: string } }>(
+    "/:appId/panel.js",
+    adminBundleHandler,
+  );
+
   app.route<{ Params: AdminRouteParams }>({
     method: ["POST", "OPTIONS"],
     url: "/:appId/*",
     handler: adminProxyHandler,
   });
+}
+
+async function adminBundleHandler(
+  request: FastifyRequest<{ Params: { appId: string } }>,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const { appId } = request.params;
+  const log = createRequestLogger({ requestId: request.id });
+
+  let bundle: string | null;
+  try {
+    bundle = await getAdminBundle(appId);
+  } catch (err) {
+    log.error({ err, appId }, "admin bundle: storage read failed");
+    return reply
+      .code(500)
+      .send(errorResponse(ErrorCode.Internal, "Failed to retrieve admin bundle"));
+  }
+
+  if (!bundle) {
+    log.info({ appId }, "admin bundle: not found");
+    return reply
+      .code(404)
+      .send(errorResponse(ErrorCode.NotFound, "Admin bundle not found"));
+  }
+
+  return reply
+    .code(200)
+    .header("Content-Type", "application/javascript; charset=utf-8")
+    .header("Cache-Control", "public, max-age=300")
+    .send(bundle);
 }
 
 async function adminProxyHandler(

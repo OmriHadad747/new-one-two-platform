@@ -29,13 +29,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from templates.capabilities import (
+from subagents.prompts.capabilities import (
     ALLOWED_ADMIN_CAPABILITIES,
     ALLOWED_HANDLER_CAPABILITIES,
-    ALLOWED_NPM_PACKAGES,
     ALLOWED_WIDGET_CAPABILITIES,
+    NPM,
 )
-from templates.capabilities.handler import HANDLER_CAPABILITY_REGISTRY
 
 # ── Webhook topic registry ────────────────────────────────────────────────────
 #
@@ -154,7 +153,7 @@ def validate_architect_plan(
       15. storefront apps must declare widgetTargetTemplates (at least one valid template).
       16. cronBatching, when non-null, must include required=true.
       17. handlerCapabilities, when present, must be an array of strings drawn
-          from the handler vocabulary in templates/capabilities/handler.py.
+          from the handler vocabulary in subagents/prompts/capabilities/handler.py.
       18. widgetCapabilities must be null for non-storefront archetypes and an
           array from the widget vocabulary for storefront archetypes.
       19. adminCapabilities must be null for non-admin archetypes and an array
@@ -673,8 +672,7 @@ FORBIDDEN_HANDLER_PATTERNS = [
     ),
     (
         r"\bmodule\.exports\b",
-        "module.exports is not allowed — use ESM `export` / `export const` "
-        "syntax",
+        "module.exports is not allowed — use ESM `export` / `export const` " "syntax",
     ),
     # Legacy ctx.* surface — prompt has been retargeted to req.platform + sql
     # + platform.*. Any ctx.* reference is carry-over from the
@@ -747,9 +745,24 @@ _RESERVED_TEMPLATE_FILES = frozenset(
 # same set via `import ... from "node:X"` or the bare specifier.
 _NODE_BUILTINS = frozenset(
     {
-        "assert", "buffer", "child_process", "crypto", "events", "fs",
-        "http", "https", "net", "os", "path", "process", "querystring",
-        "stream", "string_decoder", "url", "util", "zlib",
+        "assert",
+        "buffer",
+        "child_process",
+        "crypto",
+        "events",
+        "fs",
+        "http",
+        "https",
+        "net",
+        "os",
+        "path",
+        "process",
+        "querystring",
+        "stream",
+        "string_decoder",
+        "url",
+        "util",
+        "zlib",
     }
 )
 
@@ -958,7 +971,7 @@ def validate_handler_artifact(
        matching `adminRouter.<method>("<path>", ...)` registration.
     7. widget.ts: exports `widgetRouter`; every widgetApiCatalog path
        registered.
-    8. cron.ts: exports `jobs`; has at least one entry (Phase 2 = "main").
+    8. cron.ts: exports `jobs`; has at least one entry.
     9. State-machine flag: any file contains a `sql\`SELECT` before any
        INSERT/UPDATE of the state column (soft-verified; validator_agent
        in step 10 does the full semantic check).
@@ -1102,9 +1115,9 @@ def _build_import_allowlist(declared_caps: set) -> frozenset:
     """
     allowed = set(_TEMPLATE_PACKAGES)
     for cap_name in declared_caps:
-        cap = HANDLER_CAPABILITY_REGISTRY.get(cap_name)
-        if cap and cap.packages:
-            allowed.update(cap.packages)
+        entry = NPM.get(cap_name)
+        if entry:
+            allowed.update(entry["packages"])
     return frozenset(allowed)
 
 
@@ -1253,15 +1266,11 @@ def _validate_webhook_handlers(code: str, plan_topics: List[str]) -> List[str]:
     return errors
 
 
-def _validate_admin_router(
-    code: str, admin_catalog: List[Dict[str, Any]]
-) -> List[str]:
+def _validate_admin_router(code: str, admin_catalog: List[Dict[str, Any]]) -> List[str]:
     errors: List[str] = []
 
     if not re.search(r"\bexport\s+const\s+adminRouter\b", code):
-        errors.append(
-            "[src/routes/admin.ts] must export a named const `adminRouter`"
-        )
+        errors.append("[src/routes/admin.ts] must export a named const `adminRouter`")
 
     for entry in admin_catalog:
         method = (entry.get("method") or "POST").lower()
@@ -1269,14 +1278,12 @@ def _validate_admin_router(
         if not path:
             continue
         # adminRouter.<method>("<path>", ...) OR  adminRouter[<method>]("<path>", ...)
-        pattern = (
-            rf"""adminRouter\s*\.\s*{re.escape(method)}\s*\(\s*['"]{re.escape(path)}['"]"""
-        )
+        pattern = rf"""adminRouter\s*\.\s*{re.escape(method)}\s*\(\s*['"]{re.escape(path)}['"]"""
         if not re.search(pattern, code):
             errors.append(
                 f"[src/routes/admin.ts] missing route {method.upper()} "
                 f"'{path}' — register via "
-                f"adminRouter.{method}(\"{path}\", ...). Every "
+                f'adminRouter.{method}("{path}", ...). Every '
                 f"adminApiCatalog entry MUST be registered."
             )
 
@@ -1289,23 +1296,19 @@ def _validate_widget_router(
     errors: List[str] = []
 
     if not re.search(r"\bexport\s+const\s+widgetRouter\b", code):
-        errors.append(
-            "[src/routes/widget.ts] must export a named const `widgetRouter`"
-        )
+        errors.append("[src/routes/widget.ts] must export a named const `widgetRouter`")
 
     for entry in widget_catalog:
         method = (entry.get("method") or "POST").lower()
         path = entry.get("path", "")
         if not path:
             continue
-        pattern = (
-            rf"""widgetRouter\s*\.\s*{re.escape(method)}\s*\(\s*['"]{re.escape(path)}['"]"""
-        )
+        pattern = rf"""widgetRouter\s*\.\s*{re.escape(method)}\s*\(\s*['"]{re.escape(path)}['"]"""
         if not re.search(pattern, code):
             errors.append(
                 f"[src/routes/widget.ts] missing route {method.upper()} "
                 f"'{path}' — register via "
-                f"widgetRouter.{method}(\"{path}\", ...). Every "
+                f'widgetRouter.{method}("{path}", ...). Every '
                 f"widgetApiCatalog entry MUST be registered."
             )
 
@@ -1323,18 +1326,12 @@ def _validate_cron_router(code: str) -> List[str]:
         )
         return errors
 
-    # Phase 2 convention: exactly one job named "main".
-    # Pattern matches both `jobs: ... = { main: ... }` and
-    # `jobs = { main: ... }`. The typing form is flexible.
-    has_main = bool(
-        re.search(r"""\bjobs\b[^=]*=\s*\{[^}]*\bmain\s*:""", code, re.DOTALL)
+    # Require at least one job in the map.
+    has_any_job = bool(
+        re.search(r"""\bjobs\b[^=]*=\s*\{[^}]*\w+\s*:""", code, re.DOTALL)
     )
-    if not has_main:
-        errors.append(
-            "[src/routes/cron.ts] jobs map must include a `main` entry — "
-            "Phase 2 convention is one job per app named 'main' "
-            "(multi-job support is tech-debt TD-021)"
-        )
+    if not has_any_job:
+        errors.append("[src/routes/cron.ts] jobs map must include at least one entry")
 
     return errors
 

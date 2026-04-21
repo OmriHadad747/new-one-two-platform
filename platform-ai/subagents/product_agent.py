@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Tuple
 
 from models.adapter import get_llm, invoke, invoke_conversation, extract_json
 from models.agent_models import get_agent_model
-from subagents.prompts.product import PRODUCT_BASE, PRODUCT_ANALYZE_BASE
+from subagents.prompts.core.product import PRODUCT_BASE, PRODUCT_ANALYZE_BASE
 
 
 def run_product_agent(prompt: str) -> Tuple[Dict[str, Any], int, int]:

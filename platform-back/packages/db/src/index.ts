@@ -1,5 +1,10 @@
 export { sql, closeDb } from "./connection.js";
 export {
+  updateAppBundles,
+  getAppBundles,
+  type AppBundles,
+} from "./bundles.js";
+export {
   getAppById,
   getAppSlugs,
   resolveAppHandler,

@@ -27,7 +27,9 @@ from typing import Dict, FrozenSet, List, Optional, Tuple
 from models.adapter import extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
 from subagents.base import CodegenContext, needs_extended_thinking
-from subagents.prompts.revision import REVISION_SYSTEM
+from subagents.jit.handler import build_handler_jit_sections
+from subagents.prompts.core.revision import REVISION_SYSTEM
+from subagents.prompts.topics.handler import HANDLER as HARNESS_BASE
 
 # Extended-thinking budget for the revision agent.  Revision rewrites whole
 # artifacts to fix a precise list of validator issues — it is exactly the call
@@ -38,12 +40,6 @@ from subagents.prompts.revision import REVISION_SYSTEM
 _REVISION_THINKING_BUDGET = 6000
 
 log = logging.getLogger(__name__)
-
-# System prompt: REVISION_SYSTEM (in subagents/prompts/revision/_core.py) —
-# embeds the compact HARNESS_API_SURFACE so revisions see the handler API
-# reminder without the full HARNESS_BASE. Revisions already have the prior
-# handler code in the user prompt, which embodies the handler patterns;
-# re-sending the full harness contract wastes tokens without improving edits.
 
 
 # ── User prompt builder ────────────────────────────────────────────────────────
@@ -90,9 +86,7 @@ Revise ONLY the unlocked artifacts to align with the locked code's contracts.
     static_errors_block = ""
     if static_errors:
         error_lines = "\n".join(
-            f"  [{gen}]: {err}"
-            for gen, errs in static_errors.items()
-            for err in errs
+            f"  [{gen}]: {err}" for gen, errs in static_errors.items() for err in errs
         )
         static_errors_block = f"""
 ═══════════════════════════════════════════════════════════════
@@ -132,7 +126,20 @@ Fix ALL of them in your revised output:
         else "migration.sql (prior — NEVER drop or recreate these tables)"
     )
 
-    return f"""Merchant revision request: {intent.get("desiredOutcome", "")}
+    # Build the same handler-surface view the handler agent sees at first-run
+    # time — HARNESS_BASE plus capability docs and topic sections gated by the
+    # revised plan. This is what the revision agent must respect when editing.
+    widget_catalog = (plan.get("appContracts") or {}).get("widgetApiCatalog") or []
+    handler_surface = (
+        HARNESS_BASE + "\n\n" + build_handler_jit_sections(plan, widget_catalog)
+    )
+
+    return f"""{handler_surface}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REVISION REQUEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Merchant revision request: {intent.get("desiredOutcome", "")}
 
 Feature intent:
 {json.dumps(intent, indent=2)}
