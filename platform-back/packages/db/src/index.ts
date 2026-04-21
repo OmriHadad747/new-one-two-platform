@@ -20,7 +20,6 @@ export {
   getActiveWebhookSubscriptionsForApp,
   getAppVersionSemvers,
   getLatestDeployedVersionForApp,
-  getLatestMigrationSqlForApp,
   type AppRecord,
   type AppFullRecord,
   type CreateAppInput,

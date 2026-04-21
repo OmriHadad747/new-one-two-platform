@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import {
-  getAppById,
+  getAppByIdUnsafe,
   getAppSlugs,
   getGenerationByJobId,
   markGenerationDeployed,
@@ -49,7 +49,7 @@ async function getGenerationHandler(
 ): Promise<FastifyReply | void> {
   const { appId, jobId } = req.params;
 
-  const appRecord = await getAppById(appId);
+  const appRecord = await getAppByIdUnsafe(appId);
   if (!appRecord) {
     return reply
       .code(404)
@@ -83,7 +83,7 @@ async function deployGenerationHandler(
   const { appId, jobId } = req.params;
 
   const [appRecord, slugs] = await Promise.all([
-    getAppById(appId),
+    getAppByIdUnsafe(appId),
     getAppSlugs(appId),
   ]);
   if (!appRecord || !slugs) {

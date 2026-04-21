@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
-import { getAppById, getAppSlugs } from "@platform-back/db";
+import { getAppByIdUnsafe, getAppSlugs } from "@platform-back/db";
 import {
   getDeployJob,
   startDeploy,
@@ -81,7 +81,7 @@ async function deployHandler(
   const { appId } = req.params;
 
   const [appRecord, slugs] = await Promise.all([
-    getAppById(appId),
+    getAppByIdUnsafe(appId),
     getAppSlugs(appId),
   ]);
   if (!appRecord || !slugs) {

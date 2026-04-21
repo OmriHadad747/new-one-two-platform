@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import {
-  getAppById,
+  getAppByIdUnsafe,
   getAppEmailConfig,
   getAppEmailStats,
   getAppEmailVariables,
@@ -101,7 +101,7 @@ export async function emailRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const { appId } = req.params;
 
-      const appRecord = await getAppById(appId);
+      const appRecord = await getAppByIdUnsafe(appId);
       if (!appRecord) {
         return reply
           .code(404)
@@ -213,7 +213,7 @@ export async function emailRoutes(app: FastifyInstance): Promise<void> {
     "/apps/:appId/stats",
     async (req, reply) => {
       const { appId } = req.params;
-      const appRecord = await getAppById(appId);
+      const appRecord = await getAppByIdUnsafe(appId);
       if (!appRecord) {
         return reply
           .code(404)

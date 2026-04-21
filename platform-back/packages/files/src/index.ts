@@ -108,6 +108,44 @@ export async function signReadUrl(
 }
 
 /**
+ * Remove many objects with bounded concurrency. Used by the permanent-
+ * delete flow where a single app can have hundreds of files. Best-effort:
+ * individual failures are logged and swallowed, so one stuck delete
+ * can't stall the whole teardown. Returns the count of successful deletes
+ * so callers can log a summary.
+ */
+export async function deleteObjectsBatch(
+  gcsObjects: readonly string[],
+  { concurrency = 50 }: { concurrency?: number } = {},
+): Promise<{ deleted: number; failed: number }> {
+  if (SKIP_GCS || gcsObjects.length === 0) {
+    return { deleted: 0, failed: 0 };
+  }
+  let deleted = 0;
+  let failed = 0;
+  const queue = [...gcsObjects];
+
+  async function worker(): Promise<void> {
+    while (queue.length > 0) {
+      const next = queue.shift();
+      if (!next) return;
+      try {
+        await deleteObject(next);
+        deleted += 1;
+      } catch {
+        // deleteObject already warn-logged; just count.
+        failed += 1;
+      }
+    }
+  }
+
+  const width = Math.min(concurrency, gcsObjects.length);
+  await Promise.all(Array.from({ length: width }, () => worker()));
+  logger.info({ total: gcsObjects.length, deleted, failed }, "batch delete done");
+  return { deleted, failed };
+}
+
+/**
  * Remove a single object. Used by the uninstall flow. Ignores
  * NOT_FOUND so a second-invocation cleanup is idempotent; any other
  * error is surfaced for the caller to decide on.

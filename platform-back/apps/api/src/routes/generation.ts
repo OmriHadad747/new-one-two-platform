@@ -18,7 +18,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import {
-  getAppById,
+  getAppByIdUnsafe,
   getAppSlugs,
   createPendingGeneration,
   getGenerationByJobId,
@@ -118,7 +118,7 @@ async function startGenerationHandler(
 
   if (!requireTenant(req, reply, tenantId)) return;
 
-  const appRecord = await getAppById(appId);
+  const appRecord = await getAppByIdUnsafe(appId);
   if (!appRecord || appRecord.tenantId !== tenantId) {
     return reply
       .code(404)
@@ -226,7 +226,7 @@ async function approveHandler(
   }
 
   const [appRecord, slugs] = await Promise.all([
-    getAppById(row.appId),
+    getAppByIdUnsafe(row.appId),
     getAppSlugs(row.appId),
   ]);
   if (!appRecord || !slugs) return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
@@ -293,7 +293,7 @@ async function latestHandler(
   reply: FastifyReply,
 ): Promise<FastifyReply | void> {
   const { appId } = req.params;
-  const appRecord = await getAppById(appId);
+  const appRecord = await getAppByIdUnsafe(appId);
   if (!appRecord) return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   if (!requireTenant(req, reply, appRecord.tenantId)) return;
   const row = await getLatestGenerationForApp(appId);
@@ -305,7 +305,7 @@ async function latestCompletedHandler(
   reply: FastifyReply,
 ): Promise<FastifyReply | void> {
   const { appId } = req.params;
-  const appRecord = await getAppById(appId);
+  const appRecord = await getAppByIdUnsafe(appId);
   if (!appRecord) return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   if (!requireTenant(req, reply, appRecord.tenantId)) return;
   const row = await getLatestCompletedGenerationForApp(appId);
@@ -317,7 +317,7 @@ async function sessionsHandler(
   reply: FastifyReply,
 ): Promise<FastifyReply | void> {
   const { appId } = req.params;
-  const appRecord = await getAppById(appId);
+  const appRecord = await getAppByIdUnsafe(appId);
   if (!appRecord) return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   if (!requireTenant(req, reply, appRecord.tenantId)) return;
   const rows = await listGenerationsForApp(appId);

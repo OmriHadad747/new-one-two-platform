@@ -203,3 +203,60 @@ function requireEnv(name: string): string {
   if (!v) throw new Error(`${name} is not set`);
   return v;
 }
+
+// ─── Unregister (teardown / permanent-delete path) ───────────────────────────
+
+export interface UnregisterShopifyWebhooksInput {
+  shopDomain: string;
+  /** null when the tenant has no admin token on file — we skip cleanly. */
+  accessTokenSecretName: string | null;
+  webhooks: Array<{ topic: string; shopifyWebhookId: string }>;
+}
+
+/**
+ * Best-effort removal of Shopify-side webhook subscriptions when an app
+ * is torn down or permanently deleted. Non-fatal: skips on missing token,
+ * logs + continues on any per-webhook DELETE failure so partial outages
+ * don't prevent the rest of the teardown flow from progressing. The DB
+ * side (webhook_subscriptions.is_active) is flipped separately by
+ * deactivateAppInfrastructure / hardDeleteApp.
+ */
+export async function unregisterShopifyWebhooks(
+  input: UnregisterShopifyWebhooksInput,
+): Promise<void> {
+  if (input.webhooks.length === 0) return;
+
+  if (!input.accessTokenSecretName) {
+    logger.warn(
+      { shopDomain: input.shopDomain },
+      "unregisterShopifyWebhooks: no access-token secret on tenant — skipping",
+    );
+    return;
+  }
+
+  let adminToken: string;
+  try {
+    adminToken = await getSecret(input.accessTokenSecretName);
+  } catch (err) {
+    logger.warn(
+      { err, shopDomain: input.shopDomain },
+      "unregisterShopifyWebhooks: secret resolve failed — skipping",
+    );
+    return;
+  }
+
+  for (const wh of input.webhooks) {
+    try {
+      await deleteShopifyWebhook(input.shopDomain, adminToken, wh.shopifyWebhookId);
+      logger.info(
+        { topic: wh.topic, shopifyWebhookId: wh.shopifyWebhookId },
+        "unregisterShopifyWebhooks: removed",
+      );
+    } catch (err) {
+      logger.warn(
+        { err, topic: wh.topic, shopifyWebhookId: wh.shopifyWebhookId },
+        "unregisterShopifyWebhooks: DELETE failed — continuing",
+      );
+    }
+  }
+}

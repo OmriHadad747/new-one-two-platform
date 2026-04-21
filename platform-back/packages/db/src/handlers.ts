@@ -398,27 +398,3 @@ export async function getLatestDeployedVersionForApp(
   };
 }
 
-/**
- * Latest stored rollback SQL for an app — feeds rollbackTenantMigration
- * during permanent-delete. Returns null when no deploy has persisted
- * rollback_sql yet (pre-column deploys, or generator still producing
- * only forward SQL). Caller falls back to "leak tenant tables" in that
- * case, matching REFACTOR_GAPS §6 path D as the MVP compromise until the
- * generator learns to emit rollback SQL (§6-A).
- */
-export async function getLatestMigrationSqlForApp(
-  tenantId: string,
-  appId: string,
-): Promise<{ migrationSql: string | null; rollbackSql: string | null } | null> {
-  const rows = await sql<
-    Array<{ migrationSql: string | null; rollbackSql: string | null }>
-  >`
-    SELECT migration_sql AS "migrationSql", rollback_sql AS "rollbackSql"
-      FROM deployed_functions
-     WHERE app_id = ${appId}
-       AND tenant_id = ${tenantId}
-     ORDER BY deployed_at DESC
-     LIMIT 1
-  `;
-  return rows[0] ?? null;
-}

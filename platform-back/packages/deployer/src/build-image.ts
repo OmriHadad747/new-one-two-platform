@@ -118,3 +118,55 @@ async function buildCloudBuild(
       `client ready: ${cloudBuildClient !== null})`,
   );
 }
+
+// ─── Image deletion (permanent-delete path) ──────────────────────────────────
+
+/**
+ * Best-effort image delete. Called once per stored app_versions.semver
+ * during permanentDeleteApp. Non-fatal: a failed delete leaves a
+ * cost-only orphan in the registry, not a correctness issue. Logs
+ * warn + continues so one stale tag can't block teardown.
+ *
+ * - DEPLOY_MODE=local: `docker rmi -f`. Missing images are expected on
+ *   dev machines (never pulled, already pruned); skip quietly.
+ * - DEPLOY_MODE=cloudrun: shells out to
+ *   `gcloud artifacts docker images delete`. The image name is already
+ *   in Artifact Registry format (REGION-docker.pkg.dev/…); passing it
+ *   verbatim is what the CLI expects.
+ */
+export async function deleteDockerImage(imageName: string): Promise<void> {
+  if (DEPLOY_MODE === "local") {
+    try {
+      await runCommand("docker", ["rmi", "-f", imageName], process.cwd());
+      logger.info({ imageName }, "[local] docker rmi");
+    } catch (err) {
+      logger.warn(
+        { err, imageName },
+        "[local] docker rmi failed (image not present?) — continuing",
+      );
+    }
+    return;
+  }
+
+  try {
+    await runCommand(
+      "gcloud",
+      [
+        "artifacts",
+        "docker",
+        "images",
+        "delete",
+        imageName,
+        "--quiet",
+        "--delete-tags",
+      ],
+      process.cwd(),
+    );
+    logger.info({ imageName }, "Artifact Registry image deleted");
+  } catch (err) {
+    logger.warn(
+      { err, imageName },
+      "deleteDockerImage: Artifact Registry delete failed — continuing",
+    );
+  }
+}

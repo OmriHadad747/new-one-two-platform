@@ -176,6 +176,9 @@ importers:
       '@platform-back/db':
         specifier: workspace:*
         version: link:../db
+      '@platform-back/files':
+        specifier: workspace:*
+        version: link:../files
       '@platform-back/logger':
         specifier: workspace:*
         version: link:../logger

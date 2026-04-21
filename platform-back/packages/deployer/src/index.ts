@@ -87,5 +87,26 @@ export {
 
 export {
   registerWebhooks,
+  unregisterShopifyWebhooks,
   type RegisterWebhooksInput,
+  type UnregisterShopifyWebhooksInput,
 } from "./webhook-registrar.js";
+
+export {
+  dropAppTables,
+  appTablePrefix,
+  type DropAppTablesInput,
+} from "./migration-runner.js";
+
+export {
+  deleteDockerImage,
+} from "./build-image.js";
+
+export {
+  teardownApp,
+  reactivateApp,
+  permanentDeleteApp,
+  type TeardownAppInput,
+  type ReactivateAppInput,
+  type PermanentDeleteAppInput,
+} from "./lifecycle.js";
