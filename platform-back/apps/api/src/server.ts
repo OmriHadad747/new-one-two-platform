@@ -13,6 +13,7 @@ import { emailPublicRoutes } from "./routes/email-public.js";
 import { emailServiceRoutes } from "./routes/services/email.js";
 import { filesServiceRoutes } from "./routes/services/files.js";
 import { shopifyServiceRoutes } from "./routes/services/shopify.js";
+import { tenantsRoutes } from "./routes/tenants.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { resendWebhookRoutes } from "./routes/webhook/resend.js";
 import { generationsRoutes } from "./routes/generations.js";
@@ -80,6 +81,7 @@ export async function buildServer() {
   await app.register(emailRoutes, { prefix: "/email" });
   await app.register(emailPublicRoutes, { prefix: "/email/u" });
   await app.register(oauthRoutes, { prefix: "/oauth" });
+  await app.register(tenantsRoutes, { prefix: "/tenants" });
   await app.register(resendWebhookRoutes, { prefix: "/webhook" });
   // /apps/:appId/deploy  +  /deploy/jobs/:jobId  (mounted at root because
   // the two paths don't share a common prefix)
