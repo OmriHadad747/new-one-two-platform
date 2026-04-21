@@ -4,9 +4,11 @@ files capability — platform.files.upload() / uploadLarge() / signReadUrl().
 Per-agent views:
   ARCHITECT — short line for the AVAILABLE capabilities list, plus the
               discipline about when NOT to declare this capability.
-  HANDLER   — full implementation docs for both upload paths, the
-              "when NOT to use" anti-patterns, and the signReadUrl
-              usage for long-lived links.
+              Declaration is the leverage point; by the time the handler
+              sees its doc, the architect has already decided.
+  HANDLER   — full implementation docs for both upload paths + signReadUrl.
+              Assumes the architect already decided this capability is
+              warranted; teaches how to use it, not whether.
 """
 
 ARCHITECT = (
@@ -81,45 +83,6 @@ Both methods return the SAME shape:
     contents: csvBuffer,
     mimeType: "text/csv",
   });
-
-── WHEN NOT TO USE THE FILES SERVICE ──────────────────────────
-
-Before reaching for platform.files.*, verify the simpler path isn't
-already there. The file service produces a durable download artefact —
-it is NOT a way to hand bytes between functions or materialise data the
-merchant will read once.
-
-DO NOT upload a file when any of these fit:
-
-  - The data fits in an email body. Render the data inline in the email
-    template (platform.email.send's `data` + {{tokens}}); do not attach
-    a PDF for a three-line order confirmation.
-
-  - The data displays in an admin UI table. Return the rows from an
-    admin route as JSON; the admin UI renders them. Don't materialise
-    as a downloadable CSV unless the merchant explicitly needs to export.
-
-  - Shopify has a native export for it. Product CSV, order CSV, customer
-    CSV are all native Shopify admin features — do not rebuild them.
-    Point the merchant at Shopify's own Export button in the UX copy.
-
-  - The bytes are transient computation results. Return them in the HTTP
-    response body of the admin/widget route that needs them. Don't round-
-    trip through object storage.
-
-  - You only need an in-memory preview or thumbnail. Use the npm
-    package (sharp for images, etc.) in-process; do not upload the
-    intermediate.
-
-  - Invalidation / re-run is frequent. Files are durable — every upload
-    counts against the tenant's storage cap. A cron that produces a
-    "daily summary" file that nobody reads is just quota burn.
-
-ONLY upload when all of these are true:
-  1. A merchant or customer needs to download the artefact (click a link).
-  2. The artefact must persist beyond the request that produced it.
-  3. The data is genuinely too large or too binary for an email body /
-     JSON response.
 
 ── Longer-lived download links ─────────────────────────────────
 
