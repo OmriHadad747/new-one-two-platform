@@ -84,21 +84,53 @@ export interface FileUploadResult {
   sizeBytes: number;
 }
 
-// Threshold at which the SDK switches from inline POST → resumable PUT.
-// Matches /services/files/upload's MAX_FILE_BYTES on the backend; anything
-// at or above goes through create-upload-url + PUT + finalize instead.
-// Handler never picks the path; the SDK routes by buffer size.
-const RESUMABLE_THRESHOLD_BYTES = 25 * 1024 * 1024;
+// Hard caps the handler must respect. upload() is for typical app-generated
+// artefacts (receipts, small CSVs, thumbnails); uploadLarge() is the escape
+// hatch for bulk exports, archives, and image batches. Handlers pick
+// explicitly — no auto-routing — so the choice shows up in generated code
+// and prompt teaching can reason about it.
+const INLINE_UPLOAD_CAP_BYTES = 25 * 1024 * 1024;
+const RESUMABLE_UPLOAD_CAP_BYTES = 500 * 1024 * 1024;
 
+/**
+ * Upload a small file inline. Rejects anything >=25 MiB with
+ * PayloadTooLarge — use uploadLarge() for those.
+ *
+ * Typical callers: generated PDF receipts, small CSV exports, thumbnails,
+ * short JSON bundles. Bytes transit platform-back.
+ */
 async function filesUpload(input: FileUploadInput): Promise<FileUploadResult> {
-  // Buffer and Uint8Array both serialize via base64; Node's Buffer handles both.
   const buf = Buffer.isBuffer(input.contents)
     ? input.contents
     : Buffer.from(input.contents);
+  if (buf.length >= INLINE_UPLOAD_CAP_BYTES) {
+    // Client-side guard — surfaces as the same error the server would
+    // return, but saves the round-trip and makes the "wrong method"
+    // obvious in stack traces.
+    throw new PayloadTooLarge(INLINE_UPLOAD_CAP_BYTES);
+  }
+  return uploadInline(input, buf);
+}
 
-  return buf.length < RESUMABLE_THRESHOLD_BYTES
-    ? uploadInline(input, buf)
-    : uploadResumable(input, buf);
+/**
+ * Upload a large file via the resumable path. Bytes are PUT directly to
+ * GCS with a signed URL; platform-back never sees the payload. Cap is
+ * 500 MiB per file.
+ *
+ * Use only when the file genuinely exceeds the 25 MiB inline cap —
+ * whole-store CSV exports, theme archives, high-res image batches.
+ * Small files should use upload() so the simpler control flow wins.
+ */
+async function filesUploadLarge(
+  input: FileUploadInput,
+): Promise<FileUploadResult> {
+  const buf = Buffer.isBuffer(input.contents)
+    ? input.contents
+    : Buffer.from(input.contents);
+  if (buf.length > RESUMABLE_UPLOAD_CAP_BYTES) {
+    throw new PayloadTooLarge(RESUMABLE_UPLOAD_CAP_BYTES);
+  }
+  return uploadResumable(input, buf);
 }
 
 async function uploadInline(
@@ -250,7 +282,11 @@ async function filesSignReadUrl(
 
 export const platform = {
   email: { send: emailSend, sendBatch: emailSendBatch },
-  files: { upload: filesUpload, signReadUrl: filesSignReadUrl },
+  files: {
+    upload: filesUpload,
+    uploadLarge: filesUploadLarge,
+    signReadUrl: filesSignReadUrl,
+  },
   QuotaExceeded,
   PayloadTooLarge,
 };

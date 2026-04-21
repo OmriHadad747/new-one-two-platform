@@ -36,10 +36,17 @@ handlerCapabilities: Closed-vocabulary list of platform services and npm
   - Declare "shopify_rest" and/or "shopify_graphql" based on which Shopify
     API the handler calls. Most handlers declare at least one; a DB-only
     admin panel with no Shopify reads declares neither.
-  - Declare "files" when the handler produces a downloadable artefact.
-    Declaring a document-format npm package (npm:pdfkit / npm:exceljs /
-    npm:csv) without "files" is inconsistent — the output still needs
-    the /services/files/upload service to hand the buffer to.
+  - Declare "files" ONLY when the app genuinely produces a durable
+    download artefact the merchant or customer needs to persist —
+    receipts, exports they can't get from Shopify natively, reports.
+    Do NOT declare "files" when the data could instead live in an email
+    body, render in an admin UI table, or be returned as JSON from a
+    request. Files are a last-resort materialisation, not a convenient
+    way to hand bytes between functions. See the files capability docs
+    for the full "when NOT to use" list.
+    When declared, the handler picks explicitly between
+    platform.files.upload (≤25 MiB) and platform.files.uploadLarge
+    (≤500 MiB) — there is no auto-routing.
   - npm:* entries gate whether the handler may import the package — all
     packages are pre-installed in the handler template's package.json,
     so the architect's declaration is the ONLY gate deciding which
