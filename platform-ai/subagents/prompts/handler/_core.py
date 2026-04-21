@@ -30,9 +30,11 @@ replacements for them:
   src/lib/db.ts                      — exports `sql` (postgres.js tagged
                                         template, search_path pinned to this
                                         tenant's schema)
-  src/lib/platform-call.ts           — exports `callPlatformService({path, body})`
-                                        — mints a Google ID token and calls
-                                        platform-back /services/* endpoints
+  src/lib/platform-call.ts           — low-level outbound transport; do NOT
+                                        call directly — use platform.ts instead
+  src/lib/platform.ts                — exports `platform` SDK and `QuotaExceeded`;
+                                        typed wrappers around every /services/*
+                                        endpoint (see PLATFORM SDK below)
   src/lib/shopify.ts                 — exports a preconfigured
                                         `@shopify/shopify-api` client keyed on
                                         the tenant's shop domain + access token
@@ -119,29 +121,51 @@ atomicity across multiple statements, use `sql.begin(tx => {...})`:
   });
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PLATFORM SERVICES — `callPlatformService` from ../lib/platform-call.js:
+PLATFORM SDK — `platform` from ../lib/platform.js:
 
-  import { callPlatformService } from "../lib/platform-call.js";
+  import { platform, QuotaExceeded } from "../lib/platform.js";
 
-Use this (and ONLY this) to reach platform-back `/services/*` endpoints —
-e.g. sending email, future shared services. It mints a Google OIDC ID
-token on the handler's Cloud Run service account; platform-back verifies
-caller identity from that token, derives (tenantId, appId) — you do NOT
-need to include them in the body.
+Use `platform.*` (and ONLY this) to reach platform-back `/services/*`
+endpoints. It mints a Google OIDC ID token automatically; you do NOT need
+to include tenantId or appId in the call.
 
-  const { status, body } = await callPlatformService<{ ok: boolean }>({
-    path: "/services/<service_name>",
-    body: { <request_shape> },
-  });
+AVAILABLE METHODS:
 
-THREE-BRANCH RESPONSE RULE — handle platform service responses exactly
-this way, no exceptions:
-  if (status === 429) { /* quota exceeded */ return res.status(429).json({...}); }
-  if (status >= 400)  { /* platform error */ return res.status(502).json({...}); }
-  /* success — use body */
+  platform.email.send(input)
+    input:  { to: string; data: Record<string, unknown> }
+    returns EmailSendResult union:
+      { ok: true; delivered: true; deliveryId: string }
+      { ok: true; delivered: false; reason: "suppressed" | "missing_config" }
+      { ok: true; delivered: false; reason: "provider_failed" }
+    throws QuotaExceeded when the monthly quota is exceeded
 
-Do NOT hand-roll fetch() to reach /services/* — the auth plumbing only
-lives inside callPlatformService.
+  platform.email.sendBatch(items)
+    items:  EmailSendInput[]
+    returns { items: EmailBatchItemResult[] }
+    throws on unexpected status
+
+USAGE PATTERN — email loop with quota early-exit:
+
+  try {
+    for (const row of rows) {
+      const result = await platform.email.send({ to: row.email, data: { ... } });
+      if (result.delivered) {
+        // mark sent in DB
+      }
+      // delivered:false is a soft outcome — log and continue
+    }
+  } catch (err) {
+    if (err instanceof QuotaExceeded) {
+      // Monthly quota hit — stop the loop, do not retry
+      req.log?.warn({ limit: err.limit }, "email quota exceeded");
+      return;
+    }
+    throw err;
+  }
+
+Do NOT import or call `callPlatformService` directly — it is a low-level
+transport and has no response taxonomy. Do NOT hand-roll fetch() to
+reach /services/*.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REQUIRED OUTPUT FORMAT — file bundle delimiters:
@@ -198,14 +222,15 @@ ABSOLUTE RULES (violations cause deployment failure):
     return 500; that's a last-resort, not your error strategy.
 5.  Every route MUST send a response (res.json / res.status().json /
     res.status().send). Never leave a request hanging.
-6.  When calling callPlatformService, obey the three-branch rule above —
-    429, 4xx, success — and never expose the `body` of a 4xx back to the
-    caller verbatim (it may contain platform-internal detail).
+6.  Use `platform.*` for all /services/* calls — never call
+    `callPlatformService` directly. The platform SDK encodes the response
+    taxonomy in its return types; do not re-implement it.
 7.  https:// URLs are allowed ONLY inside fetch() calls to non-platform
     third-party APIs. Never hand-roll an https call to platform-back —
     always use callPlatformService. Never put https:// in comments, in
     email templateIds, or in other strings (templateId is a short opaque
-    string like 'd-<hex>', never a URL).
+    string like 'd-<hex>', never a URL). Never call callPlatformService
+    directly — always use platform.*.
 8.  For Shopify REST: paths are relative (e.g. '/<shopify_resource>.json'),
     NEVER full URLs. For Shopify GraphQL IDs use GID format:
     `gid://shopify/<Type>/${id}`. (Capability docs cover the specific API
