@@ -355,6 +355,138 @@ Not audited line-by-line. Obvious coverage drops:
 
 ---
 
+## 14. Files service — open issues
+
+These surfaced reviewing commits `9a1233a` (resumable upload) and `0cd2e4a`
+(tests) against `docs/FILES_INTEGRATION.md`. Items covered elsewhere in this
+doc (§4 GCS cleanup on app-delete; §13 the "integration" tests are all mocks)
+are omitted here — do not duplicate-fix.
+
+### Correctness / security
+
+- **Resumable path doesn't actually reserve quota.** `create-upload-url`
+  pre-checks `getTenantStorageUsage(tenantId) + expectedSizeBytes > limit`,
+  but `getTenantStorageUsage` only sums `status='active'` rows — `pending`
+  rows (reserved-but-not-finalized uploads) are invisible. Two concurrent
+  `create-upload-url` calls both read usage=X, both insert pending rows of
+  ~600 MiB against a 1 GiB cap, and a third call right after still sees
+  usage=X and accepts another 600 MiB. Fix: include `'pending'` in the
+  usage sum, or do an atomic reserve. Files: `packages/db/src/files.ts:200-209`,
+  `apps/api/src/routes/services/files.ts:416-430`.
+
+- **Quota race on the inline path.** Same shape as above but on `/upload`:
+  `getTenantStorageUsage` + decision + GCS put + DB insert with no lock,
+  so concurrent uploads that each fit can collectively overflow. Fix: atomic
+  `INSERT … WHERE (SELECT SUM…) + new.size_bytes ≤ limit`, or
+  `pg_advisory_xact_lock(tenantId)`. Files: `apps/api/src/routes/services/files.ts:218-232`.
+
+- **No compensating GCS delete on DB-insert failure.** Inline path writes
+  to GCS, then inserts the DB row. If the insert fails, the code logs
+  `"object now orphaned"` and returns 500 — the GCS object stays forever
+  (until a future orphan sweeper that doesn't exist for the inline path).
+  Fix: best-effort `deleteObject(gcsObject)` in the catch.
+  File: `apps/api/src/routes/services/files.ts:231-239`.
+
+- **`finalize-upload` trusts GCS-reported size blindly.** Handler reserves
+  10 MiB, PUTs 9 MiB of *different* content than intended — nothing checks.
+  Not a "bug" exactly; the contract is "whatever GCS accepted is truth."
+  Worth either a code comment acknowledging this, or an MD5/sha verification
+  against a handler-supplied hash. File: `apps/api/src/routes/services/files.ts:550-563`.
+
+- **`finalizeFile` race on double-finalize.** Two concurrent finalize calls
+  both pass the SELECT, both run the UPDATE. Current outcome is harmless
+  (same size) but if the GCS object were replaced between calls, the
+  second update would clobber. Fix: advisory lock keyed on `fileId`.
+  File: `packages/db/src/files.ts:91-111`.
+
+### SDK / handler contract
+
+- **`QuotaExceeded` reuses email-quota semantics on files path.** SDK does
+  `throw new QuotaExceeded(e.limitBytes, e.usedBytes, null)` but the class
+  constructor emits `"Monthly quota exceeded (${limit})"` and names its
+  third field `resetsAt` — neither applies to a non-resetting storage
+  quota. Logs will say "Monthly quota exceeded" for a permanent storage
+  cap. Fix: a dedicated `StorageQuotaExceeded` class, or add `kind:
+  "email" | "storage"` + a neutral message. File:
+  `templates/handler/src/lib/platform.ts:3-12, 113, 129, 170`.
+
+- **SDK resumable path: `PayloadTooLarge` fallback is a magic number.**
+  `throw new PayloadTooLarge(((body as { limitBytes?: number }).limitBytes
+  ?? RESUMABLE_THRESHOLD_BYTES * 20))`. The backend's Zod 400 for oversize
+  returns `{ error: "invalid_request", details }` without `limitBytes`, so
+  the fallback (`25 MiB * 20 = 500 MiB-ish`) always fires. Fix either side:
+  backend returns `{ error: "payload_too_large", limitBytes: MAX_RESUMABLE_BYTES }`
+  on oversize (matching inline-path 413), or SDK imports/duplicates
+  `MAX_RESUMABLE_BYTES` for the fallback. File:
+  `templates/handler/src/lib/platform.ts:174-179`.
+
+- **SDK resumable path has no rollback on PUT / finalize failure.** If the
+  PUT to GCS fails after `create-upload-url` succeeded, the `pending` row
+  holds quota until orphan-GC sweeps it (up to 2 h later). Fix: add
+  `/cancel-upload` backend route + SDK try/finally that calls it on PUT/
+  finalize error. File: `templates/handler/src/lib/platform.ts:195-217`.
+
+- **Threshold boundary off-by-one.** SDK switches at `< 25 MiB` (resumable
+  for exact-25 MiB); backend inline route rejects `> MAX_FILE_BYTES` (allows
+  exact-25 MiB). Picks different paths for the same exact-boundary buffer.
+  Pick one boundary and align. Files:
+  `templates/handler/src/lib/platform.ts:91,99`;
+  `apps/api/src/routes/services/files.ts:212`.
+
+### Orphan GC
+
+- **GC runs on every replica with no locking.** `getStalePendingFiles` is
+  `SELECT … ORDER BY created_at LIMIT 200` — every replica reads the same
+  200 rows and races on `deleteObject`. GCS's `ignoreNotFound: true` saves
+  us from hard failure, but every replica still burns a round trip per
+  row. Fix: `SELECT … FOR UPDATE SKIP LOCKED` or claim via `UPDATE …
+  RETURNING`. Low severity at single-replica; the inline code comment
+  "SQL is idempotent … duplicates are harmless" is misleading.
+  File: `apps/api/src/lib/files-orphan-gc.ts:24-25,70-95`.
+
+- **First GC sweep is delayed by a full interval (1 h).** The comment says
+  "first sweep after a short delay so app boot finishes" but the code only
+  calls `setInterval` — which fires at T+1h, not at boot. Restart-heavy
+  environments never sweep. Fix: kick an initial sweep on `startOrphanGc`
+  after a ~60s delay. File: `apps/api/src/lib/files-orphan-gc.ts:45-62`.
+
+### Billing / UX polish
+
+- **`files_uploaded` usage counter never incremented.** `usage_records`
+  has a `files_uploaded INTEGER` column (migration:391) but upload
+  handlers never `incrementUsage(tenantId, 'files_uploaded')`. Billing
+  dashboard will always show 0. Fix: call `incrementUsage` alongside the
+  successful insert. File: `apps/api/src/routes/services/files.ts:262-300, 586-595`.
+
+- **All downloads forced as `Content-Disposition: attachment`.** Signing
+  hard-codes attachment for every MIME, including `image/{png,jpeg,webp}`.
+  Admin UIs rendering images inline can't. Fix: take a `disposition:
+  "attachment" | "inline"` hint in `signReadUrl`, or default images to
+  `inline`. File: `packages/files/src/index.ts:104`.
+
+### Minor
+
+- **Fastify's own 413 doesn't match the spec shape.** Requests over the
+  40 MiB route-level bodyLimit are rejected by Fastify's default error
+  handler as `{ code, message }`, not `{ error: "payload_too_large",
+  limitBytes }`. SDK constructs `new PayloadTooLarge(undefined)`. Fix:
+  translate in `setErrorHandler`, or map `undefined → MAX_FILE_BYTES` in
+  the SDK. File: `apps/api/src/server.ts:99-123`.
+
+- **`Buffer.from(base64)` never throws — catch block is dead.** Node
+  silently drops invalid chars, so malformed base64 produces wrong bytes
+  rather than a 400. Low severity; spec doesn't mandate strict validation.
+  Either delete the catch, or validate with a regex up front.
+  File: `apps/api/src/routes/services/files.ts:168-174`.
+
+- **Always-on handler prompt mentions `QuotaExceeded` without distinguishing
+  email vs storage.** While capability docs for `files` are JIT-injected,
+  the always-on SDK section lists `QuotaExceeded` generically — see the
+  semantics mismatch above. Adjust prompt when the class is clarified.
+  File: `platform-ai/subagents/prompts/topics/handler.py:163-177`.
+
+---
+
 ## Tiered punch list
 
 **Tier 1 — blocks the UI working at all**
