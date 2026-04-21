@@ -488,12 +488,54 @@ def _phase_codegen(
     sys.exit(1)
 
 
+_REVISION_TRACES_SUBDIR = "revision_traces"
+
+
+def _make_run_dir(run_ts: str, run_slug: str) -> Path:
+    """Create and return the per-run output directory."""
+    run_dir = TEST_RESULTS_DIR / f"{run_ts}_{run_slug}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def _save_generated_files(
+    run_dir: Path,
+    artifacts: Dict[str, str],
+    is_storefront: bool,
+    is_admin_ui: bool,
+) -> None:
+    """Write generated artifacts as individual files within run_dir."""
+    from utils.file_bundle import parse_file_bundle, ParseError
+
+    handler_raw = artifacts.get("handler", "")
+    if handler_raw:
+        try:
+            for f in parse_file_bundle(handler_raw):
+                dest = run_dir / f["path"]
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(f["contents"])
+        except ParseError:
+            (run_dir / "handler_bundle.ts").write_text(handler_raw)
+
+    migration = artifacts.get("migration", "")
+    if migration:
+        migrations_dir = run_dir / "migrations"
+        migrations_dir.mkdir(exist_ok=True)
+        (migrations_dir / "generated.sql").write_text(migration)
+
+    if is_storefront and artifacts.get("widget_js"):
+        (run_dir / "widget.js").write_text(artifacts["widget_js"])
+
+    if is_admin_ui and artifacts.get("admin_ui"):
+        (run_dir / "admin_ui.js").write_text(artifacts["admin_ui"])
+
+
 def _save_revision_failure_local(
+    run_dir: Path,
     bad_artifacts: Dict[str, str],
     errors: Dict[str, List[str]],
 ) -> Path:
-    """Save bad revision artifacts to test_results/revision_failures/ for analysis."""
-    failure_dir = TEST_RESULTS_DIR / "revision_failures"
+    failure_dir = run_dir / "revision_failures"
     failure_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     path = failure_dir / f"{ts}_revision_failure.json"
@@ -502,13 +544,8 @@ def _save_revision_failure_local(
     return path
 
 
-_REVISION_TRACES_SUBDIR = "revision_traces"
-
-
-def _save_revision_trace(run_ts: str, slug: str, trace: Dict[str, Any]) -> Path:
-    """Persist a validator+revision trace. Shares run_ts+slug with the report .md
-    so traces and reports are trivially cross-referenceable on disk."""
-    trace_dir = TEST_RESULTS_DIR / _REVISION_TRACES_SUBDIR
+def _save_revision_trace(run_dir: Path, run_ts: str, slug: str, trace: Dict[str, Any]) -> Path:
+    trace_dir = run_dir / _REVISION_TRACES_SUBDIR
     trace_dir.mkdir(parents=True, exist_ok=True)
     path = trace_dir / f"{run_ts}_{slug}.json"
     path.write_text(json.dumps(trace, indent=2))
@@ -520,6 +557,7 @@ def _phase_validator(
     artifacts: Dict[str, str],
     is_storefront: bool,
     is_admin_ui: bool,
+    run_dir: Path,
     run_ts: str,
     run_slug: str,
 ) -> Tuple[Dict[str, str], int, int, Optional[Dict[str, Any]]]:
@@ -602,7 +640,7 @@ def _phase_validator(
 
     def _finalize(outcome: str) -> None:
         trace["final_outcome"] = outcome
-        _save_revision_trace(run_ts, run_slug, trace)
+        _save_revision_trace(run_dir, run_ts, run_slug, trace)
 
     _spinner("Revision")
     t0 = time.monotonic()
@@ -705,7 +743,7 @@ def _phase_validator(
     trace["attempts"][-1]["outcome"] = "failed"
     _finalize("failed")
     bad = {**frontend_revised, **frontend_revised2}
-    path = _save_revision_failure_local(bad, static_errors2)
+    path = _save_revision_failure_local(run_dir, bad, static_errors2)
     _agent_line("Revision", ok=False, ms=ms2,
                 notes=_tok_note(rev2_in, rev2_out, extra="static validation failed after 2 attempts"))
     print(f"\n  {_RED}Revision agent produced structurally invalid code after 2 attempts.{_RESET}")
@@ -724,15 +762,13 @@ def _slug(text: str, max_words: int = 6) -> str:
     return "-".join(words[:max_words])
 
 
-def _save_arch_json(prompt: str, intent: Dict, plan: Dict, errors: List[str], product_prompt: str = "") -> Path:
-    TEST_RESULTS_DIR.mkdir(exist_ok=True)
-    ts   = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    path = TEST_RESULTS_DIR / f"{ts}_{_slug(prompt)}_arch.json"
+def _save_arch_json(run_dir: Path, prompt: str, intent: Dict, plan: Dict, errors: List[str], product_prompt: str = "") -> Path:
     payload: Dict[str, Any] = {"prompt": prompt, "intent": intent, "plan": plan, "validation_errors": errors}
     if product_prompt:
         payload["product_prompt"] = product_prompt
+    path = run_dir / "arch.json"
     path.write_text(json.dumps(payload, indent=2))
-    return path
+    return run_dir
 
 
 def _validator_revision_md_lines(trace: Dict[str, Any]) -> List[str]:
@@ -774,6 +810,7 @@ def _validator_revision_md_lines(trace: Dict[str, Any]) -> List[str]:
 
 
 def _save_artifacts_md(
+    run_dir: Path,
     prompt: str,
     artifacts: Dict[str, str],
     stop_label: str,
@@ -782,13 +819,11 @@ def _save_artifacts_md(
     retry_log: Optional[List[Dict]] = None,
     intent: Optional[Dict] = None,
     plan: Optional[Dict] = None,
-    run_ts: Optional[str] = None,
     validator_trace: Optional[Dict[str, Any]] = None,
     handler_email_metadata: Optional[Dict[str, Any]] = None,
 ) -> Path:
-    TEST_RESULTS_DIR.mkdir(exist_ok=True)
-    ts   = run_ts or datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    path = TEST_RESULTS_DIR / f"{ts}_{_slug(prompt)}_{stop_label}.md"
+    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui)
+    path = run_dir / "report.md"
 
     lines = [
         f"# Chat Local — {stop_label.capitalize()} Output",
@@ -914,7 +949,7 @@ def _build_bundle(
     emailVariables / emailStarterContent come from the handler's structured
     sidecar (captured by HandlerGenerator.generate() onto base_ctx).
     """
-    handler_code = artifacts.get("handler", "")
+    handler_raw  = artifacts.get("handler", "")
     shopify_plan = plan.get("shopifyPlan", {})
     technical    = explanation.get("technical", {})
     app_contracts = plan.get("appContracts") or {}
@@ -935,20 +970,15 @@ def _build_bundle(
         else None
     )
 
+    from utils.file_bundle import parse_file_bundle
+    handler_files = parse_file_bundle(handler_raw) if handler_raw else []
+
     return {
         "widgetModule":          artifacts.get("widget_js") if is_storefront else None,
         "adminUiModule":         artifacts.get("admin_ui")  if is_admin_ui   else None,
         "widgetTargetTemplates": (app_contracts.get("widgetTargetTemplates") or None) if is_storefront else None,
         "handlerModule": {
-            # Phase 2 bridge: one-file wrapper around whatever the handler
-            # agent returned. Step 5 made handler_agent emit a real file
-            # bundle; CLI local-testing still calls the older single-string
-            # path so this wrap keeps it convertible until chat_local is
-            # ported. No npmPackages — packages are template-shipped (see
-            # platform-back/templates/handler/package.json).
-            "files": [
-                {"path": "src/routes/generated.ts", "contents": handler_code},
-            ],
+            "files": handler_files,
             "webhookTopics": shopify_plan.get("webhookTopics", []),
             "cronSchedule":  shopify_plan.get("cronSchedule"),
         },
@@ -1073,6 +1103,7 @@ def main() -> None:
     total_start = time.monotonic()
     run_ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     run_slug = _slug(prompt)
+    run_dir = _make_run_dir(run_ts, run_slug)
     all_tokens: Dict[str, Tuple[int, int]] = {}
 
     def _fail_db(reason: str) -> None:
@@ -1094,8 +1125,8 @@ def main() -> None:
     if stop_after == "arch":
         total_ms = int((time.monotonic() - total_start) * 1000)
         _print_token_summary(all_tokens)
-        report = _save_arch_json(prompt, intent, plan, [], product_prompt)
-        print(f"\n  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
+        _save_arch_json(run_dir, prompt, intent, plan, [], product_prompt)
+        print(f"\n  done — {total_ms / 1000:.1f}s — {run_dir.relative_to(_HERE)}/")
         _hr("━")
         return
 
@@ -1117,17 +1148,16 @@ def main() -> None:
         total_ms = int((time.monotonic() - total_start) * 1000)
         _print_artifacts(artifacts)
         _print_token_summary(all_tokens)
-        report = _save_artifacts_md(prompt, artifacts, "codegen", is_storefront, is_admin_ui,
-                                    retry_log or None, intent=intent, plan=plan,
-                                    run_ts=run_ts,
-                                    handler_email_metadata=base_ctx.handler_email_metadata)
-        print(f"\n  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
+        _save_artifacts_md(run_dir, prompt, artifacts, "codegen", is_storefront, is_admin_ui,
+                           retry_log or None, intent=intent, plan=plan,
+                           handler_email_metadata=base_ctx.handler_email_metadata)
+        print(f"\n  done — {total_ms / 1000:.1f}s — {run_dir.relative_to(_HERE)}/")
         _hr("━")
         return
 
     # ── Phase: LLM Validator + Revision ───────────────────────────────────────
     artifacts, val_in, val_out, validator_trace = _phase_validator(
-        base_ctx, artifacts, is_storefront, is_admin_ui, run_ts, run_slug,
+        base_ctx, artifacts, is_storefront, is_admin_ui, run_dir, run_ts, run_slug,
     )
     if val_in or val_out:
         all_tokens["validator"] = (val_in, val_out)
@@ -1136,11 +1166,11 @@ def main() -> None:
         total_ms = int((time.monotonic() - total_start) * 1000)
         _print_artifacts(artifacts)
         _print_token_summary(all_tokens)
-        report = _save_artifacts_md(prompt, artifacts, "validator", is_storefront, is_admin_ui,
-                                    retry_log or None, intent=intent, plan=plan,
-                                    run_ts=run_ts, validator_trace=validator_trace,
-                                    handler_email_metadata=base_ctx.handler_email_metadata)
-        print(f"\n  done — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
+        _save_artifacts_md(run_dir, prompt, artifacts, "validator", is_storefront, is_admin_ui,
+                           retry_log or None, intent=intent, plan=plan,
+                           validator_trace=validator_trace,
+                           handler_email_metadata=base_ctx.handler_email_metadata)
+        print(f"\n  done — {total_ms / 1000:.1f}s — {run_dir.relative_to(_HERE)}/")
         _hr("━")
         return
 
@@ -1170,14 +1200,12 @@ def main() -> None:
             _info(f"DB bundle save failed: {exc}")
 
     total_ms = int((time.monotonic() - total_start) * 1000)
-
-    # ── Save full report ───────────────────────────────────────────────────────
-    TEST_RESULTS_DIR.mkdir(exist_ok=True)
-    report = TEST_RESULTS_DIR / f"{run_ts}_{run_slug}.md"
-
     total_in  = sum(v[0] for v in all_tokens.values())
     total_out = sum(v[1] for v in all_tokens.values())
 
+    # ── Save report + generated files ─────────────────────────────────────────
+    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui)
+    merchant_facing = explanation.get("merchantFacing", "")
     lines = [
         "# Chat Local — Full Pipeline",
         "",
@@ -1210,25 +1238,16 @@ def main() -> None:
             lines.append("")
     if validator_trace:
         lines += _validator_revision_md_lines(validator_trace)
-    lines += ["## Artifacts", ""]
-    if artifacts.get("handler"):
-        lines += ["### handler.js",    "", "```javascript", artifacts["handler"],   "```", ""]
     if base_ctx.handler_email_metadata is not None:
         lines += _email_metadata_md_lines(base_ctx.handler_email_metadata)
-    if artifacts.get("migration"):
-        lines += ["### migration.sql", "", "```sql",        artifacts["migration"], "```", ""]
-    if is_storefront and artifacts.get("widget_js"):
-        lines += ["### widget.js",     "", "```javascript", artifacts["widget_js"], "```", ""]
-    if is_admin_ui and artifacts.get("admin_ui"):
-        lines += ["### admin_ui.js",   "", "```javascript", artifacts["admin_ui"],  "```", ""]
-    merchant_facing = explanation.get("merchantFacing", "")
     if merchant_facing:
-        lines += ["", "## Explanation", "", merchant_facing]
-    report.write_text("\n".join(lines) + "\n")
+        lines += ["## Explanation", "", merchant_facing]
+    (run_dir / "report.md").write_text("\n".join(lines) + "\n")
+    report = run_dir
 
     # ── Final summary ──────────────────────────────────────────────────────────
     _hr("━")
-    print(f"  {_GREEN}SUCCESS{_RESET} — {total_ms / 1000:.1f}s — {report.relative_to(_HERE)}")
+    print(f"  {_GREEN}SUCCESS{_RESET} — {total_ms / 1000:.1f}s — {run_dir.relative_to(_HERE)}/")
 
     # Artifact line counts
     artifact_parts = []

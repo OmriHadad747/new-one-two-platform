@@ -682,8 +682,8 @@ FORBIDDEN_HANDLER_PATTERNS = [
     (
         r"\bctx\.(?:db|tenantId|shopify|payload|trigger|widgetPath|widgetBody|adminPath|adminBody|logger|shop|services|http|storefront)\b",
         "ctx.* references are no longer available — use req.platform, `sql` "
-        "from ../lib/db.js, `callPlatformService` from "
-        "../lib/platform-call.js, or the shopify client from ../lib/shopify.js",
+        "from ../lib/db.js, `platform` from "
+        "../lib/platform.js, or the shopify client from ../lib/shopify.js",
     ),
     # Local-disk writes — always forbidden on Cloud Run (ephemeral FS).
     # Rewritten to point at the new /services/files/upload path.
@@ -704,6 +704,11 @@ FORBIDDEN_HANDLER_PATTERNS = [
         "wb.xlsx.writeFile(path) writes to the local filesystem which is "
         "ephemeral on Cloud Run — use wb.xlsx.writeBuffer() and hand the "
         "Buffer (base64) to /services/files/upload.",
+    ),
+    (
+        r"""import\s+.*?\s+from\s+['"]\.\.\/lib\/platform-call\.js['"]""",
+        "direct import from ../lib/platform-call.js is not allowed — "
+        "use `platform` from ../lib/platform.js instead",
     ),
 ]
 
@@ -726,8 +731,10 @@ _RESERVED_TEMPLATE_FILES = frozenset(
         "src/middleware/verify-platform.ts",
         "src/lib/db.ts",
         "src/lib/platform-call.ts",
+        "src/lib/platform.ts",
         "src/lib/shopify.ts",
         "src/lib/cron-runner.ts",
+        "src/routes/webhook.ts",
         "src/migrate.ts",
         "package.json",
         "tsconfig.json",
@@ -930,22 +937,23 @@ def validate_handler_artifact(
     2. No file path writes to a template-reserved path (server.ts,
        middleware, lib/{db,platform-call,shopify,cron-runner}.ts, etc.).
     3. Required files present based on the architect plan:
-         - src/routes/webhook.ts when webhookTopics non-empty
-         - src/routes/admin.ts   when adminApiCatalog non-empty
-         - src/routes/widget.ts  when widgetApiCatalog non-empty
-         - src/routes/cron.ts    when cronSchedule is set
+         - src/routes/webhook-handlers.ts when webhookTopics non-empty
+         - src/routes/admin.ts            when adminApiCatalog non-empty
+         - src/routes/widget.ts           when widgetApiCatalog non-empty
+         - src/routes/cron.ts             when cronSchedule is set
        And NOT present when the plan says no (widgetApiCatalog == []
        means storefront-direct; widget.ts must not be emitted).
     4. Per-file TS rules (every file):
          - Syntax completeness (balanced braces/strings).
          - Forbidden patterns (require, module.exports, ctx.*, eval,
-           setInterval, setImmediate, process.exit/kill, disk-writes).
+           setInterval, setImmediate, process.exit/kill, disk-writes,
+           direct platform-call.js imports).
          - setTimeout bounded-pause check (≤500ms literal, same as legacy).
          - Imports limited to: Node builtins, template-shipped packages,
            architect-approved npm capabilities, or relative ../lib/* paths.
-    5. webhook.ts: exports `webhookRouter`; idempotency gate present;
-       every planned topic has a `case "<topic>":` arm; no webhook topics
-       outside the plan.
+    5. webhook-handlers.ts: exports `webhookHandlers` map; every planned
+       topic has a matching key; no res.* calls; no idempotency gate
+       (template router owns both).
     6. admin.ts: exports `adminRouter`; every adminApiCatalog path has a
        matching `adminRouter.<method>("<path>", ...)` registration.
     7. widget.ts: exports `widgetRouter`; every widgetApiCatalog path
@@ -1006,10 +1014,10 @@ def validate_handler_artifact(
     widget_used = bool(widget_catalog)
     admin_used = bool(admin_catalog)
 
-    if api_plan_topics and "src/routes/webhook.ts" not in files_by_path:
+    if api_plan_topics and "src/routes/webhook-handlers.ts" not in files_by_path:
         errors.append(
-            "webhookTopics is non-empty but src/routes/webhook.ts is missing — "
-            "emit the webhookRouter file"
+            "webhookTopics is non-empty but src/routes/webhook-handlers.ts is missing — "
+            "emit the webhookHandlers map file"
         )
     if admin_used and "src/routes/admin.ts" not in files_by_path:
         errors.append(
@@ -1041,10 +1049,10 @@ def validate_handler_artifact(
         errors.extend(_validate_ts_file(path, code, allowed_import_specifiers))
 
     # 5-8. Per-role checks.
-    if "src/routes/webhook.ts" in files_by_path:
+    if "src/routes/webhook-handlers.ts" in files_by_path:
         errors.extend(
-            _validate_webhook_router(
-                files_by_path["src/routes/webhook.ts"], api_plan_topics
+            _validate_webhook_handlers(
+                files_by_path["src/routes/webhook-handlers.ts"], api_plan_topics
             )
         )
     if "src/routes/admin.ts" in files_by_path:
@@ -1173,69 +1181,72 @@ def _pkg_base(specifier: str) -> str:
     return specifier.split("/")[0]
 
 
-def _validate_webhook_router(code: str, plan_topics: List[str]) -> List[str]:
+def _validate_webhook_handlers(code: str, plan_topics: List[str]) -> List[str]:
     errors: List[str] = []
 
-    if not re.search(r"\bexport\s+const\s+webhookRouter\b", code):
+    if not re.search(r"\bexport\s+const\s+webhookHandlers\b", code):
         errors.append(
-            "[src/routes/webhook.ts] must export a named const `webhookRouter` — "
-            "the template's server.ts imports by that exact name"
+            "[src/routes/webhook-handlers.ts] must export `webhookHandlers` — "
+            "the template's webhook.ts imports by that exact name"
         )
 
-    # Idempotency gate — INSERT INTO processed_webhooks with ON CONFLICT.
-    has_gate = bool(
-        re.search(r"INSERT\s+INTO\s+processed_webhooks", code, re.IGNORECASE)
-    ) and bool(re.search(r"ON\s+CONFLICT\s*\(\s*webhook_id", code, re.IGNORECASE))
-    if not has_gate:
+    # Handlers must never write responses — the template router owns that.
+    if re.search(r"\bres\s*\.\s*(json|status|send)\b", code):
         errors.append(
-            "[src/routes/webhook.ts] missing idempotency gate — the first "
-            "statement in the router MUST be `INSERT INTO processed_webhooks "
-            "(webhook_id) VALUES (...) ON CONFLICT (webhook_id) DO NOTHING` "
-            "followed by an early-return on duplicate"
+            "[src/routes/webhook-handlers.ts] handlers must not call "
+            "res.json/res.status/res.send — the template router owns all "
+            "response writes; throw to signal failure"
         )
 
-    # Plan topics must match declared switch cases.
-    case_topics = set(
-        re.findall(r"""case\s+['"]([^'"]+)['"]\s*:""", code)
-    )
-    # "_cron/*" topics are legacy (pre-Option D fold-in) — flag if they
-    # appear, they belong in src/routes/cron.ts now.
-    bogus_cron = {t for t in case_topics if t.startswith("_cron/")}
+    # Handlers must not include the idempotency gate — the template owns it.
+    if re.search(r"INSERT\s+INTO\s+processed_webhooks", code, re.IGNORECASE):
+        errors.append(
+            "[src/routes/webhook-handlers.ts] must not include the idempotency "
+            "gate — the template's webhook.ts handles processed_webhooks; "
+            "remove it from the handlers file"
+        )
+
+    # Plan topics must match the map keys.
+    # Match `"orders/create": async (` or `'products/update': (` style entries.
+    key_topics = set(re.findall(r"""['"]([^'"]+)['"]\s*:\s*(?:async\s+)?\(""", code))
+    topic_keys = {k for k in key_topics if "/" in k}
+
+    # "_cron/*" keys are legacy — flag them.
+    bogus_cron = {t for t in topic_keys if t.startswith("_cron/")}
     if bogus_cron:
         errors.append(
-            f"[src/routes/webhook.ts] switch arms {sorted(bogus_cron)} look "
+            f"[src/routes/webhook-handlers.ts] keys {sorted(bogus_cron)} look "
             f"like cron dispatch — cron ticks arrive via src/routes/cron.ts "
-            f"(jobs map), not the webhook switch"
+            f"(jobs map), not the webhook handlers map"
         )
-    real_cases = case_topics - bogus_cron
+    real_keys = topic_keys - bogus_cron
 
     valid_topics = _get_valid_webhook_topics()
-    unknown = real_cases - valid_topics - {t for t in real_cases if "/" not in t}
-    unknown &= real_cases  # keep only keys that looked topic-ish
+    unknown = real_keys - valid_topics
     if unknown:
         errors.append(
-            f"[src/routes/webhook.ts] unknown webhook topics in switch: "
+            f"[src/routes/webhook-handlers.ts] unknown webhook topics as keys: "
             f"{sorted(unknown)}"
         )
 
     planned = set(plan_topics)
     if planned:
-        missing = planned - real_cases
+        missing = planned - real_keys
         if missing:
             errors.append(
-                f"[src/routes/webhook.ts] missing switch arm for planned "
+                f"[src/routes/webhook-handlers.ts] missing handler for planned "
                 f"topics: {sorted(missing)}"
             )
-        extra = real_cases - planned
+        extra = real_keys - planned
         if extra:
             errors.append(
-                f"[src/routes/webhook.ts] switch arm for topic(s) not in the "
-                f"architect plan: {sorted(extra)}"
+                f"[src/routes/webhook-handlers.ts] handler key for topic(s) not "
+                f"in the architect plan: {sorted(extra)}"
             )
-    elif real_cases:
+    elif real_keys:
         errors.append(
-            f"[src/routes/webhook.ts] router declares topic arms "
-            f"{sorted(real_cases)} but the plan has no webhookTopics — remove "
+            f"[src/routes/webhook-handlers.ts] declares handler keys "
+            f"{sorted(real_keys)} but the plan has no webhookTopics — remove "
             f"the file or align the plan"
         )
 
