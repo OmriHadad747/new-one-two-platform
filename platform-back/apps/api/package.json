@@ -19,6 +19,7 @@
     "@platform-back/db": "workspace:*",
     "@platform-back/deployer": "workspace:*",
     "@platform-back/email": "workspace:*",
+    "@platform-back/files": "workspace:*",
     "@platform-back/logger": "workspace:*",
     "@platform-back/types": "workspace:*",
     "fastify": "^4.28.0",

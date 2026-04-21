@@ -64,6 +64,10 @@ CREATE TABLE tenants (
   trial_ends_at                        TIMESTAMPTZ,
   billing_cycle_anchor                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   plan_updated_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Files service: per-tenant hard cap on total stored bytes across all
+  -- apps. Enforced pre-insert by /services/files/upload. Default is a
+  -- starter-grade 1 GiB; actual per-plan defaults set by billing.
+  storage_limit_bytes                  BIGINT NOT NULL DEFAULT 1073741824,
   created_at                           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at                           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT tenants_slug_format CHECK (slug ~ '^[a-z0-9-]+$')
@@ -538,3 +542,43 @@ CREATE POLICY email_suppressions_isolation ON email_suppressions
 -- jsonb_array_elements() when ops analytics need per-agent breakdowns.
 -- If a proper queryable projection is needed later, introduce a dedicated
 -- 0003_* migration — don't revive the legacy shape.
+
+-- =============================================================================
+-- FILES
+-- =============================================================================
+-- Stores metadata for objects written to GCS via /services/files/upload.
+-- Actual bytes live in the $FILES_BUCKET bucket under the key
+-- tenants/<tenant_id>/apps/<app_id>/<id>. Handlers never touch GCS
+-- directly; they call the platform.files SDK which routes through
+-- platform-back. See docs/FILES_INTEGRATION.md.
+--
+-- status is currently always 'active' on the inline-upload path.
+-- 'pending' / 'failed' are reserved for the resumable-upload pattern
+-- (Future work in the design doc) — landing the column now avoids a
+-- later migration.
+--
+-- Uninstall note: ON DELETE CASCADE drops rows when the tenant or app
+-- goes away, but does NOT reach GCS. The uninstall flow must delete
+-- GCS objects EAGERLY via the gcs_object column before deleting the
+-- tenant row (GDPR + cost).
+
+CREATE TABLE files (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  app_id      UUID NOT NULL REFERENCES apps(id)    ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  mime_type   TEXT NOT NULL,
+  size_bytes  BIGINT NOT NULL,
+  gcs_object  TEXT NOT NULL UNIQUE,
+  status      TEXT NOT NULL DEFAULT 'active'
+              CHECK (status IN ('active', 'pending', 'failed')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX files_tenant_app_idx ON files (tenant_id, app_id);
+CREATE INDEX files_tenant_status_idx ON files (tenant_id, status);
+CREATE INDEX files_created_idx ON files (created_at);
+
+ALTER TABLE files ENABLE ROW LEVEL SECURITY;
+CREATE POLICY files_isolation ON files
+  USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID);

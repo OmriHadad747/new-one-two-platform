@@ -28,6 +28,13 @@ invoice — no credit card collection or external payment provider needed.
 | **App Executions/mo** | 1,000 | 10,000 | 50,000 | 200,000 |
 | **Emails/mo** | 100 | 1,000 | 5,000 | 20,000 |
 | **SMS/mo** | 0 | 0 | 100 | 500 |
+| **File storage** | 100 MiB | 1 GiB | 10 GiB | 50 GiB |
+
+File storage is a cumulative hard cap across all generated apps for a
+tenant. `/services/files/upload` returns 429 when
+`current_usage + new_file_size > storage_limit_bytes`. Numbers are
+placeholders — revisit before public release. Per-file cap is 25 MiB
+regardless of plan; see `docs/FILES_INTEGRATION.md`.
 
 Pricing lives in the [Pricing](#pricing) section below — it's set downstream
 of the cost analysis so the numbers are grounded in current LLM + infra costs.

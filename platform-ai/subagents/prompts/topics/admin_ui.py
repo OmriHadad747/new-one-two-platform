@@ -121,8 +121,8 @@ CALLING THE EMAIL SERVICE — use platform.email.send():
     throw err;
   }
 
-Use platform.email.send() for email — never hand-roll fetch() to /services/email/*.
-For file uploads, use callPlatformService directly (no platform.files wrapper yet).
+Use platform.email.send() for email and platform.files.upload() for files
+— never hand-roll fetch() to /services/*.
 
 DB READS — search_path is already pinned to this tenant's schema, so
 bare table names Just Work:

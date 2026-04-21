@@ -42,6 +42,14 @@ export {
   type CreateWebhookInvocationLogInput,
   type UpdateWebhookInvocationLogInput,
 } from "./webhooks.js";
+export {
+  insertActiveFile,
+  getFileForApp,
+  getTenantStorageUsage,
+  getTenantStorageLimit,
+  type FileRecord,
+  type InsertFileInput,
+} from "./files.js";
 export { trackAppExecution } from "./usage.js";
 export {
   getOrCreateUsageRecord,

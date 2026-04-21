@@ -44,6 +44,9 @@ importers:
       '@platform-back/email':
         specifier: workspace:*
         version: link:../../packages/email
+      '@platform-back/files':
+        specifier: workspace:*
+        version: link:../../packages/files
       '@platform-back/logger':
         specifier: workspace:*
         version: link:../../packages/logger
@@ -208,6 +211,19 @@ importers:
       '@types/mjml':
         specifier: ^4.7.4
         version: 4.7.4
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.39)
+
+  packages/files:
+    dependencies:
+      '@google-cloud/storage':
+        specifier: ^7.15.0
+        version: 7.19.0
+      '@platform-back/logger':
+        specifier: workspace:*
+        version: link:../logger
+    devDependencies:
       vitest:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@20.19.39)

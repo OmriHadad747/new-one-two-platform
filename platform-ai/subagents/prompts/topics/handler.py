@@ -259,11 +259,10 @@ ABSOLUTE RULES (violations cause deployment failure):
     return 500; that's a last-resort, not your error strategy.
 5.  Every route MUST send a response (res.json / res.status().json /
     res.status().send). Never leave a request hanging.
-6.  Use `platform.*` for all /services/* calls except file uploads.
-    `platform.email.send/sendBatch` — the only correct way to send email.
-    `/services/files/upload` — no typed wrapper exists yet; call
-    `callPlatformService` directly for this endpoint only (see the `files`
-    capability docs). For everything else, `platform.*` is the gate.
+6.  Use `platform.*` for every /services/* call — it is the only correct
+    way to reach a platform service. `platform.email.send/sendBatch` for
+    email; `platform.files.upload/signReadUrl` for files; future
+    services land under `platform.*` as they ship.
 7.  https:// URLs are allowed ONLY inside fetch() calls to non-platform
     third-party APIs. Never put https:// in comments, email templateIds,
     or other strings (templateId is a short opaque string like 'd-<hex>',
@@ -319,7 +318,6 @@ Rules:
   - Always pass a timeout via `AbortSignal.timeout(<ms>)`.
   - NEVER use fetch() to call Shopify — use the shopify client.
   - NEVER use fetch() to call platform-back — use platform.*
-    (or callPlatformService directly for /services/files/upload).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SHOPIFY API LOOP RULE — applies to every handler path:
