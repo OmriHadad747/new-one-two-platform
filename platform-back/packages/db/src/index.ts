@@ -44,9 +44,14 @@ export {
 } from "./webhooks.js";
 export {
   insertActiveFile,
+  insertPendingFile,
+  finalizeFile,
+  deleteFileRow,
   getFileForApp,
+  getFinalizableFileForApp,
   getTenantStorageUsage,
   getTenantStorageLimit,
+  getStalePendingFiles,
   type FileRecord,
   type InsertFileInput,
 } from "./files.js";

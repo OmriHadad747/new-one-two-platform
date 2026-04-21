@@ -123,6 +123,83 @@ export async function deleteObject(gcsObject: string): Promise<void> {
   }
 }
 
+// ─── Resumable upload (handler → GCS direct) ─────────────────────────────────
+
+export interface CreateResumableUploadUrlInput {
+  gcsObject: string;
+  mimeType: string;
+  /**
+   * Hard cap on the uploaded bytes. GCS enforces via the
+   * `x-goog-content-length-range` extension header baked into the
+   * signed URL — a PUT that sends more gets rejected server-side,
+   * so a malicious handler cannot overrun the cap we reserved quota for.
+   */
+  maxSizeBytes: number;
+  /** URL expiry. Fixed TTL from the caller; finalize must happen before this. */
+  expiresAt: Date;
+}
+
+/**
+ * Produce a v4-signed PUT URL for a resumable-style single-shot upload.
+ *
+ * We intentionally use the "signed URL PUT" flow rather than GCS's
+ * multi-part resumable protocol — for files up to the 500 MiB cap
+ * (the ceiling we set), a single PUT is simpler on both sides and
+ * still avoids sending bytes through platform-back.
+ *
+ * Caller sequence:
+ *   1. createResumableUploadUrl → gets uploadUrl
+ *   2. handler PUTs bytes to uploadUrl with
+ *         Content-Type: <mimeType>
+ *         x-goog-content-length-range: 0,<maxSizeBytes>
+ *   3. finalize endpoint reads actual size via getObjectSize + flips row.
+ */
+export async function createResumableUploadUrl(
+  input: CreateResumableUploadUrlInput,
+): Promise<{ url: string }> {
+  const bucket = getStorage().bucket(BUCKET_NAME);
+  const file = bucket.file(input.gcsObject);
+  const [url] = await file.getSignedUrl({
+    version: "v4",
+    action: "write",
+    contentType: input.mimeType,
+    expires: input.expiresAt,
+    // Requires the PUT to declare a Content-Length inside this range;
+    // anything larger gets a 400 from GCS. Handler MUST send the
+    // matching `x-goog-content-length-range: 0,<maxSizeBytes>` header.
+    extensionHeaders: {
+      "x-goog-content-length-range": `0,${input.maxSizeBytes}`,
+    },
+  });
+  return { url };
+}
+
+/**
+ * Read the actual byte count of an uploaded object. Used by the
+ * finalize endpoint to reconcile declared vs actual size and to gate
+ * the 'pending' → 'active' transition.
+ *
+ * Returns null when the object doesn't exist — handler never PUT the
+ * bytes (crashed mid-upload, user cancelled). Finalize maps null to a
+ * retry error so the handler can react.
+ */
+export async function getObjectSize(
+  gcsObject: string,
+): Promise<number | null> {
+  if (SKIP_GCS) return null;
+  const bucket = getStorage().bucket(BUCKET_NAME);
+  const file = bucket.file(gcsObject);
+  try {
+    const [metadata] = await file.getMetadata();
+    // GCS returns size as a string; coerce to number.
+    return Number(metadata.size ?? 0);
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    if (code === 404) return null;
+    throw err;
+  }
+}
+
 // ─── Internals ────────────────────────────────────────────────────────────────
 
 /**

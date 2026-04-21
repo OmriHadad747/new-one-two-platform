@@ -25,6 +25,7 @@ import {
   startProgressSubscription,
   stopProgressSubscription,
 } from "./pubsub/progress-subscriber.js";
+import { startOrphanGc, stopOrphanGc } from "./lib/files-orphan-gc.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "3010", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";
@@ -139,6 +140,7 @@ async function shutdown(
   // swallows its own errors — it's best-effort drain, not a blocker.
   await stopCompletedSubscription();
   await stopProgressSubscription();
+  stopOrphanGc();
   await closeDb();
   process.exit(0);
 }
@@ -154,6 +156,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // the process; shutdown closes it via stopCompletedSubscription.
   await startCompletedSubscription();
   await startProgressSubscription();
+
+  // Files-service orphan-GC sweeper: reclaims tenant quota from rows
+  // stuck in 'pending' after a failed resumable upload. Runs in-process;
+  // no-op when FILES_BUCKET=__skip__ (local dev).
+  startOrphanGc();
 
   await app.listen({ port: PORT, host: HOST });
   logger.info(

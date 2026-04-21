@@ -56,9 +56,96 @@ export async function insertActiveFile(
 }
 
 /**
- * Look up a file by its id, scoped to (tenantId, appId) to prevent a
- * handler from signing a URL for another app's file even if it guesses
- * the id. Returns null when no match.
+ * Insert a pending file row for the resumable-upload flow. size_bytes
+ * holds the *expected* size at this point (what the handler claimed);
+ * finalizeFile replaces it with the actual size GCS reports.
+ */
+export async function insertPendingFile(
+  input: InsertFileInput,
+): Promise<FileRecord> {
+  const rows = await sql<FileRecord[]>`
+    INSERT INTO files (
+      id, tenant_id, app_id, name, mime_type, size_bytes, gcs_object, status
+    ) VALUES (
+      ${input.id}, ${input.tenantId}, ${input.appId},
+      ${input.name}, ${input.mimeType}, ${input.sizeBytes},
+      ${input.gcsObject}, 'pending'
+    )
+    RETURNING
+      id, tenant_id AS "tenantId", app_id AS "appId",
+      name, mime_type AS "mimeType", size_bytes AS "sizeBytes",
+      gcs_object AS "gcsObject", status, created_at AS "createdAt"
+  `;
+  return rows[0]!;
+}
+
+/**
+ * Transition a pending row to active after the PUT completed. Updates
+ * size_bytes to match what GCS actually received. Idempotent on the
+ * id; a second finalize after the row has already flipped is a no-op
+ * returning the current row.
+ *
+ * Scoped to (fileId, tenantId, appId) so a handler can't finalize a
+ * file it doesn't own even if the id is somehow exposed.
+ */
+export async function finalizeFile(
+  fileId: string,
+  tenantId: string,
+  appId: string,
+  actualSizeBytes: number,
+): Promise<FileRecord | null> {
+  const rows = await sql<FileRecord[]>`
+    UPDATE files
+       SET status = 'active',
+           size_bytes = ${actualSizeBytes}
+     WHERE id = ${fileId}
+       AND tenant_id = ${tenantId}
+       AND app_id = ${appId}
+       AND status IN ('pending', 'active')
+    RETURNING
+      id, tenant_id AS "tenantId", app_id AS "appId",
+      name, mime_type AS "mimeType", size_bytes AS "sizeBytes",
+      gcs_object AS "gcsObject", status, created_at AS "createdAt"
+  `;
+  return rows[0] ?? null;
+}
+
+/**
+ * Hard-delete a file row. Used by the orphan GC sweep and by the
+ * uninstall flow. Does NOT touch GCS — caller handles that separately.
+ */
+export async function deleteFileRow(fileId: string): Promise<void> {
+  await sql`DELETE FROM files WHERE id = ${fileId}`;
+}
+
+/**
+ * Stale pending rows for the orphan GC sweep. A row is stale when it
+ * was created more than `olderThanSec` seconds ago and never flipped
+ * to 'active' — handler crashed between createUploadUrl and finalize,
+ * upload URL expired, etc. Returned tuples feed the sweeper: it
+ * deletes the GCS object (if any) and the row.
+ */
+export async function getStalePendingFiles(
+  olderThanSec: number,
+  limit: number = 500,
+): Promise<Array<{ id: string; gcsObject: string }>> {
+  const rows = await sql<Array<{ id: string; gcsObject: string }>>`
+    SELECT id, gcs_object AS "gcsObject"
+      FROM files
+     WHERE status = 'pending'
+       AND created_at < NOW() - make_interval(secs => ${olderThanSec})
+     ORDER BY created_at
+     LIMIT ${limit}
+  `;
+  return rows;
+}
+
+/**
+ * Look up an active file by its id, scoped to (tenantId, appId) to
+ * prevent a handler from signing a URL for another app's file even if
+ * it guesses the id. Returns null when no match. Pending files are
+ * intentionally excluded — don't hand out read URLs for bytes that
+ * haven't arrived yet.
  */
 export async function getFileForApp(
   fileId: string,
@@ -75,6 +162,32 @@ export async function getFileForApp(
       AND tenant_id = ${tenantId}
       AND app_id = ${appId}
       AND status = 'active'
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
+/**
+ * Look up a file for the finalize-upload path. Accepts both 'pending'
+ * (first finalize) and 'active' (idempotent re-finalize after retry).
+ * Rejects 'failed' rows — those need an explicit cleanup, not a
+ * re-finalize.
+ */
+export async function getFinalizableFileForApp(
+  fileId: string,
+  tenantId: string,
+  appId: string,
+): Promise<FileRecord | null> {
+  const rows = await sql<FileRecord[]>`
+    SELECT
+      id, tenant_id AS "tenantId", app_id AS "appId",
+      name, mime_type AS "mimeType", size_bytes AS "sizeBytes",
+      gcs_object AS "gcsObject", status, created_at AS "createdAt"
+    FROM files
+    WHERE id = ${fileId}
+      AND tenant_id = ${tenantId}
+      AND app_id = ${appId}
+      AND status IN ('pending', 'active')
     LIMIT 1
   `;
   return rows[0] ?? null;

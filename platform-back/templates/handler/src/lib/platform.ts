@@ -84,11 +84,27 @@ export interface FileUploadResult {
   sizeBytes: number;
 }
 
+// Threshold at which the SDK switches from inline POST → resumable PUT.
+// Matches /services/files/upload's MAX_FILE_BYTES on the backend; anything
+// at or above goes through create-upload-url + PUT + finalize instead.
+// Handler never picks the path; the SDK routes by buffer size.
+const RESUMABLE_THRESHOLD_BYTES = 25 * 1024 * 1024;
+
 async function filesUpload(input: FileUploadInput): Promise<FileUploadResult> {
   // Buffer and Uint8Array both serialize via base64; Node's Buffer handles both.
   const buf = Buffer.isBuffer(input.contents)
     ? input.contents
     : Buffer.from(input.contents);
+
+  return buf.length < RESUMABLE_THRESHOLD_BYTES
+    ? uploadInline(input, buf)
+    : uploadResumable(input, buf);
+}
+
+async function uploadInline(
+  input: FileUploadInput,
+  buf: Buffer,
+): Promise<FileUploadResult> {
   const body = {
     name: input.name,
     mimeType: input.mimeType,
@@ -122,6 +138,82 @@ async function filesUpload(input: FileUploadInput): Promise<FileUploadResult> {
   // 400 / 415 / other 4xx — programming errors (bad MIME, empty body, etc.)
   throw new Error(
     `platform.files.upload: unexpected status ${status} (${JSON.stringify(resp)})`,
+  );
+}
+
+async function uploadResumable(
+  input: FileUploadInput,
+  buf: Buffer,
+): Promise<FileUploadResult> {
+  // 1. Reserve quota + get a signed PUT URL.
+  const create = await callPlatformService<
+    | {
+        fileId: string;
+        uploadUrl: string;
+        requiredHeaders: Record<string, string>;
+        expiresAt: string;
+      }
+    | { error: "payload_too_large"; limitBytes: number }
+    | { error: "quota_exceeded"; usedBytes: number; limitBytes: number }
+    | { error: "unsupported_mime_type"; allowed: string[] }
+  >({
+    path: "/services/files/create-upload-url",
+    body: {
+      name: input.name,
+      mimeType: input.mimeType,
+      expectedSizeBytes: buf.length,
+    },
+  });
+
+  if (create.status === 429) {
+    const e = create.body as { usedBytes: number; limitBytes: number };
+    throw new QuotaExceeded(e.limitBytes, e.usedBytes, null);
+  }
+  // Zod schema on the backend rejects oversize with 400, not 413, but
+  // surface both as PayloadTooLarge for caller simplicity.
+  if (create.status === 400 || create.status === 413) {
+    throw new PayloadTooLarge(
+      ((create.body as { limitBytes?: number }).limitBytes ??
+        RESUMABLE_THRESHOLD_BYTES * 20) as number,
+    );
+  }
+  if (create.status !== 200) {
+    throw new Error(
+      `platform.files.upload (resumable create): unexpected status ${create.status} (${JSON.stringify(create.body)})`,
+    );
+  }
+
+  const { fileId, uploadUrl, requiredHeaders } = create.body as {
+    fileId: string;
+    uploadUrl: string;
+    requiredHeaders: Record<string, string>;
+  };
+
+  // 2. PUT bytes straight to GCS. requiredHeaders MUST be echoed —
+  //    the signed URL was minted with x-goog-content-length-range, and
+  //    GCS rejects the PUT without the matching header.
+  const putRes = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: requiredHeaders,
+    body: buf,
+  });
+  if (!putRes.ok) {
+    throw new Error(
+      `platform.files.upload (resumable PUT): GCS returned ${putRes.status}`,
+    );
+  }
+
+  // 3. Finalize — reconciles actual size, flips row to 'active',
+  //    returns the same shape as the inline path.
+  const finalize = await callPlatformService<
+    FileUploadResult | { error: string }
+  >({
+    path: "/services/files/finalize-upload",
+    body: { fileId },
+  });
+  if (finalize.status === 200) return finalize.body as FileUploadResult;
+  throw new Error(
+    `platform.files.upload (resumable finalize): unexpected status ${finalize.status} (${JSON.stringify(finalize.body)})`,
   );
 }
 
