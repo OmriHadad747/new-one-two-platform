@@ -3,8 +3,7 @@ Admin-routing handler patterns.
 
 Injected by handler_agent.py's JIT when ``appContracts.adminApiCatalog``
 is non-empty (storefront_backend_admin or backend_admin). Covers the
-src/routes/admin.ts file shape, express path-to-catalog mapping, and the
-three-branch callPlatformService discipline for /services/* calls.
+src/routes/admin.ts file shape and express path-to-catalog mapping.
 """
 
 HARNESS_SECTION_ADMIN = """
@@ -19,7 +18,7 @@ File skeleton:
 
   import { Router } from "express";
   import { sql } from "../lib/db.js";
-  import { callPlatformService } from "../lib/platform-call.js";
+  import { platform, QuotaExceeded } from "../lib/platform.js";
 
   export const adminRouter = Router();
 
@@ -51,24 +50,28 @@ Body & response contract:
   - Use `res.json({...})` for success; `res.status(400|404|...).json({error: "..."})`
     for client errors.
 
-CALLING PLATFORM SERVICES (email, etc.) — three-branch rule:
+CALLING THE EMAIL SERVICE — use platform.email.send():
 
-  const { status, body } = await callPlatformService<{ ok: boolean; delivered: boolean }>({
-    path: "/services/<service_name>",
-    body: { <request_shape> },
-  });
-  if (status === 429) {
-    res.status(429).json({ ok: false, reason: "quota_exceeded" });
-    return;
+  try {
+    const result = await platform.email.send({
+      to: <recipient>,
+      data: { <template_vars> },
+    });
+    if (result.delivered) {
+      res.json({ ok: true });
+    } else {
+      res.json({ ok: true, delivered: false, reason: result.reason });
+    }
+  } catch (err) {
+    if (err instanceof QuotaExceeded) {
+      res.status(429).json({ ok: false, reason: "quota_exceeded" });
+      return;
+    }
+    throw err;
   }
-  if (status >= 400) {
-    res.status(502).json({ ok: false, reason: "platform_error" });
-    return;
-  }
-  res.json({ ...body, ok: true });
 
-NEVER hand-roll fetch() to reach /services/*. Auth plumbing only works
-through callPlatformService.
+NEVER hand-roll fetch() or callPlatformService() to reach /services/email/*.
+For files uploads, callPlatformService is still used directly (no platform.files yet).
 
 DB READS — search_path is already pinned to this tenant's schema, so
 bare table names Just Work:

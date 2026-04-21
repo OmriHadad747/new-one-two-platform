@@ -677,7 +677,7 @@ FORBIDDEN_HANDLER_PATTERNS = [
         "syntax",
     ),
     # Legacy ctx.* surface — prompt has been retargeted to req.platform + sql
-    # + callPlatformService. Any ctx.* reference is carry-over from the
+    # + platform.*. Any ctx.* reference is carry-over from the
     # pre-Phase-2 prompt set and the model is regressing.
     (
         r"\bctx\.(?:db|tenantId|shopify|payload|trigger|widgetPath|widgetBody|adminPath|adminBody|logger|shop|services|http|storefront)\b",

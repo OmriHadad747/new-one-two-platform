@@ -34,7 +34,7 @@ cron runner stays disabled.
 File skeleton:
 
   import { sql } from "../lib/db.js";
-  import { callPlatformService } from "../lib/platform-call.js";
+  import { platform, QuotaExceeded } from "../lib/platform.js";
 
   type JobFn = (payload: unknown) => Promise<void>;
 
@@ -53,8 +53,8 @@ Rules:
   - `JobFn` takes a single `payload: unknown` argument. There is NO
     `req.platform` — cron runs outside any HTTP request. Tenant
     identity is implicit in the `sql` import (search_path pinned to
-    this tenant's schema) and `callPlatformService` (the handler's
-    Cloud Run SA identifies tenant + app to platform-back).
+    this tenant's schema) and `platform.*` (the handler's Cloud Run SA
+    identifies tenant + app to platform-back).
   - NEVER call setInterval inside a job. The schedule is external;
     the job body runs once per scheduled tick.
 
@@ -104,17 +104,30 @@ TYPICAL SHAPES:
       `;
       if (!claimed) continue;
 
-      const { status } = await callPlatformService({
-        path: "/services/email/send",
-        body: { to: r.<email_col>, data: { /* template vars */ } },
-      });
-      if (status === 429 || status >= 400) {
-        // Revert the claim so a retry tick can try again.
+      let result;
+      try {
+        result = await platform.email.send({
+          to: r.<email_col>,
+          data: { /* template vars */ },
+        });
+      } catch (err) {
+        if (err instanceof QuotaExceeded) {
+          // Monthly quota hit — revert the claim and stop this tick.
+          await sql`
+            UPDATE <table_1> SET <sent_at_col> = NULL
+            WHERE <recipient_id_col> = ${r.<recipient_id_col>}
+          `;
+          return;
+        }
+        throw err;
+      }
+      if (!result.delivered) {
+        // Soft failure — revert the claim so a retry tick can try again.
         await sql`
           UPDATE <table_1> SET <sent_at_col> = NULL
           WHERE <recipient_id_col> = ${r.<recipient_id_col>}
         `;
-        break;   // stop this tick; backoff kicks in
+        return;   // stop this tick; backoff kicks in
       }
     }
   };

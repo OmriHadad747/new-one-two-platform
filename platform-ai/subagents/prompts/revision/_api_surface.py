@@ -68,13 +68,14 @@ Request context (inside an Express route — webhook / admin / widget):
 
 Cron jobs (src/routes/cron.ts) run OUTSIDE a request — no req.platform.
 A job function receives only (payload: unknown) and imports `sql` /
-`callPlatformService` / `shopifyClientFor` the same way routes do.
+`platform` / `shopifyClientFor` the same way routes do.
 
-Platform services (email, files, shopify access-token):
-  import {{ callPlatformService }} from "../lib/platform-call.js";
-  const {{ status, body }} = await callPlatformService({{ path, body }});
-  Three-branch response: 429 → quota; status ≥ 400 → platform error;
-  else → success. Never hand-roll fetch() to reach /services/*.
+Platform services (email):
+  import {{ platform, QuotaExceeded }} from "../lib/platform.js";
+  const result = await platform.email.send({{ to, data }});
+  result.delivered → success; delivered:false → soft failure (log, continue);
+  throws QuotaExceeded on monthly quota hit.
+  Never hand-roll fetch() or callPlatformService() to reach /services/*.
 
 Shopify admin REST / GraphQL / storefront:
   import {{ shopifyClientFor }} from "../lib/shopify.js";
@@ -84,11 +85,12 @@ Shopify admin REST / GraphQL / storefront:
   for await (const page of shopify.rest.paginate("<resource>.json")) ...
 
 Required file shape:
-  src/routes/webhook.ts  — exports const webhookRouter (Express Router)
-  src/routes/admin.ts    — exports const adminRouter
-  src/routes/widget.ts   — exports const widgetRouter
-  src/routes/cron.ts     — exports const jobs: Record<string, JobFn>
-                           (Phase 2 convention: one job named "main")
+  src/routes/webhook-handlers.ts — exports const webhookHandlers (Record<string, WebhookHandler>)
+  src/routes/admin.ts            — exports const adminRouter
+  src/routes/widget.ts           — exports const widgetRouter
+  src/routes/cron.ts             — exports const jobs: Record<string, JobFn>
+                                   (Phase 2 convention: one job named "main")
+  FORBIDDEN: src/routes/webhook.ts — template-owned; never emit this file
 
 Core rules:
   - ESM only. No require(), no module.exports.

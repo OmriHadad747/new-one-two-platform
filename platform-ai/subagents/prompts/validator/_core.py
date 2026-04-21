@@ -101,7 +101,7 @@ Q5_CRON_BULK_FETCH = (
     "a non-trivial set of items and enriches each with Shopify data, it MUST bulk-\n"
     "fetch before the loop.\n"
     "Check every file in the handler bundle — the long-loop may live in\n"
-    "src/routes/cron.ts (jobs.main body), src/routes/webhook.ts (a large enrichment\n"
+    "src/routes/cron.ts (jobs.main body), src/routes/webhook-handlers.ts (a large enrichment\n"
     "path), or a helper in src/lib/*.ts:\n"
     "  a) Is all required Shopify data fetched in one or a few batched calls via\n"
     "     `shopify.rest.paginate(...)` / batched `shopify.rest.get('/<resource>.json?ids=...')`\n"

@@ -47,17 +47,16 @@ HANDLER (src/routes/*.ts and optional src/lib/*.ts):
 - Express route shapes stay: export const webhookRouter / adminRouter /
   widgetRouter and the named `jobs` map for src/routes/cron.ts. Do NOT
   change the export names.
-- Imports: `sql` from ../lib/db.js, `callPlatformService` from
-  ../lib/platform-call.js, `shopifyClientFor` from ../lib/shopify.js. Any
+- Imports: `sql` from ../lib/db.js, `platform` + `QuotaExceeded` from
+  ../lib/platform.js, `shopifyClientFor` from ../lib/shopify.js. Any
   package import must be authorized by the architect's handlerCapabilities
   (packages are pre-installed; declaration is the gate).
 - SQL: `sql` tagged template only. Use exact column names from dbContracts.
   Tables live in the tenant's schema (search_path pinned by the template);
   never qualify with a schema name, never declare a tenant_id column.
-- webhookTopics change: the switch arms in src/routes/webhook.ts MUST align
-  with the new plan — add arms for new topics, remove arms for dropped ones,
-  leave the template-owned idempotency gate (INSERT INTO processed_webhooks
-  … ON CONFLICT DO NOTHING) untouched as the first statement.
+- webhookTopics change: the topic handlers in src/routes/webhook-handlers.ts
+  MUST align with the new plan — add handlers for new topics, remove handlers
+  for dropped ones. src/routes/webhook.ts is TEMPLATE-OWNED — never emit it.
 - Cron: src/routes/cron.ts has a `jobs` map with exactly one entry named
   "main" (Phase 2 convention — multi-job is TD-021). If cronSchedule
   flipped from null → non-null, emit the file; from non-null → null, remove
@@ -66,7 +65,7 @@ HANDLER (src/routes/*.ts and optional src/lib/*.ts):
 FORBIDDEN (static validator rejects these in any handler file):
   - ctx.* references of any kind (ctx.db, ctx.services, ctx.widgetPath, …)
     — that's pre-Phase-2 vocabulary; everything is now req.platform + sql +
-    callPlatformService.
+    platform.*.
   - module.exports / require() — ESM TypeScript only.
   - eval(), new Function(), setInterval, setImmediate, process.exit/kill.
   - setTimeout with a non-literal or >500 ms delay.

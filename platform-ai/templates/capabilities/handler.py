@@ -6,7 +6,7 @@ Run). The architect declares `handlerCapabilities`, and the handler JIT
 assembles the handler prompt by concatenating:
 
   1. HARNESS_BASE — always-shipped: file-bundle output format, req.platform,
-     sql tagged template, callPlatformService, absolute rules, logging,
+     sql tagged template, platform.* SDK, absolute rules, logging,
      Shopify loop rule.
   2. Capability.docs for every entry listed in handlerCapabilities.
   3. Any conditional sections gated on trigger presence (webhook / cron /
@@ -202,24 +202,35 @@ shopify.graphqlPaginate(query, variables, connectionPath) → AsyncGenerator<any
         (
             "email",
             Capability(
-                short="callPlatformService({path: '/services/email/send', body: { to, data? }}) — merchant-configured email template (subject/body/CTA owned by the platform; handler passes recipient + variables only).",
+                short="platform.email.send({ to, data }) — merchant-configured email template (subject/body/CTA owned by the platform; handler passes recipient + variables only).",
                 docs="""\
-── /services/email/send ──────────────────────────────────────
+── platform.email.send() ─────────────────────────────────────
 
-Sent via callPlatformService — the handler never talks to the email
-provider directly.
+  import { platform, QuotaExceeded } from "../lib/platform.js";
 
-  import { callPlatformService } from "../lib/platform-call.js";
+  try {
+    const result = await platform.email.send({
+      to: <recipient>,
+      data: { /* template vars */ },
+    });
+    if (result.delivered) {
+      // email delivered
+    }
+    // delivered:false (suppressed / missing_config / provider_failed) is a
+    // soft outcome — log and continue; do not throw.
+  } catch (err) {
+    if (err instanceof QuotaExceeded) {
+      // Monthly quota hit — stop sending, do not retry.
+      return;
+    }
+    throw err;
+  }
 
-  const { status, body } = await callPlatformService<{
-    ok: boolean; delivered: boolean; reason?: string;
-  }>({
-    path: "/services/email/send",
-    body: { to: <recipient>, data: { /* template vars */ } },
-  });
-  if (status === 429) { /* quota exceeded */ return ...; }
-  if (status >= 400) { /* platform error */ return ...; }
-  /* success */
+For batch sends use platform.email.sendBatch(items: EmailSendInput[]):
+  const { items: results } = await platform.email.sendBatch(
+    rows.map(r => ({ to: r.email, data: { ... } }))
+  );
+  // each result: { index, status: 200|429|500, result? }
 
 The handler ONLY provides the recipient and runtime variables. The
 platform owns everything else — subject, body, brand, layout, from
@@ -245,15 +256,12 @@ All `data` keys MUST be camelCase — never snake_case or PascalCase. The
 merchant references them as {{camelCase}} in the template.
 
 Example (shape only — fill in variables appropriate to your app):
-  const { status, body } = await callPlatformService({
-    path: "/services/email/send",
-    body: {
-      to: <recipient>,
-      data: {
-        <variable_1>: <value_1>,
-        <variable_2>: <value_2>,
-        <variable_url>: <url_value>,
-      },
+  const result = await platform.email.send({
+    to: <recipient>,
+    data: {
+      <variable_1>: <value_1>,
+      <variable_2>: <value_2>,
+      <variable_url>: <url_value>,
     },
   });
 
@@ -319,12 +327,14 @@ RULES:
         (
             "files",
             Capability(
-                short="callPlatformService({path: '/services/files/upload', body: { name, contents, mimeType? }}) → signed URL — generate a downloadable artefact (CSV / PDF / XLSX / ZIP / image).",
+                short="callPlatformService({path: '/services/files/upload', body: { name, contents, mimeType? }}) → signed URL — generate a downloadable artefact (CSV / PDF / XLSX / ZIP / image). No platform.files wrapper yet — use callPlatformService directly.",
                 docs="""\
 ── /services/files/upload ────────────────────────────────────
 
-Sent via callPlatformService. Stub in MVP (logs FILE_UPLOADED) — real
-GCS integration ships later.
+NOTE: files has no platform.* typed wrapper yet — use callPlatformService
+directly (the only /services/* endpoint that still requires it).
+
+  import { callPlatformService } from "../lib/platform-call.js";
 
   const { status, body } = await callPlatformService<{ url: string }>({
     path: "/services/files/upload",
@@ -353,7 +363,7 @@ GCS integration ships later.
         (
             "http",
             Capability(
-                short="Node's built-in fetch() for outbound HTTPS to a non-Shopify, non-platform third party. Declare only for external integrations — never for Shopify endpoints (use shopify.*) or platform-back (use callPlatformService).",
+                short="Node's built-in fetch() for outbound HTTPS to a non-Shopify, non-platform third party. Declare only for external integrations — never for Shopify endpoints (use shopify.*) or platform-back (use platform.*).",
                 docs="""\
 ── fetch() (Node built-in) ───────────────────────────────────
 
@@ -391,7 +401,7 @@ RULES:
   - Always check `resp.ok` and throw / early-return on non-2xx.
   - Always include a timeout — use `AbortSignal.timeout(<ms>)`:
       fetch(url, { signal: AbortSignal.timeout(5_000) })
-  - NEVER use fetch() to call platform-back — use callPlatformService.
+  - NEVER use fetch() to call platform-back — use platform.* (or callPlatformService for files).
   - NEVER use fetch() to call Shopify — use the shopify client.\
 """,
             ),

@@ -8,7 +8,7 @@ The architect's contracts tell it WHAT data is needed; the api_context
 tells it WHAT is available in the Shopify schema.
 
 System prompt: HARNESS_BASE (always) — core-only (file-bundle output
-format, req.platform, sql tagged template, callPlatformService, absolute
+format, req.platform, sql tagged template, platform.* SDK, absolute
 rules, logging, cross-cutting Shopify loop rule).
 
 Per-API docs (@shopify/shopify-api client, platform /services/*, npm

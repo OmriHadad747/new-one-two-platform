@@ -182,26 +182,23 @@ check before every send. Populated by unsubscribes, bounces, complaints.
 
 | File | Role |
 |---|---|
-| `platform/packages/db/migrations/0025_email_integration.sql` | Schema + RLS policies |
-| `platform/packages/types/src/harness.ts` | `EmailSendParams`, `AppEmailConfig`, `TenantBrand`, `EmailDelivery`, etc. |
-| `platform/packages/types/src/pubsub.ts` | `FeatureBundle.usesEmail/emailVariables/emailStarterContent/emailTypeSuggestion` |
-| `platform/packages/db/src/email.ts` | Typed DB helpers for all 4 tables |
-| `platform/packages/harness/src/email-renderer.ts` | MJML template + variable substitution + unsubscribe tokens |
-| `platform/packages/harness/src/email-service.ts` | Resend adapter factory |
-| `platform/packages/harness/src/context-factory.ts` | Wires real service into `ctx.email` |
-| `platform/apps/api/src/routes/email.ts` | Config CRUD, test send, stats, brand CRUD, public unsubscribe page |
-| `platform/apps/api/src/routes/generation.ts` | `applyBundleEmailMetadata` + deploy block check |
-| `platform/apps/api/src/plugins/auth.ts` | Exempts `/email/u/` from auth |
-| `platform/apps/webhook-gateway/src/routes/resend-webhook.ts` | Ingests Resend delivery events |
+| `platform-back/packages/db/migrations/0001_initial_schema.sql` | Schema + RLS policies (email tables are part of the initial schema, not a separate migration) |
+| `platform-back/packages/db/src/email.ts` | Typed DB helpers for all 4 tables |
+| `platform-back/packages/email/src/renderer.ts` | MJML template + variable substitution + unsubscribe tokens |
+| `platform-back/packages/email/src/sender.ts` | Resend adapter (`SendEmailInput` → Resend SDK) |
+| `platform-back/apps/api/src/pubsub/schemas.ts` | `BundleSchema` — `usesEmail/emailVariables/emailStarterContent/emailTypeSuggestion` |
+| `platform-back/apps/api/src/routes/email.ts` | Config CRUD, test send, stats, brand CRUD, public unsubscribe page |
+| `platform-back/apps/api/src/routes/generation.ts` | Deploy block check (**`applyBundleEmailMetadata` not yet wired — see §14**) |
+| `platform-back/apps/api/src/plugins/auth.ts` | Exempts `/email/u/` from auth |
+| `platform-back/apps/webhook-gateway/src/routes/resend-webhook.ts` | Ingests Resend delivery events (**not yet implemented — see §14**) |
 
 ### Generator (Python)
 
 | File | Role |
 |---|---|
-| `generator/contract/validators.py` | `EmailStarterContent` + new `Bundle` fields |
-| `generator/subagents/email_metadata.py` | Regex detection + variable extraction + starter content generation |
-| `generator/crews/feature_generator/crew.py` | Calls `extract_email_metadata` and attaches to the bundle |
-| `generator/templates/harness_contract.py` | Documents new `ctx.email.send({to, data})` API |
+| `platform-ai/contract/validators.py` | `EmailStarterContent` + new `Bundle` fields |
+| `platform-ai/crews/feature_generator/crew.py` | Email metadata detection + variable extraction + starter content (inline, no separate subagent file) |
+| `platform-ai/templates/harness_contract.py` | Documents new `ctx.email.send({to, data})` API |
 
 ### Frontend (React)
 
@@ -225,8 +222,8 @@ check before every send. Populated by unsubscribes, bounces, complaints.
    starter content, classifies as `transactional`
 4. Bundle is published with `usesEmail=true`, `emailVariables`,
    `emailStarterContent`, `emailTypeSuggestion`
-5. Platform `generation.ts` completed listener calls
-   `applyBundleEmailMetadata`:
+5. **[NOT YET IMPLEMENTED — see §14]** Platform `generation.ts` completed
+   listener calls `applyBundleEmailMetadata`:
    - Sets `apps.uses_email = TRUE`
    - Sets `apps.email_variables = [...]`
    - Upserts `app_email_configs` with starter content, `configured_by_merchant = FALSE`
@@ -240,8 +237,8 @@ check before every send. Populated by unsubscribes, bounces, complaints.
 12. Merchant clicks Deploy again → passes the check → app goes live
 13. Handler executes → `ctx.email.send({to, data})` → platform renders with
     merchant's brand → Resend → customer inbox
-14. Resend webhooks update `email_deliveries` → merchant sees delivery stats
-    in the Email tab
+14. **[NOT YET IMPLEMENTED — see §14]** Resend webhooks update
+    `email_deliveries` → merchant sees delivery stats in the Email tab
 15. If customer clicks Unsubscribe → Ton-hosted page → `email_suppressions`
     insert → all future sends to that address from this merchant are silent-skipped
 
@@ -319,36 +316,68 @@ In rough priority order after MVP ships:
 ## 12. File manifest (this implementation)
 
 New files:
-- `platform/packages/db/migrations/0025_email_integration.sql`
-- `platform/packages/db/src/email.ts`
-- `platform/packages/harness/src/email-renderer.ts`
-- `platform/packages/harness/src/email-service.ts`
-- `platform/apps/api/src/routes/email.ts`
-- `platform/apps/webhook-gateway/src/routes/resend-webhook.ts`
-- `generator/subagents/email_metadata.py`
+- `platform-back/packages/db/src/email.ts`
+- `platform-back/packages/email/src/renderer.ts`
+- `platform-back/packages/email/src/sender.ts`
+- `platform-back/apps/api/src/routes/email.ts`
+- `platform-back/apps/webhook-gateway/src/routes/resend-webhook.ts` (**not yet created — see §14**)
 - `platform-front/src/hooks/useEmail.ts`
 - `platform-front/src/components/features/email/EmailTab.tsx`
 - `platform-front/src/components/features/email/BrandPanel.tsx`
 - `docs/EMAIL_INTEGRATION_PLAN.md` (this file)
 
 Modified files:
-- `platform/packages/types/src/harness.ts`
-- `platform/packages/types/src/pubsub.ts`
-- `platform/packages/db/src/index.ts`
-- `platform/packages/harness/package.json`
-- `platform/packages/harness/src/context-factory.ts`
-- `platform/apps/api/src/server.ts`
-- `platform/apps/api/src/plugins/auth.ts`
-- `platform/apps/api/src/routes/generation.ts`
-- `platform/apps/webhook-gateway/src/server.ts`
-- `generator/contract/validators.py`
-- `generator/crews/feature_generator/crew.py`
-- `generator/templates/harness_contract.py`
+- `platform-back/packages/db/migrations/0001_initial_schema.sql` (email tables added to initial schema)
+- `platform-back/apps/api/src/pubsub/schemas.ts` (email bundle fields)
+- `platform-back/apps/api/src/server.ts`
+- `platform-back/apps/api/src/plugins/auth.ts`
+- `platform-back/apps/api/src/routes/generation.ts` (`applyBundleEmailMetadata` **not yet wired — see §14**)
+- `platform-back/apps/webhook-gateway/src/server.ts`
+- `platform-ai/contract/validators.py`
+- `platform-ai/crews/feature_generator/crew.py` (email metadata inline; no separate subagent file)
+- `platform-ai/templates/harness_contract.py`
 - `platform-front/src/types/dashboard.ts`
 - `platform-front/src/lib/api.ts`
 - `platform-front/src/pages/AppDetailPage.tsx`
 - `platform-front/src/pages/SettingsPage.tsx`
-- `docs/TECH_DEBT.md` (removed outdated TD-007)
+
+---
+
+## 14. Implementation gaps
+
+Two pieces described in this plan are not yet implemented. Everything else
+is shipped.
+
+### Gap 1 — `applyBundleEmailMetadata` bridge (blocking for Email tab UX)
+
+**What's missing:** after the generator publishes a bundle with
+`usesEmail=true`, nothing reads those fields and writes them to the
+database. The DB helpers already exist
+(`platform-back/packages/db/src/email.ts` — `setAppUsesEmail`,
+`createAppEmailConfigFromStarter`), but no code in the generation subscriber
+or generation route calls them.
+
+**Impact:** `apps.uses_email` stays `FALSE`, no `app_email_configs` row is
+created, the Email tab never appears in the dashboard, and the deploy-block
+check never triggers.
+
+**Fix needed:** in `platform-back/apps/api/src/routes/generation.ts` (or its
+pub/sub subscriber), after bundle storage, call `setAppUsesEmail` and
+`createAppEmailConfigFromStarter` when `bundle.usesEmail === true`.
+
+### Gap 2 — Resend webhook route
+
+**What's missing:** `platform-back/apps/webhook-gateway/src/routes/resend-webhook.ts`
+does not exist. The webhook-gateway only handles Shopify webhooks today.
+
+**Impact:** Resend delivery events (`email.delivered`, `email.bounced`,
+`email.complained`, `email.failed`) are never ingested. `email_deliveries`
+rows stay at `sent` status forever; bounces and complaints never create
+`email_suppressions` entries.
+
+**Fix needed:** create the route, verify Svix signature with
+`RESEND_WEBHOOK_SECRET`, and update `email_deliveries` + insert
+`email_suppressions` on bounce/complaint.
 
 ---
 

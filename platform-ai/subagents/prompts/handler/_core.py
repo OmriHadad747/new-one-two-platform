@@ -3,7 +3,7 @@ Handler system prompt — always-on core (HARNESS_BASE).
 
 Parallels prompts/architect/_core.py and prompts/widget/_core.py: this module
 holds the always-shipped handler prompt content — file-bundle output format,
-req.platform contract, sql tagged template, callPlatformService, absolute
+req.platform contract, sql tagged template, platform.* SDK, absolute
 rules, logging, cross-cutting Shopify loop rule.
 
 Capability-specific API docs (shopify REST/GraphQL, platform services, npm
@@ -79,9 +79,9 @@ verifyPlatform runs before every route and rejects requests that don't
 carry the required headers. If you don't need platform fields in a route,
 skip destructuring.
 
-NOTE: cron jobs run OUTSIDE an HTTP request. See _cron.py for the jobs-map
-shape; the job function does not receive `req.platform` — it uses env vars
-plus `sql` / `callPlatformService` directly.
+NOTE: cron jobs run OUTSIDE an HTTP request. The job function does not
+receive `req.platform` — it uses `sql` / `platform.*` / `shopifyClientFor`
+directly. See the CRON JOBS section in this prompt for the jobs-map shape.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 DATABASE — `sql` tagged template from ../lib/db.js:
@@ -193,7 +193,7 @@ Rules:
     Record<string, WebhookHandler>) — the template router imports it by
     that exact name. src/routes/admin.ts and src/routes/widget.ts export
     `adminRouter` / `widgetRouter`. src/routes/cron.ts exports a named
-    `jobs` map (see _cron.py).
+    `jobs` map (see the CRON JOBS section in this prompt).
   - Emit the FULL file contents each time; the deployer replaces the
     whole file. Partial diffs are not supported.
   - No markdown fences, no prose outside the markers, no backtick

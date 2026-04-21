@@ -52,6 +52,13 @@ const SCOPES = [
   "read_inventory",
   "read_themes",
   "write_themes",
+  "unauthenticated_read_product_listings",
+  "unauthenticated_read_product_inventory",
+  "unauthenticated_read_collection_listings",
+  "unauthenticated_read_checkouts",
+  "unauthenticated_write_checkouts",
+  "unauthenticated_read_customers",
+  "unauthenticated_write_customers",
 ].join(",");
 
 // ─── Routes ─────────────────────────────────────────────────────────────────
@@ -303,7 +310,7 @@ async function writeShopMetafield(
   value: string,
 ): Promise<void> {
   const res = await fetch(
-    `https://${shop}/admin/api/2024-01/metafields.json`,
+    `https://${shop}/admin/api/2026-01/metafields.json`,
     {
       method: "POST",
       headers: {
@@ -409,7 +416,7 @@ async function provisionStorefrontToken(
   adminAccessToken: string,
 ): Promise<string> {
   const res = await fetch(
-    `https://${shop}/admin/api/2024-01/storefront_access_tokens.json`,
+    `https://${shop}/admin/api/2026-01/storefront_access_tokens.json`,
     {
       method: "POST",
       headers: {

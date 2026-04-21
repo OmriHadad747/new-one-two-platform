@@ -53,7 +53,7 @@ handlerCapabilities: Closed-vocabulary list of platform services and npm
     so the architect's declaration is the ONLY gate deciding which
     imports are legal in the generated TypeScript.
   - Keep [] only when the handler needs nothing beyond the always-on
-    surface (`sql`, `callPlatformService`, req.platform, console logging)
+    surface (`sql`, `platform.*`, req.platform, console logging)
     — rare."""
 
 
