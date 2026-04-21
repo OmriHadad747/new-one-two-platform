@@ -1,147 +1,129 @@
 # MVP Plan — Small Shopify App Generator
 
-## Architecture (current shape)
+## What it is
 
-Three repos, three runtimes:
-
-- **`platform-ai/`** — Python generator. Architect → handler/migration codegen → validator → revision. Publishes `generation.completed` to Pub/Sub.
-- **`platform-back/`** — TypeScript edge + services. Owns OAuth, deployer, webhook ingest, `/services/*` capabilities, signed-proxy `/admin/:appId/*` and `/widget/:appId/*` routes.
-- **`platform-front/`** — Merchant dashboard.
-
-Each generated app deploys as **its own Cloud Run container** built from `platform-back/templates/handler/`. The container is a standalone Node/Express service: per-tenant Postgres schema, pinned dependencies, frozen on deploy. Platform-back is a signed proxy in front; handlers never run "inside" the platform.
-
-```
-Shopify ──► /admin/:appId/*  ─┐
-        ──► /widget/:appId/* ─┼─► platform-back edge ─► handler-<tenant>-<app>.run.app
-        ──► webhook-gateway ──┘                              │
-                                                              ▼
-                                          handler ─► /services/email/send  (etc.)
-                                                  ─► Postgres (own schema)
-                                                  ─► @shopify/shopify-api
-```
-
-Auth: Cloud Run IAM both directions (Google ID tokens). No shared HMAC secrets between platform and handler.
+A platform that generates, deploys, and operates small-to-medium Shopify apps from a prompt. Each generated app is a standalone Node service with its own Postgres schema, running in its own Cloud Run container. The platform acts as a signed proxy for inbound traffic and provides shared capabilities (email, Shopify auth, file storage, SMS) to handlers over HTTP.
 
 ---
 
-## What the Generator Produces
+## Critical components
 
-Generator writes per-app code only:
+```
+platform-ai/      Python generator — architect → codegen → validator → revision
+platform-back/    TypeScript edge + services
+  apps/api            fastify — /admin/:appId/*, /widget/:appId/*, /services/*, OAuth, deploy
+  apps/webhook-gateway Shopify HMAC → BullMQ
+  apps/worker         BullMQ drain → HTTP to handler
+  packages/deployer   9-step orchestrator (SA → build → migrate → Cloud Run → cron/webhook register)
+  packages/db         shared Postgres, per-tenant schemas
+  packages/email      Resend + MJML renderer + suppression/quota
+  templates/handler/  the reference container shipped into every tenant
+platform-front/   merchant dashboard
+```
 
-- `src/routes/{webhook,admin,widget,cron}.ts` — route handlers (whichever the archetype needs)
-- `migrations/0002_*.sql` — feature schema (the template ships `0001_processed_webhooks.sql` + `cron_queue`)
+### Handler template — what it owns
+
+Fixed across every generated app:
+
+- Express server boot + graceful shutdown
+- `verifyPlatform` middleware (Google ID token → `req.platform`)
+- DB connection with `search_path = tenant_<uuid>, public`
+- Shopify client: REST + GraphQL + pagination + 401-retry token cache
+- Cron runner: `FOR UPDATE SKIP LOCKED` + lease/sweeper + LISTEN/NOTIFY
+- `callPlatformService({path, body})` — typed `platform.*` SDK in flight (see `TEMPLATE_PROMOTIONS.md`)
+- Migration runner (template migration 0001 + per-app migrations)
+
+### Generator — what it writes per app
+
+- `src/routes/{webhook,admin,widget,cron}.ts` (whichever the archetype needs)
+- `migrations/0002_*.sql` (per-app feature schema)
 - Optional `src/lib/*.ts` helpers
-- Email starter content + variable manifest (when the app sends email)
+- Email starter content + variable manifest (email-using apps)
 
-Everything else is template-owned and frozen across all generated apps:
-HTTP server, inbound auth middleware, DB connection with tenant `search_path`, Shopify client (REST + GraphQL + pagination + 401-retry token cache), cron runner (claim + lease + retry + LISTEN/NOTIFY), platform-call helper, migration runner.
+### Platform services (`/services/*`)
 
-In-flight refactor: lifting webhook idempotency-and-dispatch and the `/services/*` call pattern out of generated code into the template — see [`TEMPLATE_PROMOTIONS.md`](../TEMPLATE_PROMOTIONS.md).
-
----
-
-## Platform Services (`/services/*`)
-
-Handlers call platform-back over HTTP for capabilities that need shared credentials, billing, or quotas. Auth is the handler's Cloud Run service-account ID token, verified by platform-back and mapped to `(tenantId, appId)` via `apps.handler_sa_email`.
+Handler calls platform-back over HTTP with its Cloud Run SA ID token.
 
 | Endpoint | Status |
 |---|---|
-| `/services/email/send` + `/send-batch` | Live (Resend, suppression, quota, rendering, delivery log) |
+| `/services/email/send` + `/send-batch` | Live |
 | `/services/shopify/access-token` | Live (cron-path token fetch) |
-| `/services/files/upload` | Not built — add when first archetype needs it |
+| `/services/files/upload` | Not built |
 | `/services/sms/send` | Not built |
-| `/services/events` | Not built (cross-tenant analytics sink) |
+| `/services/events` | Not built |
 
-Response taxonomy is uniform across services: `200` with `{delivered, reason}` for handled cases (sent / suppressed / config-missing / provider-failed), `429` for quota stop, `4xx` for caller bugs, `5xx` for transient platform problems. The handler `try`s exactly one stop signal per service (e.g. `QuotaExceeded` for email).
-
-For capabilities that don't need shared platform credentials (PDF, CSV, image processing, dates, slugs, etc.), the handler installs ordinary npm packages from a security-checked allowlist (see `platform-back/packages/deployer/src/npm-allowlist.ts`).
+Uniform response shape: `200 {delivered, reason?}` for handled cases, `429` for quota stop, `4xx` for caller bugs, `5xx` for transient platform problems.
 
 ---
 
-## App Categories
+## Architecture decisions
 
-| Category | Surface | Status |
-|---|---|---|
-| **C — Backend only** (webhook, cron, scheduled jobs) | `/webhook/*` + `/cron` | **Live**. First milestone target. |
-| **D — Backend + Admin UI** | adds admin UI bundle | Backend live. Admin UI deferred to UI Phase. |
-| **A — Storefront widget + Backend** | adds widget bundle | Backend ready. Widget bundle deferred to UI Phase. |
-| **B — Storefront widget + Backend + Admin UI** | both bundles | Both deferred to UI Phase. |
+Core invariants that shape the rest of the system.
 
-Categories A, B, D are unblocked on the *backend* side — `/widget/:appId/*` and `/admin/:appId/*` proxy routes work end-to-end. What's missing is the per-app UI bundle (widget JS for storefront, React module for embedded admin shell). UI archetype templates are the next major frontier; bundle contract already has `widgetModule` / `adminUiModule` slots reserved for it.
+1. **One Cloud Run container per (tenant, app).** Physical isolation, no shared runtime, noisy-neighbor-free. Handler is a frozen artifact on deploy.
+
+2. **Shared Postgres, schema per tenant (`tenant_<uuid>`).** Logical DB isolation via role-scoped `search_path`. No per-tenant Postgres instances until an enterprise customer demands it.
+
+3. **Cloud Run IAM both directions.** Platform-back → handler uses the edge's SA ID token; handler → `/services/*` uses the handler's SA ID token. No shared HMAC secrets between the two tiers.
+
+4. **Three inbound trust domains, one middleware each.**
+   - `/webhook/*` — Shopify HMAC, verified at the gateway
+   - `/admin/:appId/*` — App Bridge session JWT, verified at the edge
+   - `/widget/:appId/*` — App Proxy HMAC, verified at the edge
+   Each domain maps to a single signature type; no mixing.
+
+5. **Tenant identity never comes from the request body or URL.** Always derived from verified upstream signatures or from the caller's SA identity.
+
+6. **Two-layer webhook idempotency.** BullMQ `jobId = webhook_id` at enqueue; `INSERT INTO processed_webhooks ON CONFLICT DO NOTHING` at the handler. Survives Redis eviction and Shopify's 48h retry window.
+
+7. **pg_cron owns scheduling.** Deployer calls `cron.schedule(...)` at deploy time; each tick does one `INSERT INTO tenant_xxx.cron_queue + NOTIFY`; the handler's runner wakes via `LISTEN`. Generator never touches `cron.*`.
+
+8. **Standard libraries over bespoke wrappers.** `@shopify/shopify-api`, `postgres`, native `fetch`, stock `mjml` — pinned in the handler's `package.json`. No `@platform/shopify-client` SDK to maintain. The platform SDK surface is limited to things that can't exist in an npm package: `platform.*` over HTTP for shared-credential services.
+
+9. **Template owns mechanics; generator owns business logic.** The split is strictest where it's cleanest (cron jobs map, Shopify pagination). Drift from that pattern (webhook dispatch, `/services/*` calls) is being closed — see `TEMPLATE_PROMOTIONS.md`.
+
+10. **Signed headers, not forwarded tokens.** Platform-back verifies Shopify's JWT/HMAC once at the edge, then forwards to the handler with its own signed headers + ID token. The handler never sees a Shopify token's TTL concerns.
+
+---
+
+## Supported app scopes
+
+The generator targets small-to-medium Shopify apps — apps a single developer could build in a day to a week. Four archetypes:
+
+| Archetype | What it does | Triggers | Surfaces |
+|---|---|---|---|
+| **A — Storefront + Backend** | Widget on product/cart/etc. pages, backend config + events | Widget fetches via App Proxy; webhook events optional | `/widget/*`, `/webhook/*` |
+| **B — Storefront + Backend + Admin UI** | Widget + merchant admin dashboard | + admin UI actions | All three |
+| **C — Backend only** | Automated — runs on webhooks or a schedule | `/webhook/*`, cron | No UI |
+| **D — Backend + Admin UI** | Merchant-facing dashboard or control panel | Admin UI actions | `/admin/*` |
+
+### What "small-to-medium" means
+
+**In scope:**
+- Single-tenant logic per app (no multi-shop federation)
+- Synchronous request-response + cron-scheduled batches
+- Shopify REST/GraphQL consumption, webhook processing
+- Transactional email, SMS, file generation (PDF/CSV/images)
+- Postgres state up to ~10 tables, a few million rows per tenant
+- Jobs that fit in a single Cloud Run container with a 30s request timeout (cron batches iterate; single ticks stay short)
+
+**Out of scope for MVP:**
+- Real-time (WebSockets, server-sent to storefront)
+- Heavy background processing (video transcoding, ML inference)
+- Multi-day workflows with complex state machines (possible but not the sweet spot)
+- Anything requiring per-tenant custom infrastructure
+
+When the architect determines an app concept needs a capability outside this surface, the pipeline fails before codegen with `errorCode: "platform_limitation"` and a merchant-facing reason. No retry prompt; the frontend surfaces a "not supported yet" state.
+
+### Deployable today
+
+- Category C apps (backend only — webhook + cron). Admin-only milestone covers the admin trust-domain plumbing for Category D's backend half.
+
+### Deferred to UI phase
+
+- Categories A and B need the widget bundle delivery path (CDN + App Proxy integration).
+- Categories B and D need the embedded admin UI bundle (React + App Bridge shell).
+
+Backend routes for all four categories already work end-to-end; what's missing is the per-app UI bundle generation + delivery. Bundle contract (`widgetModule`, `adminUiModule`) already has slots reserved for it.
 
 Full app catalog: **[Supported Apps Catalog](./SUPPORTED_APPS_CATALOG.md)**.
-
----
-
-## Monetization
-
-| Plan | Price | App limit | Categories unlocked |
-|---|---|---|---|
-| **Free** | $0/mo | 1 app | A only (when widgets ship) |
-| **Starter** | $15/mo | 3 apps | A + C |
-| **Growth** | $35/mo | 10 apps | A + B + C + D |
-
-While categories A/B/D are backend-only-deployable, paid plans gate by intended category, not delivered surface — so the gate logic lands once and unblocks UI archetypes as they ship.
-
-**Phase 3 add-on:** usage charges on top of subscriptions — Email $0.001/send (1k included), SMS $0.05/send (100 included on Growth). PDF/CSV always free (no marginal cost).
-
----
-
-## Execution Phases
-
-### Phase 0 — Architecture refactor ✅ (done)
-
-`ctx.*`-injected harness retired. Standalone-handler model live: per-tenant Cloud Run, per-tenant Postgres schema, signed edges, Cloud Run IAM both directions, pg_cron for scheduling, BullMQ-backed webhook dispatch with two-layer idempotency. Generator retargeted off `ctx.*` onto the template surface.
-
-### Phase 1 — Backend-only end-to-end (in progress)
-
-First Category-C app installed → generated → deployed → executed → email sent. Validates the full loop. Checklist in [`OPEN_GAPS.md`](../OPEN_GAPS.md).
-
-### Phase 2 — Template promotions
-
-Lift webhook dispatch + `/services/*` call pattern into the template (see [`TEMPLATE_PROMOTIONS.md`](../TEMPLATE_PROMOTIONS.md)). Shrinks generator prompts ~15–25%, shrinks generated code ~30%.
-
-### Phase 3 — Webhook + cron archetypes
-
-Generate and deploy real Category-C apps end-to-end. Validate the cron tick path against pg_cron in prod.
-
-### Phase 4 — UI archetypes
-
-Reintroduce `widgetModule` and `adminUiModule` in the bundle contract. Build the parallel templates:
-
-- **`admin-ui-template`** — React + Polaris + App Bridge, fetch-to-`/admin/:appId/*`, served from the handler container or a CDN bucket.
-- **`widget-template`** — vanilla JS + App Proxy fetch, delivered via CDN or Shopify theme extension.
-
-Same template-owns-mechanics / generator-owns-business-logic split as the handler. Unblocks Categories A, B, D's UI surfaces.
-
-### Phase 5 — Remaining `/services/*`
-
-Build `/services/files/upload`, `/services/sms/send`, `/services/events` as archetypes demand them. Email is the reference implementation.
-
-### Phase 6 — Billing + App Store launch
-
-Shopify `RecurringApplicationCharge`, plan storage, gating wiring. Submit listing for review.
-
-### Later — Expand
-
-Usage billing (email, SMS), wider catalog, `ctx.queue`-equivalent if a real archetype needs it (it might not; pg_cron + handler routes cover most fan-out cases today).
-
----
-
-## Expert Assist — Human in the Loop
-
-When the generator can't get a merchant's app live on its own, a certified Shopify developer steps in.
-
-- **On-demand:** "Get expert help" button appears after repeated validation failures or revisions without a deploy.
-- **Auto-detected:** platform watches struggle signals (N failed generations, M revisions, age threshold) and proactively offers help.
-- **Developer role:** read-only session link with prompt history, generated code, validation errors. They make small surgical edits or write precise revision prompts the merchant couldn't. They guide the generator — they don't replace it.
-
-Charged per session (credit-based). Merchants who never get stuck pay nothing extra. Platform-certified developers, not a freelance marketplace.
-
-**Auto-discovery follow-up:** track which app types, prompts, or merchant segments consistently need human help, feed that signal back into prompts and validation rules.
-
----
-
-## The Core Bet
-
-A merchant paying $19/mo for "Notify Me," $29/mo for "Sales Pop," and $15/mo for "Announcement Bar" — three separate apps totalling $63/mo — will immediately see the value in paying $35/mo for a platform that generates all three (and more) from a prompt.
