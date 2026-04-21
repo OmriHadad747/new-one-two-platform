@@ -70,7 +70,7 @@ Cron jobs (src/routes/cron.ts) run OUTSIDE a request — no req.platform.
 A job function receives only (payload: unknown) and imports `sql` /
 `callPlatformService` / `shopifyClientFor` the same way routes do.
 
-Platform services (email, sms, files, shopify access-token):
+Platform services (email, files, shopify access-token):
   import {{ callPlatformService }} from "../lib/platform-call.js";
   const {{ status, body }} = await callPlatformService({{ path, body }});
   Three-branch response: 429 → quota; status ≥ 400 → platform error;

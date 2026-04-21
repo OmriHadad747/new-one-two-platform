@@ -28,7 +28,7 @@ Write two outputs:
       — mention specific settings if the handler reads config from the DB (e.g. email subject, thresholds)
       — if there's a "run now" button or manual trigger, mention it explicitly
    d) Any known limitations — phrase as practical notes, not technical caveats:
-      - Email/SMS: "requires an email service to be connected" (not "ctx.services.email is stubbed")
+      - Email: "requires an email service to be connected" (not "ctx.services.email is stubbed")
       - File upload: "files are saved and a download link is returned"
       - If a feature is configurable, mention that the merchant can adjust settings from the dashboard
 

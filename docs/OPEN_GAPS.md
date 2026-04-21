@@ -7,10 +7,9 @@ names the concrete next action.
 
 ### Platform services not yet built
 - `/services/files/upload`
-- `/services/sms/send`
 - `/services/events` (cross-tenant analytics sink)
 
-None required for admin-only. Add when the first archetype that needs them lands. The email service is the reference pattern — copy the route shape, the SA-to-app auth, and the 200/429/4xx/5xx response taxonomy.
+Neither required for admin-only. Add when the first archetype that needs them lands. The email service is the reference pattern — copy the route shape, the SA-to-app auth, and the 200/429/4xx/5xx response taxonomy.
 
 ### Persisted deploy job state
 - **Where:** `platform-back/packages/deployer/src/orchestrator.ts:18` — *"Job state lives in-process (Map keyed by jobId). Lost on restart."*

@@ -317,28 +317,6 @@ RULES:
             ),
         ),
         (
-            "sms",
-            Capability(
-                short="callPlatformService({path: '/services/sms/send', body: { to, body }}) — outbound SMS to E.164 phone numbers.",
-                docs="""\
-── /services/sms/send ────────────────────────────────────────
-
-Sent via callPlatformService. Stub in MVP (logs SMS_SENT) — real
-Twilio integration ships later.
-
-  const { status } = await callPlatformService({
-    path: "/services/sms/send",
-    body: {
-      to: <e164_phone>,            // E.164 format, e.g. "+15551234567"
-      body: <sms_text>,            // max 160 chars
-    },
-  });
-  if (status === 429) { /* quota */ return ...; }
-  if (status >= 400) { /* platform error */ return ...; }\
-""",
-            ),
-        ),
-        (
             "files",
             Capability(
                 short="callPlatformService({path: '/services/files/upload', body: { name, contents, mimeType? }}) → signed URL — generate a downloadable artefact (CSV / PDF / XLSX / ZIP / image).",

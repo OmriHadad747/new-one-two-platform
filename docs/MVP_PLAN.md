@@ -2,7 +2,7 @@
 
 ## What it is
 
-A platform that generates, deploys, and operates small-to-medium Shopify apps from a prompt. Each generated app is a standalone Node service with its own Postgres schema, running in its own Cloud Run container. The platform acts as a signed proxy for inbound traffic and provides shared capabilities (email, Shopify auth, file storage, SMS) to handlers over HTTP.
+A platform that generates, deploys, and operates small-to-medium Shopify apps from a prompt. Each generated app is a standalone Node service with its own Postgres schema, running in its own Cloud Run container. The platform acts as a signed proxy for inbound traffic and provides shared capabilities (email, Shopify auth, file storage) to handlers over HTTP.
 
 ---
 
@@ -49,7 +49,6 @@ Handler calls platform-back over HTTP with its Cloud Run SA ID token.
 | `/services/email/send` + `/send-batch` | Live |
 | `/services/shopify/access-token` | Live (cron-path token fetch) |
 | `/services/files/upload` | Not built |
-| `/services/sms/send` | Not built |
 | `/services/events` | Not built |
 
 Uniform response shape: `200 {delivered, reason?}` for handled cases, `429` for quota stop, `4xx` for caller bugs, `5xx` for transient platform problems.
@@ -103,7 +102,7 @@ The generator targets small-to-medium Shopify apps — apps a single developer c
 - Single-tenant logic per app (no multi-shop federation)
 - Synchronous request-response + cron-scheduled batches
 - Shopify REST/GraphQL consumption, webhook processing
-- Transactional email, SMS, file generation (PDF/CSV/images)
+- Transactional email, file generation (PDF/CSV/images)
 - Postgres state up to ~10 tables, a few million rows per tenant
 - Jobs that fit in a single Cloud Run container with a 30s request timeout (cron batches iterate; single ticks stay short)
 
