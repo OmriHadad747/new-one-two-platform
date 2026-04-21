@@ -11,6 +11,10 @@ export interface PlanLimits {
   maxAppExecutionsPerMonth: number;
   maxEmailsPerMonth: number;
   maxSmsPerMonth: number;
+  // Cumulative hard cap on bytes stored in the files service across all
+  // of this tenant's apps. Checked pre-insert by /services/files/upload.
+  // Infinity on internal.
+  maxStorageBytes: number;
   trialDays: number;
 }
 
@@ -35,6 +39,7 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
       maxAppExecutionsPerMonth: 1_000,
       maxEmailsPerMonth: 100,
       maxSmsPerMonth: 0,
+      maxStorageBytes: 100 * 1024 * 1024, // 100 MiB
       trialDays: 0,
     },
   },
@@ -50,6 +55,7 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
       maxAppExecutionsPerMonth: 10_000,
       maxEmailsPerMonth: 1_000,
       maxSmsPerMonth: 0,
+      maxStorageBytes: 1 * 1024 * 1024 * 1024, // 1 GiB
       trialDays: 7,
     },
   },
@@ -70,6 +76,7 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
       maxAppExecutionsPerMonth: 100_000,
       maxEmailsPerMonth: 10_000,
       maxSmsPerMonth: 0,
+      maxStorageBytes: 10 * 1024 * 1024 * 1024, // 10 GiB
       trialDays: 7,
     },
   },
@@ -90,6 +97,7 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
       maxAppExecutionsPerMonth: 1_000_000,
       maxEmailsPerMonth: 100_000,
       maxSmsPerMonth: 0,
+      maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GiB
       trialDays: 14,
     },
   },
@@ -110,6 +118,7 @@ export const PLANS: Record<BillingPlan, PlanDefinition> = {
       maxAppExecutionsPerMonth: Number.POSITIVE_INFINITY,
       maxEmailsPerMonth: Number.POSITIVE_INFINITY,
       maxSmsPerMonth: Number.POSITIVE_INFINITY,
+      maxStorageBytes: Number.POSITIVE_INFINITY,
       trialDays: 0,
     },
   },

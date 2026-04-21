@@ -32,9 +32,12 @@ invoice — no credit card collection or external payment provider needed.
 
 File storage is a cumulative hard cap across all generated apps for a
 tenant. `/services/files/upload` returns 429 when
-`current_usage + new_file_size > storage_limit_bytes`. Numbers are
-placeholders — revisit before public release. Per-file cap is 25 MiB
-regardless of plan; see `docs/FILES_INTEGRATION.md`.
+`current_usage + new_file_size > PLANS[plan].limits.maxStorageBytes`.
+The cap is plan-derived, not stored on the tenant row — same pattern
+as email / app-exec quotas, so plan changes take effect on the next
+upload with no sync step. Numbers are placeholders — revisit before
+public release. Per-file cap is 25 MiB regardless of plan; see
+`docs/FILES_INTEGRATION.md`.
 
 Pricing lives in the [Pricing](#pricing) section below — it's set downstream
 of the cost analysis so the numbers are grounded in current LLM + infra costs.

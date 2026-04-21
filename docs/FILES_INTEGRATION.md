@@ -115,12 +115,10 @@ CREATE INDEX files_tenant_app_idx ON files(tenant_id, app_id);
 CREATE INDEX files_created_idx    ON files(created_at);
 ```
 
-`tenants` gains one column:
-
-```sql
-ALTER TABLE tenants
-  ADD COLUMN storage_limit_bytes BIGINT NOT NULL DEFAULT 1073741824;  -- 1 GiB
-```
+`tenants` gains no new column. The per-tenant storage cap is resolved
+at request time from `billing_plan` via `PLANS[plan].limits.maxStorageBytes`
+— same pattern as email and app-exec quotas. Plan changes take effect
+on the next upload with no cap-sync step on the tenants row.
 
 **Why `status` now.** Only `'active'` is used today (inline path). `'pending'` /
 `'failed'` are reserved for the resumable-upload pattern (see Future work).

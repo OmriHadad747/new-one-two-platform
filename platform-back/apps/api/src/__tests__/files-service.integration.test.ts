@@ -14,7 +14,7 @@ vi.mock("@platform-back/db", () => ({
   getFileForApp: vi.fn(),
   getFinalizableFileForApp: vi.fn(),
   getTenantStorageUsage: vi.fn(),
-  getTenantStorageLimit: vi.fn(),
+  getTenantBillingPlan: vi.fn(),
 }));
 
 vi.mock("@platform-back/files", () => ({
@@ -52,7 +52,7 @@ import {
   getFileForApp,
   getFinalizableFileForApp,
   getTenantStorageUsage,
-  getTenantStorageLimit,
+  getTenantBillingPlan,
 } from "@platform-back/db";
 import {
   storeFile,
@@ -73,7 +73,7 @@ const mockDeleteRow = vi.mocked(deleteFileRow);
 const mockGetFile = vi.mocked(getFileForApp);
 const mockGetFinalizable = vi.mocked(getFinalizableFileForApp);
 const mockUsage = vi.mocked(getTenantStorageUsage);
-const mockLimit = vi.mocked(getTenantStorageLimit);
+const mockPlan = vi.mocked(getTenantBillingPlan);
 const mockStore = vi.mocked(storeFile);
 const mockSign = vi.mocked(signReadUrl);
 const mockCreateUploadUrl = vi.mocked(createResumableUploadUrl);
@@ -94,7 +94,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockVerify.mockResolvedValue({ ok: true, caller: { email: SA_EMAIL } } as never);
   mockResolveApp.mockResolvedValue(IDENTITY);
-  mockLimit.mockResolvedValue(1024 * 1024 * 1024); // 1 GiB default
+  // Default the tenant to 'starter' plan = 1 GiB cap (PLANS.starter.limits.maxStorageBytes).
+  // Individual tests override mockPlan when they need a different cap.
+  mockPlan.mockResolvedValue("starter");
   mockUsage.mockResolvedValue(0);
   mockSign.mockResolvedValue({ url: "https://storage.example/signed" });
   // Ensure void-returning mocks produce a resolved promise so the route's
@@ -209,8 +211,9 @@ describe("POST /services/files/upload — inline", () => {
   });
 
   it("returns 429 when tenant storage quota would be exceeded", async () => {
-    mockUsage.mockResolvedValue(1024 * 1024 * 1024); // tenant already at 1 GiB
-    mockLimit.mockResolvedValue(1024 * 1024 * 1024);
+    // starter = 1 GiB cap; push usage right up to it
+    mockUsage.mockResolvedValue(1024 * 1024 * 1024);
+    mockPlan.mockResolvedValue("starter");
     const app = await buildApp();
     const res = await app.inject({
       method: "POST",
@@ -363,8 +366,9 @@ describe("POST /services/files/create-upload-url", () => {
   });
 
   it("returns 429 when expectedSizeBytes pushes tenant over storage cap", async () => {
+    // starter = 1 GiB cap; 900 MiB used + 200 MiB request > 1 GiB
     mockUsage.mockResolvedValue(900 * 1024 * 1024);
-    mockLimit.mockResolvedValue(1024 * 1024 * 1024);
+    mockPlan.mockResolvedValue("starter");
 
     const app = await buildApp();
     const res = await app.inject({

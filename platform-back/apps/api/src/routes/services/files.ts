@@ -6,11 +6,12 @@ import {
   finalizeFile,
   getFileForApp,
   getFinalizableFileForApp,
-  getTenantStorageLimit,
+  getTenantBillingPlan,
   getTenantStorageUsage,
   insertActiveFile,
   insertPendingFile,
 } from "@platform-back/db";
+import { getPlanLimits } from "@platform-back/types";
 import {
   SKIP_GCS,
   buildObjectKey,
@@ -216,12 +217,14 @@ async function uploadHandler(
     });
   }
 
-  // 3. Tenant storage quota. Pre-check before the GCS hop so we don't
-  //    store + roll back on overage.
-  const [usage, limit] = await Promise.all([
+  // 3. Tenant storage quota. Plan-derived cap resolved per request (same
+  //    pattern as email / app-exec quotas) — plan changes take effect on
+  //    the very next upload, no per-tenant cap column to keep in sync.
+  const [usage, plan] = await Promise.all([
     getTenantStorageUsage(caller.tenantId),
-    getTenantStorageLimit(caller.tenantId),
+    getTenantBillingPlan(caller.tenantId),
   ]);
+  const limit = getPlanLimits(plan).maxStorageBytes;
   if (usage + buffer.length > limit) {
     return reply.code(429).send({
       error: "quota_exceeded",
@@ -413,10 +416,11 @@ async function createUploadUrlHandler(
   // Pre-reserve quota. Actual size may be smaller (finalize reconciles),
   // but it cannot be larger — GCS rejects over-size PUTs server-side via
   // x-goog-content-length-range.
-  const [usage, limit] = await Promise.all([
+  const [usage, plan] = await Promise.all([
     getTenantStorageUsage(caller.tenantId),
-    getTenantStorageLimit(caller.tenantId),
+    getTenantBillingPlan(caller.tenantId),
   ]);
+  const limit = getPlanLimits(plan).maxStorageBytes;
   if (usage + body.expectedSizeBytes > limit) {
     return reply.code(429).send({
       error: "quota_exceeded",

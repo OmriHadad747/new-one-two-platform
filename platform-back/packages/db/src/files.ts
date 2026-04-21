@@ -1,3 +1,4 @@
+import type { BillingPlan } from "@platform-back/types";
 import { sql } from "./connection.js";
 
 // Files-service DB helpers. See docs/FILES_INTEGRATION.md and
@@ -210,18 +211,21 @@ export async function getTenantStorageUsage(
 }
 
 /**
- * Per-tenant storage cap, in bytes. Owned by the tenants row so it can
- * be tuned per plan without touching files-service code.
+ * Resolve this tenant's billing plan for quota checks. Returns 'free'
+ * when the tenant row is missing a plan so the caller's plan-limit
+ * lookup fails closed to the lowest cap rather than unlimited.
+ *
+ * Mirrors the plan-lookup pattern used for email/executions quotas —
+ * plan → PLANS[plan].limits.*, no per-tenant limit columns on the DB.
  */
-export async function getTenantStorageLimit(
+export async function getTenantBillingPlan(
   tenantId: string,
-): Promise<number> {
-  const rows = await sql<Array<{ limit: string | null }>>`
-    SELECT storage_limit_bytes::text AS "limit"
+): Promise<BillingPlan> {
+  const rows = await sql<Array<{ plan: BillingPlan | null }>>`
+    SELECT billing_plan AS "plan"
       FROM tenants
      WHERE id = ${tenantId}
+     LIMIT 1
   `;
-  // Fail closed: if the tenant row somehow doesn't have a limit, treat
-  // as zero (blocks uploads) rather than unlimited.
-  return Number(rows[0]?.limit ?? 0);
+  return rows[0]?.plan ?? "free";
 }

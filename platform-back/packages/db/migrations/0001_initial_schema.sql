@@ -64,10 +64,10 @@ CREATE TABLE tenants (
   trial_ends_at                        TIMESTAMPTZ,
   billing_cycle_anchor                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   plan_updated_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  -- Files service: per-tenant hard cap on total stored bytes across all
-  -- apps. Enforced pre-insert by /services/files/upload. Default is a
-  -- starter-grade 1 GiB; actual per-plan defaults set by billing.
-  storage_limit_bytes                  BIGINT NOT NULL DEFAULT 1073741824,
+  -- Storage cap is NOT stored on this row. Files service resolves it
+  -- per-request from billing_plan via PLANS[plan].limits.maxStorageBytes
+  -- (same pattern as email / app-exec quotas) so plan changes take
+  -- effect on the very next upload, no column to keep in sync.
   created_at                           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at                           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT tenants_slug_format CHECK (slug ~ '^[a-z0-9-]+$')

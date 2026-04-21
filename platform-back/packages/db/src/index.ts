@@ -50,7 +50,7 @@ export {
   getFileForApp,
   getFinalizableFileForApp,
   getTenantStorageUsage,
-  getTenantStorageLimit,
+  getTenantBillingPlan,
   getStalePendingFiles,
   type FileRecord,
   type InsertFileInput,
