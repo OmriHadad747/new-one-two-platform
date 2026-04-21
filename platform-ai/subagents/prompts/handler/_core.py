@@ -46,7 +46,9 @@ replacements for them:
 You emit replacement route files (and optionally small lib helpers) that
 layer on top of the template. Files you author:
 
-  src/routes/webhook.ts              — Shopify webhook topic dispatch
+  src/routes/webhook-handlers.ts     — Shopify webhook topic handlers map
+                                        (ONLY when the architect declared
+                                        webhookTopics; otherwise do not emit)
   src/routes/admin.ts                — /admin/* routes (embedded merchant UI)
   src/routes/widget.ts               — /widget/:path routes (storefront)
   src/routes/cron.ts                 — EXPORTS A JOBS MAP for the cron runner
@@ -147,15 +149,14 @@ REQUIRED OUTPUT FORMAT — file bundle delimiters:
 Emit each file with explicit markers. Nothing between the markers is
 interpreted — it lands verbatim on disk.
 
-===FILE: src/routes/webhook.ts===
-import { Router } from "express";
+===FILE: src/routes/webhook-handlers.ts===
+import type { Request } from "express";
+import type { WebhookHandler } from "./webhook-handlers.js";
 import { sql } from "../lib/db.js";
 
-export const webhookRouter = Router();
-
-webhookRouter.post("/:topic", async (req, res) => {
-  // ... implementation
-});
+export const webhookHandlers: Record<string, WebhookHandler> = {
+  // ... handlers keyed by topic
+};
 ===END===
 ===FILE: src/routes/admin.ts===
 // ... another file ...
@@ -164,10 +165,11 @@ webhookRouter.post("/:topic", async (req, res) => {
 Rules:
   - EXACTLY `===FILE: <path>===` to open, EXACTLY `===END===` to close.
   - `<path>` is relative, no leading "/", no "..", ≤512 chars.
-  - Each route file MUST export a router named `webhookRouter` /
-    `adminRouter` / `widgetRouter` — server.ts imports by that exact
-    name. src/routes/cron.ts exports a named `jobs` map instead (see
-    _cron.py).
+  - src/routes/webhook-handlers.ts MUST export `webhookHandlers` (a
+    Record<string, WebhookHandler>) — the template router imports it by
+    that exact name. src/routes/admin.ts and src/routes/widget.ts export
+    `adminRouter` / `widgetRouter`. src/routes/cron.ts exports a named
+    `jobs` map (see _cron.py).
   - Emit the FULL file contents each time; the deployer replaces the
     whole file. Partial diffs are not supported.
   - No markdown fences, no prose outside the markers, no backtick
@@ -209,10 +211,9 @@ ABSOLUTE RULES (violations cause deployment failure):
     `gid://shopify/<Type>/${id}`. (Capability docs cover the specific API
     shape when the architect has declared shopify_rest / shopify_graphql.)
 9.  webhookTopics declared by the architect are authoritative — implement
-    exactly the topic set the architect listed, no more, no fewer. Topic
-    dispatch lives in the `switch (topic)` of webhook.ts; unknown topics
-    should fall through and still return 200 (the template's idempotency
-    gate already ran, so we must not retry).
+    exactly the topic set the architect listed, no more, no fewer. Handler
+    keys in webhook-handlers.ts must match exactly; the template router
+    dispatches to them and handles unknown topics (200, not retried).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 LOGGING — structured stdout logs (Cloud Run → Cloud Logging):

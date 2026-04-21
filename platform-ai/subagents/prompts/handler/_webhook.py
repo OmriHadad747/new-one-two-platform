@@ -2,10 +2,9 @@
 Webhook-path handler patterns.
 
 Injected by handler_agent.py's JIT into the USER prompt when
-``shopifyPlan.webhookTopics`` is non-empty. Covers the /webhook/:topic
-dispatch shape, the template-owned idempotency gate, atomic side-effect
-claiming with RETURNING, and the bulk-prefetch discipline for webhooks
-that enrich multiple records.
+``shopifyPlan.webhookTopics`` is non-empty. Covers the webhook-handlers
+data-file shape, atomic side-effect claiming with RETURNING, and the
+bulk-prefetch discipline for webhooks that enrich multiple records.
 
 Cron is NOT handled here — scheduled work runs through the handler's
 cron-runner (see prompts/handler/_cron.py) via a queue table, not HTTP.
@@ -13,77 +12,40 @@ cron-runner (see prompts/handler/_cron.py) via a queue table, not HTTP.
 
 HARNESS_SECTION_WEBHOOK = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WEBHOOK ROUTER — src/routes/webhook.ts
+WEBHOOK HANDLERS — src/routes/webhook-handlers.ts
 
-File skeleton (emit via the ===FILE: ... === markers; this is the shape,
-fill in the topic dispatch for the topics the architect declared):
+The template owns the webhook router (idempotency gate, dispatch, response
+writes). You author ONLY the handlers data file.
 
-  import { Router } from "express";
+File skeleton (emit via ===FILE: ... === markers):
+
+  import type { Request } from "express";
+  import type { WebhookHandler } from "./webhook-handlers.js";
   import { sql } from "../lib/db.js";
 
-  export const webhookRouter = Router();
+  // Import whatever else your handlers need (platform, shopify, etc.)
 
-  interface WebhookEnvelope {
-    webhook_id: string;
-    topic: string;
-    payload: unknown;
-  }
-
-  webhookRouter.post("/:topic", async (req, res) => {
-    const { topic } = req.params;
-    const env = req.body as Partial<WebhookEnvelope>;
-
-    // ── Idempotency gate — COPY VERBATIM, always first ──────────────────────
-    if (typeof env.webhook_id !== "string" || env.webhook_id.length === 0) {
-      res.status(400).json({ error: "missing_webhook_id" });
-      return;
-    }
-    const inserted = await sql<Array<{ webhook_id: string }>>`
-      INSERT INTO processed_webhooks (webhook_id)
-      VALUES (${env.webhook_id})
-      ON CONFLICT (webhook_id) DO NOTHING
-      RETURNING webhook_id
-    `;
-    if (inserted.length === 0) {
-      res.status(200).json({ ok: true, duplicate: true });
-      return;
-    }
-
-    // ── Topic dispatch ──────────────────────────────────────────────────────
-    const payload = (env.payload ?? {}) as Record<string, unknown>;
-    try {
-      switch (topic) {
-        case "<topic_1>":
-          // ... topic-specific logic
-          break;
-        case "<topic_2>":
-          // ... topic-specific logic
-          break;
-        default:
-          // Unknown topics still 200 — idempotency gate already ran; replay
-          // is not desired.
-          break;
-      }
-      res.status(200).json({ ok: true });
-    } catch (err) {
-      console.error(
-        { requestId: req.platform!.requestId, topic, err: String(err) },
-        "webhook failed",
-      );
-      res.status(500).json({ error: "internal_error" });
-    }
-  });
+  export const webhookHandlers: Record<string, WebhookHandler> = {
+    "<topic_1>": async (payload, req) => {
+      const p = (payload ?? {}) as Record<string, unknown>;
+      // ... topic-specific business logic
+    },
+    "<topic_2>": async (payload, req) => {
+      const p = (payload ?? {}) as Record<string, unknown>;
+      // ... topic-specific business logic
+    },
+  };
 
 RULES:
-  - The idempotency block is MANDATORY and must be the first code in the
-    route body. The template relies on `processed_webhooks` being populated
-    before any side effect runs.
-  - Topic list must match the architect's webhookTopics exactly — same
-    strings, no additions, no omissions. Unknown topics fall through the
-    default arm and still 200 (never 404; that would trigger Shopify retries).
-  - Every arm in the switch MUST either finish successfully or throw — the
-    router's try/catch maps exceptions to 500. NEVER call res.json() inside
-    an arm (the router sends the response after the switch).
+  - Topic keys must match the architect's webhookTopics exactly — same
+    strings, no additions, no omissions.
+  - Each handler is `(payload: unknown, req: Request) => Promise<void>`.
+    The template router handles envelope parsing, idempotency, and all
+    res.json() calls — never write to `res` inside a handler.
+  - Handlers throw to signal failure (the router maps throws → 500).
+    Never swallow errors that should surface as retries.
+  - Do NOT import or call anything related to idempotency or
+    processed_webhooks — the template router already handles that.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WEBHOOK BODY PATTERNS — atomic side effects, scoping, prefetch

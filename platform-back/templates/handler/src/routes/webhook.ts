@@ -1,37 +1,26 @@
 import { Router } from "express";
 import { sql } from "../lib/db.js";
+import { webhookHandlers } from "./webhook-handlers.js";
 
-// /webhook/* — fired by the platform's worker after a Shopify webhook
-// arrives. The worker is the only caller; platform-back's verifyPlatform
-// middleware has already established that, so req.platform is trusted.
-//
-// Per locked decision 8 (idempotency layer 2): every webhook route MUST
-// start with the INSERT … ON CONFLICT DO NOTHING dance against
-// processed_webhooks, and return early on conflict. Locking this in at
-// the template level means every generated handler is duplicate-safe by
-// construction.
+// Locked down — generator does NOT replace this file.
+// Business logic lives in webhook-handlers.ts (generator-authored).
 
 export const webhookRouter = Router();
 
-interface WebhookEnvelope {
-  webhook_id: string;
-  topic: string;
-  payload: unknown;
-}
+// Shopify topics contain a slash (e.g. "orders/create"), so we capture
+// the full path rather than a single :param segment.
+webhookRouter.post("/*", async (req, res) => {
+  const topic = req.path.slice(1); // "/orders/create" → "orders/create"
+  const envelop = req.body as { webhook_id?: string; payload?: unknown };
 
-webhookRouter.post("/:topic", async (req, res) => {
-  const { topic } = req.params;
-  const env = req.body as Partial<WebhookEnvelope>;
-
-  if (typeof env.webhook_id !== "string" || env.webhook_id.length === 0) {
+  if (typeof envelop.webhook_id !== "string" || envelop.webhook_id.length === 0) {
     res.status(400).json({ error: "missing_webhook_id" });
     return;
   }
 
-  // ── Idempotency gate ──────────────────────────────────────────────────────
   const inserted = await sql<Array<{ webhook_id: string }>>`
     INSERT INTO processed_webhooks (webhook_id)
-    VALUES (${env.webhook_id})
+    VALUES (${envelop.webhook_id})
     ON CONFLICT (webhook_id) DO NOTHING
     RETURNING webhook_id
   `;
@@ -40,15 +29,21 @@ webhookRouter.post("/:topic", async (req, res) => {
     return;
   }
 
-  // ── Topic dispatch (generator fills these in) ─────────────────────────────
-  switch (topic) {
-    case "orders/create":
-      // example: do something
-      break;
-    default:
-      // Unknown topics still get marked processed above so we don't hot-loop.
-      break;
+  const handler = webhookHandlers[topic];
+  if (!handler) {
+    // Unknown topic — already marked processed above so we don't hot-loop.
+    res.status(200).json({ ok: true, ignored: true });
+    return;
   }
 
-  res.status(200).json({ ok: true });
+  try {
+    await handler(envelop.payload, req);
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error(
+      { err: String(err), topic, webhook_id: envelop.webhook_id },
+      "webhook handler threw",
+    );
+    res.status(500).json({ error: "handler_failed" });
+  }
 });
