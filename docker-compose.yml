@@ -116,11 +116,10 @@ services:
     env_file:
       - path: ./platform-back/.env
         required: false
+      - path: ./platform-back/envs/.env.docker
+        required: false
     environment:
       PORT: 3001
-      DATABASE_URL: postgresql://new_one_two_u:paas_dev_password@postgres:5432/new_one_two
-      REDIS_HOST: redis
-      CLOUD_RUN_SKIP_AUTH: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,10 +134,10 @@ services:
     env_file:
       - path: ./platform-back/.env
         required: false
+      - path: ./platform-back/envs/.env.docker
+        required: false
     environment:
-      DATABASE_URL: postgresql://new_one_two_u:paas_dev_password@postgres:5432/new_one_two
-      REDIS_HOST: redis
-      CLOUD_RUN_SKIP_AUTH: "true"
+      PORT: 3005
     depends_on:
       postgres:
         condition: service_healthy
@@ -155,11 +154,8 @@ services:
     env_file:
       - path: ./platform-back/.env
         required: false
-    environment:
-      PORT: 3002
-      DATABASE_URL: postgresql://new_one_two_u:paas_dev_password@postgres:5432/new_one_two
-      PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
-      GOOGLE_CLOUD_PROJECT: local
+      - path: ./platform-back/envs/.env.docker
+        required: false
     depends_on:
       postgres:
         condition: service_healthy
