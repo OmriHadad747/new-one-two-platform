@@ -120,6 +120,26 @@ export async function deleteFileRow(fileId: string): Promise<void> {
 }
 
 /**
+ * Every file row (any status) for this (tenant, app) pair, returning only
+ * gcs_object. Feeds the eager GCS-cleanup step of permanentDeleteApp —
+ * the DB rows themselves cascade away when the apps row is deleted, so
+ * this query captures the object keys BEFORE the cascade makes them
+ * unreadable.
+ */
+export async function getGcsObjectsForApp(
+  tenantId: string,
+  appId: string,
+): Promise<string[]> {
+  const rows = await sql<Array<{ gcsObject: string }>>`
+    SELECT gcs_object AS "gcsObject"
+      FROM files
+     WHERE tenant_id = ${tenantId}
+       AND app_id = ${appId}
+  `;
+  return rows.map((r) => r.gcsObject);
+}
+
+/**
  * Stale pending rows for the orphan GC sweep. A row is stale when it
  * was created more than `olderThanSec` seconds ago and never flipped
  * to 'active' — handler crashed between createUploadUrl and finalize,

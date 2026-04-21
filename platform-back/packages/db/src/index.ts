@@ -6,20 +6,49 @@ export {
 } from "./bundles.js";
 export {
   getAppById,
+  getAppByIdUnsafe,
   getAppSlugs,
   resolveAppHandler,
+  listAppsForTenant,
+  createApp,
+  updateAppName,
+  updateAppStatus,
+  setThemeInjection,
+  clearThemeInjection,
+  deactivateAppInfrastructure,
+  hardDeleteApp,
+  getActiveWebhookSubscriptionsForApp,
+  getAppVersionSemvers,
+  getLatestDeployedVersionForApp,
+  getLatestMigrationSqlForApp,
   type AppRecord,
+  type AppFullRecord,
+  type CreateAppInput,
   type ResolvedHandler,
+  type ActiveWebhookSubscription,
+  type LatestDeployedVersion,
 } from "./handlers.js";
 export {
   createTenant,
   getTenantBasics,
+  getTenantById,
   getTenantByShopDomain,
   getTenantAccessTokenSecretName,
   getTenantStorefrontTokenSecretName,
+  getTenantStats,
   updateTenantAccessToken,
   type TenantBasics,
+  type TenantRecord,
+  type TenantStats,
 } from "./tenants.js";
+export {
+  getWidgetInvocationLogs,
+  getAdminInvocationLogs,
+  getRecentWebhookInvocationLogs,
+  type WidgetInvocationLogRow,
+  type AdminInvocationLogRow,
+  type WebhookInvocationLogRow,
+} from "./invocation-logs.js";
 export {
   upsertGeneration,
   getGenerationByJobId,
@@ -52,6 +81,7 @@ export {
   getTenantStorageUsage,
   getTenantBillingPlan,
   getStalePendingFiles,
+  getGcsObjectsForApp,
   type FileRecord,
   type InsertFileInput,
 } from "./files.js";

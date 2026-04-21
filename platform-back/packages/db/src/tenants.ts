@@ -153,3 +153,78 @@ export async function getTenantStorefrontTokenSecretName(
   `;
   return rows[0]?.secretName ?? null;
 }
+
+// ─── Dashboard reads ─────────────────────────────────────────────────────────
+
+export interface TenantRecord {
+  id: string;
+  slug: string;
+  name: string;
+  status: "active" | "suspended" | "pending";
+  shopDomain: string | null;
+  shopifyAccessTokenSecretName: string | null;
+  storefrontAccessTokenSecretName: string | null;
+  billingPlan: BillingPlan;
+  subscriptionStatus: string;
+  trialEndsAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Full dashboard-facing tenant row. Strictly more fields than getTenantBasics
+ * (which is tuned for /services/* auth). Used by /tenants/:tenantId and the
+ * upgrade / subscription-state UX.
+ */
+export async function getTenantById(
+  tenantId: string,
+): Promise<TenantRecord | null> {
+  const rows = await sql<TenantRecord[]>`
+    SELECT
+      id,
+      slug,
+      name,
+      status,
+      shop_domain                          AS "shopDomain",
+      shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
+      storefront_access_token_secret_name  AS "storefrontAccessTokenSecretName",
+      billing_plan                         AS "billingPlan",
+      subscription_status                  AS "subscriptionStatus",
+      trial_ends_at                        AS "trialEndsAt",
+      created_at                           AS "createdAt",
+      updated_at                           AS "updatedAt"
+    FROM tenants
+    WHERE id = ${tenantId}
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
+export interface TenantStats {
+  activeApps: number;
+  totalApps: number;
+  appsByStatus: Record<string, number>;
+}
+
+/**
+ * Headline dashboard numbers. Intentionally cheap — a single grouped
+ * query over apps. Detailed usage counters come from /billing/usage.
+ */
+export async function getTenantStats(tenantId: string): Promise<TenantStats> {
+  const rows = await sql<Array<{ status: string; n: string }>>`
+    SELECT status, COUNT(*)::text AS n
+      FROM apps
+     WHERE tenant_id = ${tenantId}
+     GROUP BY status
+  `;
+  const appsByStatus: Record<string, number> = {};
+  let total = 0;
+  let active = 0;
+  for (const r of rows) {
+    const n = Number(r.n);
+    appsByStatus[r.status] = n;
+    total += n;
+    if (r.status === "active") active = n;
+  }
+  return { activeApps: active, totalApps: total, appsByStatus };
+}

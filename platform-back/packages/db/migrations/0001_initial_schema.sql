@@ -176,6 +176,15 @@ CREATE TABLE deployed_functions (
   memory_mb            INTEGER NOT NULL DEFAULT 256,
   timeout_sec          INTEGER NOT NULL DEFAULT 30,
   env_vars_encrypted   BYTEA NOT NULL DEFAULT '',
+  -- Forward + reverse SQL used to materialise this app's tenant-schema
+  -- changes (migration_sql / rollback_sql). Stored here so teardown can
+  -- roll back exactly what this deploy added — schemas are shared
+  -- across multiple apps under the same tenant, so dropping the whole
+  -- tenant schema on delete would nuke siblings. See REFACTOR_GAPS §6-A.
+  -- Both are nullable during MVP: older deploys predate the column,
+  -- and the generator is still being taught to emit rollback_sql.
+  migration_sql        TEXT,
+  rollback_sql         TEXT,
   deployed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   is_active            BOOLEAN NOT NULL DEFAULT TRUE,
   CONSTRAINT memory_range CHECK (memory_mb BETWEEN 128 AND 3008),
