@@ -1,4 +1,4 @@
-import type { BillingPlan } from "@platform-back/types";
+import type { BillingPlan, FileStatus } from "@platform-back/types";
 import { sql } from "./connection.js";
 
 // Files-service DB helpers. See docs/FILES_INTEGRATION.md and
@@ -17,7 +17,7 @@ export interface FileRecord {
   mimeType: string;
   sizeBytes: number;
   gcsObject: string;
-  status: "active" | "pending" | "failed";
+  status: FileStatus;
   createdAt: string;
 }
 

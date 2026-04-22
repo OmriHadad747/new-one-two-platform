@@ -16,6 +16,7 @@
     "@platform-back/crypto": "workspace:*",
     "@platform-back/db": "workspace:*",
     "@platform-back/files": "workspace:*",
+    "@platform-back/types": "workspace:*",
     "@platform-back/logger": "workspace:*",
     "google-auth-library": "^9.14.0",
     "postgres": "^3.4.4"

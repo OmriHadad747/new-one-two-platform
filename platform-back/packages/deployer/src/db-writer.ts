@@ -1,3 +1,4 @@
+import type { HandlerRuntime } from "@platform-back/types";
 import { sql } from "@platform-back/db";
 
 // Persists deployment metadata to Postgres. Two writes per deploy:
@@ -25,7 +26,7 @@ export interface UpsertDeployedFunctionInput {
   appId: string;
   tenantId: string;
   functionUrl: string;
-  runtime: "nodejs20" | "nodejs18";
+  runtime: HandlerRuntime;
   memoryMb: number;
   timeoutSec: number;
   /**

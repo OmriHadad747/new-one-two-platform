@@ -1,3 +1,4 @@
+import type { AppStatus, AppArchetype } from "@platform-back/types";
 import { sql } from "./connection.js";
 
 // ─── Core app shape ───────────────────────────────────────────────────────────
@@ -12,13 +13,9 @@ export interface AppFullRecord {
   tenantId: string;
   slug: string;
   name: string;
-  status: "draft" | "ready" | "active" | "inactive" | "deleted";
+  status: AppStatus;
   shopDomain: string;
-  appArchetype:
-    | "storefront_backend"
-    | "storefront_backend_admin"
-    | "backend"
-    | "backend_admin";
+  appArchetype: AppArchetype;
   themeInjectionStatus: string;
   themeInjectionThemeId: string | null;
   usesEmail: boolean;
@@ -251,7 +248,7 @@ export async function updateAppName(
 
 export async function updateAppStatus(
   appId: string,
-  status: "draft" | "ready" | "active" | "inactive" | "deleted",
+  status: AppStatus,
 ): Promise<void> {
   await sql`
     UPDATE apps

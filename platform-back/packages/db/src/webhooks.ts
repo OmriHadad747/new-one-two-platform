@@ -1,3 +1,4 @@
+import type { WebhookInvocationLogStatus } from "@platform-back/types";
 import { sql } from "./connection.js";
 
 // ─── resolveWebhookContext ────────────────────────────────────────────────────
@@ -178,7 +179,7 @@ export async function createWebhookInvocationLog(
 }
 
 export interface UpdateWebhookInvocationLogInput {
-  status: "running" | "success" | "failed";
+  status: WebhookInvocationLogStatus;
   startedAt?: Date;
   completedAt?: Date;
   durationMs?: number;

@@ -1,4 +1,4 @@
-import type { BillingPlan, BillingInterval, SubscriptionStatus } from "@platform-back/types";
+import type { BillingPlan, BillingInterval, SubscriptionStatus, RevisionClassification } from "@platform-back/types";
 import { sql } from "./connection.js";
 
 export interface BillingEvent {
@@ -89,7 +89,7 @@ export async function storeRevisionClassification(params: {
   appId: string;
   sessionId?: string;
   jobId?: string;
-  classification: "bug_report" | "feature_modification" | "new_capability";
+  classification: RevisionClassification;
   confidence: string;
   merchantPrompt: string;
 }): Promise<void> {

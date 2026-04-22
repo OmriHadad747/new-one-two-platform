@@ -1,4 +1,4 @@
-import type { BillingPlan } from "@platform-back/types";
+import type { BillingPlan, BillingInterval, TenantStatus } from "@platform-back/types";
 import { sql } from "./connection.js";
 
 // Default KMS key name used for new tenants when no GCP project is set
@@ -160,12 +160,12 @@ export interface TenantRecord {
   id: string;
   slug: string;
   name: string;
-  status: "active" | "suspended" | "pending";
+  status: TenantStatus;
   shopDomain: string | null;
   shopifyAccessTokenSecretName: string | null;
   storefrontAccessTokenSecretName: string | null;
   billingPlan: BillingPlan;
-  billingInterval: "monthly" | "annual";
+  billingInterval: BillingInterval;
   subscriptionStatus: string;
   shopifySubscriptionId: string | null;
   trialEndsAt: string | null;

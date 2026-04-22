@@ -1,3 +1,4 @@
+import type { GenerationStatus } from "@platform-back/types";
 import { sql } from "./connection.js";
 
 // Persistence for the Phase 2 `generations` table.
@@ -11,7 +12,7 @@ export interface UpsertGenerationInput {
   jobId: string;
   tenantId: string;
   appId: string;
-  status: "success" | "failed";
+  status: GenerationStatus;
   error?: string | null;
   errorCode?: string | null;
   /** Full Bundle JSON. Null on failure. */
@@ -72,7 +73,7 @@ export interface GenerationRow {
   jobId: string;
   tenantId: string;
   appId: string;
-  status: "success" | "failed";
+  status: GenerationStatus;
   error: string | null;
   errorCode: string | null;
   bundle: unknown | null;
