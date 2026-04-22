@@ -173,6 +173,21 @@ export async function listAppsForTenant(
   `;
 }
 
+/**
+ * Count of apps currently in 'active' status for a tenant. Feeds the
+ * canActivateApp plan check — soft-deleted / inactive / draft rows don't
+ * consume the seat.
+ */
+export async function getActiveAppCount(tenantId: string): Promise<number> {
+  const rows = await sql<Array<{ n: string }>>`
+    SELECT COUNT(*)::text AS n
+      FROM apps
+     WHERE tenant_id = ${tenantId}
+       AND status = 'active'
+  `;
+  return Number(rows[0]?.n ?? 0);
+}
+
 // ─── Write helpers ────────────────────────────────────────────────────────────
 
 export interface CreateAppInput {

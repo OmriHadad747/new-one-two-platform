@@ -20,6 +20,7 @@ export {
   getActiveWebhookSubscriptionsForApp,
   getAppVersionSemvers,
   getLatestDeployedVersionForApp,
+  getActiveAppCount,
   type AppRecord,
   type AppFullRecord,
   type CreateAppInput,

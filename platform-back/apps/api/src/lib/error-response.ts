@@ -29,6 +29,10 @@ export const ErrorCode = {
   BackendNotDeployed: "backend_not_deployed",
   BadGateway: "bad_gateway",
   UpstreamTimeout: "upstream_timeout",
+
+  // Plan enforcement + integration preconditions.
+  AppLimitReached: "app_limit_reached",
+  ShopNotConnected: "shop_not_connected",
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

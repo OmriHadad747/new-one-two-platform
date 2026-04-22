@@ -1,5 +1,5 @@
 /**
- * Dashboard-facing tenant + app CRUD + log-read routes.
+ * Dashboard-facing tenant + app CRUD + log-read + theme-inject routes.
  *
  * POST   /tenants                                           create tenant
  * GET    /tenants/:tenantId                                 fetch tenant
@@ -12,16 +12,15 @@
  * DELETE /tenants/:tenantId/apps/:appId                     permanent delete
  * GET    /tenants/:tenantId/apps/:appId/widget-logs         widget invocations
  * GET    /tenants/:tenantId/apps/:appId/admin-logs          admin invocations
+ * GET    /tenants/:tenantId/apps/:appId/theme-templates     injectable theme templates
+ * POST   /tenants/:tenantId/apps/:appId/inject-theme        duplicate + inject widget block
+ * DELETE /tenants/:tenantId/apps/:appId/inject-theme        remove duplicate test theme
  *
- * Status flips drive real infrastructure:
- *   status='active'   → reactivateApp  (redeploy existing image, re-register webhooks)
- *   status='inactive' → teardownApp    (stop Cloud Run, deactivate DB infra)
- *   status='deleted'  → teardownApp    (same — DELETE is the permanent path)
- *
- * Theme-injection routes (GET theme-templates, POST/DELETE inject-theme)
- * are deferred to a follow-up — Category A/B widget archetypes aren't
- * generated yet so the UI surface has no call sites. Tracked in
- * REFACTOR_GAPS Tier 2.
+ * Status flips drive real infrastructure (fire-and-forget so the
+ * response doesn't block on Cloud Run / Shopify round-trips):
+ *   status='active'   → canActivateApp plan-check → reactivateApp
+ *   status='inactive' → teardownApp
+ *   status='deleted'  → teardownApp   (DELETE is the permanent path)
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
@@ -44,13 +43,26 @@ import {
   reactivateApp,
   teardownApp,
 } from "@platform-back/deployer";
+import { getSecret } from "@platform-back/crypto";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
+import { parseBody } from "../lib/validate-body.js";
+import { canActivateApp } from "../lib/plan-enforcement.js";
 import { requireTenant } from "../plugins/auth.js";
+import {
+  duplicateTheme,
+  getActiveTheme,
+  getThemeTemplates,
+  injectAppBlock,
+  themeEditorUrl,
+  themePreviewUrl,
+} from "../lib/theme-injector.js";
 
 // ─── Shared schemas ──────────────────────────────────────────────────────────
-// Stricter than the DB CHECK (`^[a-z0-9-]+$`) — leading-hyphen slugs clash
-// with DNS labels, URL segments, and CLI args at the ingress. Matches the
-// OLD tenants.ts convention.
+//
+// Stricter than the DB CHECK (`^[a-z0-9-]+$`): leading-hyphen slugs clash
+// with DNS labels, URL segments after `/`, and CLI argument parsers, so we
+// reject them at the ingress even though the DB would accept them.
+
 const SlugSchema = z
   .string()
   .min(1)
@@ -85,6 +97,16 @@ const UpdateAppBodySchema = z
     message: "name or status is required",
   });
 
+const InjectionTargetSchema = z.object({
+  templateKey: z.string().min(1).max(200),
+  sectionId: z.string().min(1).max(200),
+  position: z.number().int().min(0),
+});
+
+const InjectThemeBodySchema = z.object({
+  targets: z.array(InjectionTargetSchema).min(1),
+});
+
 // ─── Plugin ─────────────────────────────────────────────────────────────────
 
 export async function tenantsRoutes(app: FastifyInstance): Promise<void> {
@@ -100,10 +122,7 @@ export async function tenantsRoutes(app: FastifyInstance): Promise<void> {
     Querystring: { limit?: string };
   }>("/:tenantId/logs", getTenantLogsHandler);
 
-  app.get<{ Params: { tenantId: string } }>(
-    "/:tenantId/apps",
-    listAppsHandler,
-  );
+  app.get<{ Params: { tenantId: string } }>("/:tenantId/apps", listAppsHandler);
   app.post<{ Params: { tenantId: string } }>(
     "/:tenantId/apps",
     createAppHandler,
@@ -130,6 +149,19 @@ export async function tenantsRoutes(app: FastifyInstance): Promise<void> {
     Params: { tenantId: string; appId: string };
     Querystring: { limit?: string };
   }>("/:tenantId/apps/:appId/admin-logs", getAdminLogsHandler);
+
+  app.get<{ Params: { tenantId: string; appId: string } }>(
+    "/:tenantId/apps/:appId/theme-templates",
+    getThemeTemplatesHandler,
+  );
+  app.post<{ Params: { tenantId: string; appId: string } }>(
+    "/:tenantId/apps/:appId/inject-theme",
+    injectThemeHandler,
+  );
+  app.delete<{ Params: { tenantId: string; appId: string } }>(
+    "/:tenantId/apps/:appId/inject-theme",
+    deleteInjectedThemeHandler,
+  );
 }
 
 // ─── Handlers ───────────────────────────────────────────────────────────────
@@ -138,28 +170,17 @@ async function createTenantHandler(
   req: FastifyRequest,
   reply: FastifyReply,
 ): Promise<FastifyReply | void> {
-  const parsed = CreateTenantBodySchema.safeParse(req.body);
-  if (!parsed.success) {
-    return reply
-      .code(400)
-      .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Invalid body",
-          parsed.error.flatten(),
-        ),
-      );
-  }
-  const b = parsed.data;
+  const body = parseBody(CreateTenantBodySchema, req, reply);
+  if (!body) return;
   const { id } = await createTenant({
-    slug: b.slug,
-    name: b.name,
-    shopDomain: b.shopDomain,
-    shopifyAccessTokenSecretName: b.shopifyAccessTokenSecretName,
-    ...(b.storefrontAccessTokenSecretName !== undefined && {
-      storefrontAccessTokenSecretName: b.storefrontAccessTokenSecretName,
+    slug: body.slug,
+    name: body.name,
+    shopDomain: body.shopDomain,
+    shopifyAccessTokenSecretName: body.shopifyAccessTokenSecretName,
+    ...(body.storefrontAccessTokenSecretName !== undefined && {
+      storefrontAccessTokenSecretName: body.storefrontAccessTokenSecretName,
     }),
-    ...(b.kmsKeyName !== undefined && { kmsKeyName: b.kmsKeyName }),
+    ...(body.kmsKeyName !== undefined && { kmsKeyName: body.kmsKeyName }),
   });
   const tenant = await getTenantById(id);
   return reply.code(201).send(tenant);
@@ -226,18 +247,8 @@ async function createAppHandler(
 ): Promise<FastifyReply | void> {
   const tenantId = requireTenant(req, reply, req.params.tenantId);
   if (!tenantId) return;
-  const parsed = CreateAppBodySchema.safeParse(req.body);
-  if (!parsed.success) {
-    return reply
-      .code(400)
-      .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Invalid body",
-          parsed.error.flatten(),
-        ),
-      );
-  }
+  const body = parseBody(CreateAppBodySchema, req, reply);
+  if (!body) return;
 
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
@@ -256,12 +267,11 @@ async function createAppHandler(
       );
   }
 
-  const b = parsed.data;
   const { id: appId } = await createApp({
-    ...(b.id !== undefined && { id: b.id }),
+    ...(body.id !== undefined && { id: body.id }),
     tenantId,
-    slug: b.slug,
-    name: b.name,
+    slug: body.slug,
+    name: body.name,
     shopDomain: tenant.shopDomain,
     ...(process.env["SHOPIFY_CLIENT_ID"] !== undefined && {
       shopifyClientId: process.env["SHOPIFY_CLIENT_ID"],
@@ -297,18 +307,8 @@ async function updateAppHandler(
   if (!tenantId) return;
   const { appId } = req.params;
 
-  const parsed = UpdateAppBodySchema.safeParse(req.body);
-  if (!parsed.success) {
-    return reply
-      .code(400)
-      .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Invalid body",
-          parsed.error.flatten(),
-        ),
-      );
-  }
+  const body = parseBody(UpdateAppBodySchema, req, reply);
+  if (!body) return;
 
   const app = await getAppById(tenantId, appId);
   if (!app) {
@@ -317,13 +317,32 @@ async function updateAppHandler(
       .send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
 
-  const { name, status } = parsed.data;
+  const { name, status } = body;
   if (name?.trim()) await updateAppName(tenantId, appId, name.trim());
 
-  // Status transitions drive real infra. Fire-and-forget so the response
-  // doesn't block on Cloud Run / Shopify round-trips; errors land in the
-  // structured log for the ops team to chase.
   if (status === "active") {
+    // Plan gate — blocks activation when the merchant is already at
+    // their plan's active-app cap. Creation was unlimited; the seat
+    // check only fires at the activate transition.
+    const tenant = await getTenantById(tenantId);
+    if (tenant) {
+      const gate = await canActivateApp(tenant);
+      if (!gate.allowed) {
+        const details =
+          gate.upgradeHint !== undefined
+            ? { upgradeHint: gate.upgradeHint }
+            : undefined;
+        return reply
+          .code(403)
+          .send(
+            errorResponse(
+              ErrorCode.AppLimitReached,
+              gate.reason ?? "App activation limit reached",
+              details,
+            ),
+          );
+      }
+    }
     await updateAppStatus(appId, "active");
     reactivateApp({ tenantId, appId }).catch((err: unknown) => {
       req.log.error({ err, tenantId, appId }, "reactivateApp failed");
@@ -358,9 +377,10 @@ async function deleteAppHandler(
       .send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
 
-  // Run permanentDeleteApp synchronously — the dashboard wants a real
-  // commit signal before refreshing the list. Best-effort internals
-  // handle partial failures without leaving a half-deleted state.
+  // Run permanentDeleteApp synchronously — the dashboard expects a real
+  // commit signal before refreshing. The helper is best-effort across
+  // every side-effect step, so partial infra failures don't leave a
+  // half-deleted state; hardDeleteApp at the tail is authoritative.
   try {
     await permanentDeleteApp({ tenantId, appId });
   } catch (err) {
@@ -369,9 +389,9 @@ async function deleteAppHandler(
       .code(500)
       .send(errorResponse(ErrorCode.Internal, "Delete failed"));
   }
-  // If permanentDeleteApp's hardDeleteApp at the end threw but somehow
-  // didn't bubble, fall back to a direct row delete so the UI isn't
-  // stuck on a ghost app.
+  // Belt-and-braces: if the lifecycle helper threw after partial cleanup
+  // before reaching hardDeleteApp, this direct row-delete ensures the UI
+  // isn't left staring at a ghost row.
   await hardDeleteApp(appId).catch(() => {});
   return reply.code(200).send({ deleted: true });
 }
@@ -414,4 +434,129 @@ async function getAdminLogsHandler(
   const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
   const logs = await getAdminInvocationLogs(req.params.appId, limit);
   return reply.send(logs);
+}
+
+// ─── Theme injection (Category A/B widget archetypes) ───────────────────────
+
+async function getThemeTemplatesHandler(
+  req: FastifyRequest<{ Params: { tenantId: string; appId: string } }>,
+  reply: FastifyReply,
+): Promise<FastifyReply | void> {
+  const tenantId = requireTenant(req, reply, req.params.tenantId);
+  if (!tenantId) return;
+  const app = await getAppById(tenantId, req.params.appId);
+  if (!app) {
+    return reply
+      .code(404)
+      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+  }
+
+  const tenant = await getTenantById(tenantId);
+  if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
+    return reply
+      .code(409)
+      .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
+  }
+
+  const token = await getSecret(tenant.shopifyAccessTokenSecretName);
+  const activeTheme = await getActiveTheme(tenant.shopDomain, token);
+  const templates = await getThemeTemplates(
+    tenant.shopDomain,
+    token,
+    activeTheme.id,
+  );
+  return reply.send({ activeTheme, templates });
+}
+
+async function injectThemeHandler(
+  req: FastifyRequest<{ Params: { tenantId: string; appId: string } }>,
+  reply: FastifyReply,
+): Promise<FastifyReply | void> {
+  const tenantId = requireTenant(req, reply, req.params.tenantId);
+  if (!tenantId) return;
+  const { appId } = req.params;
+
+  const body = parseBody(InjectThemeBodySchema, req, reply);
+  if (!body) return;
+
+  const app = await getAppById(tenantId, appId);
+  if (!app) {
+    return reply
+      .code(404)
+      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+  }
+
+  const tenant = await getTenantById(tenantId);
+  if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
+    return reply
+      .code(409)
+      .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
+  }
+
+  const token = await getSecret(tenant.shopifyAccessTokenSecretName);
+  const shop = tenant.shopDomain;
+
+  const activeTheme = await getActiveTheme(shop, token);
+  const newThemeName = `${activeTheme.name} — Widget Test (${app.name})`;
+  const duplicated = await duplicateTheme(
+    shop,
+    token,
+    activeTheme.id,
+    newThemeName,
+  );
+
+  for (const target of body.targets) {
+    await injectAppBlock(shop, token, duplicated.id, appId, target);
+  }
+
+  const { setThemeInjection } = await import("@platform-back/db");
+  await setThemeInjection(appId, String(duplicated.id));
+
+  return reply.send({
+    themeId: duplicated.id,
+    themeName: duplicated.name,
+    previewUrl: themePreviewUrl(shop, duplicated.id),
+    editorUrl: themeEditorUrl(shop, duplicated.id),
+  });
+}
+
+async function deleteInjectedThemeHandler(
+  req: FastifyRequest<{ Params: { tenantId: string; appId: string } }>,
+  reply: FastifyReply,
+): Promise<FastifyReply | void> {
+  const tenantId = requireTenant(req, reply, req.params.tenantId);
+  if (!tenantId) return;
+  const { appId } = req.params;
+
+  const app = await getAppById(tenantId, appId);
+  if (!app) {
+    return reply
+      .code(404)
+      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+  }
+  if (
+    app.themeInjectionStatus !== "injected" ||
+    !app.themeInjectionThemeId
+  ) {
+    return reply
+      .code(409)
+      .send(errorResponse(ErrorCode.Conflict, "No injected theme to delete"));
+  }
+
+  const tenant = await getTenantById(tenantId);
+  if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
+    return reply
+      .code(409)
+      .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
+  }
+
+  const token = await getSecret(tenant.shopifyAccessTokenSecretName);
+  await fetch(
+    `https://${tenant.shopDomain}/admin/api/2026-01/themes/${app.themeInjectionThemeId}.json`,
+    { method: "DELETE", headers: { "X-Shopify-Access-Token": token } },
+  );
+
+  const { clearThemeInjection } = await import("@platform-back/db");
+  await clearThemeInjection(appId);
+  return reply.send({ deleted: true });
 }
