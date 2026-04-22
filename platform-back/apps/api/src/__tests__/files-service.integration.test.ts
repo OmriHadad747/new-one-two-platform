@@ -9,6 +9,7 @@ import Fastify from "fastify";
 vi.mock("@platform-back/db", () => ({
   insertActiveFileAtomic: vi.fn(),
   insertPendingFile: vi.fn(),
+  incrementUsage: vi.fn().mockResolvedValue(undefined),
   finalizeFile: vi.fn(),
   deleteFileRow: vi.fn(),
   getFileForApp: vi.fn(),

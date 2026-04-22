@@ -8,6 +8,7 @@ import {
   getFinalizableFileForApp,
   getTenantBillingPlan,
   getTenantStorageUsage,
+  incrementUsage,
   insertActiveFileAtomic,
   insertPendingFile,
 } from "@platform-back/db";
@@ -197,15 +198,14 @@ async function uploadHandler(
     });
   }
 
-  // 2. Decode + size check. Base64 decode failures throw — catch and 400.
-  let buffer: Buffer;
-  try {
-    buffer = Buffer.from(body.contents, "base64");
-  } catch {
+  // 2. Validate base64 encoding before decoding. Node's Buffer.from silently
+  //    drops invalid chars rather than throwing, so we pre-validate.
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(body.contents)) {
     return reply
       .code(400)
       .send(errorResponse(ErrorCode.InvalidRequest, "contents is not valid base64"));
   }
+  const buffer = Buffer.from(body.contents, "base64");
   if (buffer.length === 0) {
     return reply
       .code(400)
@@ -305,6 +305,11 @@ async function uploadHandler(
     mimeType: record.mimeType,
     expiresAt,
   });
+
+  // Fire-and-forget — counter failure must not block the response.
+  void incrementUsage(caller.tenantId, "files_uploaded").catch((err) =>
+    log.warn({ err }, "files_uploaded counter increment failed"),
+  );
 
   log.info(
     {
@@ -606,6 +611,10 @@ async function finalizeUploadHandler(
     mimeType: finalized.mimeType,
     expiresAt,
   });
+
+  void incrementUsage(caller.tenantId, "files_uploaded").catch((err) =>
+    log.warn({ err }, "files_uploaded counter increment failed"),
+  );
 
   log.info(
     {

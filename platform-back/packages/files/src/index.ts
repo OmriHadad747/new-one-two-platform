@@ -78,13 +78,27 @@ export async function storeFile(input: StoreFileInput): Promise<void> {
   );
 }
 
+const INLINE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/svg+xml",
+]);
+
 export interface SignReadUrlInput {
   gcsObject: string;
-  /** Preserved on download via Content-Disposition: attachment; filename=... */
+  /** Preserved on download via Content-Disposition filename=... */
   name: string;
   mimeType: string;
   /** Absolute Date when the URL expires. */
   expiresAt: Date;
+  /**
+   * Override the Content-Disposition disposition token.
+   * Defaults to "inline" for image MIME types (admin UIs rendering
+   * previews), "attachment" for everything else (forced download).
+   */
+  disposition?: "inline" | "attachment";
 }
 
 /**
@@ -97,11 +111,12 @@ export async function signReadUrl(
 ): Promise<{ url: string }> {
   const bucket = getStorage().bucket(BUCKET_NAME);
   const file = bucket.file(input.gcsObject);
+  const disp = input.disposition ?? (INLINE_MIME_TYPES.has(input.mimeType) ? "inline" : "attachment");
   const [url] = await file.getSignedUrl({
     version: "v4",
     action: "read",
     expires: input.expiresAt,
-    responseDisposition: `attachment; filename="${sanitizeFilename(input.name)}"`,
+    responseDisposition: `${disp}; filename="${sanitizeFilename(input.name)}"`,
     responseType: input.mimeType,
   });
   return { url };

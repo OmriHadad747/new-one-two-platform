@@ -177,25 +177,40 @@ export async function getGcsObjectsForApp(
 }
 
 /**
- * Stale pending rows for the orphan GC sweep. A row is stale when it
- * was created more than `olderThanSec` seconds ago and never flipped
- * to 'active' — handler crashed between createUploadUrl and finalize,
- * upload URL expired, etc. Returned tuples feed the sweeper: it
- * deletes the GCS object (if any) and the row.
+ * Claim stale pending rows for the orphan GC sweep and process each
+ * one with the provided callback inside a single transaction.
+ *
+ * Uses FOR UPDATE SKIP LOCKED so multiple API replicas can run
+ * concurrently without each processing the same rows — each replica
+ * claims a distinct batch and skips any row another replica already
+ * holds. The lock is held until the transaction commits (i.e. after
+ * the callback completes for all rows in the batch).
+ *
+ * A row is stale when it was created more than `olderThanSec` seconds
+ * ago and never flipped to 'active'.
  */
-export async function getStalePendingFiles(
+export async function sweepStalePendingFiles(
   olderThanSec: number,
-  limit: number = 500,
-): Promise<Array<{ id: string; gcsObject: string }>> {
-  const rows = await sql<Array<{ id: string; gcsObject: string }>>`
-    SELECT id, gcs_object AS "gcsObject"
-      FROM files
-     WHERE status = 'pending'
-       AND created_at < NOW() - make_interval(secs => ${olderThanSec})
-     ORDER BY created_at
-     LIMIT ${limit}
-  `;
-  return rows;
+  limit: number = 200,
+  onRow: (row: { id: string; gcsObject: string }) => Promise<void>,
+): Promise<number> {
+  let swept = 0;
+  await sql.begin(async (tx) => {
+    const rows = await tx<Array<{ id: string; gcsObject: string }>>`
+      SELECT id, gcs_object AS "gcsObject"
+        FROM files
+       WHERE status = 'pending'
+         AND created_at < NOW() - make_interval(secs => ${olderThanSec})
+       ORDER BY created_at
+       LIMIT ${limit}
+       FOR UPDATE SKIP LOCKED
+    `;
+    for (const row of rows) {
+      await onRow(row);
+      swept++;
+    }
+  });
+  return swept;
 }
 
 /**

@@ -80,7 +80,7 @@ export {
   getFinalizableFileForApp,
   getTenantStorageUsage,
   getTenantBillingPlan,
-  getStalePendingFiles,
+  sweepStalePendingFiles,
   getGcsObjectsForApp,
   type FileRecord,
   type InsertFileInput,

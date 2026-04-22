@@ -11,7 +11,7 @@ import { deployRoutes } from "./routes/deploy.js";
 import { emailRoutes } from "./routes/email.js";
 import { emailPublicRoutes } from "./routes/email-public.js";
 import { emailServiceRoutes } from "./routes/services/email.js";
-import { filesServiceRoutes } from "./routes/services/files.js";
+import { filesServiceRoutes, MAX_FILE_BYTES } from "./routes/services/files.js";
 import { shopifyServiceRoutes } from "./routes/services/shopify.js";
 import { tenantsRoutes } from "./routes/tenants.js";
 import { billingRoutes } from "./routes/billing.js";
@@ -117,6 +117,18 @@ export async function buildServer() {
         "Request error",
       );
     }
+
+    // Translate Fastify's auto-413 (body-limit exceeded) into the same
+    // shape the /upload route returns for its own decoded-size check, so
+    // the handler SDK's PayloadTooLarge catch sees a consistent response.
+    if (status === 413 && req.url.endsWith("/upload")) {
+      void reply.code(413).send({
+        error: "payload_too_large",
+        limitBytes: MAX_FILE_BYTES,
+      });
+      return;
+    }
+
     void reply
       .code(status)
       .send(
