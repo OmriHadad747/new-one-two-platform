@@ -32,31 +32,6 @@ export interface InsertFileInput {
 }
 
 /**
- * Insert a new active file row. Caller (the upload route) has already
- * validated MIME, size cap, and storage quota. Throws on unique-key
- * collision — gcs_object is globally unique by construction
- * (tenants/<uuid>/apps/<uuid>/<file_id>).
- */
-export async function insertActiveFile(
-  input: InsertFileInput,
-): Promise<FileRecord> {
-  const rows = await sql<FileRecord[]>`
-    INSERT INTO files (
-      id, tenant_id, app_id, name, mime_type, size_bytes, gcs_object, status
-    ) VALUES (
-      ${input.id}, ${input.tenantId}, ${input.appId},
-      ${input.name}, ${input.mimeType}, ${input.sizeBytes},
-      ${input.gcsObject}, 'active'
-    )
-    RETURNING
-      id, tenant_id AS "tenantId", app_id AS "appId",
-      name, mime_type AS "mimeType", size_bytes AS "sizeBytes",
-      gcs_object AS "gcsObject", status, created_at AS "createdAt"
-  `;
-  return rows[0]!;
-}
-
-/**
  * Atomically check tenant storage quota and insert an active file row
  * in a single serialized transaction.
  *
