@@ -31,16 +31,6 @@ Shopify requires the two redact webhooks to pass review.
 
 
 
-## 12. Webhook gateway — `apps/webhook-gateway/`
-
-Core receiver + queue + idempotency + quota is ported. Noted drift:
-
-- Log-field volume is lower on NEW vs OLD (fewer correlation fields in
-  structured logs) — observability nuance, not functional.
-- Retry policy (backoff + max-attempts) — verify on both branches that
-  the logic matches. Not audited here.
-
----
 
 ## 13. Tests
 
