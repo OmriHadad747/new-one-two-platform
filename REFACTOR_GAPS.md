@@ -14,13 +14,3 @@ Items closed by recent commits have been removed; what remains is real outstandi
 
 ---
 
-## 14. Files service — open issues
-
-These surfaced reviewing commits `9a1233a` (resumable upload) and
-`0cd2e4a` (tests) against `docs/FILES_INTEGRATION.md`.
-
-### Correctness / security
-
-### SDK / handler contract
-
----
