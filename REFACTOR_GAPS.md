@@ -21,17 +21,6 @@ These surfaced reviewing commits `9a1233a` (resumable upload) and
 
 ### Correctness / security
 
-- **Resumable path doesn't actually reserve quota.** `create-upload-url`
-  pre-checks `getTenantStorageUsage(tenantId) + expectedSizeBytes > limit`,
-  but `getTenantStorageUsage` only sums `status='active'` rows — `pending`
-  rows (reserved-but-not-finalized uploads) are invisible. Two concurrent
-  `create-upload-url` calls both read usage=X, both insert pending rows of
-  ~600 MiB against a 1 GiB cap, and a third call right after still sees
-  usage=X and accepts another 600 MiB. Fix: include `'pending'` in the
-  usage sum, or do an atomic reserve. Files: `packages/db/src/files.ts`
-  (getTenantStorageUsage), `apps/api/src/routes/services/files.ts`
-  (create-upload-url quota check).
-
 - **Quota race on the inline path.** Same shape as above but on
   `/upload`: usage check + decision + GCS put + DB insert with no lock,
   so concurrent uploads that each fit can collectively overflow. Fix:

@@ -215,8 +215,11 @@ export async function getFinalizableFileForApp(
 }
 
 /**
- * Sum of stored bytes for this tenant across all apps. Used by the
- * upload route to pre-check quota before calling GCS.
+ * Sum of stored bytes for this tenant across all apps. Includes both
+ * 'active' rows and 'pending' rows (in-flight resumable uploads that
+ * have reserved quota via create-upload-url but haven't finalized yet).
+ * Including pending prevents concurrent create-upload-url calls from
+ * each reading usage=X and collectively blowing past the cap.
  */
 export async function getTenantStorageUsage(
   tenantId: string,
@@ -225,7 +228,7 @@ export async function getTenantStorageUsage(
     SELECT COALESCE(SUM(size_bytes), 0)::text AS total
       FROM files
      WHERE tenant_id = ${tenantId}
-       AND status = 'active'
+       AND status IN ('active', 'pending')
   `;
   return Number(rows[0]?.total ?? 0);
 }
