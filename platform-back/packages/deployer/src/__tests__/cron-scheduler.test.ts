@@ -17,7 +17,7 @@ vi.mock("postgres", () => ({ default: mockPostgres }));
 import {
   scheduleAppCron,
   unscheduleAppCron,
-} from "./cron-scheduler.js";
+} from "../cron-scheduler.js";
 
 // Shape: tenant_<32 hex>_app_<16 hex> — mirrors migration-runner's
 // appSchemaName output. Loose shapes now throw.

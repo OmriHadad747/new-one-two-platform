@@ -29,9 +29,6 @@ Shopify requires the two redact webhooks to pass review.
 
 ---
 
-
-
-
 ## 13. Tests
 
 Not audited line-by-line. Obvious coverage drops:
@@ -161,42 +158,3 @@ These surfaced reviewing commits `9a1233a` (resumable upload) and
   the class is clarified.
 
 ---
-
-## Recently closed
-
-For change-log purposes, removed sections:
-
-- §1 Dashboard API routes — closed by `250e124` (full /tenants/* port)
-- §2 Frontend orphaned calls — closed by §1 above
-- §3 Deployer lifecycle (teardown / reactivate / permanent-delete +
-  unregister + deleteDockerImage) — closed by `64837cf`. Reactivate's
-  cron-reschedule limitation closed by the follow-up that added
-  `cron_schedule` to `deployed_functions` and threaded it through
-  `getLatestDeployedVersionForApp` → `reactivateApp`.
-- §4 GCS files cleanup — closed by `64837cf` (`deleteObjectsBatch` +
-  wired into `permanentDeleteApp`).
-- §6 Tenant-schema lifecycle — **closed by per-app schema pivot**. Each
-  app now owns its own Postgres schema
-  (`tenant_<tenantIdHex>_app_<first16OfAppIdHex>`), derived via
-  deployer's `appSchemaName(tenantId, appId)`. Teardown is a single
-  `DROP SCHEMA CASCADE` (`dropAppSchema`) — no prefix-walking, no
-  `app_<hex>_` table-naming contract, no static-validator prefix rule.
-  The generator keeps emitting plain `CREATE TABLE foo` and it lands
-  at the correct per-app schema via `search_path`. Supersedes the
-  earlier Path C (`appTablePrefix` + `dropAppTables` from `64837cf`),
-  which has been removed.
-- §7 DB helpers (every helper the lifecycle / routes needed) — closed
-  by `7e8c3b2`.
-
----
-
-## Suggested next moves
-
-1. **Address §14 correctness items** before more handlers land — the
-   quota races and SDK semantic mismatches will bite when concurrent
-   traffic hits a real tenant.
-2. **§13 lifecycle test** — exercise the new teardown / reactivate /
-   permanent-delete sequence end-to-end against a stub Cloud Run + GCS.
-3. **§5 / §8 stay deferred** unless go-to-market changes (public
-   listing → §5 becomes a Shopify review blocker; charging merchants →
-   §8 becomes Tier 1).

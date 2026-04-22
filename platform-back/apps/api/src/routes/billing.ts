@@ -35,10 +35,10 @@ import {
 } from "../lib/shopify-billing.js";
 
 const DASHBOARD_URL = process.env["DASHBOARD_URL"] ?? "http://localhost:3000";
-// When disabled (default for custom apps), billing state is applied directly
-// without Shopify API calls. Set to "test" or "live" for a public/unlisted app.
-const SHOPIFY_BILLING_ENABLED =
-  (process.env["SHOPIFY_BILLING_MODE"] ?? "disabled") !== "disabled";
+// Read per-request so tests can flip it between cases.
+function isShopifyBillingEnabled(): boolean {
+  return (process.env["SHOPIFY_BILLING_MODE"] ?? "disabled") !== "disabled";
+}
 
 // ─── Body schemas ────────────────────────────────────────────────────────────
 
@@ -146,7 +146,7 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
         return reply.send({ confirmationUrl: null, plan: "free" });
       }
 
-      if (!SHOPIFY_BILLING_ENABLED) {
+      if (!isShopifyBillingEnabled()) {
         const planDef = PLANS[plan];
         const trialEndsAt =
           planDef && planDef.limits.trialDays > 0

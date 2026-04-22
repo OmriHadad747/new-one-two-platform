@@ -34,7 +34,7 @@ vi.mock("@platform-back/db", () => ({
   incrementUsage: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("./renderer.js", () => ({
+vi.mock("../renderer.js", () => ({
   renderEmail: vi.fn().mockReturnValue({
     subject: "Hello World",
     html: "<p>body</p>",
@@ -42,12 +42,12 @@ vi.mock("./renderer.js", () => ({
   }),
 }));
 
-vi.mock("./unsubscribe-token.js", () => ({
+vi.mock("../unsubscribe-token.js", () => ({
   signUnsubscribeToken: vi.fn().mockReturnValue("test-unsub-token"),
 }));
 
 import * as db from "@platform-back/db";
-import { sendEmail, QuotaExceededError } from "./sender.js";
+import { sendEmail, QuotaExceededError } from "../sender.js";
 
 const mockSuppressed = vi.mocked(db.isEmailSuppressed);
 const mockQuota = vi.mocked(db.checkUsageQuota);

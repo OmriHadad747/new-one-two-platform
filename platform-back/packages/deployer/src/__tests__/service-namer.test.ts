@@ -5,7 +5,7 @@ import {
   handlerSaEmail,
   cloudRunServiceName,
   dockerImageName,
-} from "./service-namer.js";
+} from "../service-namer.js";
 
 // MAX_SHOP_PREFIX_LEN = 30 - 2 (h-) - 1 (-) - 4 (digits) = 23
 

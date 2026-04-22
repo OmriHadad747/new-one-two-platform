@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateMigrationSql, makeIdempotent } from "./sql-validator.js";
+import { validateMigrationSql, makeIdempotent } from "../sql-validator.js";
 
 const VALID_SQL = `
 CREATE TABLE orders (

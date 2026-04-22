@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHmac } from "node:crypto";
-import { verifyShopifyAppProxy } from "./shopify-app-proxy.js";
+import { verifyShopifyAppProxy } from "../lib/shopify-app-proxy.js";
 
 const SECRET = "test-proxy-secret";
 

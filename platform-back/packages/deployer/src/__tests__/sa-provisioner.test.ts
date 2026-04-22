@@ -3,11 +3,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@platform-back/db", () => ({
   sql: vi.fn().mockResolvedValue([]),
 }));
-vi.mock("./iam-ops.js", () => ({
+vi.mock("../iam-ops.js", () => ({
   createServiceAccount: vi.fn(),
   grantCloudRunInvoker: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("./db-writer.js", () => ({
+vi.mock("../db-writer.js", () => ({
   writeHandlerSaEmail: vi.fn().mockResolvedValue(undefined),
   upsertDeployedFunction: vi.fn(),
 }));
@@ -16,13 +16,13 @@ vi.mock("@platform-back/logger", () => ({
 }));
 
 import { sql } from "@platform-back/db";
-import { createServiceAccount, grantCloudRunInvoker } from "./iam-ops.js";
-import { writeHandlerSaEmail } from "./db-writer.js";
+import { createServiceAccount, grantCloudRunInvoker } from "../iam-ops.js";
+import { writeHandlerSaEmail } from "../db-writer.js";
 import {
   nextHandlerSaCounter,
   provisionHandlerSa,
   grantPlatformBackInvokerOnHandler,
-} from "./sa-provisioner.js";
+} from "../sa-provisioner.js";
 
 const mockSql = vi.mocked(sql);
 const mockCreate = vi.mocked(createServiceAccount);

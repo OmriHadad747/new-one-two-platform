@@ -22,7 +22,10 @@ vi.mock("@platform-back/logger", () => ({
     error: vi.fn(),
     debug: vi.fn(),
   })),
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  logger: {
+    info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+  },
 }));
 
 import { resolveAppHandler } from "@platform-back/db";

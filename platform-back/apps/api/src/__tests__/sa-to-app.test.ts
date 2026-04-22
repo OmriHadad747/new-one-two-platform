@@ -10,7 +10,7 @@ import {
   resolveAppFromSaEmail,
   invalidateSaCache,
   clearSaCache,
-} from "./sa-to-app.js";
+} from "../lib/sa-to-app.js";
 
 const mockSql = vi.mocked(sql);
 

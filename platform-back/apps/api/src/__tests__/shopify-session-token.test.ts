@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHmac } from "node:crypto";
-import { verifyShopifySessionToken } from "./shopify-session-token.js";
+import { verifyShopifySessionToken } from "../lib/shopify-session-token.js";
 
 const CLIENT_ID = "test-client-id";
 const CLIENT_SECRET = "test-client-secret";
