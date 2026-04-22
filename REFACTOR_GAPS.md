@@ -30,15 +30,6 @@ Shopify requires the two redact webhooks to pass review.
 ---
 
 
-## 11. Widget / admin proxy
-
-Both `/widget/*` and `/admin/*` wildcard proxies are ported. Per-app
-Cloud Run means each call now routes to a different URL (resolved via
-`deployed_functions.function_url`) — the proxy logic handles that fine.
-
-No gaps identified.
-
----
 
 ## 12. Webhook gateway — `apps/webhook-gateway/`
 
