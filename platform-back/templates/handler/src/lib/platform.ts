@@ -205,8 +205,8 @@ async function uploadResumable(
   // surface both as PayloadTooLarge for caller simplicity.
   if (create.status === 400 || create.status === 413) {
     throw new PayloadTooLarge(
-      ((create.body as { limitBytes?: number }).limitBytes ??
-        RESUMABLE_THRESHOLD_BYTES * 20) as number,
+      (create.body as { limitBytes?: number }).limitBytes ??
+        RESUMABLE_UPLOAD_CAP_BYTES,
     );
   }
   if (create.status !== 200) {

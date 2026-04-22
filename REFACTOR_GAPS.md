@@ -66,21 +66,11 @@ These surfaced reviewing commits `9a1233a` (resumable upload) and
   for a permanent storage cap. Fix: a dedicated `StorageQuotaExceeded`
   class, or add `kind: "email" | "storage"` + a neutral message.
 
-- **SDK resumable path: `PayloadTooLarge` fallback is a magic number.**
-  The backend's Zod 400 for oversize returns `{ error:
-  "invalid_request", details }` without `limitBytes`, so the SDK
-  fallback (`25 MiB * 20 = 500 MiB-ish`) always fires. Fix either side.
-
 - **SDK resumable path has no rollback on PUT / finalize failure.** If
   the PUT to GCS fails after `create-upload-url` succeeded, the
   `pending` row holds quota until orphan-GC sweeps it (up to 2 h
   later). Fix: add `/cancel-upload` backend route + SDK try/finally
   that calls it on PUT/finalize error.
-
-- **Threshold boundary off-by-one.** SDK switches at `< 25 MiB`
-  (resumable for exact-25 MiB); backend inline route rejects
-  `> MAX_FILE_BYTES` (allows exact-25 MiB). Picks different paths for
-  the same exact-boundary buffer. Pick one boundary and align.
 
 ### Orphan GC
 
