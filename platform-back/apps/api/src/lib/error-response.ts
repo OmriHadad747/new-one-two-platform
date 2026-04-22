@@ -33,6 +33,8 @@ export const ErrorCode = {
   // Plan enforcement + integration preconditions.
   AppLimitReached: "app_limit_reached",
   ShopNotConnected: "shop_not_connected",
+
+  HmacInvalid: "hmac_invalid",
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

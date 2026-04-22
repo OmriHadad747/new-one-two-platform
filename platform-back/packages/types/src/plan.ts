@@ -3,6 +3,8 @@
 // checks). Full billing system port comes later.
 
 export type BillingPlan = "free" | "starter" | "growth" | "pro" | "internal";
+export type BillingInterval = "monthly" | "annual";
+export type SubscriptionStatus = "none" | "pending" | "active" | "frozen" | "cancelled";
 
 export interface PlanLimits {
   maxApps: number;

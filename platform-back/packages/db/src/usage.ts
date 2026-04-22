@@ -100,3 +100,31 @@ export async function checkUsageQuota(
 export async function trackAppExecution(tenantId: string): Promise<void> {
   await incrementUsage(tenantId, "app_executions");
 }
+
+export interface UsagePeriodSummary {
+  periodStart: string;
+  generations: number;
+  revisions: number;
+  appExecutions: number;
+  emailsSent: number;
+  smsSent: number;
+}
+
+export async function getUsageHistory(
+  tenantId: string,
+  periodCount = 6,
+): Promise<UsagePeriodSummary[]> {
+  return sql<UsagePeriodSummary[]>`
+    SELECT
+      period_start   AS "periodStart",
+      generations,
+      revisions,
+      app_executions AS "appExecutions",
+      emails_sent    AS "emailsSent",
+      sms_sent       AS "smsSent"
+    FROM usage_records
+    WHERE tenant_id = ${tenantId}
+    ORDER BY period_start DESC
+    LIMIT ${periodCount}
+  `;
+}

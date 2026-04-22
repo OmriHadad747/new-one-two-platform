@@ -165,8 +165,12 @@ export interface TenantRecord {
   shopifyAccessTokenSecretName: string | null;
   storefrontAccessTokenSecretName: string | null;
   billingPlan: BillingPlan;
+  billingInterval: "monthly" | "annual";
   subscriptionStatus: string;
+  shopifySubscriptionId: string | null;
   trialEndsAt: string | null;
+  billingCycleAnchor: string;
+  planUpdatedAt: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -189,8 +193,12 @@ export async function getTenantById(
       shopify_access_token_secret_name     AS "shopifyAccessTokenSecretName",
       storefront_access_token_secret_name  AS "storefrontAccessTokenSecretName",
       billing_plan                         AS "billingPlan",
+      billing_interval                     AS "billingInterval",
       subscription_status                  AS "subscriptionStatus",
+      shopify_subscription_id              AS "shopifySubscriptionId",
       trial_ends_at                        AS "trialEndsAt",
+      billing_cycle_anchor                 AS "billingCycleAnchor",
+      plan_updated_at                      AS "planUpdatedAt",
       created_at                           AS "createdAt",
       updated_at                           AS "updatedAt"
     FROM tenants

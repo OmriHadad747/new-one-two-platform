@@ -72,7 +72,7 @@ function buildServiceSpec(input: CloudRunDeployInput) {
     // INGRESS_TRAFFIC_INTERNAL blocks internet traffic at Google's network
     // edge before IAM even runs, giving us defence-in-depth on top of the
     // roles/run.invoker check enforced per handler (see sa-provisioner).
-    ingress: "INGRESS_TRAFFIC_INTERNAL" as const,
+    ingress: "INGRESS_TRAFFIC_INTERNAL_ONLY" as const,
   };
 }
 
@@ -97,11 +97,12 @@ export async function deployToCloudRun(
   let serviceUrl: string;
 
   try {
-    const [operation] = await client.updateService({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [operation] = await (client.updateService as any)({
       service: { name: cloudRunServicePath(input.appId), ...spec },
     });
-    const [service] = await operation.promise();
-    serviceUrl = service.uri ?? "";
+    const svc = await (operation as { promise(): Promise<{ uri?: string }> }).promise();
+    serviceUrl = svc.uri ?? "";
     logger.info(
       { appId: input.appId, serviceUrl },
       "Cloud Run service updated",
@@ -110,13 +111,14 @@ export async function deployToCloudRun(
     const code = (err as { code?: number }).code;
     if (code !== 5 /* NOT_FOUND */) throw err;
 
-    const [operation] = await client.createService({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [operation] = await (client.createService as any)({
       parent,
       serviceId: serviceName,
       service: spec,
     });
-    const [service] = await operation.promise();
-    serviceUrl = service.uri ?? "";
+    const svc = await (operation as { promise(): Promise<{ uri?: string }> }).promise();
+    serviceUrl = svc.uri ?? "";
     logger.info(
       { appId: input.appId, serviceUrl },
       "Cloud Run service created",
@@ -134,10 +136,11 @@ export async function deployToCloudRun(
 
 export async function deleteCloudRunService(appId: string): Promise<void> {
   try {
-    const [operation] = await client.deleteService({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [operation] = await (client.deleteService as any)({
       name: cloudRunServicePath(appId),
     });
-    await operation.promise();
+    await (operation as { promise(): Promise<unknown> }).promise();
     logger.info({ appId }, "Cloud Run service deleted");
   } catch (err: unknown) {
     const code = (err as { code?: number }).code;

@@ -90,8 +90,19 @@ export {
   getOrCreateUsageRecord,
   incrementUsage,
   checkUsageQuota,
+  getUsageHistory,
   type UsageCounter,
+  type UsagePeriodSummary,
 } from "./usage.js";
+export {
+  updateTenantBilling,
+  logBillingEvent,
+  getBillingEvents,
+  storeRevisionClassification,
+  getRevisionAnalytics,
+  type BillingEvent,
+  type RevisionAnalytics,
+} from "./billing.js";
 export {
   // tenant brand
   getTenantBrand,
