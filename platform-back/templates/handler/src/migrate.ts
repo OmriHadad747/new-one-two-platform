@@ -20,7 +20,7 @@ function required(name: string): string {
 
 const DATABASE_URL = required("DATABASE_URL");
 const TENANT_SCHEMA = required("TENANT_SCHEMA");
-if (!/^tenant_[a-z0-9_]{1,60}$/.test(TENANT_SCHEMA)) {
+if (!/^tenant_[0-9a-f]{32}_app_[0-9a-f]{16}$/.test(TENANT_SCHEMA)) {
   throw new Error(`FATAL: invalid TENANT_SCHEMA "${TENANT_SCHEMA}"`);
 }
 

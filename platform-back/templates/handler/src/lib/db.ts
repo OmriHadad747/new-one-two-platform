@@ -1,10 +1,11 @@
 import postgres from "postgres";
 
-// One shared Postgres, one schema per tenant
-// (tenant_<uuid>). The handler's role is granted USAGE on its own schema
-// only — RLS isn't the boundary here, role grants are. We pin search_path
-// at connection time so plain `SELECT * FROM widgets` lands in the right
-// schema without every query naming it explicitly.
+// One shared Postgres, one schema per app
+// (`tenant_<tenantIdHex>_app_<first16OfAppIdHex>`). The handler's role is
+// granted USAGE on its own schema only — RLS isn't the boundary here,
+// role grants are. We pin search_path at connection time so plain
+// `SELECT * FROM widgets` lands in the right schema without every query
+// naming it explicitly.
 
 function required(name: string): string {
   const v = process.env[name];
@@ -15,10 +16,11 @@ function required(name: string): string {
 const DATABASE_URL = required("DATABASE_URL");
 const TENANT_SCHEMA = required("TENANT_SCHEMA");
 
-// Light validation — schema name is user-controlled at deploy time, but
-// any deviation from the expected shape almost certainly means a wiring
-// bug we want to catch loudly rather than risk a search_path injection.
-if (!/^tenant_[a-z0-9_]{1,60}$/.test(TENANT_SCHEMA)) {
+// Shape validation — schema name comes from the deployer's appSchemaName
+// helper, which enforces the same regex. A mismatch here almost certainly
+// means a wiring bug (old-format env var, stale container) and we want to
+// crash loudly rather than risk a search_path injection.
+if (!/^tenant_[0-9a-f]{32}_app_[0-9a-f]{16}$/.test(TENANT_SCHEMA)) {
   throw new Error(
     `FATAL: TENANT_SCHEMA "${TENANT_SCHEMA}" does not match expected pattern`,
   );

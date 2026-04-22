@@ -19,7 +19,7 @@ import {
   unregisterShopifyWebhooks,
 } from "./webhook-registrar.js";
 import { scheduleAppCron, unscheduleAppCron } from "./cron-scheduler.js";
-import { dropAppTables } from "./migration-runner.js";
+import { appSchemaName, dropAppSchema } from "./migration-runner.js";
 
 // App lifecycle — the teardown / reactivate / permanent-delete side of
 // the deployer. The forward path (startDeploy in orchestrator.ts) builds
@@ -172,7 +172,7 @@ export async function reactivateApp(
   //    safe to call even if the schedule was never unscheduled.
   if (latest.cronSchedule) {
     try {
-      const tenantSchema = `tenant_${tenantId.replace(/-/g, "_")}`;
+      const tenantSchema = appSchemaName(tenantId, appId);
       await scheduleAppCron({
         appId,
         tenantSchema,
@@ -283,26 +283,25 @@ export async function permanentDeleteApp(
     logger.warn({ err, appId }, "permanentDeleteApp: GCS batch delete failed");
   }
 
-  // 7. Drop every tenant-schema object this app created. Path C
-  //    (REFACTOR_GAPS §6): the generator prefixes every table / view /
-  //    sequence with `app_<appIdNoHyphens>_`, and dropAppTables walks
-  //    pg_class for matches and drops them CASCADE. Sibling apps under
-  //    the same tenant schema are untouched by construction — their
-  //    prefix hashes differently. Non-fatal: a failure here leaves
-  //    orphan tables but doesn't block the row delete.
+  // 7. Drop the app's Postgres schema (atomic DROP SCHEMA CASCADE).
+  //    Each app owns its own schema (see appSchemaName) so teardown is
+  //    one statement — every table, view, sequence, cron_queue row, and
+  //    processed_webhooks row goes with it. Sibling apps live in
+  //    different schemas, untouched by construction. Non-fatal: a
+  //    failure here leaves the schema in place but doesn't block the
+  //    row delete.
   try {
-    const tenantSchema = `tenant_${tenantId.replace(/-/g, "_")}`;
-    const { droppedTables } = await dropAppTables({
+    const tenantSchema = appSchemaName(tenantId, appId);
+    const { dropped } = await dropAppSchema({
       tenantSchema,
-      appId,
       databaseUrl: requireEnv("DATABASE_URL"),
     });
     logger.info(
-      { tenantId, appId, count: droppedTables.length },
-      "permanentDeleteApp: per-app tables dropped",
+      { tenantId, appId, schema: tenantSchema, dropped },
+      "permanentDeleteApp: app schema dropped",
     );
   } catch (err) {
-    logger.warn({ err, appId }, "permanentDeleteApp: dropAppTables failed");
+    logger.warn({ err, appId }, "permanentDeleteApp: dropAppSchema failed");
   }
 
   // 8. Hard-delete the apps row. FK-cascades handle files, invocation
@@ -334,7 +333,7 @@ function buildBaselineEnv(params: {
     TENANT_ID: params.tenantId,
     APP_ID: params.appId,
     SHOP_DOMAIN: params.shopDomain,
-    TENANT_SCHEMA: `tenant_${params.tenantId.replace(/-/g, "_")}`,
+    TENANT_SCHEMA: appSchemaName(params.tenantId, params.appId),
     DATABASE_URL: requireEnv("DATABASE_URL"),
     PLATFORM_URL: requireEnv("PLATFORM_URL"),
     EXPECTED_AUDIENCE: requireEnv("PLATFORM_URL"),

@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { z } from "zod";
 import { getAppByIdUnsafe, getAppSlugs } from "@platform-back/db";
 import {
+  appSchemaName,
   getDeployJob,
   startDeploy,
   subscribeDeployJob,
@@ -104,9 +105,9 @@ async function deployHandler(
       );
   }
 
-  // Tenant schema name is derived from the tenant id — UUIDs include
-  // hyphens which are illegal in Postgres identifiers, so we substitute.
-  const tenantSchema = `tenant_${appRecord.tenantId.replace(/-/g, "_")}`;
+  // Per-app Postgres schema. Tenant-app isolation is schema-level: one
+  // schema per app means teardown is a single DROP SCHEMA CASCADE.
+  const tenantSchema = appSchemaName(appRecord.tenantId, appId);
 
   try {
     const jobId = await startDeploy({

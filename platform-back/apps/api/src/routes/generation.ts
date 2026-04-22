@@ -27,7 +27,7 @@ import {
   listGenerationsForApp,
   markGenerationDeployed,
 } from "@platform-back/db";
-import { startDeploy } from "@platform-back/deployer";
+import { appSchemaName, startDeploy } from "@platform-back/deployer";
 import { logger } from "@platform-back/logger";
 import { publishGenerationRequest } from "../pubsub/publisher.js";
 import { registerProgressListener } from "../pubsub/progress-subscriber.js";
@@ -237,7 +237,7 @@ async function approveHandler(
       )
     : [];
 
-  const tenantSchema = `tenant_${appRecord.tenantId.replace(/-/g, "_")}`;
+  const tenantSchema = appSchemaName(appRecord.tenantId, row.appId);
   const deployJobId = await startDeploy({
     appId: row.appId,
     appName: `app ${row.appId}`,

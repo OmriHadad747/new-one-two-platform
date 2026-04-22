@@ -29,41 +29,6 @@ Shopify requires the two redact webhooks to pass review.
 
 ---
 
-## 6. Path C generator-side enforcement
-
-The deployer-side of Path C (`dropAppTables` walking `pg_class` for the
-app's prefix, wired into `permanentDeleteApp`) landed in `64837cf`.
-What's NOT yet done:
-
-- **Generator must prefix every tenant-schema object** with
-  `app_<sanitised_appId>_` in the migration SQL it emits, AND in any
-  query the handler runs against those tables.
-- **Static validator must enforce the prefix** before the bundle is
-  published — without this, an un-prefixed `CREATE TABLE foo` slips
-  through and `dropAppTables` silently leaves it behind on permanent
-  delete.
-
-Where this needs to land (Python, `platform-ai/`):
-- `subagents/static_validation.py` `validate_migration_artifact` —
-  add a check that every `CREATE TABLE / INDEX / VIEW / SEQUENCE` name
-  starts with the app's prefix. Function signature needs `app_id`.
-- `subagents/prompts/core/migration.py` — teach the prefix rule.
-- `subagents/base.py` — add `app_id` to `CodegenContext`; wire it
-  through every place that constructs the context.
-- Handler prompt (`subagents/prompts/topics/handler.py`) — table
-  references in queries must use the same prefix.
-
-The deployer's `appTablePrefix(appId)` in
-`@platform-back/deployer/src/migration-runner.ts` is the canonical
-derivation; the Python validator must mirror it exactly:
-`app_${appId.replace(/-/g, '')}_`.
-
-Until this lands: generated apps that survive permanent-delete with
-un-prefixed tables will leak rows in the shared tenant schema. Not a
-correctness bug for runtime traffic; only a teardown completeness bug.
-
----
-
 ## 8. Billing plumbing
 
 Everything under `/billing/*` is gone on NEW. `docs/BILLING.md` describes
@@ -288,9 +253,16 @@ For change-log purposes, removed sections:
   `getLatestDeployedVersionForApp` → `reactivateApp`.
 - §4 GCS files cleanup — closed by `64837cf` (`deleteObjectsBatch` +
   wired into `permanentDeleteApp`).
-- §6 Tenant-schema lifecycle (deployer side) — closed by `64837cf`
-  (Path C: `appTablePrefix` + `dropAppTables`). Generator-side
-  enforcement still pending — see §6 above.
+- §6 Tenant-schema lifecycle — **closed by per-app schema pivot**. Each
+  app now owns its own Postgres schema
+  (`tenant_<tenantIdHex>_app_<first16OfAppIdHex>`), derived via
+  deployer's `appSchemaName(tenantId, appId)`. Teardown is a single
+  `DROP SCHEMA CASCADE` (`dropAppSchema`) — no prefix-walking, no
+  `app_<hex>_` table-naming contract, no static-validator prefix rule.
+  The generator keeps emitting plain `CREATE TABLE foo` and it lands
+  at the correct per-app schema via `search_path`. Supersedes the
+  earlier Path C (`appTablePrefix` + `dropAppTables` from `64837cf`),
+  which has been removed.
 - §7 DB helpers (every helper the lifecycle / routes needed) — closed
   by `7e8c3b2`.
 
@@ -298,14 +270,11 @@ For change-log purposes, removed sections:
 
 ## Suggested next moves
 
-1. **Close §6 generator side** — the deployer's `dropAppTables` is a
-   no-op until generated migrations and handler queries actually use
-   the prefix. Without this, Path C is half-built.
-2. **Address §14 correctness items** before more handlers land — the
+1. **Address §14 correctness items** before more handlers land — the
    quota races and SDK semantic mismatches will bite when concurrent
    traffic hits a real tenant.
-3. **§13 lifecycle test** — exercise the new teardown / reactivate /
+2. **§13 lifecycle test** — exercise the new teardown / reactivate /
    permanent-delete sequence end-to-end against a stub Cloud Run + GCS.
-4. **§5 / §8 stay deferred** unless go-to-market changes (public
+3. **§5 / §8 stay deferred** unless go-to-market changes (public
    listing → §5 becomes a Shopify review blocker; charging merchants →
    §8 becomes Tier 1).

@@ -19,9 +19,12 @@ import {
   unscheduleAppCron,
 } from "./cron-scheduler.js";
 
+// Shape: tenant_<32 hex>_app_<16 hex> — mirrors migration-runner's
+// appSchemaName output. Loose shapes now throw.
 const VALID_INPUT = {
   appId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  tenantSchema: "tenant_a1b2c3d4_e5f6_7890_abcd_ef1234567890",
+  tenantSchema:
+    "tenant_11111111222222223333333344444444_app_a1b2c3d4e5f67890",
   cronExpression: "*/5 * * * *",
   databaseUrl: "postgresql://user:pass@localhost/db",
 };

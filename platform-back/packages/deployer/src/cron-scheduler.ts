@@ -25,7 +25,10 @@ import { logger } from "@platform-back/logger";
 
 // ─── Validation ──────────────────────────────────────────────────────────────
 
-const TENANT_SCHEMA_RE = /^tenant_[a-z0-9_]{1,60}$/;
+// Per-app schema: `tenant_<tenantIdHex>_app_<first16OfAppIdHex>`. Mirrors
+// migration-runner's appSchemaName derivation so mismatches throw here
+// rather than silently scheduling against the wrong schema.
+const TENANT_SCHEMA_RE = /^tenant_[0-9a-f]{32}_app_[0-9a-f]{16}$/;
 const NOTIFY_CHANNEL_RE = /^cron_tick_[a-z0-9_]{1,80}$/;
 // pg_cron job names can't contain spaces or start with a digit. We
 // synthesise them from appIds, which are UUIDs — replace hyphens with
@@ -64,7 +67,7 @@ function openPlatformConn(databaseUrl: string) {
 export interface ScheduleAppCronInput {
   /** UUID of the app. Used to derive the pg_cron job name + LISTEN channel. */
   appId: string;
-  /** Tenant's Postgres schema, `tenant_<uuid>`. Where cron_queue lives. */
+  /** Per-app Postgres schema from appSchemaName. Where cron_queue lives. */
   tenantSchema: string;
   /** Cron expression, 5 or 6 fields. Validated; malformed → throw. */
   cronExpression: string;

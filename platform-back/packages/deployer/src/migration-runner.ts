@@ -25,12 +25,47 @@ import { makeIdempotent, validateMigrationSql } from "./sql-validator.js";
 // 0001_processed_webhooks.sql) are hand-written by us and skip the
 // gate; they're trusted by construction.
 
-const TENANT_SCHEMA_RE = /^tenant_[a-z0-9_]{1,60}$/;
+// Per-app schema format: `tenant_<tenantIdHex>_app_<first16OfAppIdHex>`.
+// 5 + 32 + 5 + 16 = 58 chars, comfortably under Postgres' 63-char identifier
+// limit. Both UUID halves are lowercased hex with hyphens stripped. Derived
+// via `appSchemaName(tenantId, appId)` — the single canonical builder.
+const TENANT_SCHEMA_RE = /^tenant_[0-9a-f]{32}_app_[0-9a-f]{16}$/;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Canonical per-app schema name. Every app gets its own Postgres schema so
+ * teardown is a single `DROP SCHEMA CASCADE` — no prefix-walking, no leak
+ * risk for un-prefixed generator output, no cross-app visibility for
+ * sibling apps under the same tenant.
+ *
+ * Used by routes, the orchestrator's TENANT_SCHEMA env, lifecycle's
+ * teardown/reactivate, and (indirectly) the handler's db.ts which sets
+ * search_path from the env var.
+ */
+export function appSchemaName(tenantId: string, appId: string): string {
+  if (!UUID_RE.test(tenantId)) {
+    throw new Error(`appSchemaName: tenantId "${tenantId}" is not a UUID`);
+  }
+  if (!UUID_RE.test(appId)) {
+    throw new Error(`appSchemaName: appId "${appId}" is not a UUID`);
+  }
+  const tenantHex = tenantId.replace(/-/g, "").toLowerCase();
+  const appHex = appId.replace(/-/g, "").toLowerCase().slice(0, 16);
+  const name = `tenant_${tenantHex}_app_${appHex}`;
+  // Defence-in-depth: the regex is the authoritative shape check for every
+  // DB call site, so assert the builder output matches.
+  if (!TENANT_SCHEMA_RE.test(name)) {
+    throw new Error(`appSchemaName: derived "${name}" is malformed`);
+  }
+  return name;
+}
 
 export interface RunMigrationsInput {
   /** Absolute path to the assembled build context (contains migrations/). */
   buildContextDir: string;
-  /** Tenant DB schema name — `tenant_<uuid>`. Created here if missing. */
+  /** Per-app Postgres schema — see `appSchemaName`. Created here if missing. */
   tenantSchema: string;
   /** Postgres connection string. Same DATABASE_URL the handler will use. */
   databaseUrl: string;
@@ -154,115 +189,64 @@ async function loadMigrations(
   );
 }
 
-// ─── Path C: per-app table prefix ────────────────────────────────────────────
+// ─── Per-app schema teardown ─────────────────────────────────────────────────
 //
-// Generated migrations MUST prefix every created object with
-// `app_<appIdNoHyphens>_`. Permanent-delete drops everything in the
-// tenant schema that matches the prefix. No matched rollback SQL is
-// persisted — the prefix convention is self-documenting.
-//
-// Static validation (platform-ai) enforces the convention on generator
-// output. The deployer trusts it at runtime: if the generator emitted
-// an unprefixed table, dropAppTables won't find it and it'll leak. That
-// leak is a bug in validation, not in deploy-time behaviour.
+// Each app owns its own Postgres schema (see `appSchemaName`). Permanent
+// delete is a single `DROP SCHEMA CASCADE` — atomic, captures every object
+// the generator ever created (tables, views, sequences, cron_queue,
+// processed_webhooks), and leaves no orphan rows even if the generator
+// skipped a naming convention. Sibling apps live in different schemas by
+// construction, so there's no cross-app collateral.
 
-const APP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/**
- * The required per-app table-name prefix. Exported so the static
- * validator and generator prompt can use the exact same derivation.
- */
-export function appTablePrefix(appId: string): string {
-  if (!APP_ID_RE.test(appId)) {
-    throw new Error(`appTablePrefix: "${appId}" is not a UUID`);
-  }
-  return `app_${appId.replace(/-/g, "")}_`;
-}
-
-export interface DropAppTablesInput {
+export interface DropAppSchemaInput {
+  /** Per-app schema name from `appSchemaName(tenantId, appId)`. */
   tenantSchema: string;
-  appId: string;
   databaseUrl: string;
 }
 
 /**
- * Drops every object in `tenantSchema` whose name starts with the
- * app's prefix — tables first, then views, sequences, functions. Uses
- * `DROP ... CASCADE` so constraints across the dropped set (FKs,
- * default-generated sequences) don't block the teardown. Siblings
- * under the same schema are untouched by construction: their prefix
- * is a different 32-hex string.
+ * Drops the app's entire Postgres schema via `DROP SCHEMA ... CASCADE`.
  *
- * Called by permanentDeleteApp. Safe to re-run — each object is
- * already-dropped idempotent via IF EXISTS.
+ * Idempotent: `IF EXISTS` makes a second call a no-op. Safe to call even
+ * when the app never applied any migrations (schema may not exist yet).
+ * Called by permanentDeleteApp.
  */
-export async function dropAppTables(
-  input: DropAppTablesInput,
-): Promise<{ droppedTables: string[] }> {
+export async function dropAppSchema(
+  input: DropAppSchemaInput,
+): Promise<{ dropped: boolean }> {
   if (!TENANT_SCHEMA_RE.test(input.tenantSchema)) {
     throw new Error(
-      `dropAppTables: refusing schema "${input.tenantSchema}" — must match ${TENANT_SCHEMA_RE}`,
+      `dropAppSchema: refusing schema "${input.tenantSchema}" — must match ${TENANT_SCHEMA_RE}`,
     );
   }
-  const prefix = appTablePrefix(input.appId);
-  const matchPattern = `${prefix}%`;
-
   const sql = postgres(input.databaseUrl, {
     max: 1,
     prepare: false,
     onnotice: () => {},
   });
   try {
-    // Collect every object under the app's prefix. pg_class is the
-    // source of truth — covers tables, views, sequences, materialised
-    // views, foreign tables. We don't need to distinguish kinds because
-    // DROP TABLE IF EXISTS / DROP VIEW IF EXISTS are both safe no-ops
-    // for the wrong kind.
-    const rows = await sql<Array<{ relname: string; relkind: string }>>`
-      SELECT c.relname, c.relkind
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname = ${input.tenantSchema}
-         AND c.relname LIKE ${matchPattern}
-         AND c.relkind IN ('r', 'v', 'm', 'S', 'f')
+    // Identifier substitution is safe: schema is regex-gated against the
+    // fixed `tenant_<hex>_app_<hex>` shape, no attacker-controlled chars.
+    // Check existence first so we can surface `dropped: false` to the
+    // caller for clean logging on never-migrated apps.
+    const rows = await sql<Array<{ exists: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_namespace WHERE nspname = ${input.tenantSchema}
+      ) AS exists
     `;
-    const droppedTables: string[] = [];
-    if (rows.length === 0) {
+    if (!rows[0]?.exists) {
       logger.info(
-        { schema: input.tenantSchema, prefix, droppedTables: [] },
-        "dropAppTables: no matching objects",
+        { schema: input.tenantSchema },
+        "dropAppSchema: schema did not exist — nothing to drop",
       );
-      return { droppedTables };
+      return { dropped: false };
     }
-
-    // Drop in one transaction so cross-table FK references either all
-    // go together or none do (caller treats failure as non-fatal).
-    await sql.begin(async (tx) => {
-      for (const row of rows) {
-        const kind = row.relkind;
-        const name = row.relname;
-        // Identifier substitution is safe here: schema is regex-gated and
-        // name came from pg_class for THIS schema (not attacker input).
-        const stmt =
-          kind === "v"
-            ? `DROP VIEW IF EXISTS ${input.tenantSchema}."${name}" CASCADE`
-            : kind === "m"
-              ? `DROP MATERIALIZED VIEW IF EXISTS ${input.tenantSchema}."${name}" CASCADE`
-              : kind === "S"
-                ? `DROP SEQUENCE IF EXISTS ${input.tenantSchema}."${name}" CASCADE`
-                : kind === "f"
-                  ? `DROP FOREIGN TABLE IF EXISTS ${input.tenantSchema}."${name}" CASCADE`
-                  : `DROP TABLE IF EXISTS ${input.tenantSchema}."${name}" CASCADE`;
-        await tx.unsafe(stmt);
-        droppedTables.push(name);
-      }
-    });
-
+    await sql.unsafe(`DROP SCHEMA IF EXISTS ${input.tenantSchema} CASCADE`);
     logger.info(
-      { schema: input.tenantSchema, prefix, count: droppedTables.length },
-      "dropAppTables: done",
+      { schema: input.tenantSchema },
+      "dropAppSchema: schema dropped",
     );
-    return { droppedTables };
+    return { dropped: true };
   } finally {
     await sql.end({ timeout: 5 });
   }

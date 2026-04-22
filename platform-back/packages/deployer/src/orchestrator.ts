@@ -66,7 +66,7 @@ export interface StartDeployInput {
   appVersionId: string;
   tenantId: string;
   shopDomain: string;
-  /** tenant_<uuid> Postgres schema. */
+  /** Per-app Postgres schema — see deployer's `appSchemaName`. */
   tenantSchema: string;
   /** Bundle of generator-emitted files slotted on top of handler-template. */
   generatedFiles: GeneratedFile[];

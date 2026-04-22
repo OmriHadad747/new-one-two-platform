@@ -57,7 +57,10 @@ export {
 
 export {
   runMigrations,
+  appSchemaName,
+  dropAppSchema,
   type RunMigrationsInput,
+  type DropAppSchemaInput,
 } from "./migration-runner.js";
 
 export {
@@ -91,12 +94,6 @@ export {
   type RegisterWebhooksInput,
   type UnregisterShopifyWebhooksInput,
 } from "./webhook-registrar.js";
-
-export {
-  dropAppTables,
-  appTablePrefix,
-  type DropAppTablesInput,
-} from "./migration-runner.js";
 
 export {
   deleteDockerImage,

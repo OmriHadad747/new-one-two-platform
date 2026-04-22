@@ -5,7 +5,7 @@ import {
   getGenerationByJobId,
   markGenerationDeployed,
 } from "@platform-back/db";
-import { startDeploy } from "@platform-back/deployer";
+import { appSchemaName, startDeploy } from "@platform-back/deployer";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import { requireTenant } from "../plugins/auth.js";
 
@@ -169,8 +169,8 @@ async function deployGenerationHandler(
   const appVersionId = jobId;
   const appVersion = `gen-${jobId.slice(0, 8)}`;
 
-  // Derive tenant schema the same way platform-back's deploy route does.
-  const tenantSchema = `tenant_${appRecord.tenantId.replace(/-/g, "_")}`;
+  // Per-app Postgres schema — isolation lives at the schema level.
+  const tenantSchema = appSchemaName(appRecord.tenantId, appId);
 
   try {
     const deployJobId = await startDeploy({
