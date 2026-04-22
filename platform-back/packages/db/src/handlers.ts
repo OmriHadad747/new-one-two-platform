@@ -365,6 +365,8 @@ export interface LatestDeployedVersion {
   imageName: string | null; // resolved by caller via dockerImageName(appId, semver)
   semver: string;
   webhookTopics: string[];
+  /** Cron expression captured at deploy; null when the app has no tick. */
+  cronSchedule: string | null;
 }
 
 /**
@@ -381,6 +383,7 @@ export async function getLatestDeployedVersionForApp(
       deployedFunctionId: string;
       appVersionId: string;
       semver: string;
+      cronSchedule: string | null;
       webhookTopics: string[];
     }>
   >`
@@ -388,6 +391,7 @@ export async function getLatestDeployedVersionForApp(
       df.id              AS "deployedFunctionId",
       df.app_version_id  AS "appVersionId",
       av.semver          AS "semver",
+      df.cron_schedule   AS "cronSchedule",
       COALESCE(
         ARRAY(
           SELECT DISTINCT topic
@@ -410,6 +414,7 @@ export async function getLatestDeployedVersionForApp(
     imageName: null,
     semver: row.semver,
     webhookTopics: row.webhookTopics ?? [],
+    cronSchedule: row.cronSchedule,
   };
 }
 

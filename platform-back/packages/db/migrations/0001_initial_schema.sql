@@ -176,6 +176,10 @@ CREATE TABLE deployed_functions (
   memory_mb            INTEGER NOT NULL DEFAULT 256,
   timeout_sec          INTEGER NOT NULL DEFAULT 30,
   env_vars_encrypted   BYTEA NOT NULL DEFAULT '',
+  -- Cron expression for this deploy. Null when the app has no cron tick.
+  -- Captured here so reactivateApp can re-assert pg_cron without
+  -- re-reading the generation bundle.
+  cron_schedule        TEXT,
   deployed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   is_active            BOOLEAN NOT NULL DEFAULT TRUE,
   CONSTRAINT memory_range CHECK (memory_mb BETWEEN 128 AND 3008),

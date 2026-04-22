@@ -275,6 +275,7 @@ async function runDeploy(
         runtime: "nodejs20",
         memoryMb: 256,
         timeoutSec: 30,
+        cronSchedule: input.cronSchedule ?? null,
       }),
     );
 

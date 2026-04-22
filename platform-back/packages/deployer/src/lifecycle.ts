@@ -18,7 +18,7 @@ import {
   registerWebhooks,
   unregisterShopifyWebhooks,
 } from "./webhook-registrar.js";
-import { unscheduleAppCron } from "./cron-scheduler.js";
+import { scheduleAppCron, unscheduleAppCron } from "./cron-scheduler.js";
 import { dropAppTables } from "./migration-runner.js";
 
 // App lifecycle — the teardown / reactivate / permanent-delete side of
@@ -165,17 +165,28 @@ export async function reactivateApp(
     }
   }
 
-  // 3. Re-schedule pg_cron if this app has a schedule. We don't have the
-  //    cron expression on latest — scheduleAppCron is idempotent against
-  //    the job name, so a redeploy of startDeploy would re-assert it.
-  //    For reactivation of a cron app without redeploying: caller needs
-  //    the expression. Left as a follow-up; for MVP, cron apps should
-  //    rely on a full redeploy rather than reactivate. Logged so the
-  //    gap is discoverable.
-  logger.info(
-    { appId },
-    "reactivateApp: cron schedule NOT re-asserted — redeploy the app to restore cron",
-  );
+  // 3. Re-assert the pg_cron tick when the latest deploy declared one.
+  //    deployed_functions.cron_schedule is captured at deploy time so
+  //    reactivation can recover it without re-reading the generation
+  //    bundle. scheduleAppCron is idempotent on the per-app job name —
+  //    safe to call even if the schedule was never unscheduled.
+  if (latest.cronSchedule) {
+    try {
+      const tenantSchema = `tenant_${tenantId.replace(/-/g, "_")}`;
+      await scheduleAppCron({
+        appId,
+        tenantSchema,
+        cronExpression: latest.cronSchedule,
+        databaseUrl: requireEnv("DATABASE_URL"),
+      });
+      logger.info(
+        { appId, cronSchedule: latest.cronSchedule },
+        "reactivateApp: cron re-asserted",
+      );
+    } catch (err) {
+      logger.warn({ err, appId }, "reactivateApp: cron re-assert failed");
+    }
+  }
 
   return { functionUrl };
 }

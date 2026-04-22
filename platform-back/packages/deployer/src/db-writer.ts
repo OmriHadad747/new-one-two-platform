@@ -28,6 +28,12 @@ export interface UpsertDeployedFunctionInput {
   runtime: "nodejs20" | "nodejs18";
   memoryMb: number;
   timeoutSec: number;
+  /**
+   * Cron expression captured from the architect plan. Null when the
+   * app declares no cron tick. Stored so reactivateApp can re-assert
+   * pg_cron without re-reading the generation bundle.
+   */
+  cronSchedule?: string | null;
 }
 
 /**
@@ -47,10 +53,11 @@ export async function upsertDeployedFunction(
     const rows = await tx<Array<{ id: string }>>`
       INSERT INTO deployed_functions (
         app_version_id, app_id, tenant_id, function_url,
-        runtime, memory_mb, timeout_sec, is_active
+        runtime, memory_mb, timeout_sec, cron_schedule, is_active
       ) VALUES (
         ${input.appVersionId}, ${input.appId}, ${input.tenantId}, ${input.functionUrl},
-        ${input.runtime}, ${input.memoryMb}, ${input.timeoutSec}, TRUE
+        ${input.runtime}, ${input.memoryMb}, ${input.timeoutSec},
+        ${input.cronSchedule ?? null}, TRUE
       )
       RETURNING id
     `;
