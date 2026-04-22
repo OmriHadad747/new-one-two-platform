@@ -167,11 +167,14 @@ atomicity across multiple statements, use `sql.begin(tx => {...})`:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PLATFORM SDK — `platform` from ../lib/platform.js:
 
-  import { platform, QuotaExceeded } from "../lib/platform.js";
+  import { platform, QuotaExceeded, PayloadTooLarge } from "../lib/platform.js";
 
 Use `platform.*` (and ONLY this) to reach platform-back `/services/*`
 endpoints. It mints a Google OIDC ID token automatically; you do NOT need
 to include tenantId or appId in the call.
+
+QuotaExceeded has a `kind` field: `"email"` (monthly counter, check
+`resetsAt`) or `"storage"` (permanent cap, `resetsAt` is null).
 
 AVAILABLE METHODS:
 
@@ -181,7 +184,7 @@ AVAILABLE METHODS:
       { ok: true; delivered: true; deliveryId: string }
       { ok: true; delivered: false; reason: "suppressed" | "missing_config" }
       { ok: true; delivered: false; reason: "provider_failed" }
-    throws QuotaExceeded when the monthly quota is exceeded
+    throws QuotaExceeded (kind="email") when the monthly quota is exceeded
 
   platform.email.sendBatch(items)
     items:  EmailSendInput[]

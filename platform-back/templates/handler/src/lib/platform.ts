@@ -4,9 +4,16 @@ export class QuotaExceeded extends Error {
   constructor(
     public readonly limit: number,
     public readonly current: number,
+    /** Non-null for email (resets each billing period); null for storage (permanent cap). */
     public readonly resetsAt: string | null,
+    /** Distinguishes email (monthly counter) from storage (cumulative cap). */
+    public readonly kind: "email" | "storage" = "email",
   ) {
-    super(`Monthly quota exceeded (${limit})`);
+    super(
+      kind === "storage"
+        ? `Storage quota exceeded (${limit} bytes)`
+        : `Monthly quota exceeded (${limit})`,
+    );
     this.name = "QuotaExceeded";
   }
 }
@@ -156,9 +163,7 @@ async function uploadInline(
   }
   if (status === 429) {
     const e = resp as { usedBytes: number; limitBytes: number };
-    // Storage quota is long-lived (monthly-ish), not hourly like email —
-    // reuse the same QuotaExceeded class with resetsAt=null.
-    throw new QuotaExceeded(e.limitBytes, e.usedBytes, null);
+    throw new QuotaExceeded(e.limitBytes, e.usedBytes, null, "storage");
   }
   if (status >= 500) {
     // Platform / GCS transient. Surface as a thrown error; callers that
@@ -221,32 +226,46 @@ async function uploadResumable(
     requiredHeaders: Record<string, string>;
   };
 
-  // 2. PUT bytes straight to GCS. requiredHeaders MUST be echoed —
-  //    the signed URL was minted with x-goog-content-length-range, and
-  //    GCS rejects the PUT without the matching header.
-  const putRes = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: requiredHeaders,
-    body: buf,
-  });
-  if (!putRes.ok) {
-    throw new Error(
-      `platform.files.upload (resumable PUT): GCS returned ${putRes.status}`,
-    );
-  }
+  // Steps 2+3 are wrapped in a try/finally so a PUT or finalize failure
+  // immediately releases the quota reservation via cancel-upload instead
+  // of leaving the pending row for the 2-hour orphan-GC window.
+  try {
+    // 2. PUT bytes straight to GCS. requiredHeaders MUST be echoed —
+    //    the signed URL was minted with x-goog-content-length-range, and
+    //    GCS rejects the PUT without the matching header.
+    const putRes = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: requiredHeaders,
+      body: buf,
+    });
+    if (!putRes.ok) {
+      throw new Error(
+        `platform.files.upload (resumable PUT): GCS returned ${putRes.status}`,
+      );
+    }
 
-  // 3. Finalize — reconciles actual size, flips row to 'active',
-  //    returns the same shape as the inline path.
-  const finalize = await callPlatformService<
-    FileUploadResult | { error: string }
-  >({
-    path: "/services/files/finalize-upload",
-    body: { fileId },
-  });
-  if (finalize.status === 200) return finalize.body as FileUploadResult;
-  throw new Error(
-    `platform.files.upload (resumable finalize): unexpected status ${finalize.status} (${JSON.stringify(finalize.body)})`,
-  );
+    // 3. Finalize — reconciles actual size, flips row to 'active',
+    //    returns the same shape as the inline path.
+    const finalize = await callPlatformService<
+      FileUploadResult | { error: string }
+    >({
+      path: "/services/files/finalize-upload",
+      body: { fileId },
+    });
+    if (finalize.status === 200) return finalize.body as FileUploadResult;
+    throw new Error(
+      `platform.files.upload (resumable finalize): unexpected status ${finalize.status} (${JSON.stringify(finalize.body)})`,
+    );
+  } catch (err) {
+    // Best-effort cancel: releases quota reservation immediately.
+    // Ignore cancel errors — the upload already failed; caller gets the
+    // original error regardless.
+    await callPlatformService({
+      path: "/services/files/cancel-upload",
+      body: { fileId },
+    }).catch(() => undefined);
+    throw err;
+  }
 }
 
 export interface FileSignReadUrlInput {

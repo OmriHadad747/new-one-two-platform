@@ -115,6 +115,10 @@ export async function insertPendingFile(
  *
  * Scoped to (fileId, tenantId, appId) so a handler can't finalize a
  * file it doesn't own even if the id is somehow exposed.
+ *
+ * Uses a per-file advisory lock so two concurrent finalize calls
+ * (e.g. a retry race) are serialized — only one runs the UPDATE
+ * at a time, and the second becomes an idempotent re-flip.
  */
 export async function finalizeFile(
   fileId: string,
@@ -122,19 +126,25 @@ export async function finalizeFile(
   appId: string,
   actualSizeBytes: number,
 ): Promise<FileRecord | null> {
-  const rows = await sql<FileRecord[]>`
-    UPDATE files
-       SET status = 'active',
-           size_bytes = ${actualSizeBytes}
-     WHERE id = ${fileId}
-       AND tenant_id = ${tenantId}
-       AND app_id = ${appId}
-       AND status IN ('pending', 'active')
-    RETURNING
-      id, tenant_id AS "tenantId", app_id AS "appId",
-      name, mime_type AS "mimeType", size_bytes AS "sizeBytes",
-      gcs_object AS "gcsObject", status, created_at AS "createdAt"
-  `;
+  const rows = await sql.begin(async (tx) => {
+    // Per-file lock — serializes concurrent finalize calls for the same
+    // upload. hashtext maps the UUID string to an int4; abs keeps it
+    // positive. Transaction-scoped, auto-released on commit.
+    await tx`SELECT pg_advisory_xact_lock(abs(hashtext(${fileId})))`;
+    return tx<FileRecord[]>`
+      UPDATE files
+         SET status = 'active',
+             size_bytes = ${actualSizeBytes}
+       WHERE id = ${fileId}
+         AND tenant_id = ${tenantId}
+         AND app_id = ${appId}
+         AND status IN ('pending', 'active')
+      RETURNING
+        id, tenant_id AS "tenantId", app_id AS "appId",
+        name, mime_type AS "mimeType", size_bytes AS "sizeBytes",
+        gcs_object AS "gcsObject", status, created_at AS "createdAt"
+    `;
+  });
   return rows[0] ?? null;
 }
 

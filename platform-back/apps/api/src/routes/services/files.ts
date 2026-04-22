@@ -112,6 +112,7 @@ export async function filesServiceRoutes(app: FastifyInstance): Promise<void> {
   app.post("/sign-read-url", signReadUrlHandler);
   app.post("/create-upload-url", createUploadUrlHandler);
   app.post("/finalize-upload", finalizeUploadHandler);
+  app.post("/cancel-upload", cancelUploadHandler);
 }
 
 // ─── Per-request auth ────────────────────────────────────────────────────────
@@ -580,6 +581,11 @@ async function finalizeUploadHandler(
     });
   }
 
+  // GCS-reported size is accepted as truth — the platform doesn't
+  // verify content against a handler-supplied hash. The handler
+  // declared expectedSizeBytes at create-upload-url time and GCS
+  // enforced that ceiling via x-goog-content-length-range; what
+  // arrived is authoritative.
   const finalized = await finalizeFile(
     fileId,
     caller.tenantId,
@@ -617,4 +623,81 @@ async function finalizeUploadHandler(
     expiresAt: expiresAt.toISOString(),
     sizeBytes: finalized.sizeBytes,
   });
+}
+
+// ─── POST /services/files/cancel-upload ──────────────────────────────────────
+//
+// Explicit cancellation for the resumable path. Called by the SDK's
+// uploadLarge() in a try/finally when the PUT or finalize step fails —
+// releases the quota reservation immediately instead of waiting for the
+// 2-hour orphan-GC window. Also usable by a handler that decides mid-
+// upload that it no longer needs the file.
+//
+// Only accepts rows in status='pending'. 'active' rows are already
+// finalised and cannot be cancelled this way; use the tenant's delete-
+// app flow to clean those up.
+
+const CancelUploadBodySchema = z.object({
+  fileId: z.string().uuid(),
+});
+
+async function cancelUploadHandler(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<FastifyReply | void> {
+  if (SKIP_GCS) {
+    return reply
+      .code(501)
+      .send(
+        errorResponse(
+          ErrorCode.Internal,
+          "Files service is in skip mode (FILES_BUCKET=__skip__)",
+        ),
+      );
+  }
+
+  const caller = await resolveCaller(request, reply);
+  if (!caller) return;
+
+  const log = createRequestLogger({ requestId: request.id });
+
+  const parsed = CancelUploadBodySchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply
+      .code(400)
+      .send(
+        errorResponse(
+          ErrorCode.InvalidRequest,
+          "Invalid cancel-upload body",
+          parsed.error.flatten(),
+        ),
+      );
+  }
+  const { fileId } = parsed.data;
+
+  // Only pending rows can be cancelled — active rows are already
+  // finalised and need a full delete-app flow.
+  const row = await getFinalizableFileForApp(fileId, caller.tenantId, caller.appId);
+  if (!row) {
+    return reply
+      .code(404)
+      .send(errorResponse(ErrorCode.NotFound, "Pending upload not found"));
+  }
+  if (row.status !== "pending") {
+    return reply
+      .code(409)
+      .send(errorResponse(ErrorCode.Conflict, "Cannot cancel an already-finalized upload"));
+  }
+
+  // GCS delete first (idempotent via ignoreNotFound), then DB row.
+  await deleteObject(row.gcsObject).catch((err) =>
+    log.warn({ err, gcsObject: row.gcsObject }, "cancel-upload: GCS delete failed"),
+  );
+  await deleteFileRow(fileId);
+
+  log.info(
+    { fileId, tenantId: caller.tenantId, appId: caller.appId },
+    "upload cancelled",
+  );
+  return reply.code(200).send({ cancelled: true });
 }

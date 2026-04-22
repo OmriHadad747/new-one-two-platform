@@ -21,39 +21,7 @@ These surfaced reviewing commits `9a1233a` (resumable upload) and
 
 ### Correctness / security
 
-- **No compensating GCS delete on DB-insert failure.** Inline path
-  writes to GCS, then inserts the DB row. If the insert fails, the
-  code logs `"object now orphaned"` and returns 500 — the GCS object
-  stays forever (until a future orphan sweeper that doesn't exist for
-  the inline path). Fix: best-effort `deleteObject(gcsObject)` in the
-  catch.
-
-- **`finalize-upload` trusts GCS-reported size blindly.** Handler
-  reserves 10 MiB, PUTs 9 MiB of *different* content than intended —
-  nothing checks. Worth either a code comment acknowledging this, or
-  an MD5/sha verification against a handler-supplied hash.
-
-- **`finalizeFile` race on double-finalize.** Two concurrent finalize
-  calls both pass the SELECT, both run the UPDATE. Current outcome is
-  harmless (same size) but if the GCS object were replaced between
-  calls, the second update would clobber. Fix: advisory lock keyed on
-  `fileId`.
-
 ### SDK / handler contract
-
-- **`QuotaExceeded` reuses email-quota semantics on files path.** SDK
-  does `throw new QuotaExceeded(e.limitBytes, e.usedBytes, null)` but
-  the class constructor emits `"Monthly quota exceeded (${limit})"` and
-  names its third field `resetsAt` — neither applies to a
-  non-resetting storage quota. Logs will say "Monthly quota exceeded"
-  for a permanent storage cap. Fix: a dedicated `StorageQuotaExceeded`
-  class, or add `kind: "email" | "storage"` + a neutral message.
-
-- **SDK resumable path has no rollback on PUT / finalize failure.** If
-  the PUT to GCS fails after `create-upload-url` succeeded, the
-  `pending` row holds quota until orphan-GC sweeps it (up to 2 h
-  later). Fix: add `/cancel-upload` backend route + SDK try/finally
-  that calls it on PUT/finalize error.
 
 ### Orphan GC
 
