@@ -21,12 +21,6 @@ These surfaced reviewing commits `9a1233a` (resumable upload) and
 
 ### Correctness / security
 
-- **Quota race on the inline path.** Same shape as above but on
-  `/upload`: usage check + decision + GCS put + DB insert with no lock,
-  so concurrent uploads that each fit can collectively overflow. Fix:
-  atomic `INSERT … WHERE (SELECT SUM…) + new.size_bytes ≤ limit`, or
-  `pg_advisory_xact_lock(tenantId)`.
-
 - **No compensating GCS delete on DB-insert failure.** Inline path
   writes to GCS, then inserts the DB row. If the insert fails, the
   code logs `"object now orphaned"` and returns 500 — the GCS object

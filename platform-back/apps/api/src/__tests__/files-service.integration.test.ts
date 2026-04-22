@@ -7,7 +7,7 @@ import Fastify from "fastify";
 // Postgres or GCS.
 
 vi.mock("@platform-back/db", () => ({
-  insertActiveFile: vi.fn(),
+  insertActiveFileAtomic: vi.fn(),
   insertPendingFile: vi.fn(),
   finalizeFile: vi.fn(),
   deleteFileRow: vi.fn(),
@@ -45,7 +45,7 @@ vi.mock("@platform-back/logger", () => ({
 }));
 
 import {
-  insertActiveFile,
+  insertActiveFileAtomic,
   insertPendingFile,
   finalizeFile,
   deleteFileRow,
@@ -66,7 +66,7 @@ import { filesServiceRoutes } from "../routes/services/files.js";
 
 const mockVerify = vi.mocked(verifyCallerIdToken);
 const mockResolveApp = vi.mocked(resolveAppFromSaEmail);
-const mockInsertActive = vi.mocked(insertActiveFile);
+const mockInsertActive = vi.mocked(insertActiveFileAtomic);
 const mockInsertPending = vi.mocked(insertPendingFile);
 const mockFinalize = vi.mocked(finalizeFile);
 const mockDeleteRow = vi.mocked(deleteFileRow);

@@ -57,6 +57,58 @@ export async function insertActiveFile(
 }
 
 /**
+ * Atomically check tenant storage quota and insert an active file row
+ * in a single serialized transaction.
+ *
+ * Uses a per-tenant advisory lock so concurrent uploads are serialized
+ * for the quota-check + insert window, preventing two requests from
+ * both reading usage=X and collectively exceeding the cap.
+ *
+ * Returns null when the upload would push the tenant over limitBytes.
+ * The caller must handle null by deleting the GCS object already written
+ * (compensating delete) and returning 429.
+ *
+ * The lock is transaction-scoped (pg_advisory_xact_lock) and releases
+ * automatically on commit — no explicit unlock needed.
+ */
+export async function insertActiveFileAtomic(
+  input: InsertFileInput,
+  limitBytes: number,
+): Promise<FileRecord | null> {
+  const rows = await sql.begin(async (tx) => {
+    // Acquire a per-tenant serialization lock. hashtext() maps the UUID
+    // string to an int4; abs() keeps it positive for readability in
+    // pg_locks. Two requests for the same tenant will queue here.
+    await tx`SELECT pg_advisory_xact_lock(abs(hashtext(${input.tenantId})))`;
+
+    // Conditional INSERT: only writes the row if quota allows it.
+    // Counts both 'active' and 'pending' (in-flight resumable uploads
+    // that have reserved quota but not yet finalized).
+    return tx<FileRecord[]>`
+      INSERT INTO files (
+        id, tenant_id, app_id, name, mime_type, size_bytes, gcs_object, status
+      )
+      SELECT
+        ${input.id}, ${input.tenantId}, ${input.appId},
+        ${input.name}, ${input.mimeType}, ${input.sizeBytes},
+        ${input.gcsObject}, 'active'
+      FROM (
+        SELECT COALESCE(SUM(size_bytes), 0) AS used
+          FROM files
+         WHERE tenant_id = ${input.tenantId}
+           AND status IN ('active', 'pending')
+      ) _usage
+      WHERE _usage.used + ${input.sizeBytes}::bigint <= ${limitBytes}::bigint
+      RETURNING
+        id, tenant_id AS "tenantId", app_id AS "appId",
+        name, mime_type AS "mimeType", size_bytes AS "sizeBytes",
+        gcs_object AS "gcsObject", status, created_at AS "createdAt"
+    `;
+  });
+  return rows[0] ?? null;
+}
+
+/**
  * Insert a pending file row for the resumable-upload flow. size_bytes
  * holds the *expected* size at this point (what the handler claimed);
  * finalizeFile replaces it with the actual size GCS reports.

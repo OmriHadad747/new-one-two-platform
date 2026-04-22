@@ -8,7 +8,7 @@ import {
   getFinalizableFileForApp,
   getTenantBillingPlan,
   getTenantStorageUsage,
-  insertActiveFile,
+  insertActiveFileAtomic,
   insertPendingFile,
 } from "@platform-back/db";
 import { getPlanLimits } from "@platform-back/types";
@@ -217,9 +217,9 @@ async function uploadHandler(
     });
   }
 
-  // 3. Tenant storage quota. Plan-derived cap resolved per request (same
-  //    pattern as email / app-exec quotas) — plan changes take effect on
-  //    the very next upload, no per-tenant cap column to keep in sync.
+  // 3. Fast pre-check: plan-derived cap resolved per request. This catches
+  //    obvious over-quota cases before the GCS put. The definitive atomic
+  //    check happens in step 5 — the pre-check is a cheap optimistic guard.
   const [usage, plan] = await Promise.all([
     getTenantStorageUsage(caller.tenantId),
     getTenantBillingPlan(caller.tenantId),
@@ -233,9 +233,9 @@ async function uploadHandler(
     });
   }
 
-  // 4. Write to GCS, then record in DB. If the DB insert fails after
-  //    the GCS put, we have an orphan object. Rare; resolved by the
-  //    future orphan-GC sweeper (see FILES_INTEGRATION.md Future work).
+  // 4. Write to GCS. Bytes are already validated — doing this before the
+  //    atomic quota check so the lock window in step 5 is as short as
+  //    possible (no network I/O while holding the advisory lock).
   const fileId = randomUUID();
   const gcsObject = buildObjectKey(caller.tenantId, caller.appId, fileId);
 
@@ -252,25 +252,46 @@ async function uploadHandler(
       .send(errorResponse(ErrorCode.BadGateway, "Object store write failed"));
   }
 
+  // 5. Atomic quota check + DB insert. Uses a per-tenant advisory lock so
+  //    two concurrent uploads cannot both pass the quota check. Returns null
+  //    when the upload would push the tenant over the cap (race was lost).
   let record;
   try {
-    record = await insertActiveFile({
-      id: fileId,
-      tenantId: caller.tenantId,
-      appId: caller.appId,
-      name: body.name,
-      mimeType: body.mimeType,
-      sizeBytes: buffer.length,
-      gcsObject,
-    });
+    record = await insertActiveFileAtomic(
+      {
+        id: fileId,
+        tenantId: caller.tenantId,
+        appId: caller.appId,
+        name: body.name,
+        mimeType: body.mimeType,
+        sizeBytes: buffer.length,
+        gcsObject,
+      },
+      limit,
+    );
   } catch (err) {
-    log.error(
-      { err, gcsObject, fileId },
-      "insertActiveFile failed after GCS write — object now orphaned",
+    log.error({ err, gcsObject, fileId }, "insertActiveFileAtomic failed — deleting GCS object");
+    await deleteObject(gcsObject).catch((e) =>
+      log.warn({ err: e, gcsObject }, "compensating GCS delete failed"),
     );
     return reply
       .code(500)
       .send(errorResponse(ErrorCode.Internal, "Failed to record file"));
+  }
+
+  if (!record) {
+    // Concurrent upload consumed the remaining quota between the pre-check
+    // and the advisory lock. Compensate by deleting the GCS object we
+    // already wrote.
+    log.info({ gcsObject, fileId }, "quota exceeded after GCS write — compensating delete");
+    await deleteObject(gcsObject).catch((e) =>
+      log.warn({ err: e, gcsObject }, "compensating GCS delete failed"),
+    );
+    return reply.code(429).send({
+      error: "quota_exceeded",
+      usedBytes: limit,
+      limitBytes: limit,
+    });
   }
 
   // 5. Mint a short read URL so the caller can hand it straight to a

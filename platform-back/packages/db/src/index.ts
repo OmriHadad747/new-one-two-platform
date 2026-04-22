@@ -73,6 +73,7 @@ export {
 } from "./webhooks.js";
 export {
   insertActiveFile,
+  insertActiveFileAtomic,
   insertPendingFile,
   finalizeFile,
   deleteFileRow,
