@@ -36,6 +36,10 @@ const SHOPIFY_CLIENT_ID = process.env["SHOPIFY_CLIENT_ID"] ?? "";
 const SHOPIFY_CLIENT_SECRET = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
 const PLATFORM_URL = process.env["PLATFORM_URL"] ?? "http://localhost:3010";
 const DASHBOARD_URL = process.env["DASHBOARD_URL"] ?? "http://localhost:3000";
+// KMS key used when creating a new tenant. Required in production; if unset,
+// createTenant falls back to the dev placeholder key which is only suitable
+// for local dev (the key doesn't exist in prod GCP).
+const KMS_KEY_NAME = process.env["KMS_KEY_NAME"] ?? "";
 
 if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) {
   throw new Error(
@@ -393,7 +397,9 @@ async function upsertTenant(
   const slug = shop
     .replace(".myshopify.com", "")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-");
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") // trim edge hyphens from aggressive replace
+    || "shop"; // guard against empty string (shouldn't happen with valid Shopify domains)
 
   const { id } = await createTenant({
     slug,
@@ -403,6 +409,7 @@ async function upsertTenant(
     ...(storefrontSecretName !== undefined && {
       storefrontAccessTokenSecretName: storefrontSecretName,
     }),
+    ...(KMS_KEY_NAME && { kmsKeyName: KMS_KEY_NAME }),
   });
   return id;
 }
