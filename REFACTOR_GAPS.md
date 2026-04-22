@@ -29,47 +29,12 @@ Shopify requires the two redact webhooks to pass review.
 
 ---
 
-## 8. Billing plumbing
+## 9. OAuth flow — ✅ no gaps
 
-Everything under `/billing/*` is gone on NEW. `docs/BILLING.md` describes
-this surface as "Wired" but that doc predates the refactor. Routes
-missing:
-
-- `GET /billing/plans` — list plans + current
-- `GET /billing/usage/:tenantId` — current-period counters vs limits
-- `POST /billing/subscribe` — mint Shopify confirmation URL
-- `GET /billing/callback` — Shopify post-approval redirect
-- `POST /billing/cancel/:tenantId` — downgrade to free
-- `POST /billing/webhook` — `APP_SUBSCRIPTIONS_UPDATE` handler (HMAC-verified)
-- `GET /billing/dashboard/:tenantId` — aggregated view
-- `GET /billing/analytics/:tenantId` — revision classification breakdown
-
-Plan-enforcement helpers (`canActivateApp`, `canStartGeneration`,
-`canExecuteApp`, `isCategoryAllowed`) ARE ported (see
-`platform-back/apps/api/src/lib/plan-enforcement.ts`). They're called
-from the tenants router and ready to be called from `/generation` once
-that's wired through too. The billing dashboard / subscribe / cancel
-flows are the part that's missing.
-
-Impact: no upgrade/downgrade flow. Any merchant on the dashboard today
-stays whatever plan the `billing_plan` column says (defaults to `free`).
-
-Priority depends on whether we want to charge anyone for MVP. If yes →
-schedule next. If custom-distribution / comped tenants only → low.
-
----
-
-## 9. OAuth flow — mostly intact
-
-OAuth (`/oauth/install`, `/oauth/callback`) is ported. Two confirmations
-worth doing:
-
-- OLD had a "link to dashboard with JWT" final step. NEW does the same
-  but relies on `DASHBOARD_URL` env, which is set differently per
-  environment. Confirm each env file has it right.
-- OAuth does not write a tenant with plan-appropriate defaults — POST
-  `/tenants` (now ported) is the alternative tenant-creation path; the
-  two should converge on a shared seeding helper. Track if it bites.
+`/oauth/install` + `/oauth/callback` ported. `DASHBOARD_URL` is set in
+all env files. OAuth calls `createTenant` (the same DB helper used by
+`POST /tenants`), so both paths converge on the same tenant-seeding
+code. Nothing outstanding.
 
 ---
 
