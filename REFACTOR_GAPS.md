@@ -14,33 +14,6 @@ Items closed by recent commits have been removed; what remains is real outstandi
 
 ---
 
-## 5. Uninstall / compliance webhooks
-
-Neither OLD nor NEW is wired here, but listed so we don't forget:
-
-- **`app/uninstalled` webhook handler** — not present
-- **`shop/redact` (GDPR)** — not present
-- **`customer/redact` (GDPR)** — not present
-- **Tenant hard-delete admin tool** — not present
-
-Priority depends on whether we go public with Shopify review or stay on
-custom-distribution. Custom distribution → low priority. Public listing →
-Shopify requires the two redact webhooks to pass review.
-
----
-
-## 13. Tests
-
-Not audited line-by-line. Obvious coverage drops:
-
-- Deployer has per-function tests but **no lifecycle test** covering
-  teardown / reactivate / permanent-delete.
-- `files-service.integration.test.ts` is a route-contract test (all
-  mocks) — flagged in prior review.
-- The new `/tenants/*` router has no route-level test yet.
-
----
-
 ## 14. Files service — open issues
 
 These surfaced reviewing commits `9a1233a` (resumable upload) and

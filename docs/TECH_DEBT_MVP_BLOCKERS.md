@@ -45,3 +45,29 @@ The platform-back side of this contract is on the phase-1 plan (step 2: provisio
 - `platform-front/src/types/dashboard.ts` — `DeployJob`, `DeployStep`, `DeployStepStatus` types.
 
 **Complexity:** Low — same shape as the existing generation-progress UI. Blocked on platform-back shipping the deploy endpoint + job-id stream first.
+
+---
+
+## TD-022 — Shopify uninstall + GDPR compliance webhooks not wired
+
+**Current state**
+Neither the OLD nor the NEW branch handles any of the Shopify lifecycle / compliance webhooks:
+- `app/uninstalled` — no handler; when a merchant uninstalls, platform state is never cleaned up.
+- `shop/redact` — no handler; GDPR shop-data redaction requests are silently dropped.
+- `customer/redact` — no handler; GDPR customer-data redaction requests are silently dropped.
+
+A "tenant hard-delete admin tool" also doesn't exist — there is no way to wipe a tenant's data from the platform.
+
+**Why it matters**
+`shop/redact` and `customer/redact` are **required by Shopify** to pass app review for public or unlisted distribution. Without them the app cannot be listed. `app/uninstalled` is needed to keep billing state and GCS storage in sync when a merchant leaves.
+
+**What to do**
+1. Register the three webhook topics in the OAuth install flow (Shopify requires them to be declared at install time).
+2. Add a `/webhook/shopify` route (or extend the gateway) to receive HMAC-verified Shopify app lifecycle webhooks.
+3. `app/uninstalled` handler: cancel the Shopify subscription (if any), call `teardownApp` + `permanentDeleteApp` for each app, and mark the tenant inactive.
+4. `shop/redact` handler: delete tenant row + all associated data (same as tenant hard-delete). Must run within 30 days of the request per Shopify policy.
+5. `customer/redact` handler: forward to each of the tenant's handler Cloud Run services so app-layer customer data can be scrubbed.
+6. Implement a `deleteTenant(tenantId)` helper in `@platform-back/deployer` that orchestrates: `permanentDeleteApp` for each app → GCS tenant-prefix wipe → DB tenant row delete (cascades).
+
+**Priority**
+Custom distribution (current mode) → low. Public/unlisted Shopify listing → blocks app review.
