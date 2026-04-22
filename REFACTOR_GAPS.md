@@ -29,30 +29,6 @@ Shopify requires the two redact webhooks to pass review.
 
 ---
 
-## 9. OAuth flow — ✅ no gaps
-
-`/oauth/install` + `/oauth/callback` ported. `DASHBOARD_URL` is set in
-all env files. OAuth calls `createTenant` (the same DB helper used by
-`POST /tenants`), so both paths converge on the same tenant-seeding
-code. Nothing outstanding.
-
----
-
-## 10. Email service
-
-Mostly ported with the same contract on `/email/*`. The addition of
-`/services/email/*` is a NEW-only surface for in-handler programmatic
-sends.
-
-- ✅ config GET/PUT/test/stats — ported
-- ✅ brand GET/PUT — ported
-- ✅ `/email/u/*` (unsubscribe) — registered as `emailPublicRoutes`
-- ✅ `/webhook/resend` — NEW, not in OLD
-- ✅ `/services/email/send` + `/send-batch` — NEW
-
-No regressions spotted.
-
----
 
 ## 11. Widget / admin proxy
 
