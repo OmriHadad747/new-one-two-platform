@@ -168,8 +168,8 @@ merchant opens Shopify Admin → clicks your app in sidebar
   → Shopify loads <admin-ngrok>/?shop=...&host=...  (platform-shopify-admin)
   → App Bridge initialises, shell fetches apps list
   → merchant selects an app → admin UI module mounts
-  → bridge.call() → POST <api-ngrok>/admin-ui/:shop/:appId/admin/*
-    (session token verified, forwarded to harness)
+  → bridge.call() → POST <api-ngrok>/admin/:appId/*
+    (session token verified — shop read from JWT claims, forwarded to harness)
 ```
 
 ## Troubleshooting

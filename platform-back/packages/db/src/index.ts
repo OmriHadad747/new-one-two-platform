@@ -10,6 +10,7 @@ export {
   getAppSlugs,
   resolveAppHandler,
   listAppsForTenant,
+  listAdminAppsForShop,
   createApp,
   updateAppName,
   updateAppStatus,

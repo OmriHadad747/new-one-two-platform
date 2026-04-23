@@ -1,5 +1,5 @@
 /**
- * Metadata returned by GET /admin-ui/apps/:shop
+ * Metadata returned by GET /admin/apps?shop=…
  * Only what the shell needs — no JS code, no sensitive fields.
  */
 export interface AdminApp {

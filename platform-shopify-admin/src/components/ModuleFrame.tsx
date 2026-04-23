@@ -6,7 +6,6 @@ import { ADMIN_SHELL_CSS } from "../adminShellStyles.js";
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
 
 interface Props {
-  shop: string;
   app: AdminApp;
   bridge: AdminBridge;
 }
@@ -20,12 +19,12 @@ type FrameState =
  * Fetches and mounts an adminUiModule ES module into a DOM container.
  *
  * Lifecycle:
- * 1. GET /admin-ui/:shop/:appId.js  — fetch the module source
+ * 1. GET /admin/:appId/panel.js  — fetch the module source
  * 2. Create a Blob URL and dynamically import() the ES module
  * 3. Call module.mount(container, bridge)
  * 4. On unmount / app switch: call module.unmount(container) if provided
  */
-export function ModuleFrame({ shop, app, bridge }: Props) {
+export function ModuleFrame({ app, bridge }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const moduleRef = useRef<AdminUiModule | null>(null);
   const blobUrlRef = useRef<string | null>(null);
@@ -43,8 +42,11 @@ export function ModuleFrame({ shop, app, bridge }: Props) {
       // ── 1. Fetch the module source ──────────────────────────────────────
       let moduleSource: string;
       try {
+        // The bundle is the same bytes for every shop that has this app
+        // installed, so `shop` is no longer part of the URL — `appId` is
+        // the primary key in the new standalone-app-backends model.
         const res = await fetch(
-          `${API_BASE}/admin-ui/${encodeURIComponent(shop)}/${encodeURIComponent(app.id)}.js`
+          `${API_BASE}/admin/${encodeURIComponent(app.id)}/panel.js`
         );
         if (!res.ok) {
           const msg = res.status === 404
@@ -141,7 +143,7 @@ export function ModuleFrame({ shop, app, bridge }: Props) {
         blobUrlRef.current = null;
       }
     };
-  }, [shop, app.id, bridge]);
+  }, [app.id, bridge]);
 
   return (
     <div style={{ minHeight: "100%" }}>

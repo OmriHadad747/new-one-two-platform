@@ -142,6 +142,30 @@ export async function resolveAppHandler(
 }
 
 /**
+ * Apps installed on a given shop that expose an Admin UI module — powers
+ * the embedded Shopify Admin shell's left-nav. Scoped by the authoritative
+ * `apps.shop_domain` column (an app is pinned to the shop it was created
+ * under; shop identity is not per-tenant in the new model). Filters:
+ *   - admin_ui_js IS NOT NULL — only apps with a deployable admin bundle.
+ *   - status != 'deleted'    — match the old contract: inactive apps still
+ *                               show in the sidebar so the merchant can see
+ *                               them, even if POST /admin/:appId/* 503s.
+ * Sorted newest-updated first so recently-deployed apps surface at the top.
+ */
+export async function listAdminAppsForShop(
+  shopDomain: string,
+): Promise<Array<{ id: string; name: string; slug: string }>> {
+  return sql<Array<{ id: string; name: string; slug: string }>>`
+    SELECT id, name, slug
+      FROM apps
+     WHERE shop_domain = ${shopDomain}
+       AND admin_ui_js IS NOT NULL
+       AND status != 'deleted'
+     ORDER BY updated_at DESC
+  `;
+}
+
+/**
  * List all non-deleted apps for a tenant, newest first. Powers the
  * dashboard's app picker.
  */

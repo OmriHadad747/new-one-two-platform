@@ -34,7 +34,7 @@ export function AdminShell({ shop }: Props) {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`${API_BASE}/admin-ui/apps/${encodeURIComponent(shop)}`);
+        const res = await fetch(`${API_BASE}/admin/apps?shop=${encodeURIComponent(shop)}`);
         if (!res.ok) throw new Error(`API returned ${res.status}`);
         const data = (await res.json()) as AdminApp[];
         if (cancelled) return;
@@ -66,7 +66,10 @@ export function AdminShell({ shop }: Props) {
 
       call: async (path: string, body?: unknown) => {
         const token = await shopify.idToken();
-        const url = `${API_BASE}/admin-ui/${encodeURIComponent(shop)}/${encodeURIComponent(appId)}/admin${path}`;
+        // Shop identity now travels inside the App Bridge session JWT —
+        // the edge reads claims.shop server-side rather than trusting a
+        // URL segment. `path` must start with "/" per the bridge contract.
+        const url = `${API_BASE}/admin/${encodeURIComponent(appId)}${path}`;
         const res = await fetch(url, {
           method: "POST",
           headers: {
@@ -178,7 +181,6 @@ export function AdminShell({ shop }: Props) {
         {activeApp ? (
           <ModuleFrame
             key={activeApp.id}
-            shop={shop}
             app={activeApp}
             bridge={makeBridge(activeApp.id)}
           />

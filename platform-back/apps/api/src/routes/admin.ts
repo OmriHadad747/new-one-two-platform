@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { resolveAppHandler } from "@platform-back/db";
+import { listAdminAppsForShop, resolveAppHandler } from "@platform-back/db";
 import { createRequestLogger } from "@platform-back/logger";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import { ForwardError, forwardToHandler } from "../lib/forward.js";
@@ -38,6 +38,14 @@ interface AdminRouteParams {
 }
 
 export async function adminRoutes(app: FastifyInstance): Promise<void> {
+  // Listing endpoint for the embedded Shopify Admin shell's left-nav.
+  // Concrete path — must be registered before the `:appId/*` wildcard
+  // so Fastify routes `/admin/apps` here and not into the proxy.
+  // Unauthenticated by design: the response is just app metadata
+  // (id / name / slug) scoped to the caller-supplied shop, matching
+  // the pre-refactor /admin-ui/apps/:shop contract.
+  app.get<{ Querystring: { shop?: string } }>("/apps", adminAppsListHandler);
+
   // Serve the generated admin panel ES module. Must be registered before the
   // wildcard proxy route so Fastify picks the more-specific path first.
   app.get<{ Params: { appId: string } }>(
@@ -50,6 +58,32 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     url: "/:appId/*",
     handler: adminProxyHandler,
   });
+}
+
+async function adminAppsListHandler(
+  request: FastifyRequest<{ Querystring: { shop?: string } }>,
+  reply: FastifyReply,
+): Promise<FastifyReply> {
+  const shop = request.query.shop?.trim();
+  if (!shop) {
+    return reply
+      .code(400)
+      .send(errorResponse(ErrorCode.InvalidRequest, "Missing ?shop query param"));
+  }
+
+  const log = createRequestLogger({ requestId: request.id });
+  let apps;
+  try {
+    apps = await listAdminAppsForShop(shop);
+  } catch (err) {
+    log.error({ err, shop }, "admin apps list: db query failed");
+    return reply
+      .code(500)
+      .send(errorResponse(ErrorCode.Internal, "Failed to list admin apps"));
+  }
+
+  log.debug({ shop, count: apps.length }, "admin apps list");
+  return reply.send(apps);
 }
 
 async function adminBundleHandler(
