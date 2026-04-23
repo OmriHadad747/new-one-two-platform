@@ -6,6 +6,5 @@ I have enough signal. Here are the gaps I found that are **from the refactor its
 ## Infra-pipeline holes
 
 12. **`platform-shopify-admin` is not built or deployed by CI.** `platform-front` has the full Vite-build + `gcloud storage rsync` step. `platform-shopify-admin` — the iframe Shopify Admin actually loads when a merchant opens the app — has no CI job, no bucket, no deploy YAML, not even an `API_URL` injection. The iframe-contract fix (`0897350`) is code-complete but unshippable today.
-13. **Stale package reference in frontend types** — `platform-front/src/types/dashboard.ts:1` says `// Mirrors the subset of @new-one-two/types needed by the dashboard.` The old monorepo `@new-one-two/*` package namespace was renamed to `@platform-back/*`. Just a comment, but it's the tell that sections of `dashboard.ts` haven't been re-audited against the new types.
 
 ---

@@ -1,5 +1,5 @@
-// Mirrors the subset of @new-one-two/types needed by the dashboard.
-// Keep in sync with platform/packages/types/src/index.ts manually or via codegen.
+// Mirrors the subset of @platform-back/types needed by the dashboard.
+// Keep in sync with platform-back/packages/types/src/index.ts manually or via codegen.
 
 export type TenantStatus = "active" | "suspended" | "pending";
 export type AppStatus = "draft" | "ready" | "active" | "inactive" | "deleted";
