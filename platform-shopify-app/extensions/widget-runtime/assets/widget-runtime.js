@@ -97,7 +97,7 @@ async function mountBlock(block) {
  * Plain GET with no custom headers = simple CORS request, no preflight needed.
  */
 async function fetchWidgetModule(platformUrl, shop, appId) {
-  const widgetUrl = `${platformUrl}/widgets/${encodeURIComponent(shop)}/${encodeURIComponent(appId)}.js`;
+  const widgetUrl = `${platformUrl}/widget/${encodeURIComponent(appId)}/bundle.js`;
 
   const res = await fetch(widgetUrl, {
     credentials: "omit",
@@ -144,11 +144,11 @@ function buildHost({ appId, shop, platformUrl }) {
     },
 
     // ── Backend calls ─────────────────────────────────────────────────────────
-    // Widget calls are proxied through the platform API, which forwards them
-    // internally to the deployed container. Containers are not browser-accessible
-    // (Docker-internal in dev, INGRESS_TRAFFIC_INTERNAL_ONLY in production).
+    // Widget calls go through Shopify's App Proxy: the browser calls the shop's
+    // own domain, Shopify appends an HMAC signature, then forwards to platform-back
+    // which verifies it. Containers are never directly browser-accessible.
     call: async (path, body) => {
-      const proxyUrl = `${platformUrl}/widgets/${encodeURIComponent(shop)}/${encodeURIComponent(appId)}/widget${path}`;
+      const proxyUrl = `https://${shop}/apps/new-one-two/${encodeURIComponent(appId)}${path}`;
       const res = await fetch(proxyUrl, {
         method: "POST",
         headers: {

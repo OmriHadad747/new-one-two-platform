@@ -1,13 +1,5 @@
 I have enough signal. Here are the gaps I found that are **from the refactor itself** (not in TD files, not the Resend integration).
 
-## Storefront-widget pipeline is completely broken end-to-end
-
-This is one coherent failure spread across 4 files. The old system served widgets via `GET /widgets/:shop/:appId.js` + direct storefront fetches. The new backend serves `GET /widget/:appId/bundle.js` + `/widget/:appId/*` (singular, no shop in URL) and verifies a **Shopify App Proxy signature**. None of the callers or configs were updated:
-
-1. **`platform-shopify-app/extensions/widget-runtime/assets/widget-runtime.js`** still calls `${platformUrl}/widgets/${shop}/${appId}.js` and `${platformUrl}/widgets/${shop}/${appId}/widget${path}`. Plural path, shop in URL, direct fetch (no App Proxy hop) — will 404 against the new backend and could never produce a valid App Proxy signature even if the path matched.
-2. **`platform-front/src/lib/api.ts:197`** (`api.widget.trigger`) still calls `/widgets/${shop}/${appId}/widget/trigger`. The dashboard's "test widget" button is dead.
-3. **OAuth no longer writes the `platform_app.base_url` shop metafield.** Old `platform/apps/api/src/routes/oauth.ts` wrote it so `app-block.liquid` could discover the platform URL at runtime. New `platform-back/apps/api/src/routes/oauth.ts` skips it. The Liquid falls back to `http://localhost:3002`. Even if widget-runtime.js were fixed, it'd still have no production URL to hit.
-4. **No `shopify.app.toml` with `[app_proxy]` block anywhere.** `platform-shopify-app/` only contains the theme extension config. The new widget routes *require* App Proxy HMAC, which requires Shopify to know the proxy prefix; that config was never shipped.
 
 ## Deploy / local-dev path regressions
 

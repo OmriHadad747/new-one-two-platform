@@ -191,10 +191,10 @@ export const api = {
   widgets: {
     /**
      * Fire a manual test event against a deployed app handler.
-     * Routes through the existing widget proxy → Cloud Run function.
+     * JWT-authenticated; shopDomain is read from the platform token server-side.
      */
-    trigger: (shopDomain: string, appId: string, payload: Record<string, unknown> = {}) =>
-      request<Record<string, unknown>>(`/widgets/${encodeURIComponent(shopDomain)}/${appId}/widget/trigger`, {
+    trigger: (appId: string, payload: Record<string, unknown> = {}) =>
+      request<Record<string, unknown>>(`/widget/${appId}/trigger`, {
         method: "POST",
         body: JSON.stringify({ test: true, ...payload }),
       }),
