@@ -86,7 +86,9 @@ const MOCK_WEBHOOKS = [
 
 const MOCK_LATEST = {
   deployedFunctionId: "df-1",
+  appVersionId: "av-1",
   semver: "1.0.0",
+  imageName: null,
   webhookTopics: ["orders/create"],
   cronSchedule: "*/5 * * * *",
 };
@@ -105,7 +107,7 @@ beforeEach(() => {
   vi.mocked(deleteServiceAccount).mockResolvedValue(undefined);
   vi.mocked(deleteDockerImage).mockResolvedValue(undefined);
   vi.mocked(unregisterShopifyWebhooks).mockResolvedValue(undefined);
-  vi.mocked(unscheduleAppCron).mockResolvedValue(undefined);
+  vi.mocked(unscheduleAppCron).mockResolvedValue({ removed: true });
   vi.mocked(deployToCloudRun).mockResolvedValue({ functionUrl: "https://handler.run.app", serviceName: "h-acme" } as never);
   vi.mocked(registerWebhooks).mockResolvedValue(undefined);
   vi.mocked(scheduleAppCron).mockResolvedValue(undefined);

@@ -281,8 +281,15 @@ CREATE TABLE generations (
   job_id       UUID PRIMARY KEY,
   tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   app_id       UUID NOT NULL REFERENCES apps(id)    ON DELETE CASCADE,
-  -- "success" | "failed" — mirrors FeatureBundleMessage.status on the wire.
+  -- "pending" | "success" | "failed" — "pending" is written by
+  -- createPendingGeneration the instant /generation is accepted; flipped
+  -- to success/failed by the completed-subscriber. Mirrors
+  -- FeatureBundleMessage.status on the wire for the two terminal values.
   status       TEXT NOT NULL,
+  -- Original merchant prompt that initiated the generation. Persisted so
+  -- the dashboard's Sessions list and chat-rehydrate-on-reload paths can
+  -- render the session without re-reading the bundle from GCS.
+  prompt       TEXT,
   -- Populated only on status='failed'.
   error        TEXT,
   -- Populated only on status='failed' when the architect decided the app
@@ -298,6 +305,20 @@ CREATE TABLE generations (
   -- agentTrace[]. Null on failure when the generator aborted before
   -- tallying. Used by ops for cost / latency analytics.
   meta         JSONB,
+  -- Flat mirrors of bundle.handlerModule.{webhookTopics,cronSchedule}
+  -- copied out on success so the dashboard can render the Sessions list
+  -- and LatestSessionResult without pulling the bundle from GCS.
+  webhook_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+  cron_schedule  TEXT,
+  -- Persisted frontend chat history for this session (actions stripped).
+  -- Null until the first PATCH /generation/:jobId/chat. Layer-2
+  -- persistence only — the store/IndexedDB is primary; DB is the
+  -- rehydrate-on-hard-reload fallback.
+  chat_messages  JSONB,
+  -- The app_versions.id created when this generation was approved and
+  -- deployed. NULL until approveHandler runs. Lets the Sessions list
+  -- mark the row that matches apps.active_app_version_id as "Live".
+  app_version_id UUID,
   -- Deploy-button bookkeeping. Flipped to true (+ deployed_at set) when
   -- the merchant clicks Deploy and the deploy job is registered. Not a
   -- source of truth for deploy history — that's app_versions — just a

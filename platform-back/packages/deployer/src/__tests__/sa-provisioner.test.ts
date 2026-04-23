@@ -41,7 +41,7 @@ beforeEach(() => {
 
 describe("nextHandlerSaCounter", () => {
   it("returns 1 when no existing SAs for this shop", async () => {
-    mockSql.mockResolvedValueOnce([]);
+    mockSql.mockResolvedValueOnce([] as never);
     const n = await nextHandlerSaCounter(SHOP);
     expect(n).toBe(1);
   });
@@ -50,7 +50,7 @@ describe("nextHandlerSaCounter", () => {
     mockSql.mockResolvedValueOnce([
       { handlerSaEmail: "h-acme-1@test-project.iam.gserviceaccount.com" },
       { handlerSaEmail: "h-acme-3@test-project.iam.gserviceaccount.com" },
-    ]);
+    ] as never);
     const n = await nextHandlerSaCounter(SHOP);
     expect(n).toBe(4); // max is 3, next is 4
   });
@@ -58,7 +58,7 @@ describe("nextHandlerSaCounter", () => {
   it("ignores rows where local-part tail is not a number", async () => {
     mockSql.mockResolvedValueOnce([
       { handlerSaEmail: "h-acme-foo@test-project.iam.gserviceaccount.com" },
-    ]);
+    ] as never);
     const n = await nextHandlerSaCounter(SHOP);
     expect(n).toBe(1);
   });
@@ -66,7 +66,7 @@ describe("nextHandlerSaCounter", () => {
 
 describe("provisionHandlerSa — local mode (DEPLOY_MODE=local from setup)", () => {
   beforeEach(() => {
-    mockSql.mockResolvedValue([]);
+    mockSql.mockResolvedValue([] as never);
   });
 
   it("skips GCP SA create and writes placeholder email", async () => {
@@ -104,7 +104,7 @@ describe("provisionHandlerSa — local mode (DEPLOY_MODE=local from setup)", () 
 // the local-mode tests which verify the correct call path is taken.
 describe.skip("provisionHandlerSa — cloudrun mode (requires DEPLOY_MODE=cloudrun worker)", () => {
   beforeEach(() => {
-    mockSql.mockResolvedValue([]);
+    mockSql.mockResolvedValue([] as never);
   });
 
   it("calls createServiceAccount and writes email", async () => {
@@ -112,6 +112,7 @@ describe.skip("provisionHandlerSa — cloudrun mode (requires DEPLOY_MODE=cloudr
     mockCreate.mockResolvedValueOnce({
       email: expectedEmail,
       created: true,
+      uniqueId: "mock-unique-id",
     });
 
     const result = await provisionHandlerSa({
@@ -130,6 +131,7 @@ describe.skip("provisionHandlerSa — cloudrun mode (requires DEPLOY_MODE=cloudr
     mockCreate.mockResolvedValueOnce({
       email: "different@other-project.iam.gserviceaccount.com",
       created: true,
+      uniqueId: "mock-unique-id",
     });
 
     await expect(

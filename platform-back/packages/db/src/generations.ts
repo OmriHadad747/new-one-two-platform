@@ -19,6 +19,10 @@ export interface UpsertGenerationInput {
   bundleGcsPath?: string | null;
   /** GenerationMeta JSON. Null on failure. */
   meta?: unknown;
+  /** Flat mirror of bundle.handlerModule.webhookTopics. Empty on failure. */
+  webhookTopics?: string[];
+  /** Flat mirror of bundle.handlerModule.cronSchedule. Null on failure. */
+  cronSchedule?: string | null;
 }
 
 /**
@@ -42,10 +46,12 @@ export async function upsertGeneration(
     input.meta === undefined || input.meta === null
       ? null
       : JSON.stringify(input.meta);
+  const webhookTopicsJson = JSON.stringify(input.webhookTopics ?? []);
 
   await sql`
     INSERT INTO generations (
-      job_id, tenant_id, app_id, status, error, error_code, bundle_gcs_path, meta
+      job_id, tenant_id, app_id, status, error, error_code,
+      bundle_gcs_path, meta, webhook_topics, cron_schedule
     ) VALUES (
       ${input.jobId},
       ${input.tenantId},
@@ -54,14 +60,18 @@ export async function upsertGeneration(
       ${input.error ?? null},
       ${input.errorCode ?? null},
       ${input.bundleGcsPath ?? null},
-      ${metaJson}::jsonb
+      ${metaJson}::jsonb,
+      ${webhookTopicsJson}::jsonb,
+      ${input.cronSchedule ?? null}
     )
     ON CONFLICT (job_id) DO UPDATE SET
       status          = EXCLUDED.status,
       error           = EXCLUDED.error,
       error_code      = EXCLUDED.error_code,
       bundle_gcs_path = EXCLUDED.bundle_gcs_path,
-      meta            = EXCLUDED.meta
+      meta            = EXCLUDED.meta,
+      webhook_topics  = EXCLUDED.webhook_topics,
+      cron_schedule   = EXCLUDED.cron_schedule
   `;
 }
 
@@ -70,15 +80,40 @@ export interface GenerationRow {
   tenantId: string;
   appId: string;
   status: GenerationStatus;
+  prompt: string | null;
   error: string | null;
   errorCode: string | null;
   bundleGcsPath: string | null;
   meta: unknown | null;
+  webhookTopics: string[];
+  cronSchedule: string | null;
+  chatMessages: Array<Record<string, unknown>> | null;
+  appVersionId: string | null;
   deployed: boolean;
   deployedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+const GENERATION_COLUMNS = sql`
+  job_id           AS "jobId",
+  tenant_id        AS "tenantId",
+  app_id           AS "appId",
+  status,
+  prompt,
+  error,
+  error_code       AS "errorCode",
+  bundle_gcs_path  AS "bundleGcsPath",
+  meta,
+  webhook_topics   AS "webhookTopics",
+  cron_schedule    AS "cronSchedule",
+  chat_messages    AS "chatMessages",
+  app_version_id   AS "appVersionId",
+  deployed,
+  deployed_at      AS "deployedAt",
+  created_at       AS "createdAt",
+  updated_at       AS "updatedAt"
+`;
 
 /**
  * Look up a single generation by jobId. Used by the dashboard deploy
@@ -88,19 +123,7 @@ export async function getGenerationByJobId(
   jobId: string,
 ): Promise<GenerationRow | null> {
   const rows = await sql<Array<GenerationRow>>`
-    SELECT
-      job_id       AS "jobId",
-      tenant_id    AS "tenantId",
-      app_id       AS "appId",
-      status,
-      error,
-      error_code   AS "errorCode",
-      bundle_gcs_path AS "bundleGcsPath",
-      meta,
-      deployed,
-      deployed_at  AS "deployedAt",
-      created_at   AS "createdAt",
-      updated_at   AS "updatedAt"
+    SELECT ${GENERATION_COLUMNS}
     FROM generations
     WHERE job_id = ${jobId}
     LIMIT 1
@@ -125,17 +148,70 @@ export async function markGenerationDeployed(jobId: string): Promise<void> {
 /**
  * Create a row in 'pending' status when a generation request is dispatched.
  * Updated to 'success' or 'failed' by the completed-subscriber later.
+ * `prompt` is stored so the Sessions list / chat rehydrate paths don't
+ * have to pull the bundle from GCS just to show the original request.
  */
 export async function createPendingGeneration(input: {
   jobId: string;
   tenantId: string;
   appId: string;
+  prompt: string;
 }): Promise<void> {
   await sql`
-    INSERT INTO generations (job_id, tenant_id, app_id, status)
-    VALUES (${input.jobId}, ${input.tenantId}, ${input.appId}, 'pending')
+    INSERT INTO generations (job_id, tenant_id, app_id, status, prompt)
+    VALUES (${input.jobId}, ${input.tenantId}, ${input.appId}, 'pending', ${input.prompt})
     ON CONFLICT (job_id) DO NOTHING
   `;
+}
+
+/**
+ * Persist the frontend chat history for an in-flight or completed
+ * generation. Debounced on the client; fire-and-forget. No-op when the
+ * row is gone (hard delete via app cleanup) — the `UPDATE ... WHERE`
+ * silently affects zero rows.
+ */
+export async function saveGenerationChat(
+  jobId: string,
+  messages: Array<Record<string, unknown>>,
+): Promise<void> {
+  await sql`
+    UPDATE generations
+       SET chat_messages = ${JSON.stringify(messages)}::jsonb
+     WHERE job_id = ${jobId}
+  `;
+}
+
+/**
+ * Record which app_versions.id a generation was deployed as. Called from
+ * approveHandler right after startDeploy returns. Lets the dashboard
+ * mark the active session with a "Live" badge.
+ */
+export async function setGenerationAppVersionId(
+  jobId: string,
+  appVersionId: string,
+): Promise<void> {
+  await sql`
+    UPDATE generations
+       SET app_version_id = ${appVersionId}
+     WHERE job_id = ${jobId}
+  `;
+}
+
+/**
+ * Cancel a generation that is still pending. Only transitions 'pending'
+ * rows so a race where the completed-subscriber wrote 'success' first
+ * cannot clobber a successful generation with 'Cancelled'. Returns true
+ * when a row was actually transitioned.
+ */
+export async function cancelPendingGeneration(jobId: string): Promise<boolean> {
+  const result = await sql`
+    UPDATE generations
+       SET status = 'failed',
+           error  = 'Cancelled'
+     WHERE job_id = ${jobId}
+       AND status = 'pending'
+  `;
+  return (result.count ?? 0) > 0;
 }
 
 /** Latest generation for an app (any status). */
@@ -143,19 +219,7 @@ export async function getLatestGenerationForApp(
   appId: string,
 ): Promise<GenerationRow | null> {
   const rows = await sql<Array<GenerationRow>>`
-    SELECT
-      job_id       AS "jobId",
-      tenant_id    AS "tenantId",
-      app_id       AS "appId",
-      status,
-      error,
-      error_code   AS "errorCode",
-      bundle_gcs_path AS "bundleGcsPath",
-      meta,
-      deployed,
-      deployed_at  AS "deployedAt",
-      created_at   AS "createdAt",
-      updated_at   AS "updatedAt"
+    SELECT ${GENERATION_COLUMNS}
     FROM generations
     WHERE app_id = ${appId}
     ORDER BY created_at DESC
@@ -169,19 +233,7 @@ export async function getLatestCompletedGenerationForApp(
   appId: string,
 ): Promise<GenerationRow | null> {
   const rows = await sql<Array<GenerationRow>>`
-    SELECT
-      job_id       AS "jobId",
-      tenant_id    AS "tenantId",
-      app_id       AS "appId",
-      status,
-      error,
-      error_code   AS "errorCode",
-      bundle_gcs_path AS "bundleGcsPath",
-      meta,
-      deployed,
-      deployed_at  AS "deployedAt",
-      created_at   AS "createdAt",
-      updated_at   AS "updatedAt"
+    SELECT ${GENERATION_COLUMNS}
     FROM generations
     WHERE app_id = ${appId} AND status = 'success'
     ORDER BY created_at DESC
@@ -196,19 +248,7 @@ export async function listGenerationsForApp(
   limit = 20,
 ): Promise<GenerationRow[]> {
   return sql<Array<GenerationRow>>`
-    SELECT
-      job_id       AS "jobId",
-      tenant_id    AS "tenantId",
-      app_id       AS "appId",
-      status,
-      error,
-      error_code   AS "errorCode",
-      bundle_gcs_path AS "bundleGcsPath",
-      meta,
-      deployed,
-      deployed_at  AS "deployedAt",
-      created_at   AS "createdAt",
-      updated_at   AS "updatedAt"
+    SELECT ${GENERATION_COLUMNS}
     FROM generations
     WHERE app_id = ${appId}
     ORDER BY created_at DESC

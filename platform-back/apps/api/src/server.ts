@@ -72,7 +72,8 @@ export async function buildServer() {
   app.get("/health", async () => ({ ok: true }));
 
   // Dashboard JWT auth hook (exempts /health, /admin, /services, /webhook,
-  // /oauth, /email/u — those have their own per-trust-domain auth).
+  // /oauth, /email/u, /billing/callback, /billing/webhook — those have
+  // their own per-trust-domain auth).
   registerAuthHook(app);
 
   await app.register(adminRoutes, { prefix: "/admin" });

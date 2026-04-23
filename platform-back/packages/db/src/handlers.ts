@@ -7,6 +7,10 @@ import { sql } from "./connection.js";
  * Shape returned by the dashboard and lifecycle helpers — strictly more
  * fields than the edge's narrower AppRecord. The edge never touches this
  * shape; keep expansions here without affecting routing.
+ *
+ * `activeAppVersionId` / `currentSemver` are derived via a LEFT JOIN on
+ * the currently-active deployed_functions row — no column on `apps`.
+ * Both are null until a first successful deploy.
  */
 export interface AppFullRecord {
   id: string;
@@ -20,6 +24,8 @@ export interface AppFullRecord {
   themeInjectionThemeId: string | null;
   usesEmail: boolean;
   handlerSaEmail: string | null;
+  activeAppVersionId: string | null;
+  currentSemver: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,22 +51,28 @@ export async function getAppById(
 ): Promise<AppFullRecord | null> {
   const rows = await sql<AppFullRecord[]>`
     SELECT
-      id,
-      tenant_id                 AS "tenantId",
-      slug,
-      name,
-      status,
-      shop_domain               AS "shopDomain",
-      app_archetype             AS "appArchetype",
-      theme_injection_status    AS "themeInjectionStatus",
-      theme_injection_theme_id  AS "themeInjectionThemeId",
-      uses_email                AS "usesEmail",
-      handler_sa_email          AS "handlerSaEmail",
-      created_at                AS "createdAt",
-      updated_at                AS "updatedAt"
-    FROM apps
-    WHERE id = ${appId}
-      AND tenant_id = ${tenantId}
+      a.id,
+      a.tenant_id                 AS "tenantId",
+      a.slug,
+      a.name,
+      a.status,
+      a.shop_domain               AS "shopDomain",
+      a.app_archetype             AS "appArchetype",
+      a.theme_injection_status    AS "themeInjectionStatus",
+      a.theme_injection_theme_id  AS "themeInjectionThemeId",
+      a.uses_email                AS "usesEmail",
+      a.handler_sa_email          AS "handlerSaEmail",
+      df.app_version_id           AS "activeAppVersionId",
+      av.semver                   AS "currentSemver",
+      a.created_at                AS "createdAt",
+      a.updated_at                AS "updatedAt"
+    FROM apps a
+    LEFT JOIN deployed_functions df
+      ON df.app_id = a.id AND df.is_active = TRUE
+    LEFT JOIN app_versions av
+      ON av.id = df.app_version_id
+    WHERE a.id = ${appId}
+      AND a.tenant_id = ${tenantId}
     LIMIT 1
   `;
   return rows[0] ?? null;
@@ -184,23 +196,29 @@ export async function listAppsForTenant(
 ): Promise<AppFullRecord[]> {
   return sql<AppFullRecord[]>`
     SELECT
-      id,
-      tenant_id                 AS "tenantId",
-      slug,
-      name,
-      status,
-      shop_domain               AS "shopDomain",
-      app_archetype             AS "appArchetype",
-      theme_injection_status    AS "themeInjectionStatus",
-      theme_injection_theme_id  AS "themeInjectionThemeId",
-      uses_email                AS "usesEmail",
-      handler_sa_email          AS "handlerSaEmail",
-      created_at                AS "createdAt",
-      updated_at                AS "updatedAt"
-    FROM apps
-    WHERE tenant_id = ${tenantId}
-      AND status != 'deleted'
-    ORDER BY created_at DESC
+      a.id,
+      a.tenant_id                 AS "tenantId",
+      a.slug,
+      a.name,
+      a.status,
+      a.shop_domain               AS "shopDomain",
+      a.app_archetype             AS "appArchetype",
+      a.theme_injection_status    AS "themeInjectionStatus",
+      a.theme_injection_theme_id  AS "themeInjectionThemeId",
+      a.uses_email                AS "usesEmail",
+      a.handler_sa_email          AS "handlerSaEmail",
+      df.app_version_id           AS "activeAppVersionId",
+      av.semver                   AS "currentSemver",
+      a.created_at                AS "createdAt",
+      a.updated_at                AS "updatedAt"
+    FROM apps a
+    LEFT JOIN deployed_functions df
+      ON df.app_id = a.id AND df.is_active = TRUE
+    LEFT JOIN app_versions av
+      ON av.id = df.app_version_id
+    WHERE a.tenant_id = ${tenantId}
+      AND a.status != 'deleted'
+    ORDER BY a.created_at DESC
   `;
 }
 

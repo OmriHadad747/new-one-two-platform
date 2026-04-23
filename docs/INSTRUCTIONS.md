@@ -41,7 +41,7 @@ Start all three: `ngrok start --all`
 ### Step 1 + 2 — Start infra
 
 ```bash
-docker compose down -v && docker compose up -d postgres redis fake-gcs pubsub-emulator pubsub-init bull-board
+docker compose down -v && docker compose up -d postgres redis fake-gcs gcs-init pubsub-emulator pubsub-init bull-board
 ```
 
 ### Step 3 — Start ngrok, sync URLs, and deploy Shopify app

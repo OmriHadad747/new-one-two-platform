@@ -32,6 +32,7 @@ export const ErrorCode = {
 
   // Plan enforcement + integration preconditions.
   AppLimitReached: "app_limit_reached",
+  PlanLimited: "plan_limited",
   ShopNotConnected: "shop_not_connected",
 
   HmacInvalid: "hmac_invalid",

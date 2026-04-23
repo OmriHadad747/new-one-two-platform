@@ -34,7 +34,6 @@ vi.mock("@platform-back/crypto", () => ({
 }));
 vi.mock("../lib/plan-enforcement.js", () => ({
   canActivateApp: vi.fn().mockResolvedValue({ allowed: true }),
-  canCreateApp: vi.fn().mockResolvedValue({ allowed: true }),
 }));
 vi.mock("../lib/theme-injector.js", () => ({
   getThemeTemplates: vi.fn(),
@@ -63,7 +62,7 @@ import {
   getTenantById, getTenantByShopDomain, createTenant,
 } from "@platform-back/db";
 import { teardownApp, reactivateApp, permanentDeleteApp } from "@platform-back/deployer";
-import { canActivateApp, canCreateApp } from "../lib/plan-enforcement.js";
+import { canActivateApp } from "../lib/plan-enforcement.js";
 import { tenantsRoutes } from "../routes/tenants.js";
 
 const TENANT_ID = "11111111-1111-1111-1111-111111111111";

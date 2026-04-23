@@ -72,6 +72,8 @@ async function handleMessage(msg: Message): Promise<void> {
       errorCode: parsed.errorCode ?? null,
       bundleGcsPath,
       meta: parsed.meta ?? null,
+      webhookTopics: parsed.bundle?.handlerModule?.webhookTopics ?? [],
+      cronSchedule: parsed.bundle?.handlerModule?.cronSchedule ?? null,
     });
 
     msg.ack();

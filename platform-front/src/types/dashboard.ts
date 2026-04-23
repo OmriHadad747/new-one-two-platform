@@ -14,7 +14,6 @@ export interface Tenant {
   slug: string;
   name: string;
   status: TenantStatus;
-  plan: string;
   billingPlan: BillingPlan;
   billingInterval: BillingInterval;
   subscriptionStatus: SubscriptionStatus;
@@ -38,11 +37,9 @@ export interface App {
   activeAppVersionId: string | null;
   createdAt: string;
   updatedAt: string;
-  // Email integration metadata — set by the generator and platform at bundle
-  // completion. `usesEmail` drives the Email tab in AppDetailPage, and
-  // `emailVariables` powers the token palette inside it.
+  // `usesEmail` drives the Email tab in AppDetailPage. The token palette
+  // (email variables) is loaded separately via EmailConfigResponse.variables.
   usesEmail?: boolean;
-  emailVariables?: string[];
 }
 
 // ─── Email integration ──────────────────────────────────────────────────────
@@ -202,8 +199,6 @@ export interface BillingUsageResponse {
 export interface TenantStats {
   totalApps: number;
   liveApps: number;
-  apiCallsThisMonth: number;
-  avgResponseMs: number;
 }
 
 // ─── Generation ──────────────────────────────────────────────────────────────

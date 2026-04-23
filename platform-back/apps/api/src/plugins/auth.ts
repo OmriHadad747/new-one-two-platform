@@ -7,13 +7,18 @@
  * signature + expiry and attaches the decoded context to the request.
  *
  * The auth hook is GLOBAL but exempts:
- *   - /health           (Cloud Run probes)
- *   - /admin/*          (Shopify App Bridge JWT — verified by routes/admin.ts)
- *   - /widget/*         (Shopify App Proxy HMAC — verified by routes/widget.ts)
- *   - /services/*       (Cloud Run SA ID token — verified by routes/services/*)
- *   - /webhook/*        (provider HMAC — verified by per-route logic)
- *   - /email/u/*        (public unsubscribe pages)
- *   - /oauth/*          (Shopify install/callback — no token yet)
+ *   - /health              (Cloud Run probes)
+ *   - /admin/*             (Shopify App Bridge JWT — verified by routes/admin.ts)
+ *   - /widget/*            (Shopify App Proxy HMAC — verified by routes/widget.ts)
+ *   - /services/*          (Cloud Run SA ID token — verified by routes/services/*)
+ *   - /webhook/*           (provider HMAC — verified by per-route logic)
+ *   - /email/u/*           (public unsubscribe pages)
+ *   - /oauth/*             (Shopify install/callback — no token yet)
+ *   - /billing/callback    (Shopify cross-origin redirect; carries charge_id,
+ *                           verified against shopify_subscription_id in the
+ *                           handler)
+ *   - /billing/webhook     (Shopify APP_SUBSCRIPTIONS_UPDATE; X-Shopify-HMAC-
+ *                           SHA256 verified by the handler)
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -114,8 +119,18 @@ const EXEMPT_PREFIXES = [
   "/oauth",
 ];
 
+// Routes that must be exempt exactly — a startsWith match would swallow
+// merchant-authed siblings. /billing/callback is hit by a cross-origin
+// browser redirect from Shopify (no JWT); /billing/webhook is an HMAC-
+// signed POST from Shopify. Both verify themselves inside the handler.
+const EXEMPT_EXACT = new Set<string>([
+  "/billing/callback",
+  "/billing/webhook",
+]);
+
 function isExemptRoute(url: string): boolean {
   const path = url.split("?")[0]!;
+  if (EXEMPT_EXACT.has(path)) return true;
   for (const prefix of EXEMPT_PREFIXES) {
     if (path.startsWith(prefix)) return true;
   }

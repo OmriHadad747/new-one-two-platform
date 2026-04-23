@@ -72,6 +72,8 @@ beforeEach(() => {
   mockSuppressed.mockResolvedValue(false);
   mockQuota.mockResolvedValue({ allowed: true, current: 0, limit: 1000 });
   mockConfig.mockResolvedValue({
+    appId: "app-1",
+    tenantId: "tenant-1",
     subjectTemplate: "Hello",
     headingTemplate: null,
     bodyTemplate: "Body",
@@ -79,6 +81,8 @@ beforeEach(() => {
     ctaUrlTemplate: null,
     emailType: "transactional" as const,
     configuredByMerchant: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
   });
   mockInsert.mockResolvedValue({ id: "delivery-uuid-123" });
   mockUpdateStatus.mockResolvedValue(undefined);
@@ -129,7 +133,7 @@ describe("sendEmail — suppression", () => {
     const result = await sendEmail(BASE_INPUT);
     expect(result.ok).toBe(true);
     expect(result.delivered).toBe(false);
-    expect(result.reason).toBe("suppressed");
+    if (!result.delivered) expect(result.reason).toBe("suppressed");
     expect(mockEmailsSend).not.toHaveBeenCalled();
   });
 });
@@ -160,7 +164,7 @@ describe("sendEmail — missing config", () => {
     const result = await sendEmail(BASE_INPUT);
     expect(result.ok).toBe(true);
     expect(result.delivered).toBe(false);
-    expect(result.reason).toBe("missing_config");
+    if (!result.delivered) expect(result.reason).toBe("missing_config");
     expect(mockEmailsSend).not.toHaveBeenCalled();
   });
 });
@@ -171,7 +175,7 @@ describe("sendEmail — provider failure", () => {
     const result = await sendEmail(BASE_INPUT);
     expect(result.ok).toBe(true);
     expect(result.delivered).toBe(false);
-    expect(result.reason).toBe("provider_failed");
+    if (!result.delivered) expect(result.reason).toBe("provider_failed");
   });
 
   it("updates delivery status to failed on Resend error", async () => {

@@ -209,9 +209,8 @@ export async function getTenantById(
 }
 
 export interface TenantStats {
-  activeApps: number;
+  liveApps: number;
   totalApps: number;
-  appsByStatus: Record<string, number>;
 }
 
 /**
@@ -223,16 +222,15 @@ export async function getTenantStats(tenantId: string): Promise<TenantStats> {
     SELECT status, COUNT(*)::text AS n
       FROM apps
      WHERE tenant_id = ${tenantId}
+       AND status != 'deleted'
      GROUP BY status
   `;
-  const appsByStatus: Record<string, number> = {};
   let total = 0;
-  let active = 0;
+  let live = 0;
   for (const r of rows) {
     const n = Number(r.n);
-    appsByStatus[r.status] = n;
     total += n;
-    if (r.status === "active") active = n;
+    if (r.status === "active") live = n;
   }
-  return { activeApps: active, totalApps: total, appsByStatus };
+  return { liveApps: live, totalApps: total };
 }

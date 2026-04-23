@@ -1,22 +1,24 @@
 /**
  * Plan enforcement — checks plan limits before allowing billable actions.
- * Ported from platform/apps/api/src/lib/plan-enforcement.ts. See
- * REFACTOR_GAPS §7 / §8.
  *
- * Enforcement points (wired today):
- *   - canCreateApp       → POST /tenants/:id/apps
+ * Enforcement points:
  *   - canActivateApp     → PATCH /tenants/:id/apps/:appId  (status=active)
- *   - canStartGeneration → POST /generation
- *   - isCategoryAllowed  → POST /generation (when the pre-computed intent
- *                                            declares appCategory)
- *   - canExecuteApp      → webhook gateway (before BullMQ enqueue)
+ *                          Enforces the active-app seat cap. Draft / ready
+ *                          apps don't consume a seat — merchants can line
+ *                          up apps and only pay for the one they flip live.
+ *   - canStartGeneration → POST /generation   (generations-per-month cap)
+ *   - isCategoryAllowed  → POST /generation   (plan-gated app categories,
+ *                                              when preComputedIntent
+ *                                              declares appCategory)
  *
  * Wired elsewhere via shared checkUsageQuota/getPlanLimits:
+ *   - app executions  → webhook-gateway (before BullMQ enqueue)
  *   - email sends     → /services/email/send
  *   - file storage    → /services/files/upload (cumulative, not per-month)
  *
  * Explicitly NOT enforced:
- *   - Revisions — unlimited by product design (see BILLING.md).
+ *   - App creation — unlimited; merchants can draft freely.
+ *   - Revisions    — unlimited by product design (see BILLING.md).
  */
 import type { BillingPlan } from "@platform-back/types";
 import { getPlanLimits } from "@platform-back/types";
@@ -83,24 +85,6 @@ export function isCategoryAllowed(
   if (!limits.allowedCategories.includes(archetype)) {
     return denied(
       `Your ${plan} plan doesn't support ${formatArchetype(archetype)} apps.`,
-      plan,
-    );
-  }
-  return { allowed: true };
-}
-
-// ─── App execution quota ─────────────────────────────────────────────────────
-
-export async function canExecuteApp(
-  tenantId: string,
-  plan: BillingPlan,
-): Promise<EnforcementResult> {
-  const limits = getPlanLimits(plan);
-  const usage = await getOrCreateUsageRecord(tenantId);
-  if (usage.appExecutions >= limits.maxAppExecutionsPerMonth) {
-    return denied(
-      `Your ${plan} plan allows ${limits.maxAppExecutionsPerMonth.toLocaleString()} ` +
-        `app executions per month. Limit reached.`,
       plan,
     );
   }
