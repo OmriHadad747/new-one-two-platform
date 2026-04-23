@@ -40,7 +40,8 @@ local/
 
 results.json
 
-shopify.app.*
+shopify.app.toml
+!shopify.app.prod.toml
 
 scripts/
 
