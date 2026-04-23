@@ -1,63 +1,42 @@
 /**
- * Bundle storage — persists and retrieves widget.js / admin.js bundles.
+ * Bundle storage — persists and retrieves widget.js / admin.js bundles
+ * and full generation bundle JSON.
  *
- * Development (NODE_ENV != "production"):
- *   Reads and writes apps.widget_js / apps.admin_ui_js columns directly.
- *   No GCS dependency; fast for local iteration.
+ * Always uses GCS. For local dev, set STORAGE_EMULATOR_HOST=localhost:4443
+ * and GCS_BUCKET=new-one-two-bundles-dev — the SDK routes to fake-gcs
+ * automatically and skips Google auth.
  *
- * Production:
- *   Uploads to GCS at deterministic paths:
- *     <GCS_BUCKET>/<appId>/widget.js
- *     <GCS_BUCKET>/<appId>/admin.js
- *   Files are stored as text/javascript with public-read ACL so they can
- *   be served directly from GCS or via the serving endpoints below.
- *   DB columns are NOT used in production.
+ * GCS layout:
+ *   <appId>/widget.js            — served widget bundle (latest, overwritten)
+ *   <appId>/admin.js             — served admin UI bundle (latest, overwritten)
+ *   <jobId>/bundle.json          — full generation output (versioned by jobId)
  */
 
 import { Storage } from "@google-cloud/storage";
-import { getAppBundles, updateAppBundles } from "@platform-back/db";
 import { logger as baseLogger } from "@platform-back/logger";
 
 const log = baseLogger.child({ service: "bundle-storage" });
 
-const IS_PROD = process.env["NODE_ENV"] === "production";
-
-// ── GCS client (initialised lazily, only in production) ───────────────────────
-
 let _storage: Storage | null = null;
 
 function getStorage(): Storage {
-  if (!_storage) {
-    _storage = new Storage();
-  }
+  if (!_storage) _storage = new Storage();
   return _storage;
 }
 
 function gcsBucket(): string {
   const bucket = process.env["GCS_BUCKET"];
-  if (!bucket) throw new Error("GCS_BUCKET must be set in production");
+  if (!bucket) throw new Error("GCS_BUCKET must be set");
   return bucket;
 }
 
-function widgetPath(appId: string): string {
-  return `${appId}/widget.js`;
-}
-
-function adminPath(appId: string): string {
-  return `${appId}/admin.js`;
-}
-
-// ── Public API ─────────────────────────────────────────────────────────────────
+// ── Widget / admin bundles ────────────────────────────────────────────────────
 
 export interface BundlePayload {
   widgetJs?: string | null;
   adminUiJs?: string | null;
 }
 
-/**
- * Persist widget/admin bundles for an app.
- * Skips keys that are null/undefined — partial updates are safe.
- */
 export async function saveBundles(
   appId: string,
   bundles: BundlePayload,
@@ -65,81 +44,73 @@ export async function saveBundles(
   const { widgetJs, adminUiJs } = bundles;
   if (!widgetJs && !adminUiJs) return;
 
-  if (IS_PROD) {
-    const bucket = getStorage().bucket(gcsBucket());
-    const uploads: Promise<void>[] = [];
-    if (widgetJs) {
-      uploads.push(
-        bucket
-          .file(widgetPath(appId))
-          .save(widgetJs, { contentType: "application/javascript", resumable: false })
-          .then(() => {
-            log.info({ appId }, "bundle-storage: widget.js uploaded to GCS");
-          }),
-      );
-    }
-    if (adminUiJs) {
-      uploads.push(
-        bucket
-          .file(adminPath(appId))
-          .save(adminUiJs, { contentType: "application/javascript", resumable: false })
-          .then(() => {
-            log.info({ appId }, "bundle-storage: admin.js uploaded to GCS");
-          }),
-      );
-    }
-    await Promise.all(uploads);
-  } else {
-    await updateAppBundles(appId, {
-      ...(widgetJs != null ? { widgetJs } : {}),
-      ...(adminUiJs != null ? { adminUiJs } : {}),
-    });
-    log.info(
-      { appId, hasWidget: Boolean(widgetJs), hasAdmin: Boolean(adminUiJs) },
-      "bundle-storage: bundles written to DB",
+  const bucket = getStorage().bucket(gcsBucket());
+  const uploads: Promise<void>[] = [];
+
+  if (widgetJs) {
+    uploads.push(
+      bucket
+        .file(`${appId}/widget.js`)
+        .save(widgetJs, { contentType: "application/javascript", resumable: false })
+        .then(() => log.info({ appId }, "bundle-storage: widget.js saved")),
     );
   }
+  if (adminUiJs) {
+    uploads.push(
+      bucket
+        .file(`${appId}/admin.js`)
+        .save(adminUiJs, { contentType: "application/javascript", resumable: false })
+        .then(() => log.info({ appId }, "bundle-storage: admin.js saved")),
+    );
+  }
+  await Promise.all(uploads);
 }
 
-/**
- * Retrieve the widget bundle for an app.
- * Returns null when no bundle has been stored yet.
- */
 export async function getWidgetBundle(appId: string): Promise<string | null> {
-  if (IS_PROD) {
-    return downloadGcs(appId, widgetPath(appId));
-  }
-  const row = await getAppBundles(appId);
-  return row?.widgetJs ?? null;
+  return downloadText(`${appId}/widget.js`);
+}
+
+export async function getAdminBundle(appId: string): Promise<string | null> {
+  return downloadText(`${appId}/admin.js`);
+}
+
+// ── Generation bundles ────────────────────────────────────────────────────────
+
+/**
+ * Saves the full generation bundle JSON to GCS.
+ * Returns the GCS path to store in the generations table.
+ */
+export async function saveGenerationBundle(
+  jobId: string,
+  bundle: unknown,
+): Promise<string> {
+  const gcsPath = `${jobId}/bundle.json`;
+  await getStorage()
+    .bucket(gcsBucket())
+    .file(gcsPath)
+    .save(JSON.stringify(bundle), { contentType: "application/json", resumable: false });
+  log.info({ jobId }, "bundle-storage: generation bundle saved");
+  return gcsPath;
 }
 
 /**
- * Retrieve the admin UI bundle for an app.
- * Returns null when no bundle has been stored yet.
+ * Downloads and parses a generation bundle from GCS.
+ * Returns null when the object does not exist.
  */
-export async function getAdminBundle(appId: string): Promise<string | null> {
-  if (IS_PROD) {
-    return downloadGcs(appId, adminPath(appId));
-  }
-  const row = await getAppBundles(appId);
-  return row?.adminUiJs ?? null;
+export async function getGenerationBundle(gcsPath: string): Promise<unknown> {
+  const text = await downloadText(gcsPath);
+  if (!text) return null;
+  return JSON.parse(text) as unknown;
 }
 
-// ── GCS helpers ───────────────────────────────────────────────────────────────
+// ── Shared GCS helper ─────────────────────────────────────────────────────────
 
-async function downloadGcs(appId: string, gcsPath: string): Promise<string | null> {
+async function downloadText(gcsPath: string): Promise<string | null> {
   try {
-    const [contents] = await getStorage()
-      .bucket(gcsBucket())
-      .file(gcsPath)
-      .download();
+    const [contents] = await getStorage().bucket(gcsBucket()).file(gcsPath).download();
     return contents.toString("utf-8");
   } catch (err: unknown) {
-    const code = (err as { code?: number }).code;
-    if (code === 404) {
-      log.info({ appId, gcsPath }, "bundle-storage: GCS object not found");
-      return null;
-    }
+    if ((err as { code?: number }).code === 404) return null;
     throw err;
   }
 }

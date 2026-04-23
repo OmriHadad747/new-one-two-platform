@@ -33,6 +33,7 @@ import { publishGenerationRequest } from "../pubsub/publisher.js";
 import { registerProgressListener } from "../pubsub/progress-subscriber.js";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import { requireTenant } from "../plugins/auth.js";
+import { getGenerationBundle } from "../lib/bundle-storage.js";
 
 // ─── Request schemas ──────────────────────────────────────────────────────────
 
@@ -213,12 +214,12 @@ async function approveHandler(
     return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Generation not found"));
   }
   if (!requireTenant(req, reply, row.tenantId)) return;
-  if (row.status !== "success" || !row.bundle) {
+  if (row.status !== "success" || !row.bundleGcsPath) {
     return reply.code(409).send(errorResponse(ErrorCode.Conflict, "Generation not complete or bundle missing"));
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const bundle = row.bundle as any;
+  const bundle = (await getGenerationBundle(row.bundleGcsPath)) as any;
   const handlerFiles: Array<{ path: string; contents: string }> = bundle?.handlerModule?.files ?? [];
   const migrationFile = bundle?.dbMigration ?? null;
   if (!handlerFiles.length || !migrationFile) {
@@ -281,7 +282,9 @@ async function reviseHandler(
     tenantId: priorRow.tenantId,
     appId: priorRow.appId,
     prompt: parsed.data.feedback,
-    priorBundle: (priorRow.bundle as Record<string, unknown>) ?? null,
+    priorBundle: priorRow.bundleGcsPath
+      ? (await getGenerationBundle(priorRow.bundleGcsPath) as Record<string, unknown>)
+      : null,
   });
 
   logger.info({ newJobId, priorJobId: jobId }, "Revision started");

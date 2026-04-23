@@ -5,7 +5,7 @@ import { createRequestLogger } from "@platform-back/logger";
 import type { WebhookJobPayload } from "@platform-back/types";
 
 const WEBHOOK_QUEUE_NAME = "webhook-executions";
-const SKIP_AUTH = process.env["CLOUD_RUN_SKIP_AUTH"] === "true";
+const SKIP_AUTH = process.env["NODE_ENV"] === "development";
 const auth = SKIP_AUTH ? null : new GoogleAuth();
 
 const redisConnection = {

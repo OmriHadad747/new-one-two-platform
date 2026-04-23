@@ -328,7 +328,7 @@ function buildBaselineEnv(params: {
   shopDomain: string;
 }): Record<string, string> {
   return {
-    NODE_ENV: "production",
+    NODE_ENV: process.env["NODE_ENV"] ?? "production",
     PORT: "8080",
     TENANT_ID: params.tenantId,
     APP_ID: params.appId,

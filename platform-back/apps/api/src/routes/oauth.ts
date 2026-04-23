@@ -357,13 +357,13 @@ async function persistAccessToken(
   shop: string,
   accessToken: string,
 ): Promise<string> {
-  if (process.env["NODE_ENV"] !== "production") {
+  if (process.env["NODE_ENV"] === "development") {
     const shopPrefix = shop.replace(".myshopify.com", "");
     const secretName = `projects/local/secrets/${shopPrefix}-access-token/versions/latest`;
     // DEV-ONLY: Secret Manager is unreachable locally, so the token value
     // has to be surfaced somewhere human-accessible. Operator copy-pastes
-    // the SM_DEV_SECRETS entry into .env. Guarded by NODE_ENV != production
-    // so this can never reach prod log aggregators.
+    // the SM_DEV_SECRETS entry into .env. Guarded by NODE_ENV=development
+    // so this can never reach staging/prod log aggregators.
     logger.info(
       { shop, secretName },
       "[dev] Access token not persisted to Secret Manager. " +
@@ -453,7 +453,7 @@ async function provisionStorefrontToken(
     throw new Error("No access_token in Shopify Storefront token response");
   }
 
-  if (process.env["NODE_ENV"] !== "production") {
+  if (process.env["NODE_ENV"] === "development") {
     const shopPrefix = shop.replace(".myshopify.com", "");
     const secretName = `projects/local/secrets/${shopPrefix}-storefront-token/versions/latest`;
     logger.info(

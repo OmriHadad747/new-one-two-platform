@@ -146,7 +146,7 @@ export async function resolveAppHandler(
  * the embedded Shopify Admin shell's left-nav. Scoped by the authoritative
  * `apps.shop_domain` column (an app is pinned to the shop it was created
  * under; shop identity is not per-tenant in the new model). Filters:
- *   - admin_ui_js IS NOT NULL — only apps with a deployable admin bundle.
+ *   - app_archetype has admin — only apps with a deployable admin bundle.
  *   - status != 'deleted'    — match the old contract: inactive apps still
  *                               show in the sidebar so the merchant can see
  *                               them, even if POST /admin/:appId/* 503s.
@@ -159,9 +159,19 @@ export async function listAdminAppsForShop(
     SELECT id, name, slug
       FROM apps
      WHERE shop_domain = ${shopDomain}
-       AND admin_ui_js IS NOT NULL
+       AND app_archetype IN ('storefront_backend_admin', 'backend_admin')
        AND status != 'deleted'
      ORDER BY updated_at DESC
+  `;
+}
+
+export async function updateAppArchetype(
+  appId: string,
+  archetype: string,
+): Promise<void> {
+  await sql`
+    UPDATE apps SET app_archetype = ${archetype}, updated_at = NOW()
+     WHERE id = ${appId}
   `;
 }
 

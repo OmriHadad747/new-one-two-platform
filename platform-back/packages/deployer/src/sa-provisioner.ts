@@ -19,7 +19,7 @@ import { writeHandlerSaEmail } from "./db-writer.js";
 //      own SA to the Cloud Run service's roles/run.invoker binding so
 //      `/admin/*` and `/webhook/*` proxy calls can authenticate.
 
-const DEPLOY_MODE = process.env["DEPLOY_MODE"] ?? "cloudrun";
+const IS_LOCAL = process.env["NODE_ENV"] === "development";
 
 /**
  * Counts existing handler SAs for the given shop and returns the next
@@ -88,10 +88,9 @@ export async function provisionHandlerSa(
   const email = handlerSaEmail(input.shopDomain, n);
   const accountId = handlerSaEmail(input.shopDomain, n).split("@")[0]!;
 
-  if (DEPLOY_MODE === "local") {
+  if (IS_LOCAL) {
     // Skip the IAM API call entirely — local handlers run on docker
-    // compose with CLOUD_RUN_SKIP_AUTH=true and never present a real
-    // ID token. The DB write is still performed so /services/* routes
+    // docker container and never presents a real ID token. The DB write is still performed so /services/* routes
     // can resolve the SA-to-app mapping by the placeholder email.
     logger.info(
       { appId: input.appId, email },
@@ -131,13 +130,13 @@ export async function provisionHandlerSa(
  * Source of platform-back's SA email:
  *   - Env: PLATFORM_SA_EMAIL (set in prod via Cloud Run service
  *     account metadata, or explicitly in deploy/api.yaml)
- *   - In dev (DEPLOY_MODE=local): no-op, since local platform-back
+ *   - In dev (NODE_ENV=development): no-op, since local platform-back
  *     calls handlers without minting a real ID token.
  */
 export async function grantPlatformBackInvokerOnHandler(
   appId: string,
 ): Promise<void> {
-  if (DEPLOY_MODE === "local") {
+  if (IS_LOCAL) {
     logger.info(
       { appId },
       "[local] Skipping roles/run.invoker grant — local handlers don't enforce IAM",

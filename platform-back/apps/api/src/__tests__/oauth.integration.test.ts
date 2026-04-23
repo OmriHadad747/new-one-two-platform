@@ -17,9 +17,14 @@ vi.mock("../plugins/auth.js", () => ({
   requireTenant: vi.fn(),
   requireAuthedTenantId: vi.fn(),
 }));
-vi.mock("@platform-back/logger", () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-}));
+vi.mock("@platform-back/logger", () => {
+  const base = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  const logger = { ...base, child: vi.fn().mockReturnValue(base) };
+  return {
+    logger,
+    createRequestLogger: vi.fn().mockReturnValue(logger),
+  };
+});
 
 import { createTenant, getTenantByShopDomain, updateTenantAccessToken } from "@platform-back/db";
 import { storeSecret } from "@platform-back/crypto";

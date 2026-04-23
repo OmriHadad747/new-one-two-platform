@@ -3,19 +3,11 @@ import { CloudBuildClient } from "@google-cloud/cloudbuild";
 import { logger } from "@platform-back/logger";
 import { dockerImageName, GCP_PROJECT_VALUE } from "./service-namer.js";
 
-// Two modes — selected by DEPLOY_MODE. Same input contract; the choice
-// of mode is purely an operational concern (where the build happens).
-//
-// `local`    — shell out to `docker build` + `docker push`. Requires a
-//              Docker daemon. Fast on dev machines (cached layers); does
-//              NOT work from a Cloud Run host (no docker-in-docker).
-// `cloudrun` — submit to Cloud Build via the API. Build runs on GCP
-//              build workers, image lands in Artifact Registry. Works
-//              from anywhere with Cloud Build IAM. Slower (1–2 min cold
-//              start); the only viable option when the caller itself
-//              runs on Cloud Run.
+// Two build modes:
+// development → local docker build + push (fast, requires Docker daemon)
+// anything else (staging, production) → Cloud Build submission (runs on GCP)
 
-const DEPLOY_MODE = process.env["DEPLOY_MODE"] ?? "cloudrun";
+const IS_LOCAL = process.env["NODE_ENV"] === "development";
 const SKIP_DOCKER_PUSH = process.env["SKIP_DOCKER_PUSH"] === "true";
 
 export interface BuildImageInput {
@@ -34,7 +26,7 @@ export async function buildAndPushImage(
   input: BuildImageInput,
 ): Promise<BuildImageResult> {
   const imageName = dockerImageName(input.appId, input.version);
-  if (DEPLOY_MODE === "local") {
+  if (IS_LOCAL) {
     return buildLocal(input.buildContextDir, imageName);
   }
   return buildCloudBuild(input.buildContextDir, imageName);
@@ -113,7 +105,7 @@ async function buildCloudBuild(
   // build context. We throw rather than silently no-op so any premature
   // call is loud.
   throw new Error(
-    `buildCloudBuild not implemented yet — DEPLOY_MODE=cloudrun pipeline lands in sub-phase D ` +
+    `buildCloudBuild not implemented yet — Cloud Build pipeline lands in sub-phase D ` +
       `(call sites: ${buildContextDir} → ${imageName}, project: ${GCP_PROJECT_VALUE}, ` +
       `client ready: ${cloudBuildClient !== null})`,
   );
@@ -127,15 +119,13 @@ async function buildCloudBuild(
  * cost-only orphan in the registry, not a correctness issue. Logs
  * warn + continues so one stale tag can't block teardown.
  *
- * - DEPLOY_MODE=local: `docker rmi -f`. Missing images are expected on
- *   dev machines (never pulled, already pruned); skip quietly.
- * - DEPLOY_MODE=cloudrun: shells out to
- *   `gcloud artifacts docker images delete`. The image name is already
- *   in Artifact Registry format (REGION-docker.pkg.dev/…); passing it
- *   verbatim is what the CLI expects.
+ * - local (NODE_ENV=development): `docker rmi -f`. Missing images are
+ *   expected on dev machines (never pulled, already pruned); skip quietly.
+ * - staging/production: shells out to `gcloud artifacts docker images delete`.
+ *   The image name is already in Artifact Registry format.
  */
 export async function deleteDockerImage(imageName: string): Promise<void> {
-  if (DEPLOY_MODE === "local") {
+  if (IS_LOCAL) {
     try {
       await runCommand("docker", ["rmi", "-f", imageName], process.cwd());
       logger.info({ imageName }, "[local] docker rmi");

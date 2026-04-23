@@ -14,20 +14,16 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 // platform SA — a valid Google-issued token from any GCP project would
 // otherwise pass the signature check.
 
-const SKIP_AUTH = process.env["CLOUD_RUN_SKIP_AUTH"] === "true";
+const SKIP_AUTH = process.env["NODE_ENV"] === "development";
 const EXPECTED_AUDIENCE = process.env["EXPECTED_AUDIENCE"] ?? "";
 const PLATFORM_SA_EMAIL = process.env["PLATFORM_SA_EMAIL"] ?? "";
 
 if (!SKIP_AUTH) {
   if (!EXPECTED_AUDIENCE) {
-    throw new Error(
-      "FATAL: EXPECTED_AUDIENCE must be set when CLOUD_RUN_SKIP_AUTH != true",
-    );
+    throw new Error("FATAL: EXPECTED_AUDIENCE must be set in production");
   }
   if (!PLATFORM_SA_EMAIL) {
-    throw new Error(
-      "FATAL: PLATFORM_SA_EMAIL must be set when CLOUD_RUN_SKIP_AUTH != true",
-    );
+    throw new Error("FATAL: PLATFORM_SA_EMAIL must be set in production");
   }
 }
 

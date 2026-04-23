@@ -38,15 +38,12 @@ declare module "fastify" {
 
 const JWT_SECRET =
   process.env["JWT_SECRET"] || process.env["SHOPIFY_CLIENT_SECRET"] || "";
-const AUTH_REQUIRED = process.env["API_AUTH_REQUIRED"] === "true";
+const AUTH_REQUIRED = process.env["NODE_ENV"] !== "development";
 const TOKEN_EXPIRY_SEC = 60 * 60 * 24 * 7; // 7 days
 
-// Fail fast: a service that requires auth but cannot verify tokens would
-// 401 every dashboard call. Crash at startup so the misconfiguration is
-// obvious instead of silently locking out merchants.
 if (AUTH_REQUIRED && !JWT_SECRET) {
   throw new Error(
-    "FATAL: API_AUTH_REQUIRED=true but neither JWT_SECRET nor SHOPIFY_CLIENT_SECRET is set",
+    "FATAL: JWT_SECRET (or SHOPIFY_CLIENT_SECRET) must be set outside local dev",
   );
 }
 

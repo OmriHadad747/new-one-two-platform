@@ -15,8 +15,7 @@ import {
   provisionHandlerSa,
 } from "./sa-provisioner.js";
 
-const DEPLOY_MODE = process.env["DEPLOY_MODE"] ?? "cloudrun";
-const IS_LOCAL = DEPLOY_MODE === "local";
+const IS_LOCAL = process.env["NODE_ENV"] === "development";
 
 // End-to-end deploy orchestrator. Sequences every sub-phase A-C piece
 // in the right order, emits per-step progress events for the SSE route,
@@ -390,7 +389,7 @@ function buildHandlerEnv(input: StartDeployInput): Record<string, string> {
   );
 
   return {
-    NODE_ENV: "production",
+    NODE_ENV: process.env["NODE_ENV"] ?? "production",
     PORT: "8080",
     TENANT_ID: input.tenantId,
     APP_ID: input.appId,

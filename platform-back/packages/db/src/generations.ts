@@ -15,8 +15,8 @@ export interface UpsertGenerationInput {
   status: GenerationStatus;
   error?: string | null;
   errorCode?: string | null;
-  /** Full Bundle JSON. Null on failure. */
-  bundle?: unknown;
+  /** GCS path for the bundle JSON file. Null on failure. */
+  bundleGcsPath?: string | null;
   /** GenerationMeta JSON. Null on failure. */
   meta?: unknown;
 }
@@ -38,10 +38,6 @@ export async function upsertGeneration(
   // is JSONB; no explicit sql.json() wrapper needed. Pre-stringify when
   // passing `unknown` values so the postgres.js parameter inference picks
   // the JSONB path regardless of the runtime shape.
-  const bundleJson =
-    input.bundle === undefined || input.bundle === null
-      ? null
-      : JSON.stringify(input.bundle);
   const metaJson =
     input.meta === undefined || input.meta === null
       ? null
@@ -49,7 +45,7 @@ export async function upsertGeneration(
 
   await sql`
     INSERT INTO generations (
-      job_id, tenant_id, app_id, status, error, error_code, bundle, meta
+      job_id, tenant_id, app_id, status, error, error_code, bundle_gcs_path, meta
     ) VALUES (
       ${input.jobId},
       ${input.tenantId},
@@ -57,15 +53,15 @@ export async function upsertGeneration(
       ${input.status},
       ${input.error ?? null},
       ${input.errorCode ?? null},
-      ${bundleJson}::jsonb,
+      ${input.bundleGcsPath ?? null},
       ${metaJson}::jsonb
     )
     ON CONFLICT (job_id) DO UPDATE SET
-      status     = EXCLUDED.status,
-      error      = EXCLUDED.error,
-      error_code = EXCLUDED.error_code,
-      bundle     = EXCLUDED.bundle,
-      meta       = EXCLUDED.meta
+      status          = EXCLUDED.status,
+      error           = EXCLUDED.error,
+      error_code      = EXCLUDED.error_code,
+      bundle_gcs_path = EXCLUDED.bundle_gcs_path,
+      meta            = EXCLUDED.meta
   `;
 }
 
@@ -76,7 +72,7 @@ export interface GenerationRow {
   status: GenerationStatus;
   error: string | null;
   errorCode: string | null;
-  bundle: unknown | null;
+  bundleGcsPath: string | null;
   meta: unknown | null;
   deployed: boolean;
   deployedAt: Date | null;
@@ -99,7 +95,7 @@ export async function getGenerationByJobId(
       status,
       error,
       error_code   AS "errorCode",
-      bundle,
+      bundle_gcs_path AS "bundleGcsPath",
       meta,
       deployed,
       deployed_at  AS "deployedAt",
@@ -154,7 +150,7 @@ export async function getLatestGenerationForApp(
       status,
       error,
       error_code   AS "errorCode",
-      bundle,
+      bundle_gcs_path AS "bundleGcsPath",
       meta,
       deployed,
       deployed_at  AS "deployedAt",
@@ -180,7 +176,7 @@ export async function getLatestCompletedGenerationForApp(
       status,
       error,
       error_code   AS "errorCode",
-      bundle,
+      bundle_gcs_path AS "bundleGcsPath",
       meta,
       deployed,
       deployed_at  AS "deployedAt",
@@ -207,7 +203,7 @@ export async function listGenerationsForApp(
       status,
       error,
       error_code   AS "errorCode",
-      bundle,
+      bundle_gcs_path AS "bundleGcsPath",
       meta,
       deployed,
       deployed_at  AS "deployedAt",

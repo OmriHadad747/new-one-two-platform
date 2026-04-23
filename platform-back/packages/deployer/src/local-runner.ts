@@ -38,9 +38,7 @@ export function runHandlerLocally(
 
   const env: Record<string, string> = {
     ...input.handlerEnv,
-    // Override cloud-specific settings for local context.
     NODE_ENV: "development",
-    CLOUD_RUN_SKIP_AUTH: "true",
     PORT: "8080",
     DATABASE_URL: localDbUrl(),
   };

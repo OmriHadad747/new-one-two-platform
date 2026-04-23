@@ -1,6 +1,6 @@
 """
-db_local.py — persist chat_local generation results into the local Docker postgres,
-mirroring what the platform API does in generation.ts.
+db_local.py — persist chat_local generation results into the local Docker postgres
+and fake-GCS, mirroring what the platform API does via the Pub/Sub subscriber.
 
 Tenant constants are hardcoded to the single local dev tenant
 (hadad747teststore.myshopify.com).  NOT for use in production generator code.
@@ -12,13 +12,14 @@ import random
 import re
 import string
 import time
+import urllib.parse
 from contextlib import contextmanager
 from typing import Any, Dict, Tuple
 
 import psycopg2
+import requests
 
 # ── Local dev constants ────────────────────────────────────────────────────────
-# Match the single row in the local docker-compose postgres.
 
 _TENANT_ID         = "e5761282-0eaf-419c-bdf8-eb131e1ba406"
 _SHOPIFY_CLIENT_ID = "a2f831d9652fdb7ef86829111ac4a70e"
@@ -28,6 +29,9 @@ _DSN = (
     "host=localhost port=5432 dbname=new_one_two "
     "user=new_one_two_u password=paas_dev_password"
 )
+
+_GCS_BASE    = "http://localhost:4443"
+_GCS_BUCKET  = "new-one-two-bundles-dev"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -62,6 +66,37 @@ def _archetype_from_bundle(bundle: Dict[str, Any]) -> str:
     return "backend"
 
 
+def _upload_bundle_to_gcs(job_id: str, bundle: Dict[str, Any]) -> str:
+    """Upload bundle JSON to fake-GCS and return the GCS path."""
+    obj_name = f"{job_id}/bundle.json"
+    encoded  = urllib.parse.quote(obj_name, safe="")
+    url      = f"{_GCS_BASE}/upload/storage/v1/b/{_GCS_BUCKET}/o?uploadType=media&name={encoded}"
+    resp = requests.post(
+        url,
+        data=json.dumps(bundle),
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return obj_name
+
+
+def _upload_js_to_gcs(app_id: str, widget_js: str | None, admin_js: str | None) -> None:
+    """Upload rendered widget.js / admin.js to fake-GCS."""
+    for name, content in [("widget.js", widget_js), ("admin.js", admin_js)]:
+        if not content:
+            continue
+        obj_name = f"{app_id}/{name}"
+        encoded  = urllib.parse.quote(obj_name, safe="")
+        url      = f"{_GCS_BASE}/upload/storage/v1/b/{_GCS_BUCKET}/o?uploadType=media&name={encoded}"
+        requests.post(
+            url,
+            data=content.encode(),
+            headers={"Content-Type": "application/javascript"},
+            timeout=10,
+        ).raise_for_status()
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 
@@ -92,38 +127,42 @@ def create_app(name: str) -> Tuple[str, str]:
 
 def create_session(app_id: str, prompt: str, job_id: str) -> str:
     """
-    Create a generation_session in 'running' state.
-    Mirrors createGenerationSession + updateGenerationSession in generation.ts.
-    Returns session_id.
+    Create a pending generation row. Mirrors createPendingGeneration in the API.
+    Returns job_id (same as input — kept for caller compatibility).
     """
     with _conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO generation_sessions
-              (app_id, tenant_id, prompt, status, job_id)
-            VALUES (%s, %s, %s, 'running', %s::uuid)
-            RETURNING id
+            INSERT INTO generations (job_id, tenant_id, app_id, status)
+            VALUES (%s::uuid, %s, %s, 'pending')
+            ON CONFLICT (job_id) DO NOTHING
             """,
-            (app_id, _TENANT_ID, prompt, job_id),
+            (job_id, _TENANT_ID, app_id),
         )
-        return str(cur.fetchone()[0])
+    return job_id
 
 
 def store_bundle(job_id: str, app_id: str, bundle: Dict[str, Any]) -> None:
     """
-    Persist the completed bundle and transition app to 'ready'.
-    Mirrors storeBundleInSession + updateAppArchetype + updateAppStatus in generation.ts.
+    Persist the completed bundle. Mirrors the Pub/Sub subscriber:
+      1. Upload full bundle JSON to fake-GCS → store path in generations.
+      2. Upload widget.js / admin.js to fake-GCS (for storefront serving).
+      3. Update app archetype and status.
     """
-    archetype = _archetype_from_bundle(bundle)
+    archetype  = _archetype_from_bundle(bundle)
+    gcs_path   = _upload_bundle_to_gcs(job_id, bundle)
+    widget_js  = bundle.get("widgetModule")
+    admin_js   = bundle.get("adminUiModule")
+    _upload_js_to_gcs(app_id, widget_js, admin_js)
 
     with _conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            UPDATE generation_sessions
-            SET bundle = %s::jsonb, status = 'completed', updated_at = NOW()
+            UPDATE generations
+            SET bundle_gcs_path = %s, status = 'success', updated_at = NOW()
             WHERE job_id = %s::uuid
             """,
-            (json.dumps(bundle), job_id),
+            (gcs_path, job_id),
         )
         cur.execute(
             """
@@ -136,12 +175,12 @@ def store_bundle(job_id: str, app_id: str, bundle: Dict[str, Any]) -> None:
 
 
 def mark_session_failed(job_id: str, app_id: str, error: str) -> None:
-    """Flip session to failed and app back to draft on generation error."""
+    """Flip generation to failed and app back to draft on generation error."""
     with _conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            UPDATE generation_sessions
-            SET status = 'failed', error_message = %s, updated_at = NOW()
+            UPDATE generations
+            SET status = 'failed', error = %s, updated_at = NOW()
             WHERE job_id = %s::uuid
             """,
             (error, job_id),

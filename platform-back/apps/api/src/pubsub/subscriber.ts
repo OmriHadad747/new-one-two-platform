@@ -1,7 +1,7 @@
 import type { Message, Subscription } from "@google-cloud/pubsub";
 import { logger as baseLogger } from "@platform-back/logger";
-import { upsertGeneration } from "@platform-back/db";
-import { saveBundles } from "../lib/bundle-storage.js";
+import { upsertGeneration, updateAppArchetype } from "@platform-back/db";
+import { saveBundles, saveGenerationBundle } from "../lib/bundle-storage.js";
 import { getPubSubClient, SUB_PLATFORM_BACK_COMPLETED } from "./client.js";
 import { FeatureBundleMessageSchema } from "./schemas.js";
 
@@ -45,6 +45,24 @@ async function handleMessage(msg: Message): Promise<void> {
   }
 
   try {
+    let bundleGcsPath: string | null = null;
+    const widgetJs = parsed.bundle?.widgetModule ?? null;
+    const adminUiJs = parsed.bundle?.adminUiModule ?? null;
+
+    if (parsed.bundle) {
+      bundleGcsPath = await saveGenerationBundle(parsed.jobId, parsed.bundle);
+      if (widgetJs || adminUiJs) {
+        await saveBundles(parsed.appId, { widgetJs, adminUiJs });
+      }
+      // Keep app_archetype in sync so listAdminAppsForShop stays accurate.
+      const archetype =
+        widgetJs && adminUiJs ? "storefront_backend_admin"
+        : adminUiJs ? "backend_admin"
+        : widgetJs ? "storefront_backend"
+        : "backend";
+      await updateAppArchetype(parsed.appId, archetype);
+    }
+
     await upsertGeneration({
       jobId: parsed.jobId,
       tenantId: parsed.tenantId,
@@ -52,15 +70,9 @@ async function handleMessage(msg: Message): Promise<void> {
       status: parsed.status,
       error: parsed.error ?? null,
       errorCode: parsed.errorCode ?? null,
-      bundle: parsed.bundle ?? null,
+      bundleGcsPath,
       meta: parsed.meta ?? null,
     });
-
-    const widgetJs = parsed.bundle?.widgetModule ?? null;
-    const adminUiJs = parsed.bundle?.adminUiModule ?? null;
-    if (widgetJs || adminUiJs) {
-      await saveBundles(parsed.appId, { widgetJs, adminUiJs });
-    }
 
     msg.ack();
     logger.info(

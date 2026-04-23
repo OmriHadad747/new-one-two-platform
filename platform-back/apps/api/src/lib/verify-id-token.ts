@@ -4,22 +4,17 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 // header on /services/* calls. Returns the verified `email` claim — that
 // claim is what `apps WHERE handler_sa_email = ?` is keyed on.
 //
-// SKIP_AUTH bypasses the verify in local dev (no Cloud Run, no real
-// metadata server). When skipped, callers MUST supply a fallback SA
-// email via env so the lookup pipeline still works locally.
+// SKIP_AUTH bypasses verification in local dev (no Cloud Run, no metadata
+// server). The caller email is "" which matches apps.handler_sa_email = ""
+// written by the local deployer (SA provisioning is skipped locally).
 
-const SKIP_AUTH = process.env["CLOUD_RUN_SKIP_AUTH"] === "true";
+const SKIP_AUTH = process.env["NODE_ENV"] === "development";
 const EXPECTED_AUDIENCE = process.env["EXPECTED_AUDIENCE"] ?? "";
-const DEV_HANDLER_SA_EMAIL = process.env["DEV_HANDLER_SA_EMAIL"] ?? "";
 
 if (!SKIP_AUTH && !EXPECTED_AUDIENCE) {
-  throw new Error(
-    "FATAL: EXPECTED_AUDIENCE must be set when CLOUD_RUN_SKIP_AUTH != true",
-  );
+  throw new Error("FATAL: EXPECTED_AUDIENCE must be set in production");
 }
 
-// Google's OIDC JWKS endpoint. `jose` caches keys and refreshes on
-// signature failures; allocate once per process.
 const GOOGLE_JWKS = SKIP_AUTH
   ? null
   : createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
@@ -37,10 +32,7 @@ export async function verifyCallerIdToken(
   authorizationHeader: string | undefined,
 ): Promise<VerifyResult> {
   if (SKIP_AUTH) {
-    if (!DEV_HANDLER_SA_EMAIL) {
-      return { ok: false, reason: "untrusted_caller" };
-    }
-    return { ok: true, caller: { email: DEV_HANDLER_SA_EMAIL } };
+    return { ok: true, caller: { email: "" } };
   }
 
   if (!authorizationHeader?.startsWith("Bearer ")) {

@@ -10,11 +10,11 @@ const UNSUBSCRIBE_SECRET =
   process.env["EMAIL_UNSUBSCRIBE_SECRET"] ?? "dev-secret-change-me";
 
 if (
-  process.env["NODE_ENV"] === "production" &&
+  process.env["NODE_ENV"] !== "development" &&
   UNSUBSCRIBE_SECRET === "dev-secret-change-me"
 ) {
   throw new Error(
-    "FATAL: EMAIL_UNSUBSCRIBE_SECRET must be set to a real secret in production",
+    "FATAL: EMAIL_UNSUBSCRIBE_SECRET must be set to a real secret outside local dev",
   );
 }
 

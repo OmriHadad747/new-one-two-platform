@@ -103,8 +103,6 @@ CREATE TABLE apps (
   shopify_client_id          TEXT NOT NULL,
   shopify_secret_name        TEXT NOT NULL DEFAULT '',
   shop_domain                TEXT NOT NULL,
-  widget_js                  TEXT,
-  admin_ui_js                TEXT,
   app_archetype              TEXT NOT NULL DEFAULT 'backend'
                                CHECK (app_archetype IN ('storefront_backend', 'storefront_backend_admin', 'backend', 'backend_admin')),
   theme_injection_status     TEXT NOT NULL DEFAULT 'none',
@@ -142,7 +140,6 @@ CREATE TABLE app_versions (
   tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   semver           TEXT NOT NULL,
   status           version_status NOT NULL DEFAULT 'draft',
-  generated_code   JSONB NOT NULL DEFAULT '{}',
   build_logs       TEXT,
   gcs_bundle_path  TEXT,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -293,14 +290,13 @@ CREATE TABLE generations (
   -- lacks). Dashboard surfaces 'platform_limitation' as a non-retryable
   -- error.
   error_code   TEXT,
-  -- Full Bundle shape. Null on failure. handlerModule.files + dbMigration
-  -- are what the deploy button stitches into a generatedFiles[] payload
-  -- for POST /apps/:appId/deploy.
-  bundle       JSONB,
+  -- GCS path to the full bundle JSON (<jobId>/bundle.json in GCS_BUCKET).
+  -- Null on failure. handlerModule.files + dbMigration inside the bundle
+  -- are what the deploy button stitches into POST /apps/:appId/deploy.
+  bundle_gcs_path  TEXT,
   -- GenerationMeta: totalInputTokens, totalOutputTokens, generationMs,
   -- agentTrace[]. Null on failure when the generator aborted before
-  -- tallying. Used by ops for cost / latency analytics; dashboard doesn't
-  -- render it today.
+  -- tallying. Used by ops for cost / latency analytics.
   meta         JSONB,
   -- Deploy-button bookkeeping. Flipped to true (+ deployed_at set) when
   -- the merchant clicks Deploy and the deploy job is registered. Not a
@@ -327,14 +323,13 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON generations
   FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
 
 COMMENT ON TABLE generations IS
-  'Platform-back generation.completed subscriber target. bundle JSONB is '
-  'the source of truth; deploy button reads it, deployer stitches '
+  'One row per generator run. bundle_gcs_path points to the full Bundle '
+  'JSON in GCS (<jobId>/bundle.json). Deploy button reads it and stitches '
   'handlerModule.files + dbMigration into POST /apps/:appId/deploy.';
 
-COMMENT ON COLUMN generations.bundle IS
-  'Full Bundle JSON per platform-ai/contract/validators.py::Bundle. Null '
-  'on failure. handlerModule.files is a List[{path, contents}]; '
-  'dbMigration is a single {path, contents}.';
+COMMENT ON COLUMN generations.bundle_gcs_path IS
+  'GCS object path within GCS_BUCKET, e.g. <jobId>/bundle.json. '
+  'Null on failure. Bundle shape: platform-ai/contract/validators.py::Bundle.';
 
 COMMENT ON COLUMN generations.meta IS
   'GenerationMeta from the completed message: totalInputTokens, '

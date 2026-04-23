@@ -12,7 +12,7 @@ import { GoogleAuth } from "google-auth-library";
 const PLATFORM_URL = process.env["PLATFORM_URL"];
 if (!PLATFORM_URL) throw new Error("FATAL: PLATFORM_URL is not set");
 
-const SKIP_AUTH = process.env["CLOUD_RUN_SKIP_AUTH"] === "true";
+const SKIP_AUTH = process.env["NODE_ENV"] === "development";
 
 const auth = SKIP_AUTH ? null : new GoogleAuth();
 let cachedAuthHeader: Promise<string> | null = null;

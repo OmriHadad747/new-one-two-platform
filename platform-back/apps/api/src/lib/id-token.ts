@@ -12,7 +12,7 @@ import { logger } from "@platform-back/logger";
 // add a per-audience client cache because constructing one per request
 // is wasteful (~50ms each).
 
-const SKIP_AUTH = process.env["CLOUD_RUN_SKIP_AUTH"] === "true";
+const SKIP_AUTH = process.env["NODE_ENV"] === "development";
 
 const auth = SKIP_AUTH ? null : new GoogleAuth();
 const clientByAudience = new Map<string, Promise<IdTokenClient>>();
@@ -26,7 +26,7 @@ function audienceFor(targetUrl: string): string {
 
 async function getClient(audience: string): Promise<IdTokenClient> {
   if (!auth) {
-    throw new Error("ID token client requested while CLOUD_RUN_SKIP_AUTH=true");
+    throw new Error("ID token client requested in non-production environment");
   }
   const existing = clientByAudience.get(audience);
   if (existing) return existing;

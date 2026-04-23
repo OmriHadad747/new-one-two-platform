@@ -61,7 +61,7 @@ export async function buildServer() {
   });
 
   const allowedOrigins = parseAllowedOrigins(process.env["ALLOWED_ORIGINS"]);
-  if (NODE_ENV === "production" && allowedOrigins.length === 0) {
+  if (NODE_ENV !== "development" && allowedOrigins.length === 0) {
     logger.warn(
       "ALLOWED_ORIGINS is empty in production — only built-in Shopify origins will be permitted",
     );

@@ -6,6 +6,7 @@ import {
   markGenerationDeployed,
 } from "@platform-back/db";
 import { appSchemaName, startDeploy } from "@platform-back/deployer";
+import { getGenerationBundle } from "../lib/bundle-storage.js";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import { requireTenant } from "../plugins/auth.js";
 
@@ -114,10 +115,7 @@ async function deployGenerationHandler(
         ),
       );
   }
-  if (!row.bundle) {
-    // Defensive: status='success' without bundle is a contract bug
-    // somewhere upstream. Fail loudly so we notice rather than deploy
-    // an empty handler.
+  if (!row.bundleGcsPath) {
     return reply
       .code(500)
       .send(
@@ -128,12 +126,8 @@ async function deployGenerationHandler(
       );
   }
 
-  // Stitch handlerModule.files + [dbMigration] into the deploy endpoint's
-  // generatedFiles[]. Cast via `any` is the narrow boundary between the
-  // unknown JSONB column and the known Bundle shape; the subscriber Zod-
-  // validated it on the way in, so the shape is trusted here.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const bundle = row.bundle as any;
+  const bundle = (await getGenerationBundle(row.bundleGcsPath)) as any;
   const handlerFiles: Array<{ path: string; contents: string }> =
     bundle?.handlerModule?.files ?? [];
   const migrationFile = bundle?.dbMigration ?? null;

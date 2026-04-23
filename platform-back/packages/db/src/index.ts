@@ -1,10 +1,5 @@
 export { sql, closeDb } from "./connection.js";
 export {
-  updateAppBundles,
-  getAppBundles,
-  type AppBundles,
-} from "./bundles.js";
-export {
   getAppById,
   getAppByIdUnsafe,
   getAppSlugs,
@@ -14,6 +9,7 @@ export {
   createApp,
   updateAppName,
   updateAppStatus,
+  updateAppArchetype,
   setThemeInjection,
   clearThemeInjection,
   deactivateAppInfrastructure,
