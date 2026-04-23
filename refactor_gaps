@@ -1,10 +1,6 @@
 I have enough signal. Here are the gaps I found that are **from the refactor itself** (not in TD files, not the Resend integration).
 
 
-## Deploy / local-dev path regressions
-
-5. **Per-app local-dev deploy is gone.** Old `platform/packages/deployer/src/cloud-run-dev.ts` did `docker run` on the compose network so a generated handler could be tested locally. New deployer has `DEPLOY_MODE=local` only in `build-image.ts` (the image builds) — `cloud-run-ops.ts` and `orchestrator.ts` don't branch on it and unconditionally call Cloud Run Admin. The "Step 9 — Deploy" section of `docs/INSTRUCTIONS.md` ("Build and start the harness Docker container → `functionUrl: http://localhost:9002`") no longer works.
-6. **`docs/INSTRUCTIONS.md` was only partially updated for the refactor.** Admin URL fixed (`/admin-ui/...` → `/admin/...`), but Step 9 still says "Build and start the harness Docker container", Step 13 says `docker logs harness-00000000-...`, and the Quick-reference table lists "widget proxy" under the API. All describe the deleted single-harness model.
 
 ## Silently-dropped safety features on the edge
 

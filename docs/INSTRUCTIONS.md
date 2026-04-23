@@ -10,7 +10,7 @@ End-to-end test with a real Shopify dev store, AI generation, and live webhooks.
 - pnpm installed
 - Python venv set up: `cd generator && python3 -m venv .venv && pip install -r requirements.txt`
 - ngrok account with **three** static domains configured (see ngrok config below)
-- `platform/.env` filled in (see template at `platform/.env.example`)
+- `platform-back/.env` filled in (see template at `platform-back/.env.example`)
 - `generator/.env` with `ANTHROPIC_API_KEY`
 - `platform-shopify-admin/.env` with `VITE_SHOPIFY_CLIENT_ID` (copy from `.env.example`)
 
@@ -46,7 +46,7 @@ docker compose down -v && docker compose up -d postgres redis fake-gcs pubsub-em
 
 ### Step 3 — Start ngrok, sync URLs, and deploy Shopify app
 
-Start ngrok, then run the helper script — it updates `platform/.env` and `shopify.app.toml` with the new URLs and runs `shopify app deploy` automatically:
+Start ngrok, then run the helper script — it updates `platform-back/.env` and `shopify.app.toml` with the new URLs and runs `shopify app deploy` automatically:
 
 ```bash
 ngrok start --all
@@ -63,7 +63,7 @@ Use the install link printed by `sync-ngrok.sh` in Step 3 (format: `https://<api
 
 Complete the OAuth flow. On success you will be redirected to **platform-front** at `http://localhost:3000/merchants/<tenantId>`.
 
-The API logs will print the merchant access token — copy it and add it to `SM_DEV_SECRETS` in `platform/.env`:
+The API logs will print the merchant access token — copy it and add it to `SM_DEV_SECRETS` in `platform-back/.env`:
 
 ```
 SM_DEV_SECRETS={
@@ -93,11 +93,11 @@ Restart the API after updating.
 
 ### Step 9 — Deploy
 
-The deployer will:
+The deployer will (DEPLOY_MODE=local):
 - Apply the DB migration
-- Build and start the harness Docker container
+- Build the handler Docker image and start it as a container (`handler-<appId-short>`, port 9002)
 - Register `inventory_levels/update` webhook with Shopify
-- Return `{"deployed": true, "functionUrl": "http://localhost:9002"}`
+- Return `functionUrl: http://localhost:9002`
 
 ### Step 10 — Save the result (optional)
 
@@ -123,7 +123,7 @@ psql postgresql://new_one_two_u:paas_dev_password@localhost:5432/new_one_two \
 
 In Shopify Admin → Products, set the variant inventory back to **> 0**.
 
-Shopify fires `inventory_levels/update` → webhook gateway → BullMQ → worker → harness.
+Shopify fires `inventory_levels/update` → webhook gateway → BullMQ → worker → handler.
 
 Verify the full chain:
 ```bash
@@ -131,8 +131,8 @@ Verify the full chain:
 # (check gateway terminal or)
 open http://localhost:3010   # Bull Board — job should show as completed
 
-# Harness processed it
-docker logs harness-00000000-0000-0000-0000-000000000002 --tail 30
+# Handler processed it
+docker logs handler-<appId-short> --tail 30
 # Look for: "invoke completed" with status: "success"
 # Look for: "EMAIL_SENT" log lines (one per subscriber)
 ```

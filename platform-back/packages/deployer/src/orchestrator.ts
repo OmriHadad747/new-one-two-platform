@@ -4,6 +4,7 @@ import { logger } from "@platform-back/logger";
 import { buildAndPushImage } from "./build-image.js";
 import { assembleBuildContext, type GeneratedFile } from "./build-context.js";
 import { deployToCloudRun } from "./cloud-run-ops.js";
+import { runHandlerLocally } from "./local-runner.js";
 import { scheduleAppCron, unscheduleAppCron } from "./cron-scheduler.js";
 import { registerWebhooks } from "./webhook-registrar.js";
 import { upsertDeployedFunction } from "./db-writer.js";
@@ -13,6 +14,9 @@ import {
   grantPlatformBackInvokerOnHandler,
   provisionHandlerSa,
 } from "./sa-provisioner.js";
+
+const DEPLOY_MODE = process.env["DEPLOY_MODE"] ?? "cloudrun";
+const IS_LOCAL = DEPLOY_MODE === "local";
 
 // End-to-end deploy orchestrator. Sequences every sub-phase A-C piece
 // in the right order, emits per-step progress events for the SSE route,
@@ -204,13 +208,16 @@ async function runDeploy(
 
   try {
     // 1. Provision (or look up) the per-handler SA.
+    //    Local mode: no GCP SA needed — skip.
     const sa = await runStep(ctx, "provision_sa", () =>
-      provisionHandlerSa({
-        shopDomain: input.shopDomain,
-        appId: input.appId,
-        appName: input.appName,
-        existingEmail: input.existingHandlerSaEmail ?? null,
-      }),
+      IS_LOCAL
+        ? Promise.resolve({ email: "", uniqueId: "", created: false })
+        : provisionHandlerSa({
+            shopDomain: input.shopDomain,
+            appId: input.appId,
+            appName: input.appName,
+            existingEmail: input.existingHandlerSaEmail ?? null,
+          }),
     );
 
     // 2. Assemble the docker build context.
@@ -250,19 +257,30 @@ async function runDeploy(
       }),
     );
 
-    // 5. Deploy to Cloud Run with the per-handler SA bound.
-    const cloudRun = await runStep(ctx, "deploy_cloud_run", () =>
-      deployToCloudRun({
-        appId: input.appId,
-        imageName: image.imageName,
-        serviceAccountEmail: sa.email,
-        envVars: buildHandlerEnv(input),
-      }),
+    // 5. Deploy — Cloud Run in prod, docker run locally.
+    const deployResult = await runStep(ctx, "deploy_cloud_run", () =>
+      IS_LOCAL
+        ? Promise.resolve(
+            runHandlerLocally({
+              imageName: image.imageName,
+              appId: input.appId,
+              handlerEnv: buildHandlerEnv(input),
+            }),
+          )
+        : deployToCloudRun({
+            appId: input.appId,
+            imageName: image.imageName,
+            serviceAccountEmail: sa.email,
+            envVars: buildHandlerEnv(input),
+          }),
     );
 
     // 6. Grant platform-back's SA invoker on the new service.
+    //    Local mode: no IAM — skip.
     await runStep(ctx, "grant_invoker", () =>
-      grantPlatformBackInvokerOnHandler(input.appId),
+      IS_LOCAL
+        ? Promise.resolve()
+        : grantPlatformBackInvokerOnHandler(input.appId),
     );
 
     // 7. DB writes — record the active deployment.
@@ -271,7 +289,7 @@ async function runDeploy(
         appVersionId: input.appVersionId,
         appId: input.appId,
         tenantId: input.tenantId,
-        functionUrl: cloudRun.functionUrl,
+        functionUrl: deployResult.functionUrl,
         runtime: "nodejs20",
         memoryMb: 256,
         timeoutSec: 30,
@@ -323,13 +341,13 @@ async function runDeploy(
     });
 
     ctx.state.status = "succeeded";
-    ctx.state.functionUrl = cloudRun.functionUrl;
+    ctx.state.functionUrl = deployResult.functionUrl;
     pushEvent(ctx);
     logger.info(
       {
         jobId: ctx.jobId,
         appId: input.appId,
-        functionUrl: cloudRun.functionUrl,
+        functionUrl: deployResult.functionUrl,
       },
       "Deploy succeeded",
     );
