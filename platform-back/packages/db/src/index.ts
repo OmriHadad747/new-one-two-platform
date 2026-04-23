@@ -19,6 +19,7 @@ export {
   deactivateAppInfrastructure,
   hardDeleteApp,
   getActiveWebhookSubscriptionsForApp,
+  getActiveWebhookSubscriptionsForTenant,
   getAppVersionSemvers,
   getLatestDeployedVersionForApp,
   getActiveAppCount,
@@ -27,6 +28,7 @@ export {
   type CreateAppInput,
   type ResolvedHandler,
   type ActiveWebhookSubscription,
+  type TenantWebhookSubscription,
   type LatestDeployedVersion,
 } from "./handlers.js";
 export {

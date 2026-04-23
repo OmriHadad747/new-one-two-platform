@@ -20,11 +20,7 @@ export {
   type CloudRunDeployResult,
 } from "./cloud-run-ops.js";
 
-export {
-  buildAndPushImage,
-  type BuildImageInput,
-  type BuildImageResult,
-} from "./build-image.js";
+export { buildAndPushImage, type BuildImageInput, type BuildImageResult } from "./build-image.js";
 
 export {
   writeHandlerSaEmail,
@@ -63,10 +59,7 @@ export {
   type DropAppSchemaInput,
 } from "./migration-runner.js";
 
-export {
-  validateMigrationSql,
-  makeIdempotent,
-} from "./sql-validator.js";
+export { validateMigrationSql, makeIdempotent } from "./sql-validator.js";
 
 export {
   startDeploy,
@@ -90,14 +83,13 @@ export {
 
 export {
   registerWebhooks,
+  reregisterTenantWebhooks,
   unregisterShopifyWebhooks,
   type RegisterWebhooksInput,
   type UnregisterShopifyWebhooksInput,
 } from "./webhook-registrar.js";
 
-export {
-  deleteDockerImage,
-} from "./build-image.js";
+export { deleteDockerImage } from "./build-image.js";
 
 export {
   teardownApp,

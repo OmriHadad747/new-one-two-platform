@@ -6,8 +6,7 @@ import { sql } from "@platform-back/db";
 //   2. deployed_functions row, with the new revision marked active and
 //      any prior revision deactivated in the same transaction
 //
-// Webhook-subscription writes deliberately omitted — that's a separate
-// concern (webhook archetype, phase 3).
+// Webhook-subscription writes are handled by webhook-registrar.ts.
 
 export async function writeHandlerSaEmail(
   appId: string,

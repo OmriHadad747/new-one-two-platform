@@ -7,11 +7,7 @@
  *   GET /oauth/callback?code=...&shop=...&state=...&hmac=...
  *     Validates HMAC + state, exchanges code for access token, persists
  *     tenant + token, issues a platform JWT, redirects to dashboard.
- *
- * Phase-1 port. Deliberately omits (will return when their consumers land):
- *   - Webhook re-registration (webhook archetype, phase 3)
- *   - Per-app provisioning (handler SA, schema, Cloud Run) — that's a
- *     separate generate-time flow, not install-time
+ *     On reinstall, reconciles stale Shopify webhook subscriptions.
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -26,6 +22,7 @@ import {
   getTenantByShopDomain,
   updateTenantAccessToken,
 } from "@platform-back/db";
+import { reregisterTenantWebhooks } from "@platform-back/deployer";
 import { logger } from "@platform-back/logger";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import { signJwt } from "../plugins/auth.js";
@@ -202,8 +199,15 @@ async function callbackHandler(
       );
     }
 
-    tenantId = await upsertTenant(shop, secretName, storefrontSecretName);
-    logger.info({ shop, tenantId }, "OAuth install complete");
+    const { tenantId: id, isReinstall } = await upsertTenant(shop, secretName, storefrontSecretName);
+    tenantId = id;
+    logger.info({ shop, tenantId, isReinstall }, "OAuth install complete");
+
+    if (isReinstall) {
+      reregisterTenantWebhooks(tenantId, shop).catch((err) => {
+        logger.warn({ err, shop, tenantId }, "Webhook re-registration failed — continuing");
+      });
+    }
   } catch (err) {
     logger.error({ err, shop }, "Failed to persist tenant after OAuth");
     return reply
@@ -383,7 +387,7 @@ async function upsertTenant(
   shop: string,
   accessTokenSecretName: string,
   storefrontSecretName?: string,
-): Promise<string> {
+): Promise<{ tenantId: string; isReinstall: boolean }> {
   const existing = await getTenantByShopDomain(shop);
   if (existing) {
     await updateTenantAccessToken(
@@ -391,7 +395,7 @@ async function upsertTenant(
       accessTokenSecretName,
       storefrontSecretName,
     );
-    return existing.id;
+    return { tenantId: existing.id, isReinstall: true };
   }
 
   const slug = shop
@@ -411,7 +415,7 @@ async function upsertTenant(
     }),
     ...(KMS_KEY_NAME && { kmsKeyName: KMS_KEY_NAME }),
   });
-  return id;
+  return { tenantId: id, isReinstall: false };
 }
 
 /**

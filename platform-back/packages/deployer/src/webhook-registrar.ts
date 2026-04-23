@@ -3,6 +3,7 @@ import {
   getTenantAccessTokenSecretName,
   upsertWebhookSubscriptions,
   deactivateRemovedWebhookSubscriptions,
+  getActiveWebhookSubscriptionsForTenant,
 } from "@platform-back/db";
 import { logger } from "@platform-back/logger";
 
@@ -202,6 +203,80 @@ function requireEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`${name} is not set`);
   return v;
+}
+
+// ─── Reinstall reconciliation ────────────────────────────────────────────────
+
+/**
+ * On merchant reinstall: delete every known Shopify webhook by ID (in case
+ * the gateway URL changed since last deploy), then re-register all active
+ * subscriptions fresh against the current WEBHOOK_GATEWAY_URL.
+ *
+ * Non-fatal per app — a partial failure doesn't abort the OAuth flow.
+ * Idempotent: safe to retry.
+ */
+export async function reregisterTenantWebhooks(
+  tenantId: string,
+  shopDomain: string,
+): Promise<void> {
+  const subs = await getActiveWebhookSubscriptionsForTenant(tenantId);
+  if (subs.length === 0) return;
+
+  const secretName = await getTenantAccessTokenSecretName(tenantId);
+  if (!secretName) {
+    logger.warn({ tenantId }, "reregisterTenantWebhooks: no access token on file — skipping");
+    return;
+  }
+  let adminToken: string;
+  try {
+    adminToken = await getSecret(secretName);
+  } catch (err) {
+    logger.warn({ err, tenantId }, "reregisterTenantWebhooks: token resolve failed — skipping");
+    return;
+  }
+
+  // Group rows by appId.
+  const byApp = new Map<string, typeof subs>();
+  for (const row of subs) {
+    const group = byApp.get(row.appId) ?? [];
+    group.push(row);
+    byApp.set(row.appId, group);
+  }
+
+  for (const [appId, rows] of byApp) {
+    try {
+      // Delete stale Shopify subscriptions by known ID before re-registering.
+      // Handles the case where the gateway URL changed between deploys.
+      for (const row of rows) {
+        await deleteShopifyWebhook(shopDomain, adminToken, row.shopifyWebhookId).catch(
+          (err) => {
+            logger.warn(
+              { err, appId, topic: row.topic, shopifyWebhookId: row.shopifyWebhookId },
+              "reregisterTenantWebhooks: delete failed — continuing",
+            );
+          },
+        );
+      }
+
+      const { appSlug, tenantSlug, deployedFunctionId } = rows[0]!;
+      await registerWebhooks({
+        appId,
+        appSlug,
+        tenantId,
+        tenantSlug,
+        shopDomain,
+        deployedFunctionId,
+        webhookTopics: rows.map((r) => r.topic),
+      });
+
+      logger.info(
+        { appId, topicCount: rows.length },
+        "reregisterTenantWebhooks: app webhooks refreshed",
+      );
+    } catch (err) {
+      logger.warn({ err, appId }, "reregisterTenantWebhooks: app failed — continuing");
+    }
+  }
 }
 
 // ─── Unregister (teardown / permanent-delete path) ───────────────────────────

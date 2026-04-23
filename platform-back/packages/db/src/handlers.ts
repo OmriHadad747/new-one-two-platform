@@ -365,7 +365,40 @@ export async function getActiveWebhookSubscriptionsForApp(
       shopify_webhook_id AS "shopifyWebhookId"
     FROM webhook_subscriptions
     WHERE app_id = ${appId}
-      AND is_active = TRUE
+      AND active = TRUE
+  `;
+}
+
+export interface TenantWebhookSubscription {
+  appId: string;
+  appSlug: string;
+  tenantSlug: string;
+  deployedFunctionId: string;
+  topic: string;
+  shopifyWebhookId: string;
+}
+
+/**
+ * All active webhook subscriptions across every app for a tenant.
+ * Used on reinstall to reconcile stale Shopify callbacks.
+ */
+export async function getActiveWebhookSubscriptionsForTenant(
+  tenantId: string,
+): Promise<TenantWebhookSubscription[]> {
+  return sql<TenantWebhookSubscription[]>`
+    SELECT
+      ws.app_id               AS "appId",
+      a.slug                  AS "appSlug",
+      t.slug                  AS "tenantSlug",
+      ws.deployed_function_id AS "deployedFunctionId",
+      ws.topic                AS "topic",
+      ws.shopify_webhook_id   AS "shopifyWebhookId"
+    FROM webhook_subscriptions ws
+    JOIN apps a    ON a.id = ws.app_id
+    JOIN tenants t ON t.id = ws.tenant_id
+    WHERE ws.tenant_id = ${tenantId}
+      AND ws.active = TRUE
+    ORDER BY ws.app_id, ws.topic
   `;
 }
 

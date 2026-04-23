@@ -1,0 +1,36 @@
+I have enough signal. Here are the gaps I found that are **from the refactor itself** (not in TD files, not the Resend integration).
+
+## Storefront-widget pipeline is completely broken end-to-end
+
+This is one coherent failure spread across 4 files. The old system served widgets via `GET /widgets/:shop/:appId.js` + direct storefront fetches. The new backend serves `GET /widget/:appId/bundle.js` + `/widget/:appId/*` (singular, no shop in URL) and verifies a **Shopify App Proxy signature**. None of the callers or configs were updated:
+
+1. **`platform-shopify-app/extensions/widget-runtime/assets/widget-runtime.js`** still calls `${platformUrl}/widgets/${shop}/${appId}.js` and `${platformUrl}/widgets/${shop}/${appId}/widget${path}`. Plural path, shop in URL, direct fetch (no App Proxy hop) — will 404 against the new backend and could never produce a valid App Proxy signature even if the path matched.
+2. **`platform-front/src/lib/api.ts:197`** (`api.widget.trigger`) still calls `/widgets/${shop}/${appId}/widget/trigger`. The dashboard's "test widget" button is dead.
+3. **OAuth no longer writes the `platform_app.base_url` shop metafield.** Old `platform/apps/api/src/routes/oauth.ts` wrote it so `app-block.liquid` could discover the platform URL at runtime. New `platform-back/apps/api/src/routes/oauth.ts` skips it. The Liquid falls back to `http://localhost:3002`. Even if widget-runtime.js were fixed, it'd still have no production URL to hit.
+4. **No `shopify.app.toml` with `[app_proxy]` block anywhere.** `platform-shopify-app/` only contains the theme extension config. The new widget routes *require* App Proxy HMAC, which requires Shopify to know the proxy prefix; that config was never shipped.
+
+## Deploy / local-dev path regressions
+
+5. **Per-app local-dev deploy is gone.** Old `platform/packages/deployer/src/cloud-run-dev.ts` did `docker run` on the compose network so a generated handler could be tested locally. New deployer has `DEPLOY_MODE=local` only in `build-image.ts` (the image builds) — `cloud-run-ops.ts` and `orchestrator.ts` don't branch on it and unconditionally call Cloud Run Admin. The "Step 9 — Deploy" section of `docs/INSTRUCTIONS.md` ("Build and start the harness Docker container → `functionUrl: http://localhost:9002`") no longer works.
+6. **`docs/INSTRUCTIONS.md` was only partially updated for the refactor.** Admin URL fixed (`/admin-ui/...` → `/admin/...`), but Step 9 still says "Build and start the harness Docker container", Step 13 says `docker logs harness-00000000-...`, and the Quick-reference table lists "widget proxy" under the API. All describe the deleted single-harness model.
+
+## Silently-dropped safety features on the edge
+
+8. **Rate limiting is gone on both public services.** Old webhook-gateway: `@fastify/rate-limit` + Redis, 200/min per `(tenantId, appId)`. Old API: 100/min per tenant. New webhook-gateway never registers the plugin (yet still lists `@fastify/rate-limit` in `package.json` — dead dep). New API has no `ioredis` or rate-limit dep at all. Only Fastify's `bodyLimit` + Cloud Run concurrency protect from abuse.
+9. **Metrics plugin deleted.** Old webhook-gateway had `plugins/metrics.ts` emitting `type: "http_request"` structured logs (method, route, statusClass, durationMs) for log-based metric aggregation. Gone — no replacement on either service.
+10. **Error handler downgraded.** Old webhook-gateway had a full `plugins/error-handler.ts` returning clean 400s for validation errors and sanitising 500s. New webhook-gateway has a 3-line inline handler that returns `{ error: "internal_error" }` for anything ≥500.
+11. **Per-handler timeout enforcement lost.** Old `platform/packages/harness/src/timeout.ts` wrapped handler execution in a timeout. The new `templates/handler/` has no Express request-timeout middleware; only Cloud Run's 30 s hard cap catches runaway handlers.
+
+## Infra-pipeline holes
+
+12. **`platform-shopify-admin` is not built or deployed by CI.** `platform-front` has the full Vite-build + `gcloud storage rsync` step. `platform-shopify-admin` — the iframe Shopify Admin actually loads when a merchant opens the app — has no CI job, no bucket, no deploy YAML, not even an `API_URL` injection. The iframe-contract fix (`0897350`) is code-complete but unshippable today.
+13. **Stale package reference in frontend types** — `platform-front/src/types/dashboard.ts:1` says `// Mirrors the subset of @new-one-two/types needed by the dashboard.` The old monorepo `@new-one-two/*` package namespace was renamed to `@platform-back/*`. Just a comment, but it's the tell that sections of `dashboard.ts` haven't been re-audited against the new types.
+
+## Carry-over scale issues the refactor made worse
+
+14. **Deploy job state lives in a per-process `Map` in `orchestrator.ts`.** Old deploy was sync-in-request so it didn't matter; new deploy returns a `jobId` and the dashboard subscribes via SSE. With `maxScale: 10` on the API Cloud Run service and no sticky routing, the merchant's SSE connection will hit a different instance from the one running the deploy and see nothing. TD-001 tracks the UI wiring but not this state problem.
+15. **Pub/Sub progress fan-out has the same per-process subscription problem** (`pubsub/progress-subscriber.ts`). Present in the old design too, but in the refactor there are now *two* long-lived SSE streams (generation + deploy) running on a service configured to autoscale.
+
+---
+
+Want me to open PRs (or commits on `claude/review-refactor-gaps-0kKJe`) for any of these? The widget pipeline cluster (1-4) is one logical fix. The INSTRUCTIONS/webhook-re-register (5-7) is docs + a small OAuth patch. Rate-limit/metrics/error-handler (8-10) is ~100 lines of straight port-forward from the old code. Say the word on which you want mechanised vs left as a punch list.

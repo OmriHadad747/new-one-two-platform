@@ -3,8 +3,6 @@
 // deployer, api, webhook-gateway). Prefer importing from here over
 // inlining the same literals in multiple places.
 
-export type TenantStatus = "active" | "suspended" | "pending";
-
 export type AppStatus = "draft" | "ready" | "active" | "inactive" | "deleted";
 
 // Canonical archetype vocabulary shared between the generator (appArchetype
