@@ -47,3 +47,5 @@ scripts/
 handler.js
 
 generator/shopify_mcp/cache/
+
+.claude
