@@ -4,15 +4,18 @@ import { logger } from "@platform-back/logger";
 // Local-dev deploy: run the handler image as a Docker container on the
 // Compose network instead of deploying to Cloud Run.
 //
-// Configured via env vars (set in platform-back/.env):
-//   LOCAL_HANDLER_PORT           — host port to bind (default 9002)
-//   LOCAL_HANDLER_DOCKER_NETWORK — Compose network name (default new-one-two_default)
-//   LOCAL_HANDLER_DATABASE_URL   — postgres URL reachable from inside the
-//                                  container (uses docker service name, not localhost)
+// Matches the pre-refactor single-harness behaviour: fixed port 9002,
+// fixed Compose network. DATABASE_URL from the host env has "localhost"
+// replaced with the Compose service name "postgres" so the container
+// can reach it — no extra env vars needed.
 
-const PORT = process.env["LOCAL_HANDLER_PORT"] ?? "9002";
-const NETWORK = process.env["LOCAL_HANDLER_DOCKER_NETWORK"] ?? "new-one-two_default";
-const LOCAL_DB_URL = process.env["LOCAL_HANDLER_DATABASE_URL"] ?? "";
+const PORT = "9002";
+const NETWORK = "new-one-two_default";
+
+function localDbUrl(): string {
+  const url = process.env["DATABASE_URL"] ?? "";
+  return url.replace("localhost", "postgres");
+}
 
 export interface RunHandlerLocallyInput {
   imageName: string;
@@ -39,9 +42,7 @@ export function runHandlerLocally(
     NODE_ENV: "development",
     CLOUD_RUN_SKIP_AUTH: "true",
     PORT: "8080",
-    // If a docker-network-aware DB URL is configured, it takes precedence
-    // over the localhost URL that the deployer's own process uses.
-    ...(LOCAL_DB_URL ? { DATABASE_URL: LOCAL_DB_URL } : {}),
+    DATABASE_URL: localDbUrl(),
   };
 
   const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
