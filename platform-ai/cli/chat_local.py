@@ -22,6 +22,7 @@ OUTPUT
 from __future__ import annotations
 
 import argparse
+import atexit
 import dataclasses
 import itertools
 import json
@@ -161,19 +162,42 @@ def _phase_header(label: str) -> None:
     print(f"\n  {_c('◆', _MAGENTA)} {_c(label, _BOLD)}  {_c(bar, _DIM)}\n")
 
 
+# Pre-compiled to strip ANSI SGR escapes when measuring display width.
+# `_c()` wraps text in colour codes that expand the string's byte length
+# while taking zero visible columns — padding math must ignore them or
+# the box's right border drifts by exactly the sum of invisible bytes in
+# each row.
+_ANSI_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _visible_len(s: str) -> int:
+    return len(_ANSI_SGR_RE.sub("", s))
+
+
 def _summary_box(title: str, rows: List[Tuple[str, str]]) -> None:
     """Rounded-corner box with left-aligned labels. Widths computed per call."""
-    label_w = max((len(l) for l, _ in rows), default=8)
-    value_w = max((len(v) for _, v in rows), default=8)
-    inner_w = max(len(title) + 2, label_w + value_w + 5)
+    label_w = max((_visible_len(l) for l, _ in rows), default=8)
+    value_w = max((_visible_len(v) for _, v in rows), default=8)
+    title_w = _visible_len(title)
+    inner_w = max(title_w + 2, label_w + value_w + 5)
+
     top    = "╭" + "─" * (inner_w + 2) + "╮"
     bottom = "╰" + "─" * (inner_w + 2) + "╯"
     print(f"  {_c(top, _MAGENTA)}")
-    print(f"  {_c('│', _MAGENTA)} {_c(title.ljust(inner_w), _BOLD)} {_c('│', _MAGENTA)}")
+    print(
+        f"  {_c('│', _MAGENTA)} "
+        f"{_c(title, _BOLD)}{' ' * (inner_w - title_w)} "
+        f"{_c('│', _MAGENTA)}"
+    )
     print(f"  {_c('│', _MAGENTA)} {_c('─' * inner_w, _DIM)} {_c('│', _MAGENTA)}")
     for label, value in rows:
-        pad = inner_w - label_w - len(value) - 3
-        line = f" {_c(label.ljust(label_w), _DIM)} {_c('·', _DIM)}{' ' * pad}{value} "
+        pad = inner_w - label_w - _visible_len(value) - 3
+        if pad < 1:
+            pad = 1
+        line = (
+            f" {_c(label, _DIM)}{' ' * (label_w - _visible_len(label))} "
+            f"{_c('·', _DIM)}{' ' * pad}{value} "
+        )
         print(f"  {_c('│', _MAGENTA)}{line}{_c('│', _MAGENTA)}")
     print(f"  {_c(bottom, _MAGENTA)}")
 
@@ -219,10 +243,15 @@ def _stop_spinner() -> None:
 def _spinner(name: str) -> None:
     """Kick off a braille-spinner animation for the given agent label."""
     _stop_spinner()
+    _stop_spinner_group()
     if not _USE_COLOR:
         # Non-TTY: one static line, no animation (keeps CI logs readable).
         print(f"  {name:<14} ...", flush=True)
         return
+
+    # Reserve one row for the spinner line + _BOTTOM_MARGIN blank rows
+    # below so the active agent isn't glued to the terminal bottom.
+    _reserve_below(1)
 
     stop = threading.Event()
     start = time.monotonic()
@@ -252,6 +281,12 @@ def _spinner(name: str) -> None:
 
 
 def _agent_line(name: str, ok: bool, ms: Optional[int], notes: str = "") -> None:
+    # If a multi-line spinner group is active, route to the slot updater
+    # so the agent's row updates in place instead of printing a new line
+    # beneath the group.
+    if _group_state.get("active"):
+        _finish_slot(name, ok, ms, notes)
+        return
     _stop_spinner()
     icon   = _c("✓", _BRIGHT_GREEN, _BOLD) if ok else _c("✗", _RED, _BOLD)
     color  = _AGENT_COLOR.get(name, _CYAN)
@@ -262,6 +297,14 @@ def _agent_line(name: str, ok: bool, ms: Optional[int], notes: str = "") -> None
 
 
 def _retry_line(name: str, notes: str) -> None:
+    if _group_state.get("active"):
+        # Update the slot's notes in-place and flip status to retry.
+        for slot in _group_state["slots"]:
+            if slot["name"] == name:
+                slot["status"] = "retry"
+                slot["notes"] = notes[:60]
+                break
+        return
     _stop_spinner()
     color = _AGENT_COLOR.get(name, _CYAN)
     line = (
@@ -269,6 +312,180 @@ def _retry_line(name: str, notes: str) -> None:
         f"{'':7}  {_c(notes[:60], _DIM)}"
     )
     print(f"\r{line}")
+
+
+# ── Multi-line spinner group ──────────────────────────────────────────────────
+#
+# Codegen runs handler/migration/widget/admin in parallel via a
+# ThreadPoolExecutor in crew.run_codegen_parallel. The single-slot spinner
+# can only animate one label at a time, so the CLI used to show whichever
+# _spinner() was called last (the admin_ui slot) and hid the fact that
+# three agents were racing beneath it.
+#
+# _spinner_group(labels) starts an animated row per label, redrawing all
+# rows on each frame. Per-agent lifecycle callbacks wire in through
+# run_codegen_parallel(on_start=…, on_done=…), so the rows transition
+# from spinning → done in the order the threads actually finish, not
+# submission order.
+#
+# Concurrency notes:
+#   - The animation thread is the only writer during the group's lifetime;
+#     on_start / on_done callbacks only MUTATE slot state, never print.
+#     That keeps us clear of the classic "two threads print at once"
+#     garbled-line hazard.
+#   - ANSI cursor save/restore (\0337 / \0338 via \033[s / \033[u) pins
+#     the redraw anchor across scroll events. `\033[K` clears each line
+#     so a shorter new value doesn't leave stale characters behind.
+
+_group_state: Dict[str, Any] = {
+    "active": False,
+    "slots": [],    # list of {name, status: running|retry|done, start, ms, notes, icon}
+    "thread": None,
+    "stop": None,
+    "lock": threading.Lock(),
+}
+
+
+def _format_slot(slot: Dict[str, Any], frame: str) -> str:
+    name  = slot["name"]
+    color = _AGENT_COLOR.get(name, _CYAN)
+    label = _c(name.ljust(14), color, _BOLD)
+    status = slot["status"]
+
+    if status == "running":
+        elapsed = time.monotonic() - slot["start"]
+        elapsed_str = f"{elapsed:5.1f}s" if elapsed >= 1 else "      "
+        return (
+            f"  {label} {_c(frame, color)}  "
+            f"{_c(elapsed_str, _DIM)}"
+        )
+    if status == "retry":
+        return (
+            f"  {label} {_c('↻', _YELLOW, _BOLD)}  "
+            f"{'':7}  {_c(slot.get('notes', '')[:60], _DIM)}"
+        )
+    # done
+    icon   = slot.get("icon") or _c("✓", _BRIGHT_GREEN, _BOLD)
+    ms     = slot.get("ms")
+    timing = _c(f"{ms}ms".ljust(7), _DIM) if ms is not None else _c("—".ljust(7), _DIM)
+    notes  = slot.get("notes", "")
+    return f"  {label} {icon}  {timing}  {notes}".rstrip()
+
+
+def _spinner_group(labels: List[str]) -> None:
+    """Start a multi-line animated spinner group — one row per label."""
+    _stop_spinner()
+    _stop_spinner_group()
+
+    slots: List[Dict[str, Any]] = [
+        {
+            "name": name,
+            "status": "running",
+            "start": time.monotonic(),
+            "ms": None,
+            "notes": "",
+            "icon": None,
+        }
+        for name in labels
+    ]
+
+    if not _USE_COLOR:
+        # Non-TTY: print one static start line per slot; per-agent
+        # _agent_line calls will print their completion lines beneath.
+        for s in slots:
+            print(f"  {s['name']:<14} …", flush=True)
+        _group_state["active"] = True
+        _group_state["slots"] = slots
+        return
+
+    # Reserve (N slot rows + _BOTTOM_MARGIN) and position the cursor at
+    # the top of the slot block.
+    _reserve_below(len(slots))
+
+    # Prime each row once so cursor save/restore has real lines to land on.
+    for _ in slots:
+        sys.stdout.write("\n")
+    sys.stdout.write(f"\033[{len(slots)}A")
+    sys.stdout.flush()
+
+    stop = threading.Event()
+
+    def _loop() -> None:
+        for frame in itertools.cycle(_SPIN_FRAMES):
+            if stop.is_set():
+                return
+            with _group_state["lock"]:
+                sys.stdout.write("\033[s")  # save cursor
+                for i, slot in enumerate(_group_state["slots"]):
+                    sys.stdout.write("\r\033[K")
+                    sys.stdout.write(_format_slot(slot, frame))
+                    if i < len(_group_state["slots"]) - 1:
+                        sys.stdout.write("\n")
+                sys.stdout.write("\033[u")  # restore cursor
+                sys.stdout.flush()
+            time.sleep(0.08)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    _group_state["active"] = True
+    _group_state["slots"]  = slots
+    _group_state["stop"]   = stop
+    _group_state["thread"] = t
+
+
+def _finish_slot(name: str, ok: bool, ms: Optional[int], notes: str = "") -> None:
+    """Called by _agent_line when a group is active."""
+    if not _group_state.get("active"):
+        return
+    with _group_state["lock"]:
+        for slot in _group_state["slots"]:
+            if slot["name"] == name:
+                slot["status"] = "done"
+                slot["icon"]   = _c("✓", _BRIGHT_GREEN, _BOLD) if ok else _c("✗", _RED, _BOLD)
+                slot["ms"]     = ms
+                slot["notes"]  = notes
+                break
+        all_done = all(s["status"] != "running" for s in _group_state["slots"])
+    if all_done:
+        _stop_spinner_group()
+
+
+def _stop_spinner_group() -> None:
+    if not _group_state.get("active"):
+        return
+    stop = _group_state.get("stop")
+    if stop is not None:
+        stop.set()
+    t = _group_state.get("thread")
+    if t is not None:
+        t.join(timeout=0.3)
+
+    if _USE_COLOR:
+        # Freeze frame — one final static redraw of all slots, then move
+        # cursor past the block so subsequent output starts below it.
+        with _group_state["lock"]:
+            sys.stdout.write("\033[s")
+            for i, slot in enumerate(_group_state["slots"]):
+                sys.stdout.write("\r\033[K")
+                sys.stdout.write(_format_slot(slot, _SPIN_FRAMES[0]))
+                if i < len(_group_state["slots"]) - 1:
+                    sys.stdout.write("\n")
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+    else:
+        # Non-TTY: the status lines were already primed at _spinner_group
+        # start; emit one completion line per slot now so logs show the
+        # final state.
+        for slot in _group_state["slots"]:
+            icon = "✓" if slot["status"] == "done" and slot.get("icon") is not None else "·"
+            ms   = slot.get("ms")
+            ms_str = f"{ms}ms" if ms is not None else "—"
+            print(f"  {slot['name']:<14} {icon}  {ms_str}  {slot.get('notes', '')}".rstrip(), flush=True)
+
+    _group_state["active"] = False
+    _group_state["slots"]  = []
+    _group_state["stop"]   = None
+    _group_state["thread"] = None
 
 
 def _ktok(n: int) -> str:
@@ -280,6 +497,53 @@ def _tok_note(in_tok: int, out_tok: int, extra: str = "") -> str:
     """'in=2.4k out=0.8k' — append extra if provided."""
     base = f"in={_ktok(in_tok)} out={_ktok(out_tok)}"
     return f"{base}  {extra}" if extra else base
+
+
+# ── Bottom margin ─────────────────────────────────────────────────────────────
+#
+# Two-prong strategy:
+#
+#   1. _reserve_below(content_rows) — called before every spinner draw.
+#      Writes (content_rows + _BOTTOM_MARGIN) newlines to scroll the
+#      terminal up, then cursor-up that many rows so the caller can draw
+#      into `content_rows` rows with `_BOTTOM_MARGIN` blank rows visibly
+#      below. Keeps the active agent from sitting flush at the terminal
+#      bottom while a run is in progress — which the atexit hook alone
+#      can't fix (it only fires on shutdown).
+#
+#   2. atexit _final_margin() — ensures exits (normal, sys.exit,
+#      KeyboardInterrupt) also end with breathing room, not glued to
+#      the border.
+#
+# Both are TTY-gated via _USE_COLOR so piped output / CI logs stay flat.
+
+_BOTTOM_MARGIN = 4
+
+
+def _reserve_below(content_rows: int) -> None:
+    """
+    Make sure there are at least `_BOTTOM_MARGIN` blank visual rows below
+    the cursor after `content_rows` rows of active content are drawn.
+    """
+    if not _USE_COLOR:
+        return
+    total = content_rows + _BOTTOM_MARGIN
+    sys.stdout.write("\n" * total)
+    sys.stdout.write(f"\033[{total}A")  # cursor up `total` lines
+    sys.stdout.flush()
+
+
+def _final_margin() -> None:
+    if not _USE_COLOR:
+        return
+    _stop_spinner()          # defensive — no in-flight single-spinner
+    _stop_spinner_group()    # defensive — no in-flight group
+    sys.stdout.write("\n\n")
+    sys.stdout.flush()
+
+
+if _USE_COLOR:
+    atexit.register(_final_margin)
 
 
 # ── Clarification loop ─────────────────────────────────────────────────────────
@@ -581,14 +845,32 @@ def _phase_codegen(
             + (["admin_ui"]  if is_admin_ui   else [])
         )
 
-        for name in generators_this_round:
-            label = _CODEGEN_LABELS.get(name, name)
-            if attempt > 1:
-                top_err = (error_map.get(name) or ["unknown error"])[0]
-                _retry_line(label, notes=top_err[:60])
-            _spinner(label)
+        labels = [_CODEGEN_LABELS.get(n, n) for n in generators_this_round]
+        # Start one animated row per parallel generator so the merchant sees
+        # all three racing, not just the last _spinner call.
+        _spinner_group(labels)
 
-        t0 = time.monotonic()
+        # Map crew-side internal names → CLI labels for the callback.
+        label_of = {n: _CODEGEN_LABELS.get(n, n) for n in generators_this_round}
+
+        # Callbacks fire on worker threads the instant each generator
+        # finishes — the group's redraw loop picks up the slot transition
+        # on its next tick.
+        def _on_done(
+            name: str,
+            ms_agent: int,
+            in_tok: int,
+            out_tok: int,
+            _attempt: int = attempt,
+        ) -> None:
+            retry_sfx = f"  retry {_attempt}" if _attempt > 1 else ""
+            tok_str = (
+                _tok_note(in_tok, out_tok, extra=retry_sfx)
+                if (in_tok or out_tok)
+                else retry_sfx.strip()
+            )
+            _agent_line(label_of.get(name, name), ok=True, ms=ms_agent, notes=tok_str)
+
         artifacts, attempt_tokens = run_codegen_parallel(
             base_ctx,
             is_storefront=is_storefront,
@@ -596,21 +878,13 @@ def _phase_codegen(
             error_map=error_map,
             cumulative_errors=cumulative_errors,
             artifacts=artifacts,
+            on_done=_on_done,
         )
-        ms = int((time.monotonic() - t0) * 1000)
 
         # Accumulate token totals across retries
         for name, (in_t, out_t) in attempt_tokens.items():
             prev_in, prev_out = token_totals.get(name, (0, 0))
             token_totals[name] = (prev_in + in_t, prev_out + out_t)
-
-        # Print a completed line for each generator that ran this round
-        for i, name in enumerate(generators_this_round):
-            label  = _CODEGEN_LABELS.get(name, name)
-            in_t, out_t = attempt_tokens.get(name, (0, 0))
-            retry_sfx   = f"  retry {attempt}" if attempt > 1 else ""
-            tok_str     = _tok_note(in_t, out_t, extra=retry_sfx) if (in_t or out_t) else retry_sfx.strip()
-            _agent_line(label, ok=True, ms=ms if i == 0 else None, notes=tok_str)
 
         _spinner("Validation")
         t0 = time.monotonic()
@@ -1421,12 +1695,12 @@ def main() -> None:
     report = run_dir
 
     # ── Final summary ──────────────────────────────────────────────────────────
-    total_in  = sum(v[0] for v in all_tokens.values())
-    total_out = sum(v[1] for v in all_tokens.values())
+    # Tokens intentionally omitted here — _print_token_summary() just below
+    # shows them with the per-agent breakdown, which is strictly more useful
+    # than a rolled-up total in the box.
     rows: List[Tuple[str, str]] = [
         ("Status",   _c("✓ success", _BRIGHT_GREEN, _BOLD)),
         ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
-        ("Tokens",   _c(f"{_ktok(total_in + total_out)} (in {_ktok(total_in)} · out {_ktok(total_out)})", _MAGENTA)),
         ("Output",   _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
     ]
     for key, label in [("handler", "handler.js"), ("migration", "migration.sql"),
@@ -1434,8 +1708,6 @@ def main() -> None:
         code = artifacts.get(key, "")
         if code:
             rows.append((label, _c(f"{len(code.strip().splitlines())} lines", _DIM)))
-    if save_to_db and slug:
-        rows.append(("App", _c(f"http://localhost:3000  →  {app_name}", _CYAN)))
 
     print()
     _summary_box("◆  RUN COMPLETE", rows)

@@ -28,9 +28,9 @@ import json
 import logging
 import pathlib
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timezone
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
 
 import contract.publisher as _contract_publisher
 from contract.validators import (
@@ -76,6 +76,12 @@ _BACKEND_VALIDATOR_QUESTIONS: FrozenSet[str] = frozenset(
         "q6_state_machine",
         "q7_schema_completeness",
     }
+)
+
+# These questions indicate the migration itself is broken (missing tables/columns),
+# so both migration and handler must be unlocked to let the revision fix both together.
+_MIGRATION_BROKEN_QUESTIONS: FrozenSet[str] = frozenset(
+    {"q1_table_names", "q7_schema_completeness"}
 )
 
 # Artifact names on Part B open findings that indicate a backend problem.
@@ -196,15 +202,14 @@ def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
     Part A (Q-checks):
     - Q3/Q4 only (widget/admin_ui ↔ handler field mismatch): fix the frontend.
       Handler and migration are locked — they are the ground truth contract.
-    - Q1/Q2/Q5/Q6/Q7 (handler ↔ DB mismatch or handler logic error): fix the handler.
-      Migration stays locked (it's the schema ground truth); handler is unlocked.
+    - Q1/Q7 (missing table/schema): migration itself is broken — unlock both so the
+      revision can add the missing table AND fix the handler in one pass.
+    - Q2/Q5/Q6 (column mismatch or handler logic error): migration is the schema ground
+      truth; unlock only the handler.
 
     Part B (open findings):
     - artifact in {handler, migration}: backend problem — unlock the handler.
     - artifact in {widget_js, admin_ui}: frontend problem — keep handler locked.
-
-    Migration is always locked — it is the schema ground truth even when a Part B
-    finding names it (the handler is what gets adjusted to match the schema).
 
     Invariant: this function is only called after handler and migration have already
     passed static validation in the codegen loop. If that invariant ever breaks, the
@@ -213,11 +218,17 @@ def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
     """
     issue_keys = {i["question"] for i in issues}
     open_artifacts = {i.get("artifact") for i in issues if i.get("artifact")}
+
+    if issue_keys & _MIGRATION_BROKEN_QUESTIONS:
+        # Migration itself is incomplete — unlock both so the revision fixes both.
+        return frozenset()
+
     if (issue_keys & _BACKEND_VALIDATOR_QUESTIONS) or (
         open_artifacts & _BACKEND_OPEN_ARTIFACTS
     ):
-        # Backend finding fired — handler must be revised to align with migration/DB.
+        # Handler misaligns with a correct migration — lock migration, fix handler.
         return frozenset({"migration"})
+
     # Frontend-only misalignment — handler is ground truth, fix widget/admin_ui.
     return frozenset({"handler", "migration"})
 
@@ -1160,6 +1171,8 @@ def run_codegen_parallel(
     error_map: Dict[str, List[str]],
     cumulative_errors: Dict[str, List[str]],
     artifacts: Dict[str, str],
+    on_start: Optional[Callable[[str], None]] = None,
+    on_done:  Optional[Callable[[str, int, int, int], None]] = None,
 ) -> Tuple[Dict[str, str], Dict[str, Tuple[int, int]]]:
     """
     Run generators in parallel via ThreadPoolExecutor. Used for the first codegen
@@ -1200,13 +1213,31 @@ def run_codegen_parallel(
         )
         for gen in to_run
     }
+    # Wrap each generator call to emit start/done callbacks with wall-clock
+    # timing. Callbacks run on whichever thread finished — safe for the CLI's
+    # multi-line spinner (Python print is atomic at the line level and the
+    # spinner coordinates via a module-level dict it reads, not prints from).
+    def _wrapped(gen_name: str, ctx: CodegenContext):
+        if on_start is not None:
+            on_start(gen_name)
+        started = time.monotonic()
+        artifact, in_tok, out_tok = _registry_by_name[gen_name].generate(ctx)
+        if on_done is not None:
+            ms = int((time.monotonic() - started) * 1000)
+            on_done(gen_name, ms, in_tok, out_tok)
+        return gen_name, artifact, in_tok, out_tok
+
+    _registry_by_name = {gen.name: gen for gen in to_run}
+
     with ThreadPoolExecutor(max_workers=len(to_run)) as pool:
-        futures = {
-            gen.name: pool.submit(gen.generate, ctx_by_gen[gen.name]) for gen in to_run
-        }
-        for name, future in futures.items():
-            # Generator.generate() returns (artifact, in_tokens, out_tokens)
-            artifact, in_tok, out_tok = future.result()  # raises on sub-agent exception
+        futures = [
+            pool.submit(_wrapped, gen.name, ctx_by_gen[gen.name]) for gen in to_run
+        ]
+        # Use as_completed so on_done fires in actual completion order; the
+        # returned dicts still key by name, so callers that only care about
+        # the final result are unaffected by ordering.
+        for future in as_completed(futures):
+            name, artifact, in_tok, out_tok = future.result()
             artifacts[name] = artifact
             per_agent_tokens[name] = (in_tok, out_tok)
 

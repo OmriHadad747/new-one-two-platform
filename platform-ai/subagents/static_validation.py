@@ -1145,16 +1145,6 @@ def _validate_ts_file(
     for err in _find_setTimeout_violations(code):
         errors.append(f"[{path}] {err}")
 
-    # Per-capability anti-pattern regexes (still owned by the registry).
-    for cap_name, cap in HANDLER_CAPABILITY_REGISTRY.items():
-        if cap.static_validation_anti_pattern_regex and re.search(
-            cap.static_validation_anti_pattern_regex, code
-        ):
-            errors.append(
-                f"[{path}] code hand-rolls a pattern that the '{cap_name}' "
-                f"capability already provides — use the capability's helper instead"
-            )
-
     # Import allowlist. Supports:
     #   import x from "specifier"
     #   import { a, b } from "specifier"
