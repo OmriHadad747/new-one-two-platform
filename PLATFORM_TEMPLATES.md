@@ -91,7 +91,7 @@ Ranked by combined impact on reliability + token savings + how many app types be
    Every Category B and D app needs it and it's the single largest chunk of boilerplate the AI regenerates. High risk if wrong (broken auth, broken iframe embedding), zero app-specific variation.
 
 2. **Webhook handler skeleton** (idempotency + ack + structured logging)
-   Every Category A, B, C app that uses webhooks. Currently the AI hand-rolls idempotency and duplicate-delivery handling differently each time — a known source of bugs. Pre-baking eliminates a whole class of correctness issues.
+   Any Category A, B, C, or D app that uses webhooks — every archetype has a backend, so every archetype is eligible (a `backend_admin` app that reacts to `orders/create` is a perfectly normal shape). Currently the AI hand-rolls idempotency and duplicate-delivery handling differently each time — a known source of bugs. Pre-baking eliminates a whole class of correctness issues.
 
 3. **Admin API pagination + rate-limit loop**
    Used by the majority of backend apps (Category C and D). Getting cursor pagination and `THROTTLED` backoff right is fiddly; the AI frequently under-handles edge cases. One correct implementation benefits every app.

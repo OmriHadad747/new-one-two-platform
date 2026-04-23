@@ -1,8 +1,0 @@
-- Ability to to complie the backend during generation and feedback the chain with
-compilation error, etc. 
-
-- per agent, sometimes the arch need to know things about the handler and other components. we can may prepare short versions of them to be jitted into the arch instead to be writted directly in the arch. this way we keep single source of truth.
-
-- Do not expose trivial shopify helpers to the model. 
-instruct him only on real benefit once like paginate (rest/graphql).
-
