@@ -13,6 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^9.1.0",
     "@google-cloud/pubsub": "^4.7.0",
     "@google-cloud/storage": "^7.19.0",
     "@platform-back/crypto": "workspace:*",

@@ -23,6 +23,21 @@ app.disable("x-powered-by");
 // the platform. 1 MiB cap mirrors platform-back's bodyLimit.
 app.use(express.json({ limit: "1mb" }));
 
+// Per-request timeout — self-eject before Cloud Run's hard 30s cap so
+// the handler returns a clean 504 rather than a mid-stream disconnect.
+// Mirrors the 25s budget platform-back uses when forwarding to us.
+const REQUEST_TIMEOUT_MS = 25_000;
+app.use((_req, res, next) => {
+  const timer = setTimeout(() => {
+    if (!res.headersSent) {
+      res.status(504).json({ error: "handler_timeout" });
+    }
+  }, REQUEST_TIMEOUT_MS);
+  res.once("finish", () => clearTimeout(timer));
+  res.once("close", () => clearTimeout(timer));
+  next();
+});
+
 // Health check — Cloud Run probes this; never auth-gated.
 app.get("/health", (_req, res) => {
   res.json({ ok: true });

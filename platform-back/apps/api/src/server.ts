@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import rateLimit from "@fastify/rate-limit";
 import rawBodyPlugin from "fastify-raw-body";
 import { closeDb } from "@platform-back/db";
 import { logger } from "@platform-back/logger";
@@ -75,13 +76,43 @@ export async function buildServer() {
   registerAuthHook(app);
 
   await app.register(adminRoutes, { prefix: "/admin" });
-  await app.register(widgetRoutes, { prefix: "/widget" });
+  // Public surfaces rate-limited per IP (in-memory, per-instance).
+  // See TD-008 in docs/TECH_DEBT_POST_MVP.md for the distributed upgrade path.
+  await app.register(async (pub) => {
+    await pub.register(rateLimit, {
+      max: 100,
+      timeWindow: 60_000,
+      keyGenerator: (req) => req.ip,
+      errorResponseBuilder: () =>
+        errorResponse(ErrorCode.InvalidRequest, "Rate limit exceeded"),
+    });
+    await pub.register(widgetRoutes, { prefix: "/widget" });
+  });
+  await app.register(async (pub) => {
+    await pub.register(rateLimit, {
+      max: 20,
+      timeWindow: 60_000,
+      keyGenerator: (req) => req.ip,
+      errorResponseBuilder: () =>
+        errorResponse(ErrorCode.InvalidRequest, "Rate limit exceeded"),
+    });
+    await pub.register(oauthRoutes, { prefix: "/oauth" });
+  });
+  await app.register(async (pub) => {
+    await pub.register(rateLimit, {
+      max: 30,
+      timeWindow: 60_000,
+      keyGenerator: (req) => req.ip,
+      errorResponseBuilder: () =>
+        errorResponse(ErrorCode.InvalidRequest, "Rate limit exceeded"),
+    });
+    await pub.register(emailPublicRoutes, { prefix: "/email/u" });
+  });
+
   await app.register(emailServiceRoutes, { prefix: "/services/email" });
   await app.register(filesServiceRoutes, { prefix: "/services/files" });
   await app.register(shopifyServiceRoutes, { prefix: "/services/shopify" });
   await app.register(emailRoutes, { prefix: "/email" });
-  await app.register(emailPublicRoutes, { prefix: "/email/u" });
-  await app.register(oauthRoutes, { prefix: "/oauth" });
   await app.register(tenantsRoutes, { prefix: "/tenants" });
   await app.register(billingRoutes, { prefix: "/billing" });
   await app.register(resendWebhookRoutes, { prefix: "/webhook" });

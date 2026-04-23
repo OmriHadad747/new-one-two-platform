@@ -240,3 +240,24 @@ Replace `cronSchedule: Optional[str]` with `cronJobs: List[{name: str, schedule:
 - `platform-back/packages/deployer/src/cron-scheduler.ts` — register N schedules per app (today it registers one); add parallel `unscheduleAppCron` teardown for each.
 
 **Complexity:** Low-Medium — the runtime already supports N jobs; the deployer's `scheduleAppCron` needs a small loop, and the architect-field + prompt expansion is straightforward.
+
+---
+
+## TD-008 — API rate limiter is per-instance, not distributed
+
+**Current state**
+`platform-back/apps/api` uses an in-memory `@fastify/rate-limit` store on the three public route groups (`/oauth/*`, `/widget/*`, `/email/u/*`). With Cloud Run's `maxScale: 10`, each instance enforces its own independent counter — a flood of 10 × 100 req/min = 1 000 req/min effective limit before any IP is rejected. Limits also reset silently when an instance is replaced.
+
+The webhook-gateway already uses Redis-backed rate limiting (ioredis is a direct dep there). The API does not have ioredis and adding it solely for rate limiting was deferred.
+
+**What to do**
+1. Add `ioredis` as a dep to `platform-back/apps/api`.
+2. Create a shared Redis client in `src/server.ts` using the same `REDIS_HOST / REDIS_PORT / REDIS_PASSWORD / REDIS_TLS` env vars the gateway uses.
+3. Pass the client as `redis` to each `@fastify/rate-limit` registration in the three scoped public-route plugins.
+4. Close the client in the `closeServer` / shutdown handler.
+
+**Affected files**
+- `platform-back/apps/api/package.json` — add `ioredis`.
+- `platform-back/apps/api/src/server.ts` — construct shared Redis client, pass to rate-limit registrations.
+
+**Complexity:** Low — mechanical dep addition + client wiring; no logic changes.

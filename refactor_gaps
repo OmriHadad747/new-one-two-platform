@@ -2,12 +2,6 @@ I have enough signal. Here are the gaps I found that are **from the refactor its
 
 
 
-## Silently-dropped safety features on the edge
-
-8. **Rate limiting is gone on both public services.** Old webhook-gateway: `@fastify/rate-limit` + Redis, 200/min per `(tenantId, appId)`. Old API: 100/min per tenant. New webhook-gateway never registers the plugin (yet still lists `@fastify/rate-limit` in `package.json` — dead dep). New API has no `ioredis` or rate-limit dep at all. Only Fastify's `bodyLimit` + Cloud Run concurrency protect from abuse.
-9. **Metrics plugin deleted.** Old webhook-gateway had `plugins/metrics.ts` emitting `type: "http_request"` structured logs (method, route, statusClass, durationMs) for log-based metric aggregation. Gone — no replacement on either service.
-10. **Error handler downgraded.** Old webhook-gateway had a full `plugins/error-handler.ts` returning clean 400s for validation errors and sanitising 500s. New webhook-gateway has a 3-line inline handler that returns `{ error: "internal_error" }` for anything ≥500.
-11. **Per-handler timeout enforcement lost.** Old `platform/packages/harness/src/timeout.ts` wrapped handler execution in a timeout. The new `templates/handler/` has no Express request-timeout middleware; only Cloud Run's 30 s hard cap catches runaway handlers.
 
 ## Infra-pipeline holes
 
@@ -20,5 +14,3 @@ I have enough signal. Here are the gaps I found that are **from the refactor its
 15. **Pub/Sub progress fan-out has the same per-process subscription problem** (`pubsub/progress-subscriber.ts`). Present in the old design too, but in the refactor there are now *two* long-lived SSE streams (generation + deploy) running on a service configured to autoscale.
 
 ---
-
-Want me to open PRs (or commits on `claude/review-refactor-gaps-0kKJe`) for any of these? The widget pipeline cluster (1-4) is one logical fix. The INSTRUCTIONS/webhook-re-register (5-7) is docs + a small OAuth patch. Rate-limit/metrics/error-handler (8-10) is ~100 lines of straight port-forward from the old code. Say the word on which you want mechanised vs left as a punch list.
