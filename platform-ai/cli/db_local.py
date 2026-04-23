@@ -21,7 +21,7 @@ import requests
 
 # ── Local dev constants ────────────────────────────────────────────────────────
 
-_TENANT_ID         = "e5761282-0eaf-419c-bdf8-eb131e1ba406"
+_TENANT_ID         = "aafb09ec-a15d-48ba-91e7-a02be96a4d3e"
 _SHOPIFY_CLIENT_ID = "a2f831d9652fdb7ef86829111ac4a70e"
 _SHOP_DOMAIN       = "hadad747teststore.myshopify.com"
 
@@ -127,27 +127,35 @@ def create_app(name: str) -> Tuple[str, str]:
 
 def create_session(app_id: str, prompt: str, job_id: str) -> str:
     """
-    Create a pending generation row. Mirrors createPendingGeneration in the API.
-    Returns job_id (same as input — kept for caller compatibility).
+    Create a pending generation row. Mirrors createPendingGeneration in
+    platform-back (apps/api/src/routes/generation.ts → packages/db/src/
+    generations.ts). `prompt` is persisted so the dashboard's Sessions list
+    and chat-rehydrate-on-reload paths can render without pulling the
+    bundle from GCS. Returns job_id (same as input — kept for caller
+    compatibility).
     """
     with _conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO generations (job_id, tenant_id, app_id, status)
-            VALUES (%s::uuid, %s, %s, 'pending')
+            INSERT INTO generations (job_id, tenant_id, app_id, status, prompt)
+            VALUES (%s::uuid, %s, %s, 'pending', %s)
             ON CONFLICT (job_id) DO NOTHING
             """,
-            (job_id, _TENANT_ID, app_id),
+            (job_id, _TENANT_ID, app_id, prompt),
         )
     return job_id
 
 
 def store_bundle(job_id: str, app_id: str, bundle: Dict[str, Any]) -> None:
     """
-    Persist the completed bundle. Mirrors the Pub/Sub subscriber:
+    Persist the completed bundle. Mirrors the Pub/Sub subscriber
+    (apps/api/src/pubsub/subscriber.ts → upsertGeneration):
       1. Upload full bundle JSON to fake-GCS → store path in generations.
       2. Upload widget.js / admin.js to fake-GCS (for storefront serving).
-      3. Update app archetype and status.
+      3. Flatten handlerModule.{webhookTopics,cronSchedule} into their
+         dedicated columns so the dashboard can render LatestSessionResult
+         and the Sessions list without pulling the bundle back from GCS.
+      4. Update app archetype and status.
     """
     archetype  = _archetype_from_bundle(bundle)
     gcs_path   = _upload_bundle_to_gcs(job_id, bundle)
@@ -155,14 +163,23 @@ def store_bundle(job_id: str, app_id: str, bundle: Dict[str, Any]) -> None:
     admin_js   = bundle.get("adminUiModule")
     _upload_js_to_gcs(app_id, widget_js, admin_js)
 
+    handler_module = bundle.get("handlerModule") or {}
+    raw_topics = handler_module.get("webhookTopics") or []
+    webhook_topics = [t for t in raw_topics if isinstance(t, str)]
+    cron_schedule = handler_module.get("cronSchedule")
+
     with _conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
             UPDATE generations
-            SET bundle_gcs_path = %s, status = 'success', updated_at = NOW()
+            SET bundle_gcs_path = %s,
+                status          = 'success',
+                webhook_topics  = %s::jsonb,
+                cron_schedule   = %s,
+                updated_at      = NOW()
             WHERE job_id = %s::uuid
             """,
-            (gcs_path, job_id),
+            (gcs_path, json.dumps(webhook_topics), cron_schedule, job_id),
         )
         cur.execute(
             """

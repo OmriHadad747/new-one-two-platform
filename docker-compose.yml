@@ -2,17 +2,32 @@ services:
   # ─── Infrastructure ──────────────────────────────────────────────────────────
 
   postgres:
-    image: postgres:16-alpine
+    # postgres:16-bookworm + the Debian-packaged pg_cron. The Dockerfile
+    # is a four-liner; see docker/postgres/Dockerfile for why we build
+    # our own instead of pulling a prebuilt image.
+    build:
+      context: ./docker/postgres
+    image: new-one-two/postgres-pgcron:16
     restart: unless-stopped
     environment:
       POSTGRES_USER: new_one_two_u
       POSTGRES_PASSWORD: paas_dev_password
       POSTGRES_DB: new_one_two
+    # pg_cron requires shared_preload_libraries and a target database
+    # pinned at server start — both must be present on the first boot
+    # that materialises the data dir, otherwise CREATE EXTENSION fails
+    # with "pg_cron can only be loaded via shared_preload_libraries".
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_cron
+      - -c
+      - cron.database_name=new_one_two
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./platform/packages/db/migrations:/docker-entrypoint-initdb.d:ro
+      - ./platform-back/packages/db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U new_one_two_u -d new_one_two"]
       interval: 5s

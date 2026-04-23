@@ -23,12 +23,14 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import itertools
 import json
 import os
 import re
 import shutil
 import sys
 import textwrap
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -71,43 +73,202 @@ _MAX_CODEGEN_RETRIES = 3  # matches crew.py _MAX_RETRIES
 StopAfter = Literal["arch", "codegen", "validator", "full"]
 
 # ── Display helpers ────────────────────────────────────────────────────────────
+#
+# Terminal UI constraints:
+#   - Stdlib only (no `rich`, `prompt_toolkit`, etc.) — this CLI is part of
+#     platform-ai and we don't want to drag a UI dep into the generator's
+#     runtime dependency graph. That rules out things like Live renderables
+#     and reactive tables. We get by with ANSI escapes + a threaded spinner.
+#   - Respect NO_COLOR (https://no-color.org) and honour TTY detection so
+#     piped output stays clean. All styling routes through `_c()` which
+#     short-circuits to the raw string when colour is off.
+#   - Width is recomputed from `shutil.get_terminal_size` so resizes between
+#     phases don't misalign rules; clamped to [60, 120] for readability.
 
-_W = 80
-_RESET  = "\033[0m"
-_BOLD   = "\033[1m"
-_DIM    = "\033[2m"
-_CYAN   = "\033[36m"
-_GREEN  = "\033[32m"
-_YELLOW = "\033[33m"
-_RED    = "\033[31m"
+# Width is read once at import; most terminals don't change size mid-run
+# and recomputing on every line would cost a syscall per print.
+_W = max(60, min(120, shutil.get_terminal_size((100, 20)).columns))
+
+# Colour gate — honour NO_COLOR and non-TTY stdout (pipes, CI logs).
+_USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+_RESET   = "\033[0m"
+_BOLD    = "\033[1m"
+_DIM     = "\033[2m"
+_CYAN    = "\033[36m"
+_GREEN   = "\033[32m"
+_YELLOW  = "\033[33m"
+_RED     = "\033[31m"
+_MAGENTA = "\033[35m"
+_BLUE    = "\033[34m"
+_BRIGHT_GREEN = "\033[92m"
+_GRAY    = "\033[90m"
+
+# Per-agent accent colours so the progress lines don't look like a grey
+# wall of text. Keys match the labels passed to `_spinner` / `_agent_line`.
+_AGENT_COLOR: Dict[str, str] = {
+    "Prefetch":    _GRAY,
+    "Architect":   _MAGENTA,
+    "Handler":     _BLUE,
+    "Migration":   _CYAN,
+    "Widget JS":   _YELLOW,
+    "Admin UI":    _YELLOW,
+    "Validation":  _GREEN,
+    "Validator":   _MAGENTA,
+    "Revision":    _BLUE,
+    "Explanation": _CYAN,
+}
+
+
+def _c(text: str, *codes: str) -> str:
+    """Wrap text in ANSI codes, or return unchanged when colour is off."""
+    return f"{''.join(codes)}{text}{_RESET}" if _USE_COLOR else text
+
+
+# ── Banner ────────────────────────────────────────────────────────────────────
+
+# ASCII "TON" (stacked compact blocks). Printed once at startup. The per-
+# character colour step gives a subtle magenta→cyan gradient without the
+# cost of truecolour support detection.
+_BANNER_ROWS = [
+    "████████╗ ██████╗ ███╗   ██╗",
+    "╚══██╔══╝██╔═══██╗████╗  ██║",
+    "   ██║   ██║   ██║██╔██╗ ██║",
+    "   ██║   ██║   ██║██║╚██╗██║",
+    "   ██║   ╚██████╔╝██║ ╚████║",
+    "   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝",
+]
+_BANNER_COLORS = [_MAGENTA, _MAGENTA, _BLUE, _BLUE, _CYAN, _CYAN]
+
+
+def _render_banner(subtitle: str) -> None:
+    for row, color in zip(_BANNER_ROWS, _BANNER_COLORS):
+        print(f"  {_c(row, color, _BOLD)}")
+    print(f"\n  {_c('◆', _MAGENTA)} {_c(subtitle, _BOLD)}")
+    print(f"  {_c('Ctrl+C at any prompt to bail.', _DIM)}\n")
+
+
+# ── Phase rule + summary box ──────────────────────────────────────────────────
 
 
 def _hr(char: str = "─") -> None:
-    print(_DIM + char * _W + _RESET)
+    print(_c(char * _W, _DIM))
+
+
+def _phase_header(label: str) -> None:
+    """Bold divider between major pipeline phases."""
+    bar = "─" * (_W - len(label) - 6)
+    print(f"\n  {_c('◆', _MAGENTA)} {_c(label, _BOLD)}  {_c(bar, _DIM)}\n")
+
+
+def _summary_box(title: str, rows: List[Tuple[str, str]]) -> None:
+    """Rounded-corner box with left-aligned labels. Widths computed per call."""
+    label_w = max((len(l) for l, _ in rows), default=8)
+    value_w = max((len(v) for _, v in rows), default=8)
+    inner_w = max(len(title) + 2, label_w + value_w + 5)
+    top    = "╭" + "─" * (inner_w + 2) + "╮"
+    bottom = "╰" + "─" * (inner_w + 2) + "╯"
+    print(f"  {_c(top, _MAGENTA)}")
+    print(f"  {_c('│', _MAGENTA)} {_c(title.ljust(inner_w), _BOLD)} {_c('│', _MAGENTA)}")
+    print(f"  {_c('│', _MAGENTA)} {_c('─' * inner_w, _DIM)} {_c('│', _MAGENTA)}")
+    for label, value in rows:
+        pad = inner_w - label_w - len(value) - 3
+        line = f" {_c(label.ljust(label_w), _DIM)} {_c('·', _DIM)}{' ' * pad}{value} "
+        print(f"  {_c('│', _MAGENTA)}{line}{_c('│', _MAGENTA)}")
+    print(f"  {_c(bottom, _MAGENTA)}")
+
+
+# ── Chat helpers ──────────────────────────────────────────────────────────────
 
 
 def _bot(text: str) -> None:
-    print(f"\n{_CYAN}{_BOLD}Ton{_RESET}  {text}\n")
+    print(f"\n{_c('▸', _MAGENTA)} {_c('Ton', _CYAN, _BOLD)}  {text}\n")
 
 
 def _info(text: str) -> None:
-    print(f"  {_DIM}{text}{_RESET}")
+    print(f"  {_c(text, _DIM)}")
 
 
-def _agent_line(name: str, ok: bool, ms: Optional[int], notes: str = "") -> None:
-    icon   = f"{_GREEN}✓{_RESET}" if ok else f"{_RED}✗{_RESET}"
-    timing = f"{ms}ms" if ms is not None else "—"
-    line   = f"  {name:<14} {icon}  {_DIM}{timing:<8}{_RESET}  {notes}".rstrip()
-    print(f"\r{line:<{_W}}")
+# ── Animated spinner (threaded) ───────────────────────────────────────────────
+#
+# `_spinner(name)` starts a background thread that animates a braille frame
+# next to the agent label until the next `_agent_line` / `_retry_line` call
+# for any label stops it. Each agent call in the pipeline is strictly
+# serial, so a single module-level spinner state is enough.
+
+_SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+_spinner_state: Dict[str, Any] = {"stop": None, "thread": None, "start": None}
+
+
+def _stop_spinner() -> None:
+    stop = _spinner_state.get("stop")
+    if stop is not None:
+        stop.set()
+        t = _spinner_state.get("thread")
+        if t is not None:
+            t.join(timeout=0.3)
+    _spinner_state["stop"] = None
+    _spinner_state["thread"] = None
+    _spinner_state["start"] = None
+    # Clear the spinner line so subsequent output starts clean.
+    if _USE_COLOR:
+        print(f"\r{' ' * _W}\r", end="", flush=True)
 
 
 def _spinner(name: str) -> None:
-    print(f"\r  {name:<14} {_DIM}…{_RESET}", end="", flush=True)
+    """Kick off a braille-spinner animation for the given agent label."""
+    _stop_spinner()
+    if not _USE_COLOR:
+        # Non-TTY: one static line, no animation (keeps CI logs readable).
+        print(f"  {name:<14} ...", flush=True)
+        return
+
+    stop = threading.Event()
+    start = time.monotonic()
+    color = _AGENT_COLOR.get(name, _CYAN)
+
+    def _loop() -> None:
+        for frame in itertools.cycle(_SPIN_FRAMES):
+            if stop.is_set():
+                return
+            elapsed = time.monotonic() - start
+            # Show a running elapsed clock next to long-running agents so
+            # it's obvious when the LLM is crawling vs the process hanging.
+            elapsed_str = f"{elapsed:4.1f}s" if elapsed >= 1 else "     "
+            line = (
+                f"  {_c(name.ljust(14), color, _BOLD)} "
+                f"{_c(frame, color)}  "
+                f"{_c(elapsed_str, _DIM)}"
+            )
+            print(f"\r{line}", end="", flush=True)
+            time.sleep(0.08)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    _spinner_state["stop"] = stop
+    _spinner_state["thread"] = t
+    _spinner_state["start"] = start
+
+
+def _agent_line(name: str, ok: bool, ms: Optional[int], notes: str = "") -> None:
+    _stop_spinner()
+    icon   = _c("✓", _BRIGHT_GREEN, _BOLD) if ok else _c("✗", _RED, _BOLD)
+    color  = _AGENT_COLOR.get(name, _CYAN)
+    label  = _c(name.ljust(14), color, _BOLD)
+    timing = _c(f"{ms}ms".ljust(7), _DIM) if ms is not None else _c("—".ljust(7), _DIM)
+    line   = f"  {label} {icon}  {timing}  {notes}".rstrip()
+    print(f"\r{line}")
 
 
 def _retry_line(name: str, notes: str) -> None:
-    line = f"  {name:<14} {_YELLOW}↻{_RESET}  {'':8}  {_DIM}{notes[:60]}{_RESET}".rstrip()
-    print(f"\r{line:<{_W}}")
+    _stop_spinner()
+    color = _AGENT_COLOR.get(name, _CYAN)
+    line = (
+        f"  {_c(name.ljust(14), color, _BOLD)} {_c('↻', _YELLOW, _BOLD)}  "
+        f"{'':7}  {_c(notes[:60], _DIM)}"
+    )
+    print(f"\r{line}")
 
 
 def _ktok(n: int) -> str:
@@ -914,17 +1075,20 @@ def _print_token_summary(token_map: Dict[str, Tuple[int, int]]) -> None:
     total_in  = sum(v[0] for v in token_map.values())
     total_out = sum(v[1] for v in token_map.values())
     parts = "  ".join(
-        f"{_DIM}{name}({_ktok(in_t)}+{_ktok(out_t)}){_RESET}"
+        _c(f"{name}({_ktok(in_t)}+{_ktok(out_t)})",
+           _AGENT_COLOR.get(name.capitalize(), _DIM))
         for name, (in_t, out_t) in token_map.items()
         if in_t or out_t
     )
-    print(
-        f"\n  {_DIM}Tokens{_RESET}  "
-        f"in={_ktok(total_in)}  out={_ktok(total_out)}  "
-        f"total={_ktok(total_in + total_out)}"
+    total_str = (
+        f"{_c('Tokens', _DIM)}  "
+        f"{_c(f'in={_ktok(total_in)}', _CYAN)}  "
+        f"{_c(f'out={_ktok(total_out)}', _MAGENTA)}  "
+        f"{_c(f'total={_ktok(total_in + total_out)}', _BOLD)}"
     )
+    print(f"\n  {total_str}")
     if parts:
-        print(f"  {_DIM}Agents{_RESET}  {parts}")
+        print(f"  {_c('Agents', _DIM)}  {parts}")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -1030,11 +1194,9 @@ def main() -> None:
     stop_after: StopAfter = args.stop_after or "full"
     save_to_db = not args.no_db and stop_after == "full"
 
-    _hr("━")
-    print(f"\n{_BOLD}  Ton — Shopify App Builder{_RESET}")
-    mode_note = f"  stop after: {stop_after}" if stop_after != "full" else "  full pipeline"
-    print(f"  {_DIM}{mode_note}  |  Ctrl+C to exit{_RESET}\n")
-    _hr("━")
+    print()
+    mode_note = f"Shopify App Builder  ·  mode: {stop_after}"
+    _render_banner(mode_note)
 
     # ── Step 1: Chat until intent is ready ─────────────────────────────────────
     first_message = _ask_user(f"\n{_BOLD}You{_RESET}  ")
@@ -1090,12 +1252,6 @@ def main() -> None:
             _info(f"DB setup failed — continuing without DB: {exc}")
             save_to_db = False
 
-    print()
-    _hr()
-    print(f"  {_BOLD}Running pipeline…{_RESET}")
-    _hr()
-    print()
-
     archetype    = intent.get("appCategory", "")
     is_storefront = archetype in ("storefront_backend",       "storefront_backend_admin")
     is_admin_ui   = archetype in ("storefront_backend_admin", "backend_admin")
@@ -1115,6 +1271,7 @@ def main() -> None:
                 pass
 
     # ── Phase: Architect ───────────────────────────────────────────────────────
+    _phase_header("ARCHITECT")
     try:
         plan, api_context, product_prompt, arch_in, arch_out = _phase_architect(intent, prompt)
     except SystemExit:
@@ -1124,13 +1281,19 @@ def main() -> None:
 
     if stop_after == "arch":
         total_ms = int((time.monotonic() - total_start) * 1000)
-        _print_token_summary(all_tokens)
         _save_arch_json(run_dir, prompt, intent, plan, [], product_prompt)
-        print(f"\n  done — {total_ms / 1000:.1f}s — {run_dir.relative_to(_HERE)}/")
-        _hr("━")
+        print()
+        _summary_box("◆  ARCH STOP", [
+            ("Status",   _c("✓ architect plan only", _BRIGHT_GREEN, _BOLD)),
+            ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
+            ("Output",   _c(str(run_dir.relative_to(_HERE)) + "/arch.json", _BLUE)),
+        ])
+        _print_token_summary(all_tokens)
+        print()
         return
 
     # ── Phase: CodeGen + Static Validation ────────────────────────────────────
+    _phase_header("CODEGEN")
     base_ctx = CodegenContext(
         intent=intent,
         plan=plan,
@@ -1146,16 +1309,22 @@ def main() -> None:
 
     if stop_after == "codegen":
         total_ms = int((time.monotonic() - total_start) * 1000)
-        _print_artifacts(artifacts)
-        _print_token_summary(all_tokens)
         _save_artifacts_md(run_dir, prompt, artifacts, "codegen", is_storefront, is_admin_ui,
                            retry_log or None, intent=intent, plan=plan,
                            handler_email_metadata=base_ctx.handler_email_metadata)
-        print(f"\n  done — {total_ms / 1000:.1f}s — {run_dir.relative_to(_HERE)}/")
-        _hr("━")
+        print()
+        _summary_box("◆  CODEGEN STOP", [
+            ("Status",   _c("✓ static validation passed", _BRIGHT_GREEN, _BOLD)),
+            ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
+            ("Output",   _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
+        ])
+        _print_artifacts(artifacts)
+        _print_token_summary(all_tokens)
+        print()
         return
 
     # ── Phase: LLM Validator + Revision ───────────────────────────────────────
+    _phase_header("VALIDATOR + REVISION")
     artifacts, val_in, val_out, validator_trace = _phase_validator(
         base_ctx, artifacts, is_storefront, is_admin_ui, run_dir, run_ts, run_slug,
     )
@@ -1164,17 +1333,23 @@ def main() -> None:
 
     if stop_after == "validator":
         total_ms = int((time.monotonic() - total_start) * 1000)
-        _print_artifacts(artifacts)
-        _print_token_summary(all_tokens)
         _save_artifacts_md(run_dir, prompt, artifacts, "validator", is_storefront, is_admin_ui,
                            retry_log or None, intent=intent, plan=plan,
                            validator_trace=validator_trace,
                            handler_email_metadata=base_ctx.handler_email_metadata)
-        print(f"\n  done — {total_ms / 1000:.1f}s — {run_dir.relative_to(_HERE)}/")
-        _hr("━")
+        print()
+        _summary_box("◆  VALIDATOR STOP", [
+            ("Status",   _c("✓ semantic check passed", _BRIGHT_GREEN, _BOLD)),
+            ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
+            ("Output",   _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
+        ])
+        _print_artifacts(artifacts)
+        _print_token_summary(all_tokens)
+        print()
         return
 
     # ── Phase: Explanation ────────────────────────────────────────────────────
+    _phase_header("EXPLANATION")
     _spinner("Explanation")
     t0 = time.monotonic()
     explanation, exp_in, exp_out = run_explanation_agent(
@@ -1246,23 +1421,25 @@ def main() -> None:
     report = run_dir
 
     # ── Final summary ──────────────────────────────────────────────────────────
-    _hr("━")
-    print(f"  {_GREEN}SUCCESS{_RESET} — {total_ms / 1000:.1f}s — {run_dir.relative_to(_HERE)}/")
-
-    # Artifact line counts
-    artifact_parts = []
+    total_in  = sum(v[0] for v in all_tokens.values())
+    total_out = sum(v[1] for v in all_tokens.values())
+    rows: List[Tuple[str, str]] = [
+        ("Status",   _c("✓ success", _BRIGHT_GREEN, _BOLD)),
+        ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
+        ("Tokens",   _c(f"{_ktok(total_in + total_out)} (in {_ktok(total_in)} · out {_ktok(total_out)})", _MAGENTA)),
+        ("Output",   _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
+    ]
     for key, label in [("handler", "handler.js"), ("migration", "migration.sql"),
                        ("widget_js", "widget.js"), ("admin_ui", "admin_ui.js")]:
         code = artifacts.get(key, "")
         if code:
-            artifact_parts.append(f"{label} ({len(code.strip().splitlines())} lines)")
-    if artifact_parts:
-        print(f"  {_DIM}Files{_RESET}   " + "  ".join(artifact_parts))
+            rows.append((label, _c(f"{len(code.strip().splitlines())} lines", _DIM)))
     if save_to_db and slug:
-        print(f"  {_DIM}App{_RESET}     http://localhost:3000  →  {app_name}")
+        rows.append(("App", _c(f"http://localhost:3000  →  {app_name}", _CYAN)))
 
+    print()
+    _summary_box("◆  RUN COMPLETE", rows)
     _print_token_summary(all_tokens)
-    _hr("━")
     print()
 
     if merchant_facing:
