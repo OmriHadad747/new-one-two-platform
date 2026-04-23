@@ -243,21 +243,61 @@ Replace `cronSchedule: Optional[str]` with `cronJobs: List[{name: str, schedule:
 
 ---
 
-## TD-008 — API rate limiter is per-instance, not distributed
+## TD-008 — Per-instance state on a horizontally-scaled API service
+
+Three independent pieces of state in `platform-back/apps/api` are held per-process. Each is harmless on a single instance but breaks or degrades silently once Cloud Run scales past one (`maxScale: 10`).
+
+---
+
+### 8a — Deploy job state lost across instances
 
 **Current state**
-`platform-back/apps/api` uses an in-memory `@fastify/rate-limit` store on the three public route groups (`/oauth/*`, `/widget/*`, `/email/u/*`). With Cloud Run's `maxScale: 10`, each instance enforces its own independent counter — a flood of 10 × 100 req/min = 1 000 req/min effective limit before any IP is rejected. Limits also reset silently when an instance is replaced.
-
-The webhook-gateway already uses Redis-backed rate limiting (ioredis is a direct dep there). The API does not have ioredis and adding it solely for rate limiting was deferred.
+`packages/deployer/src/orchestrator.ts` stores every deploy job in a module-level `Map<jobId, JobContext>`. The deploy API (`POST /apps/:appId/deploy`) returns a `jobId` immediately; the dashboard then opens an SSE stream to `GET /deploy/jobs/:jobId` to watch progress. With no sticky routing, the SSE request lands on a random instance — almost certainly not the one running the deploy — and the job is not found.
 
 **What to do**
-1. Add `ioredis` as a dep to `platform-back/apps/api`.
-2. Create a shared Redis client in `src/server.ts` using the same `REDIS_HOST / REDIS_PORT / REDIS_PASSWORD / REDIS_TLS` env vars the gateway uses.
-3. Pass the client as `redis` to each `@fastify/rate-limit` registration in the three scoped public-route plugins.
-4. Close the client in the `closeServer` / shutdown handler.
+Persist job state to a `deploy_jobs` Postgres table (status, steps JSON, functionUrl, error, timestamps). The orchestrator writes each step transition as a row update; the SSE route polls or uses `LISTEN/NOTIFY` to push events. In-process `Map` + `EventEmitter` can stay as a short-circuit cache for the happy-path (same-instance hit) but must fall back to DB for misses.
 
 **Affected files**
-- `platform-back/apps/api/package.json` — add `ioredis`.
-- `platform-back/apps/api/src/server.ts` — construct shared Redis client, pass to rate-limit registrations.
+- `platform-back/packages/deployer/src/orchestrator.ts` — write step transitions to DB; fall back on Map miss.
+- `platform-back/packages/db/migrations/` — new `deploy_jobs` table.
+- `platform-back/packages/db/src/deploy-jobs.ts` — read/write helpers.
+- `platform-back/apps/api/src/routes/deploy.ts` — SSE route reads from DB on Map miss.
 
-**Complexity:** Low — mechanical dep addition + client wiring; no logic changes.
+---
+
+### 8b — Pub/Sub progress fan-out misses cross-instance SSE clients
+
+**Current state**
+`apps/api/src/pubsub/progress-subscriber.ts` maintains an in-process listener registry (`Map<jobId, Set<listener>>`). When the generation pipeline publishes a `generation.progress` event to Pub/Sub, only the API instance that happens to hold the SSE connection for that `jobId` will forward it to the dashboard. With two concurrent SSE streams (generation + deploy) on a service that autoscales, silent misses are the default at load.
+
+**What to do**
+Replace the in-process fan-out with a Redis `PUBLISH/SUBSCRIBE` channel keyed by `jobId`. Every API instance subscribes to the channel for the jobs whose SSE connections it holds; the Pub/Sub subscriber publishes to Redis instead of calling in-process listeners. Alternatively, consolidate all SSE traffic to a dedicated single-instance SSE service and route dashboard connections there via Cloud Run traffic splitting.
+
+**Affected files**
+- `apps/api/src/pubsub/progress-subscriber.ts` — publish to Redis channel instead of in-process Set.
+- `apps/api/src/routes/generation.ts` (SSE route) — subscribe to Redis channel for the relevant jobId.
+- `apps/api/src/routes/deploy.ts` (SSE route) — same.
+- `apps/api/package.json` — add `ioredis`.
+
+---
+
+### 8c — API rate limiter counters are per-instance
+
+**Current state**
+`apps/api/src/server.ts` uses `@fastify/rate-limit` with an in-memory store on the three public route groups (`/oauth/*`, `/widget/*`, `/email/u/*`). With `maxScale: 10`, each instance enforces its own counter — effective ceiling is 10× the configured limit before any IP is actually rejected. Counts also reset on instance replacement.
+
+The webhook-gateway already uses Redis-backed rate limiting (ioredis is a direct dep there).
+
+**What to do**
+1. Add `ioredis` to `platform-back/apps/api` (shared with 8b above — one dep addition covers both).
+2. Construct a shared Redis client in `src/server.ts` using `REDIS_HOST / REDIS_PORT / REDIS_PASSWORD / REDIS_TLS`.
+3. Pass the client as `redis` to each scoped `@fastify/rate-limit` registration.
+4. Close the client in the shutdown handler.
+
+**Affected files**
+- `platform-back/apps/api/package.json` — add `ioredis` (shared with 8b).
+- `platform-back/apps/api/src/server.ts` — Redis client construction + pass to rate-limit registrations.
+
+---
+
+**Suggested order:** 8c first (one dep, no schema change), then 8a (schema + orchestrator), then 8b (most complex — touches SSE architecture).
