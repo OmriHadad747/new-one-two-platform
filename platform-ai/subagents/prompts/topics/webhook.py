@@ -5,7 +5,11 @@ Views:
   ARCHITECT — plan rules: webhookTopics format + webhookContract shape.
   HANDLER   — implementation rules: webhook-handlers.ts shape, atomic
               side-effect claiming, scoping, prefetch discipline.
+              Template-owned table rules are imported from
+              topics.template_tables.
 """
+
+from subagents.prompts.topics.template_tables import HANDLER as _TEMPLATE_TABLES_HANDLER
 
 # ── Architect view ─────────────────────────────────────────────────────────────
 
@@ -64,8 +68,8 @@ RULES:
     res.json() calls — never write to `res` inside a handler.
   - Handlers throw to signal failure (the router maps throws → 500).
     Never swallow errors that should surface as retries.
-  - Do NOT import or call anything related to idempotency or
-    processed_webhooks — the template router already handles that.
+
+%TEMPLATE_TABLES_HANDLER%
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WEBHOOK BODY PATTERNS — atomic side effects, scoping, prefetch
@@ -107,4 +111,4 @@ transition), apply the same bulk-prefetch discipline as cron jobs:
 bulk-fetch all Shopify data before the loop, zero Shopify calls inside it.
 See the BATCHED SHOPIFY RATE LIMIT SAFETY section for the full pattern
 and String() key-normalization rules.
-"""
+""".replace("%TEMPLATE_TABLES_HANDLER%", _TEMPLATE_TABLES_HANDLER)

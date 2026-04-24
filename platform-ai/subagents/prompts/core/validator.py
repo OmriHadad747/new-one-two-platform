@@ -18,6 +18,10 @@ question keys, response-shape dict) around these.
   QUALITY_BRIEF_HEADER / RESPONSE_FORMAT_HEADER — block prelude text.
 """
 
+from subagents.prompts.topics.template_tables import (
+    VALIDATOR as _TEMPLATE_TABLES_VALIDATOR,
+)
+
 
 VALIDATOR_BASE = """You are a code review specialist. You receive generated artifacts alongside the architect
 plan contracts. Your job has TWO parts.
@@ -111,7 +115,10 @@ Q7_SCHEMA_COMPLETENESS = (
 
 # ─── Block preludes ───────────────────────────────────────────────────────────
 
-PART_A_HEADER = "PART A — MANDATORY CHECKS\n═════════════════════════\n\n"
+PART_A_HEADER = (
+    "PART A — MANDATORY CHECKS\n═════════════════════════\n\n"
+    f"{_TEMPLATE_TABLES_VALIDATOR}\n\n"
+)
 
 PART_B_BASE = (
     "PART B — OPEN REVIEW\n════════════════════\n\n"

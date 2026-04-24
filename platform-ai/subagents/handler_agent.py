@@ -17,9 +17,6 @@ subagents/prompts/capabilities/handler.py based on appContracts.handlerCapabilit
 
 User-prompt JIT sections:
   - Capability docs for each entry in handlerCapabilities (registry-driven).
-  - SHOPIFY_REST_VS_GRAPHQL_GUIDE only when BOTH shopify_rest AND
-    shopify_graphql are declared — no point showing a choose-one guide if
-    only one is used.
   - Trigger-gated sections:
       HARNESS_SECTION_WEBHOOK        — when webhookTopics is non-empty
       HARNESS_SECTION_CRON           — when shopifyPlan.cronSchedule is non-null
@@ -415,9 +412,9 @@ def _format_webhook_contract(plan: Dict[str, Any]) -> str:
     if must_produce:
         lines.append(f"Handler must resolve before DB writes: {must_produce}")
     lines.append(
-        "Use the Shopify API context below to decide which REST/GraphQL calls\n"
-        "to make via the shopify client (see capability docs above) to produce\n"
-        "the required data.\n"
+        "Use the Shopify API context below to decide which GraphQL queries\n"
+        "and mutations to make via the shopify client (see capability docs\n"
+        "above) to produce the required data.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
     return "\n".join(lines)

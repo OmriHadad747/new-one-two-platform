@@ -2,17 +2,15 @@ import {
   shopifyApi,
   LATEST_API_VERSION,
   Session,
-  type ShopifyRestResources,
 } from "@shopify/shopify-api";
 import "@shopify/shopify-api/adapters/node";
-import type { PlatformContext } from "../middleware/verify-platform.js";
 import { callPlatformService } from "./platform-call.js";
 
 // Per-request Shopify client helper.
 //
 // Generator call sites look like:
 //   const shopify = await shopifyClientFor(req.platform!);
-//   const data = await shopify.rest.get("/orders.json?limit=50");
+//   const data = await shopify.graphql(`{ ... }`);
 //
 // On cron paths (no req) the generator calls shopifyClientFor() with no
 // argument; the helper fetches the access token via
@@ -72,15 +70,6 @@ function makeSession(shopDomain: string, accessToken: string): Session {
 // ─── Public helper interface ─────────────────────────────────────────────────
 
 export interface ShopifyHelper {
-  rest: {
-    get(path: string): Promise<unknown>;
-    post(path: string, body: Record<string, unknown>): Promise<unknown>;
-    delete(path: string): Promise<unknown>;
-    paginate(
-      path: string,
-      query?: Record<string, string | number | boolean>,
-    ): AsyncGenerator<unknown[], void, unknown>;
-  };
   graphql(
     query: string,
     variables?: Record<string, unknown>,
@@ -90,19 +79,33 @@ export interface ShopifyHelper {
     variables: Record<string, unknown>,
     connectionPath: string,
   ): AsyncGenerator<unknown[], void, unknown>;
+  /**
+   * Async generator over a Shopify bulk operation result.
+   * Starts the operation, polls until COMPLETED, downloads the JSONL, and
+   * yields one parsed object per line. Use for large exports (100k+ rows)
+   * or list reads where GraphQL query cost would be prohibitive.
+   */
+  bulkQuery(query: string): AsyncGenerator<unknown, void, unknown>;
   storefront(
     query: string,
     variables?: Record<string, unknown>,
   ): Promise<unknown>;
 }
 
+/**
+ * Narrow structural type accepted by `shopifyClientFor`. `req.platform` from
+ * the verify-platform middleware satisfies it (has `shopDomain` + `accessToken`
+ * among other fields). Never construct this object by hand — either pass
+ * `req.platform!` on HTTP paths or call `shopifyClientFor()` with no argument
+ * on cron paths.
+ */
 export interface ShopifyClientContext {
   shopDomain: string;
   accessToken?: string;
 }
 
 export async function shopifyClientFor(
-  platform?: ShopifyClientContext | PlatformContext,
+  platform?: ShopifyClientContext,
 ): Promise<ShopifyHelper> {
   const shopDomain = platform?.shopDomain ?? process.env["SHOP_DOMAIN"];
   if (!shopDomain) {
@@ -126,76 +129,21 @@ export async function shopifyClientFor(
     }
   }
 
-  // Hoisted so graphqlPaginate can call it without wrestling with
-  // method-this binding inside an async generator.
+  // Hoisted so graphqlPaginate and bulkQuery can call it without wrestling
+  // with method-this binding inside async generators. Handles both 401 refresh
+  // and cost-based-throttle backoff internally — callers see only `data`
+  // (or a thrown error after retries are exhausted).
   async function graphqlImpl(
     query: string,
     variables?: Record<string, unknown>,
   ): Promise<unknown> {
     return with401Retry(async (session) => {
       const client = new api.clients.Graphql({ session });
-      const resp = await client.request<Record<string, unknown>>(query, {
-        ...(variables ? { variables } : {}),
-      });
-      return resp.data;
+      return requestWithThrottleRetry(client, query, variables);
     });
   }
 
   return {
-    rest: {
-      async get(path: string): Promise<unknown> {
-        const { pathOnly, query } = splitPath(path);
-        return with401Retry(async (session) => {
-          const rest = new api.clients.Rest({ session });
-          const resp = await rest.get({
-            path: pathOnly,
-            ...(query ? { query } : {}),
-          });
-          return resp.body;
-        });
-      },
-      async post(path: string, body: Record<string, unknown>): Promise<unknown> {
-        const { pathOnly } = splitPath(path);
-        return with401Retry(async (session) => {
-          const rest = new api.clients.Rest({ session });
-          // The SDK defaults `type` to JSON when `data` is an object —
-          // don't pass `type` explicitly to avoid the exactOptional-
-          // PropertyTypes mismatch on optional enum fields.
-          const resp = await rest.post({ path: pathOnly, data: body });
-          return resp.body;
-        });
-      },
-      async delete(path: string): Promise<unknown> {
-        const { pathOnly } = splitPath(path);
-        return with401Retry(async (session) => {
-          const rest = new api.clients.Rest({ session });
-          const resp = await rest.delete({ path: pathOnly });
-          return resp.body;
-        });
-      },
-      async *paginate(
-        path: string,
-        query: Record<string, string | number | boolean> = {},
-      ): AsyncGenerator<unknown[], void, unknown> {
-        const { pathOnly } = splitPath(path);
-        const resourceKey = deriveResourceKey(pathOnly);
-        const session = makeSession(shopDomain!, await getAccessToken(tokenHint));
-        const rest = new api.clients.Rest({ session });
-
-        let resp = await rest.get({
-          path: pathOnly,
-          query: { limit: 250, ...query },
-        });
-        while (true) {
-          const page = extractArray(resp.body, resourceKey);
-          yield page;
-          const next = extractNextCursor(resp);
-          if (!next) break;
-          resp = await rest.get({ path: pathOnly, query: next });
-        }
-      },
-    },
-
     graphql: graphqlImpl,
 
     async *graphqlPaginate(
@@ -228,16 +176,92 @@ export async function shopifyClientFor(
       }
     },
 
+    async *bulkQuery(query: string): AsyncGenerator<unknown, void, unknown> {
+      // 1. Start the bulk operation.
+      const startResult = (await graphqlImpl(
+        `mutation BulkOperationRun($query: String!) {
+          bulkOperationRunQuery(query: $query) {
+            bulkOperation { id status }
+            userErrors { field message }
+          }
+        }`,
+        { query },
+      )) as Record<string, unknown> | null;
+
+      const payload = (startResult?.["bulkOperationRunQuery"] ?? {}) as Record<string, unknown>;
+      const userErrors = (payload["userErrors"] as unknown[]) ?? [];
+      if (userErrors.length > 0) {
+        throw new Error(
+          `shopifyClientFor.bulkQuery: failed to start: ${JSON.stringify(userErrors)}`,
+        );
+      }
+
+      // 2. Poll until COMPLETED or FAILED.
+      const POLL_INTERVAL_MS = 3_000;
+      let downloadUrl: string | null = null;
+
+      for (;;) {
+        await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
+
+        const statusResult = (await graphqlImpl(
+          `{ currentBulkOperation { id status errorCode objectCount url } }`,
+        )) as Record<string, unknown> | null;
+
+        const op = (statusResult?.["currentBulkOperation"] ?? null) as Record<
+          string,
+          unknown
+        > | null;
+        if (!op) throw new Error("shopifyClientFor.bulkQuery: currentBulkOperation is null");
+
+        const status = op["status"] as string;
+        if (status === "COMPLETED") {
+          downloadUrl = (op["url"] as string | null) ?? null;
+          break;
+        }
+        if (status === "FAILED" || status === "CANCELED") {
+          throw new Error(
+            `shopifyClientFor.bulkQuery: operation ${status} — errorCode: ${op["errorCode"]}`,
+          );
+        }
+        // CREATED | RUNNING | CANCELING — keep polling
+      }
+
+      if (!downloadUrl) return; // zero results
+
+      // 3. Download JSONL and yield one object per line.
+      const resp = await fetch(downloadUrl);
+      if (!resp.ok || !resp.body) {
+        throw new Error(
+          `shopifyClientFor.bulkQuery: JSONL download failed (status=${resp.status})`,
+        );
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed) yield JSON.parse(trimmed) as unknown;
+        }
+      }
+      const remaining = buffer.trim();
+      if (remaining) yield JSON.parse(remaining) as unknown;
+    },
+
     async storefront(
       query: string,
       variables?: Record<string, unknown>,
     ): Promise<unknown> {
       // Storefront uses a SEPARATE access token (public, scoped to unauthed
       // shopper context). platform-back mints it at OAuth time alongside the
-      // admin access token and exposes it via a dedicated /services/
-      // endpoint. Not cached here — storefront usage is rare enough that the
-      // extra hop on first call is noise; if that changes, add a sibling
-      // cache the same way as the admin token above.
+      // admin access token and exposes it via a dedicated /services/ endpoint.
       const { status, body } = await callPlatformService<{
         storefrontAccessToken: string;
       }>({
@@ -277,6 +301,172 @@ export async function shopifyClientFor(
   };
 }
 
+// ─── Throttle-aware retry ────────────────────────────────────────────────────
+//
+// Shopify's GraphQL Admin API uses a cost-based rate limiter (default
+// 1000 pt bucket, 50 pts/sec restore). Two scenarios handled here:
+//
+//   - Hard throttle: response contains errors[].extensions.code === "THROTTLED"
+//     (the SDK surfaces this as a thrown error with the response attached).
+//     Sleep proportionally to the restoreRate, then retry.
+//   - Soft throttle: the call succeeded but currentlyAvailable is low
+//     relative to what the caller just requested — preemptively sleep before
+//     returning so the caller's next call has budget.
+//
+// Handler code never interacts with cost fields. The preemptive sleep costs
+// latency in the rare bursty case and prevents cascading throttle errors
+// under steady-state load.
+
+const MAX_THROTTLE_RETRIES = 5;
+const MAX_THROTTLE_TOTAL_WAIT_MS = 30_000;
+const SOFT_THROTTLE_MULTIPLIER = 2; // sleep when currentlyAvailable < requested * this
+const MIN_THROTTLE_WAIT_MS = 500;
+const DEFAULT_HARD_THROTTLE_WAIT_MS = 2_000;
+const HARD_THROTTLE_SAFETY_PAD_MS = 500;
+
+interface ShopifyThrottleStatus {
+  maximumAvailable: number;
+  currentlyAvailable: number;
+  restoreRate: number;
+}
+
+interface ShopifyCost {
+  requestedQueryCost: number;
+  actualQueryCost: number | null;
+  throttleStatus: ShopifyThrottleStatus;
+}
+
+async function requestWithThrottleRetry(
+  client: InstanceType<typeof api.clients.Graphql>,
+  query: string,
+  variables?: Record<string, unknown>,
+): Promise<unknown> {
+  let totalWaitedMs = 0;
+
+  for (let attempt = 1; attempt <= MAX_THROTTLE_RETRIES; attempt++) {
+    try {
+      const resp = (await client.request<Record<string, unknown>>(query, {
+        ...(variables ? { variables } : {}),
+      })) as { data?: unknown; extensions?: { cost?: ShopifyCost } };
+
+      // Soft throttle — sleep now so the next call has budget.
+      const cost = resp.extensions?.cost;
+      if (cost && isSoftThrottled(cost)) {
+        const wait = computeSoftThrottleWait(cost);
+        if (wait > 0 && totalWaitedMs + wait <= MAX_THROTTLE_TOTAL_WAIT_MS) {
+          console.warn(
+            {
+              event: "shopify_graphql_soft_throttle",
+              waitMs: wait,
+              currentlyAvailable: cost.throttleStatus.currentlyAvailable,
+              requestedQueryCost: cost.requestedQueryCost,
+            },
+            "Shopify GraphQL soft throttle — preemptive sleep",
+          );
+          await sleepMs(wait);
+          totalWaitedMs += wait;
+        }
+      }
+
+      return resp.data;
+    } catch (err: unknown) {
+      const throttle = extractThrottleInfo(err);
+      if (!throttle) throw err;
+
+      const wait = computeHardThrottleWait(throttle.cost);
+      const exhausted =
+        attempt >= MAX_THROTTLE_RETRIES ||
+        totalWaitedMs + wait > MAX_THROTTLE_TOTAL_WAIT_MS;
+
+      console.warn(
+        {
+          event: "shopify_graphql_throttled",
+          attempt,
+          waitMs: wait,
+          exhausted,
+        },
+        "Shopify GraphQL throttled",
+      );
+
+      if (exhausted) throw err;
+
+      await sleepMs(wait);
+      totalWaitedMs += wait;
+    }
+  }
+  // Unreachable — the loop either returns or throws.
+  throw new Error("shopifyClientFor.graphql: throttle retry loop exited unexpectedly");
+}
+
+function isSoftThrottled(cost: ShopifyCost): boolean {
+  const target = cost.requestedQueryCost * SOFT_THROTTLE_MULTIPLIER;
+  return cost.throttleStatus.currentlyAvailable < target;
+}
+
+function computeSoftThrottleWait(cost: ShopifyCost): number {
+  const target = cost.requestedQueryCost * SOFT_THROTTLE_MULTIPLIER;
+  const deficit = target - cost.throttleStatus.currentlyAvailable;
+  if (deficit <= 0 || cost.throttleStatus.restoreRate <= 0) return 0;
+  const waitMs = Math.ceil((deficit / cost.throttleStatus.restoreRate) * 1000);
+  return Math.max(MIN_THROTTLE_WAIT_MS, waitMs);
+}
+
+function computeHardThrottleWait(cost?: ShopifyCost): number {
+  if (!cost || cost.throttleStatus.restoreRate <= 0) {
+    return DEFAULT_HARD_THROTTLE_WAIT_MS;
+  }
+  const deficit = Math.max(
+    cost.requestedQueryCost - cost.throttleStatus.currentlyAvailable,
+    1,
+  );
+  const waitMs = Math.ceil((deficit / cost.throttleStatus.restoreRate) * 1000);
+  return Math.max(MIN_THROTTLE_WAIT_MS, waitMs + HARD_THROTTLE_SAFETY_PAD_MS);
+}
+
+function extractThrottleInfo(err: unknown): { cost?: ShopifyCost } | null {
+  if (!err || typeof err !== "object") return null;
+  const anyErr = err as {
+    response?: {
+      errors?: unknown;
+      extensions?: { cost?: ShopifyCost };
+      code?: number;
+      statusCode?: number;
+    };
+    body?: { errors?: unknown; extensions?: { cost?: ShopifyCost } };
+    errors?: unknown;
+    extensions?: { cost?: ShopifyCost };
+    code?: number;
+  };
+
+  const responseLike =
+    anyErr.response ?? anyErr.body ?? anyErr;
+  const errors = (responseLike as { errors?: unknown }).errors;
+  const cost = (responseLike as { extensions?: { cost?: ShopifyCost } })
+    .extensions?.cost;
+
+  if (Array.isArray(errors)) {
+    const isThrottled = errors.some((e) => {
+      if (!e || typeof e !== "object") return false;
+      const entry = e as { extensions?: { code?: string }; message?: string };
+      if (entry.extensions?.code === "THROTTLED") return true;
+      if (typeof entry.message === "string" &&
+          entry.message.toLowerCase().includes("throttled")) return true;
+      return false;
+    });
+    if (isThrottled) return cost ? { cost } : {};
+  }
+
+  // HTTP 429 fallback — rare for GraphQL but handle it defensively.
+  const code = anyErr.response?.code ?? anyErr.response?.statusCode ?? anyErr.code;
+  if (code === 429) return cost ? { cost } : {};
+
+  return null;
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // ─── Internals ───────────────────────────────────────────────────────────────
 
 function is401(err: unknown): boolean {
@@ -289,56 +479,6 @@ function is401(err: unknown): boolean {
   return String(err).includes("401");
 }
 
-function splitPath(path: string): {
-  pathOnly: string;
-  query?: Record<string, string>;
-} {
-  // Accept "/orders.json?status=any", "orders.json?status=any", or
-  // "/admin/api/<version>/orders.json?status=any" — the SDK's REST client
-  // adds the /admin/api/<version>/ prefix itself, so we strip it here.
-  const stripped = path
-    .replace(/^\/?admin\/api\/[^/]+\//, "")
-    .replace(/^\//, "");
-  const qIdx = stripped.indexOf("?");
-  if (qIdx === -1) return { pathOnly: stripped };
-  const pathOnly = stripped.slice(0, qIdx);
-  const params: Record<string, string> = {};
-  new URLSearchParams(stripped.slice(qIdx + 1)).forEach((v, k) => {
-    params[k] = v;
-  });
-  return { pathOnly, query: params };
-}
-
-function deriveResourceKey(pathOnly: string): string {
-  // "orders.json" → "orders"; "orders/123/fulfillments.json" → "fulfillments".
-  const leaf = pathOnly.split("/").pop() ?? "";
-  return leaf.replace(/\.json$/, "");
-}
-
-function extractArray(body: unknown, key: string): unknown[] {
-  if (body && typeof body === "object") {
-    const v = (body as Record<string, unknown>)[key];
-    if (Array.isArray(v)) return v;
-  }
-  return [];
-}
-
-function extractNextCursor(
-  resp: { pageInfo?: { nextPage?: { query?: unknown } | null } },
-): Record<string, string> | null {
-  const q = resp.pageInfo?.nextPage?.query;
-  if (!q || typeof q !== "object") return null;
-  // Normalize to a plain Record<string, string> — SearchParams allows
-  // numbers/booleans in values, but as the cursor payload the SDK round-
-  // trips back into another rest.get, passing through as-is works even
-  // when the declared type is wider than what we keep on our side.
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(q as Record<string, unknown>)) {
-    out[k] = String(v);
-  }
-  return out;
-}
-
 function getByPath(obj: unknown, path: string): unknown {
   return path
     .split(".")
@@ -348,6 +488,3 @@ function getByPath(obj: unknown, path: string): unknown {
       obj,
     );
 }
-
-// Re-export types so callers can reference without importing from SDK directly.
-export type { ShopifyRestResources };

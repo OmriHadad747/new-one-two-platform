@@ -9,7 +9,6 @@ apply to a given plan. Used by:
 
 Trigger gates:
   - Capability docs: each capability declared in handlerCapabilities
-  - SHOPIFY_REST_VS_GRAPHQL guide: when both shopify_rest + shopify_graphql declared
   - Webhook handler docs: when shopifyPlan.webhookTopics is non-empty
   - Cron handler docs: when shopifyPlan.cronSchedule is non-null
   - State machine handler docs: when appContracts.stateMachine is non-null
@@ -28,9 +27,6 @@ from subagents.prompts.capabilities import HANDLER_CAPABILITY_DOCS
 from subagents.prompts.topics.admin_ui import HANDLER as HARNESS_SECTION_ADMIN
 from subagents.prompts.topics.cron import HANDLER as HARNESS_SECTION_CRON
 from subagents.prompts.topics.shopify_loop import HANDLER as HARNESS_SECTION_CRON_BATCHING
-from subagents.prompts.topics.shopify_rest_vs_graphql import (
-    HANDLER as SHOPIFY_REST_VS_GRAPHQL_GUIDE,
-)
 from subagents.prompts.topics.state_machine import HANDLER as HARNESS_SECTION_STATE_MACHINE
 from subagents.prompts.topics.webhook import HANDLER as HARNESS_SECTION_WEBHOOK
 from subagents.prompts.topics.widget import (
@@ -65,10 +61,6 @@ def build_handler_jit_sections(
         if cap_name in declared and docs:
             sections.append(docs)
 
-    # REST vs GraphQL decision guide — only when both are declared.
-    if "shopify_rest" in declared and "shopify_graphql" in declared:
-        sections.append(SHOPIFY_REST_VS_GRAPHQL_GUIDE)
-
     # Trigger-gated topic sections.
     if shopify.get("webhookTopics"):
         sections.append(HARNESS_SECTION_WEBHOOK)
@@ -79,8 +71,20 @@ def build_handler_jit_sections(
     if sm and isinstance(sm, dict):
         sections.append(HARNESS_SECTION_STATE_MACHINE)
 
-    if batching.get("required"):
+    # Inject the "no Shopify in per-item loops" pattern whenever the handler
+    # uses shopify_graphql — the rule is universal to any Shopify-using path
+    # (cron, webhook enrichment, state machines), not just cronBatching.
+    if batching.get("required") or "shopify_graphql" in declared:
         sections.append(HARNESS_SECTION_CRON_BATCHING)
+        # When the architect specified a batching plan for THIS app, pass the
+        # prose through so the handler knows exactly what to pre-fetch rather
+        # than re-deriving it from handlerMustProduce.
+        description = (batching.get("description") or "").strip()
+        if description:
+            sections.append(
+                "CRON BATCHING — architect's plan for this app:\n"
+                f"{description}"
+            )
 
     if widget_catalog:
         sections.append(HARNESS_SECTION_WIDGET)

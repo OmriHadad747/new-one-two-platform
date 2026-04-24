@@ -5,7 +5,8 @@ Views:
   ARCHITECT — plan rules: cronSchedule format + cronContract shape.
   HANDLER   — implementation rules: src/routes/cron.ts jobs-map contract,
               idempotency under retry, and how the template's cron runner
-              invokes the job function.
+              invokes the job function. Template-owned table rules are
+              imported from topics.template_tables.
 
 HOW CRON WORKS IN THIS PLATFORM
   pg_cron (scheduler in the shared Postgres) fires on the architect's
@@ -23,6 +24,8 @@ HOW CRON WORKS IN THIS PLATFORM
   The generator's ONLY responsibility here is src/routes/cron.ts — the
   jobs map.
 """
+
+from subagents.prompts.topics.template_tables import HANDLER as _TEMPLATE_TABLES_HANDLER
 
 # ── Architect view ─────────────────────────────────────────────────────────────
 
@@ -77,6 +80,8 @@ Rules:
     identifies tenant + app to platform-back).
   - NEVER call setInterval inside a job. The schedule is external;
     the job body runs once per scheduled tick.
+
+%TEMPLATE_TABLES_HANDLER%
 
 RETRY SEMANTICS — write your job IDEMPOTENT:
   The template's cron runner auto-retries on exception:
@@ -157,4 +162,4 @@ LOGGING — include the job name in every log line from inside a job:
 
 The runner wraps your job invocation with a surrounding log context
 (row id, attempt number, duration) — you don't need to log those.
-"""
+""".replace("%TEMPLATE_TABLES_HANDLER%", _TEMPLATE_TABLES_HANDLER)

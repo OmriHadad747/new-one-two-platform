@@ -120,10 +120,11 @@ window.Shopify.context provides (variantId, productId, customerId) plus
 user input. IDs NOT in that context must be resolved server-side from
 what IS there:
   ✅ // widget only sends <shopify_id_col>; you resolve <other_id_col> server-side:
-     const { <shopify_resource_singular> } = await <shopify_client>.rest.get(
-       `/<shopify_resource>/${<shopify_id_col>}.json`,
-     );
-     const otherId = <shopify_resource_singular>.<other_id_col>;
+     const data = await <shopify_client>.graphql(
+       `query Get<Type>($id: ID!) { <shopify_resource_singular>(id: $id) { <other_id_col> } }`,
+       { id: `gid://shopify/<Type>/${<shopify_id_col>}` },
+     ) as { <shopify_resource_singular>: { <other_id_col>: string } };
+     const otherId = data.<shopify_resource_singular>.<other_id_col>;
 
 Response safety: widget responses are returned directly to the
 storefront browser. Keep them small and JSON-safe. Never return raw DB

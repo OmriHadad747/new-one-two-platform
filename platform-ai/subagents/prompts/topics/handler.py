@@ -11,7 +11,7 @@ Views:
                            Consumed by both handler_agent (first-run codegen)
                            and revision_agent (editing existing code).
 
-Capability-specific API docs (shopify REST/GraphQL, platform services, npm
+Capability-specific API docs (shopify GraphQL, platform services, npm
 packages) are NOT here — they live in subagents/prompts/capabilities/ and are
 JIT-injected into the user prompt alongside trigger-gated topic HANDLER
 sections (webhook / cron / state machine / widget / admin) by
@@ -33,9 +33,8 @@ handlerCapabilities: Closed-vocabulary list of platform services and npm
   - Declare ONLY what the handler will actually call or import. Over-
     declaration wastes prompt budget; under-declaration ships a handler
     missing docs for the API it needs.
-  - Declare "shopify_rest" and/or "shopify_graphql" based on which Shopify
-    API the handler calls. Most handlers declare at least one; a DB-only
-    admin panel with no Shopify reads declares neither.
+  - Declare "shopify_graphql" for any handler that calls the Shopify Admin
+    API. REST is not available — the platform ships GraphQL-only.
   - Declare "files" ONLY when the app genuinely produces a durable
     download artefact the merchant or customer needs to persist —
     receipts, exports they can't get from Shopify natively, reports.
@@ -260,10 +259,10 @@ ABSOLUTE RULES (violations cause deployment failure):
 3.  NO eval(), Function(), setInterval(), setImmediate(), process.exit(),
     process.kill(). Read process.env only at module init — never
     per-request. setTimeout is allowed ONLY as a bounded pause with a
-    numeric-literal delay ≤500ms (e.g. `await new Promise(r => setTimeout(r, 200))`),
-    and ONLY between unavoidable per-item Shopify writes where no batch
-    API exists. Static validation rejects missing/non-literal/>500ms
-    delays.
+    numeric-literal delay ≤500ms (e.g. `await new Promise(r => setTimeout(r, 200))`).
+    Do NOT add sleeps around Shopify calls — the shopify.* helpers manage
+    throttle-aware backoff internally. Static validation rejects
+    missing/non-literal/>500ms delays.
 4.  Handle errors with try/catch inside routes — never let a route throw
     uncaught. Uncaught errors fall into the template's error handler and
     return 500; that's a last-resort, not your error strategy.
@@ -277,10 +276,10 @@ ABSOLUTE RULES (violations cause deployment failure):
     third-party APIs. Never put https:// in comments, email templateIds,
     or other strings (templateId is a short opaque string like 'd-<hex>',
     never a URL). Never hand-roll fetch() to reach platform-back.
-8.  For Shopify REST: paths are relative (e.g. '/<shopify_resource>.json'),
-    NEVER full URLs. For Shopify GraphQL IDs use GID format:
-    `gid://shopify/<Type>/${id}`. (Capability docs cover the specific API
-    shape when the architect has declared shopify_rest / shopify_graphql.)
+8.  For Shopify GraphQL IDs use GID format: `gid://shopify/<Type>/${id}`.
+    Never construct IDs by parsing or string-concatenating — treat GIDs as
+    opaque strings. (Capability docs cover the full API shape when the
+    architect has declared shopify_graphql.)
 9.  webhookTopics declared by the architect are authoritative — implement
     exactly the topic set the architect listed, no more, no fewer. Handler
     keys in webhook-handlers.ts must match exactly; the template router
@@ -328,13 +327,4 @@ Rules:
   - Always pass a timeout via `AbortSignal.timeout(<ms>)`.
   - NEVER use fetch() to call Shopify — use the shopify client.
   - NEVER use fetch() to call platform-back — use platform.*
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SHOPIFY API LOOP RULE — applies to every handler path:
-
-NEVER call Shopify inside a per-item loop. Pre-fetch all Shopify data
-into a lookup map before any loop. Loop bodies contain only map lookups,
-DB reads/writes, and local logic — zero Shopify calls inside loops.
-  ✅ Pre-fetch → build map → loop reads map
-  ❌ for (const item of items) { await <shopify_client>.rest.get(...) }
 """

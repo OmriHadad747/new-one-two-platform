@@ -10,7 +10,6 @@ Each capability lives in its own module with per-agent views:
               (optional; omitted when the capability has no rule).
 
 Per-capability modules:
-  shopify_rest.py         ARCHITECT / HANDLER / REVISION
   shopify_graphql.py      ARCHITECT / HANDLER / REVISION
   shopify_storefront.py   HANDLER_ARCHITECT / HANDLER_DOCS  (server-side)
                           WIDGET_ARCHITECT  / WIDGET_DOCS   (client-side)
@@ -33,16 +32,11 @@ Consumers:
 
 from __future__ import annotations
 
-from . import email, files, npm, shopify_graphql, shopify_rest, shopify_storefront
+from . import email, files, npm, shopify_graphql, shopify_storefront
 
 # ── Handler services (non-npm) ────────────────────────────────────────────────
 
 HANDLER_SERVICES: dict[str, dict[str, str]] = {
-    "shopify_rest": {
-        "architect": shopify_rest.ARCHITECT,
-        "handler": shopify_rest.HANDLER,
-        "revision": shopify_rest.REVISION,
-    },
     "shopify_graphql": {
         "architect": shopify_graphql.ARCHITECT,
         "handler": shopify_graphql.HANDLER,

@@ -37,73 +37,102 @@ HANDLER = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BATCHED SHOPIFY RATE LIMIT SAFETY — iterating over items that touch Shopify:
 
-Shopify rate limit: ~2 req/s on Basic, ~4 req/s on Advanced. Per-item
-Shopify calls inside a loop cause throttle errors at any meaningful scale
-— fan them out in advance.
+Shopify GraphQL uses a cost-based rate limit (50 pts/sec, 1000 pt bucket).
+Per-item Shopify calls inside a loop exhaust the budget quickly and cause
+throttle errors at any meaningful scale — fan them out in advance. The
+platform helpers handle backoff/retry on throttle internally; you do not
+need to check cost fields or sleep after Shopify calls — just avoid
+making per-item calls to begin with.
 
 ── Rule 1: Bulk-prefetch reads BEFORE the loop ───────────────────────────────
 Pre-fetch every piece of Shopify data the loop needs in a handful of
-batched calls, then loop over results with zero Shopify calls in the
-body. Works for ANY resource (orders, products, variants, customers,
+batched GraphQL queries, then loop over results with zero Shopify calls
+in the body. Works for ANY resource (orders, products, variants, customers,
 inventory, fulfillments, metafields, etc.).
 
-  ✅ GENERIC PATTERN — substitute <shopify_resource>, <field_*> as needed:
-     // 1. Collect distinct Shopify IDs the loop will need (from DB or elsewhere)
-     const ids = [...new Set(rows.map(r => r.<shopify_id_col>))];
+  ✅ GENERIC PATTERN — moderate data sets (up to a few thousand items):
+     Use shopify.graphqlPaginate — the platform helper manages cursors;
+     you supply the query and the connectionPath.
 
-     // 2. Batch-fetch in chunks (Shopify's typical cap is 250 per call)
-     const BATCH = 250;
-     const dataMap = new Map();   // key = String(shopify_id) → value = entity
-     for (let i = 0; i < ids.length; i += BATCH) {
-       const chunk = ids.slice(i, i + BATCH);
-       const resp = await <shopify_client>.rest.get(
-         `/<shopify_resource>.json?ids=${chunk.join(',')}&fields=<field_list>`,
-       );
-       for (const item of (resp.<shopify_resource> ?? [])) {
-         dataMap.set(String(item.id), item);
+     // 1. Bulk-fetch all required Shopify data before the loop
+     const dataMap = new Map<string, unknown>();  // key = GID string
+     for await (const nodes of shopify.graphqlPaginate(
+       `query Fetch<Type>s($cursor: String) {
+          <connectionField>(first: 250, after: $cursor, query: "<filter>") {
+            pageInfo { hasNextPage endCursor }
+            edges { node { id <field_1> <field_2> } }
+          }
+        }`,
+       {},
+       "<connectionField>",
+     )) {
+       for (const item of nodes as Array<{ id: string }>) {
+         dataMap.set(item.id, item);
        }
      }
 
-     // 3. Loop body — pure local logic + DB writes, ZERO Shopify calls
+     // 2. Loop body — map lookup only; ZERO Shopify calls
      for (const row of rows) {
-       const item = dataMap.get(String(row.<shopify_id_col>));
-       if (!item) continue;
-       /* DB writes, local decisions, email sends, etc. */
+       const item = dataMap.get(`gid://shopify/<Type>/${row.<shopify_id_col>}`);
+       if (!item) continue;  // skip rows Shopify did not return
+       /* DB writes, local decisions, email sends */
      }
 
-  ❌ for (const row of rows) { await <shopify_client>.rest.get(...) }   // N sequential calls
+  ✅ VERY LARGE data sets (100k+ rows) or cost-prohibitive list reads:
+     Use shopify.bulkQuery — kicks off a bulk operation, polls to
+     completion, streams JSONL result as an async iterator.
+
+     for await (const item of shopify.bulkQuery(
+       `{ orders { edges { node { id name createdAt } } } }`
+     )) {
+       const row = item as { id: string; name: string; createdAt: string };
+       /* process — bulk query yields one object per JSONL line */
+     }
+
+  ❌ for (const row of rows) { await shopify.graphql(...) }   // N sequential calls
+  ❌ Hand-rolled `do { cursor } while(cursor)` over shopify.graphql — use graphqlPaginate.
 
 ── Rule 2: Map key normalization ─────────────────────────────────────────────
-Shopify API returns numeric IDs; postgres.js returns BIGINT columns as
-strings. ALWAYS wrap both sides of Map.set/Map.get with String() so
-lookups match:
-  ✅ dataMap.set(String(item.id), item);           // Shopify → Map
-     dataMap.get(String(row.<shopify_id_col>));    // DB row → Map lookup
-  ❌ Mixing numeric + string keys → silent misses at runtime.
+GraphQL returns GID strings; postgres.js returns BIGINT columns as
+strings. ALWAYS build map keys consistently — either convert numeric IDs
+to GIDs on both sides, or use String() on both sides if comparing raw IDs:
+  ✅ dataMap.set(item.id, item);                              // GID → Map
+     dataMap.get(`gid://shopify/<Type>/${row.<shopify_id_col>}`);  // DB row → Map lookup
+  ❌ Mixing raw numeric + GID string keys → silent misses at runtime.
 
 ── Rule 3: Required IDs must live in the DB ──────────────────────────────────
 Whatever ID you use to look up Shopify data (<shopify_id_col>) MUST be
 stored on the DB row. SELECT it alongside the primary entity ID; don't
 try to resolve it from Shopify inside the loop.
 
-── Rule 4: Per-item WRITES — unavoidable, so throttle them ───────────────────
-Some resources have no batch write API (tag updates per order, metafield
-writes per entity, image replacement). When the loop must issue a
-per-item Shopify write, add a small bounded pause between iterations to
-stay under the rate limit. setTimeout is allowed for this ONLY with a
-numeric-literal delay ≤500ms — static validation rejects
-missing/non-literal/>500ms delays.
+── Rule 4: Per-item WRITES — prefer batch mutations ──────────────────────────
+Some resources have no batch mutation (per-order tag updates, per-entity
+metafield writes). Prefer a batch mutation whenever one exists
+(e.g. `metafieldsSet` accepts an array). Fall back to per-item mutations
+ONLY when the architect plan has declared this as a platformGaps entry.
 
-  ✅ for (const row of rows) {
-       await <shopify_client>.rest.post(`/<shopify_resource>/${row.id}.json`, { ... });
-       await new Promise(r => setTimeout(r, 200));   // 200ms ≈ 5 req/s ceiling
+  ✅ Batch when available:
+     await shopify.graphql(
+       `mutation Set($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) { userErrors { message } }
+        }`,
+       { metafields: rows.map(r => ({ ownerId: r.gid, namespace: "...", key: "...", value: r.value, type: "..." })) },
+     );
+
+  ✅ Per-item fallback when no batch API exists:
+     for (const row of rows) {
+       await shopify.graphql(
+         `mutation TagsAdd($id: ID!, $tags: [String!]!) {
+            tagsAdd(id: $id, tags: $tags) { userErrors { message } }
+          }`,
+         { id: `gid://shopify/<Type>/${row.id}`, tags: [<tag_1>] },
+       );
      }
-  ❌ Tight write loop with no delay → 429 throttle errors at scale.
-  ❌ Computed or >500ms delays are rejected — the 500ms cap is enforced.
 
-  Prefer bulk APIs whenever one exists; fall back to this pattern only
-  when the architect plan has declared this as a platformGaps entry.
-  Mention the reason in your implementation comment.
+  Do NOT add manual sleeps / `setTimeout` between Shopify calls — the
+  platform helper handles throttle-aware backoff internally. Calls that
+  hit Shopify's cost-based rate limiter are retried transparently; you
+  just issue the call.
 """
 
 # ── Validator view ─────────────────────────────────────────────────────────────
@@ -117,10 +146,10 @@ VALIDATOR = (
     "src/routes/cron.ts (jobs.main body), src/routes/webhook-handlers.ts (a large enrichment\n"
     "path), or a helper in src/lib/*.ts:\n"
     "  a) Is all required Shopify data fetched in one or a few batched calls via\n"
-    "     `shopify.rest.paginate(...)` / batched `shopify.rest.get('/<resource>.json?ids=...')`\n"
-    "     / `shopify.graphqlPaginate(...)` BEFORE the main iteration loop begins?\n"
-    "  b) Does the loop body avoid making any `shopify.rest.*` / `shopify.graphql(...)`\n"
-    "     calls per-item?\n"
+    "     `shopify.graphqlPaginate(...)` / `shopify.bulkQuery(...)` BEFORE the main\n"
+    "     iteration loop begins?\n"
+    "  b) Does the loop body avoid making any `shopify.graphql(...)` /\n"
+    "     `shopify.graphqlPaginate(...)` / `shopify.bulkQuery(...)` calls per-item?\n"
     "Set aligned=false if the handler makes per-item Shopify calls inside the loop\n"
     "instead of bulk-fetching first. Name the specific file, loop, and API call pattern."
 )

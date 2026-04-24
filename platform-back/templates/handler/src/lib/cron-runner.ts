@@ -3,7 +3,7 @@ import { sql } from "./db.js";
 
 // Cron runner.
 //
-// Design — "Option D" from the Phase 2 planning: pg_cron runs in the
+// Design: pg_cron runs in the
 // shared Postgres; each scheduled tick executes a single INSERT INTO
 // cron_queue against this tenant's schema. The handler polls that queue
 // with FOR UPDATE SKIP LOCKED so N container instances never dispatch the
@@ -194,10 +194,7 @@ export function startCronRunner(jobs: JobsMap): CronRunnerHandle {
         );
       }
     } catch (err) {
-      console.error(
-        { err: String(err) },
-        "[cron-runner] sweepStale error",
-      );
+      console.error({ err: String(err) }, "[cron-runner] sweepStale error");
     }
   }
 
@@ -251,10 +248,7 @@ export function startCronRunner(jobs: JobsMap): CronRunnerHandle {
     while (inFlight > 0 && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 100));
     }
-    console.log(
-      { inFlightRemaining: inFlight },
-      "[cron-runner] stopped",
-    );
+    console.log({ inFlightRemaining: inFlight }, "[cron-runner] stopped");
   }
 
   return { stop };
