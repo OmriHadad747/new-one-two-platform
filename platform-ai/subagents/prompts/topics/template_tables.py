@@ -2,25 +2,32 @@
 Single source of truth for rules about template-owned tables.
 
 `cron_queue` and `processed_webhooks` ship with every handler via the
-template's bootstrap migration (platform-back/templates/handler/migrations/
-0001_processed_webhooks.sql). They are platform infrastructure — handler
-code never touches them directly. Job scheduling goes through the
-`enqueueJob` helper in src/lib/cron-enqueue.ts; webhook idempotency is
-handled by the template router.
+template's bootstrap migrations under
+platform-back/templates/handler/migrations/ (0001_processed_webhooks.sql,
+0002_cron_dedup.sql, …). They are platform infrastructure — handler code
+never touches them directly. Job scheduling goes through the `enqueueJob`
+helper in src/lib/cron-enqueue.ts; webhook idempotency is handled by the
+template router.
 
 Views — imported by downstream prompt surfaces:
-  HANDLER    — the "don't touch" rule + enqueueJob teaching, injected
-               into cron and webhook topic HANDLER sections.
-  VALIDATOR  — known tables + column sets + rule-violation signal,
-               prepended to the validator Part A so Q1/Q7 don't produce
-               false positives and still catch real column bugs
-               (e.g. a non-existent `run_at` on cron_queue).
+  HANDLER             — the "don't touch" rule + enqueueJob teaching,
+                        injected into cron and webhook topic HANDLER
+                        sections.
+  VALIDATOR           — known tables + column sets + rule-violation
+                        signal, prepended to validator Part A so Q1/Q7
+                        don't produce false positives and still catch
+                        real column bugs (e.g. a non-existent `run_at`
+                        on cron_queue).
+  TEMPLATE_OWNED_TABLES — frozenset of table names. Imported by
+                        static_validation to build a regex that flags
+                        direct DML against these tables in handler code.
 
-KEEP IN SYNC with 0001_processed_webhooks.sql if columns change.
+KEEP IN SYNC with the template migrations if columns change.
 """
 
-# Canonical schemas — fixed set. Update here + 0001_processed_webhooks.sql
-# together if the template migration ever changes.
+# Canonical schemas — fixed set. Update here + the corresponding template
+# migration (0001_processed_webhooks.sql, 0002_cron_dedup.sql, …) together
+# if the template tables ever change.
 _TEMPLATE_TABLE_COLUMNS: dict[str, list[str]] = {
     "cron_queue": [
         "id",
@@ -32,9 +39,15 @@ _TEMPLATE_TABLE_COLUMNS: dict[str, list[str]] = {
         "finished_at",
         "attempts",
         "next_visible_at",
+        "dedup_key",
     ],
     "processed_webhooks": ["webhook_id", "received_at"],
 }
+
+# Public alias for downstream consumers (e.g. static_validation builds a
+# regex of forbidden table names from this set so the prompt + the
+# enforcement layer stay in lockstep).
+TEMPLATE_OWNED_TABLES: frozenset[str] = frozenset(_TEMPLATE_TABLE_COLUMNS.keys())
 
 
 # ── Handler view ───────────────────────────────────────────────────────────────
@@ -65,7 +78,17 @@ AD-HOC JOB TRIGGERS — use enqueueJob, NOT a direct INSERT:
 
   The helper inserts one row into `cron_queue` using the correct schema;
   the template cron-runner dispatches it on the next poll tick. `jobName`
-  MUST match a key in the `jobs` map exported from src/routes/cron.ts.\
+  MUST match a key in the `jobs` map exported from src/routes/cron.ts.
+
+  Pass `dedupKey` when the same trigger may fire twice (admin double-click,
+  webhook retry storm) and you want at-most-one in-flight job:
+
+    await enqueueJob("reconcile", { orderId },
+      { dedupKey: `reconcile-${orderId}` });
+
+  A second enqueue with the same (jobName, dedupKey) is a silent no-op
+  while a prior identical row is still pending or processing; once that
+  row finishes, fresh enqueues with the same key are allowed again.\
 """
 
 

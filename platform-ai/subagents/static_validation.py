@@ -35,6 +35,7 @@ from subagents.prompts.capabilities import (
     ALLOWED_WIDGET_CAPABILITIES,
     NPM,
 )
+from subagents.prompts.topics.template_tables import TEMPLATE_OWNED_TABLES
 
 # ── Webhook topic registry ────────────────────────────────────────────────────
 #
@@ -707,6 +708,23 @@ FORBIDDEN_HANDLER_PATTERNS = [
         r"""import\s+.*?\s+from\s+['"]\.\.\/lib\/platform-call\.js['"]""",
         "direct import from ../lib/platform-call.js is not allowed — "
         "use `platform` from ../lib/platform.js instead",
+    ),
+    # Template-owned tables — must not appear in any DML inside a `sql`
+    # tagged-template literal. The table-name list is sourced from
+    # template_tables.TEMPLATE_OWNED_TABLES so the prompt guidance and
+    # this enforcement layer stay in lockstep when a new template-owned
+    # table is added.
+    (
+        (
+            r"(?i)sql\s*(?:<[^>]*>)?\s*`[^`]*"
+            r"\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+"
+            rf"(?:{'|'.join(re.escape(t) for t in sorted(TEMPLATE_OWNED_TABLES))})\b"
+        ),
+        "handler must not read or write template-owned tables ("
+        + ", ".join(sorted(TEMPLATE_OWNED_TABLES))
+        + ") directly — use `enqueueJob` from ../lib/cron-enqueue.js for "
+        "ad-hoc cron triggers; processed_webhooks is owned by the template "
+        "webhook router and is written before your handler runs",
     ),
 ]
 

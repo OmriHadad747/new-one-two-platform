@@ -84,8 +84,14 @@ export interface ShopifyHelper {
    * Starts the operation, polls until COMPLETED, downloads the JSONL, and
    * yields one parsed object per line. Use for large exports (100k+ rows)
    * or list reads where GraphQL query cost would be prohibitive.
+   * Polling is bounded by `opts.maxPollMs` (default 15 min); on timeout
+   * the operation is best-effort cancelled so the shop's bulk-op slot is
+   * released.
    */
-  bulkQuery(query: string): AsyncGenerator<unknown, void, unknown>;
+  bulkQuery(
+    query: string,
+    opts?: { maxPollMs?: number },
+  ): AsyncGenerator<unknown, void, unknown>;
   storefront(
     query: string,
     variables?: Record<string, unknown>,
@@ -176,8 +182,17 @@ export async function shopifyClientFor(
       }
     },
 
-    async *bulkQuery(query: string): AsyncGenerator<unknown, void, unknown> {
-      // 1. Start the bulk operation.
+    async *bulkQuery(
+      query: string,
+      opts?: { maxPollMs?: number },
+    ): AsyncGenerator<unknown, void, unknown> {
+      const maxPollMs = opts?.maxPollMs ?? BULK_DEFAULT_MAX_POLL_MS;
+      // Test/ops escape hatch — production uses BULK_POLL_INTERVAL_MS.
+      const pollIntervalMs =
+        Number(process.env["SHOPIFY_BULK_POLL_INTERVAL_MS"]) ||
+        BULK_POLL_INTERVAL_MS;
+
+      // 1. Start the bulk operation and capture its id.
       const startResult = (await graphqlImpl(
         `mutation BulkOperationRun($query: String!) {
           bulkOperationRunQuery(query: $query) {
@@ -195,24 +210,53 @@ export async function shopifyClientFor(
           `shopifyClientFor.bulkQuery: failed to start: ${JSON.stringify(userErrors)}`,
         );
       }
+      const startedOp = (payload["bulkOperation"] as Record<string, unknown> | null) ?? null;
+      const operationId = (startedOp?.["id"] as string | undefined) ?? null;
+      if (!operationId) {
+        throw new Error(
+          "shopifyClientFor.bulkQuery: bulkOperationRunQuery returned no operation id",
+        );
+      }
 
-      // 2. Poll until COMPLETED or FAILED.
-      const POLL_INTERVAL_MS = 3_000;
+      // 2. Poll the SPECIFIC operation by id until COMPLETED or FAILED.
+      // Polling currentBulkOperation would race if the shop starts another
+      // bulk op (admin action, parallel handler) between our start and our
+      // first poll — we'd silently observe that other operation's status
+      // and url. node(id:) scopes the poll to the op we actually started.
+      const deadline = Date.now() + maxPollMs;
       let downloadUrl: string | null = null;
 
       for (;;) {
-        await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
+        if (Date.now() >= deadline) {
+          // Best-effort cancel so the shop's "one bulk op at a time" slot
+          // isn't held by our orphaned operation past this handler's life.
+          void graphqlImpl(
+            `mutation BulkCancel($id: ID!) {
+              bulkOperationCancel(id: $id) { bulkOperation { id status } }
+            }`,
+            { id: operationId },
+          ).catch(() => undefined);
+          throw new Error(
+            `shopifyClientFor.bulkQuery: timeout after ${maxPollMs}ms (operationId=${operationId})`,
+          );
+        }
+        await sleepMs(pollIntervalMs);
 
         const statusResult = (await graphqlImpl(
-          `{ currentBulkOperation { id status errorCode objectCount url } }`,
+          `query BulkOpStatus($id: ID!) {
+            node(id: $id) {
+              ... on BulkOperation { id status errorCode objectCount url }
+            }
+          }`,
+          { id: operationId },
         )) as Record<string, unknown> | null;
 
-        const op = (statusResult?.["currentBulkOperation"] ?? null) as Record<
-          string,
-          unknown
-        > | null;
-        if (!op) throw new Error("shopifyClientFor.bulkQuery: currentBulkOperation is null");
-
+        const op = (statusResult?.["node"] ?? null) as Record<string, unknown> | null;
+        if (!op) {
+          throw new Error(
+            `shopifyClientFor.bulkQuery: operation ${operationId} not found while polling`,
+          );
+        }
         const status = op["status"] as string;
         if (status === "COMPLETED") {
           downloadUrl = (op["url"] as string | null) ?? null;
@@ -220,7 +264,7 @@ export async function shopifyClientFor(
         }
         if (status === "FAILED" || status === "CANCELED") {
           throw new Error(
-            `shopifyClientFor.bulkQuery: operation ${status} — errorCode: ${op["errorCode"]}`,
+            `shopifyClientFor.bulkQuery: operation ${status} — errorCode: ${op["errorCode"]} (operationId=${operationId})`,
           );
         }
         // CREATED | RUNNING | CANCELING — keep polling
@@ -228,7 +272,9 @@ export async function shopifyClientFor(
 
       if (!downloadUrl) return; // zero results
 
-      // 3. Download JSONL and yield one object per line.
+      // 3. Download JSONL and yield one object per line. JSON.parse is
+      // wrapped per line so a single corrupted line surfaces with line
+      // number + excerpt instead of an opaque SyntaxError mid-stream.
       const resp = await fetch(downloadUrl);
       if (!resp.ok || !resp.body) {
         throw new Error(
@@ -239,6 +285,21 @@ export async function shopifyClientFor(
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let lineNumber = 0;
+
+      const parseLine = (raw: string): unknown => {
+        lineNumber += 1;
+        try {
+          return JSON.parse(raw);
+        } catch (err) {
+          const excerpt = raw.length > 120 ? `${raw.slice(0, 120)}…` : raw;
+          throw new Error(
+            `shopifyClientFor.bulkQuery: JSONL parse error at line ${lineNumber} ` +
+              `(operationId=${operationId}): ${(err as Error).message} — ` +
+              `line: ${JSON.stringify(excerpt)}`,
+          );
+        }
+      };
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -248,11 +309,11 @@ export async function shopifyClientFor(
         buffer = lines.pop() ?? "";
         for (const line of lines) {
           const trimmed = line.trim();
-          if (trimmed) yield JSON.parse(trimmed) as unknown;
+          if (trimmed) yield parseLine(trimmed);
         }
       }
       const remaining = buffer.trim();
-      if (remaining) yield JSON.parse(remaining) as unknown;
+      if (remaining) yield parseLine(remaining);
     },
 
     async storefront(
@@ -300,6 +361,15 @@ export async function shopifyClientFor(
     },
   };
 }
+
+// ─── Bulk-operation polling ──────────────────────────────────────────────────
+
+const BULK_POLL_INTERVAL_MS = 3_000;
+// Bulk operations are bounded server-side at 24h, but a handler is a
+// short-lived request — block it for at most 15 min by default so a stuck
+// RUNNING op doesn't pin the container forever. Override per-call via
+// `bulkQuery(query, { maxPollMs })` for deliberately long exports.
+const BULK_DEFAULT_MAX_POLL_MS = 15 * 60_000;
 
 // ─── Throttle-aware retry ────────────────────────────────────────────────────
 //
@@ -370,6 +440,17 @@ async function requestWithThrottleRetry(
 
       return resp.data;
     } catch (err: unknown) {
+      // MAX_COST_EXCEEDED is non-retryable — the query itself is over
+      // Shopify's hard per-request cap. Surface it cleanly so the caller
+      // can split the query (smaller `first:`, fewer nested connections,
+      // or switch to bulkQuery) instead of looping until exhausted.
+      if (extractMaxCostExceeded(err)) {
+        throw new Error(
+          "shopifyClientFor.graphql: MAX_COST_EXCEEDED — query cost " +
+            "exceeds Shopify's per-request limit. Reduce nesting / page " +
+            "size, or use shopify.bulkQuery for large reads.",
+        );
+      }
       const throttle = extractThrottleInfo(err);
       if (!throttle) throw err;
 
@@ -461,6 +542,25 @@ function extractThrottleInfo(err: unknown): { cost?: ShopifyCost } | null {
   if (code === 429) return cost ? { cost } : {};
 
   return null;
+}
+
+function extractMaxCostExceeded(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const anyErr = err as {
+    response?: { errors?: unknown };
+    body?: { errors?: unknown };
+    errors?: unknown;
+  };
+  const responseLike = anyErr.response ?? anyErr.body ?? anyErr;
+  const errors = (responseLike as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) return false;
+  return errors.some((e) => {
+    if (!e || typeof e !== "object") return false;
+    return (
+      (e as { extensions?: { code?: string } }).extensions?.code ===
+      "MAX_COST_EXCEEDED"
+    );
+  });
 }
 
 function sleepMs(ms: number): Promise<void> {
