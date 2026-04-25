@@ -49,6 +49,38 @@ _TEMPLATE_TABLE_COLUMNS: dict[str, list[str]] = {
 # enforcement layer stay in lockstep).
 TEMPLATE_OWNED_TABLES: frozenset[str] = frozenset(_TEMPLATE_TABLE_COLUMNS.keys())
 
+# Files the handler template ships that neither the static validator nor
+# the tsc gate should treat as generator output. Both layers import from
+# here — a single addition covers both enforcement points.
+#
+# Rules:
+#   - The static validator rejects any bundle that tries to overwrite these
+#     paths (the deployer would silently replace hand-written code).
+#   - The tsc gate filters errors in these paths as "template bugs" so they
+#     never enter the retry-feedback loop (the generator can't fix them).
+#
+# KEEP IN SYNC with platform-back/templates/handler when adding or removing
+# template source files.
+TEMPLATE_OWNED_FILES: frozenset[str] = frozenset(
+    {
+        # TypeScript source files — generator must not overwrite
+        "src/server.ts",
+        "src/middleware/verify-platform.ts",
+        "src/lib/db.ts",
+        "src/lib/platform-call.ts",
+        "src/lib/platform.ts",
+        "src/lib/shopify.ts",
+        "src/lib/cron-runner.ts",
+        "src/lib/cron-enqueue.ts",
+        "src/routes/webhook.ts",
+        "src/migrate.ts",
+        # Infrastructure files — generator must not overwrite
+        "package.json",
+        "tsconfig.json",
+        "Dockerfile",
+    }
+)
+
 
 # ── Handler view ───────────────────────────────────────────────────────────────
 

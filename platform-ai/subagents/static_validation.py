@@ -32,7 +32,7 @@ from subagents.prompts.capabilities import (
     ALLOWED_WIDGET_CAPABILITIES,
     NPM,
 )
-from subagents.prompts.topics.template_tables import TEMPLATE_OWNED_TABLES
+from subagents.prompts.topics.template_tables import TEMPLATE_OWNED_FILES, TEMPLATE_OWNED_TABLES
 from subagents.prompts.topics.webhook import WEBHOOK_TOPICS as _VALID_WEBHOOK_TOPICS
 
 # ── Webhook topic registry ────────────────────────────────────────────────────
@@ -665,26 +665,10 @@ _DEPRECATED_EMAIL_FIELDS = frozenset(
     {"subject", "templateId", "template_id", "html", "body", "from"}
 )
 
-# Template-owned files — the generator MUST NOT emit replacements. If it
-# tries, the deployer would silently overwrite a hand-written component
-# with model-generated code. Rejected at this static-validator layer so
-# the retry loop produces better output.
-_RESERVED_TEMPLATE_FILES = frozenset(
-    {
-        "src/server.ts",
-        "src/middleware/verify-platform.ts",
-        "src/lib/db.ts",
-        "src/lib/platform-call.ts",
-        "src/lib/platform.ts",
-        "src/lib/shopify.ts",
-        "src/lib/cron-runner.ts",
-        "src/routes/webhook.ts",
-        "src/migrate.ts",
-        "package.json",
-        "tsconfig.json",
-        "Dockerfile",
-    }
-)
+# SSoT lives in template_tables.TEMPLATE_OWNED_FILES — imported above.
+# Both this validator and the tsc gate pull from the same set so a single
+# addition covers both enforcement points.
+_RESERVED_TEMPLATE_FILES = TEMPLATE_OWNED_FILES
 
 # Node 20 builtins — always allowed in ESM imports (no npm declaration
 # needed). Mirrored from the legacy validator's CJS list; TS imports the

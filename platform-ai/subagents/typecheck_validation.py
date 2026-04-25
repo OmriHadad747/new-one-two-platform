@@ -29,7 +29,7 @@ missing, log a warning and return `[]`. Sandbox / CI without Node should
 not crash the pipeline — the regex + LLM validators still run.
 
 Template-bug filter: errors whose file path matches a template-owned
-file (server.ts, lib/db.ts, etc. — see static_validation._RESERVED_TEMPLATE_FILES)
+file (server.ts, lib/db.ts, etc. — see template_tables.TEMPLATE_OWNED_FILES)
 are logged loudly but excluded from findings. The handler agent can't fix
 template bugs by regenerating handler code, so feeding those errors back
 would dead-cycle the retry loop until abort.
@@ -46,6 +46,7 @@ import tempfile
 from pathlib import Path
 from typing import Iterable, List, Optional
 
+from subagents.prompts.topics.template_tables import TEMPLATE_OWNED_FILES as _TEMPLATE_OWNED_FILES
 from utils.file_bundle import is_file_bundle, parse_file_bundle
 
 log = logging.getLogger(__name__)
@@ -56,24 +57,6 @@ _TSC_ERROR_RE = re.compile(
     r"^(?P<path>[^()\n]+?)\((?P<line>\d+),(?P<col>\d+)\): "
     r"error (?P<code>TS\d+): (?P<message>.+)$",
     re.MULTILINE,
-)
-
-# Files the handler template ships and the generator never overwrites. tsc
-# errors against these files indicate a template bug, not a generator bug —
-# they go to the operator log, not into the retry-feedback loop.
-_TEMPLATE_OWNED_FILES = frozenset(
-    {
-        "src/server.ts",
-        "src/middleware/verify-platform.ts",
-        "src/lib/db.ts",
-        "src/lib/platform-call.ts",
-        "src/lib/platform.ts",
-        "src/lib/shopify.ts",
-        "src/lib/cron-runner.ts",
-        "src/lib/cron-enqueue.ts",
-        "src/routes/webhook.ts",
-        "src/migrate.ts",
-    }
 )
 
 # Default location of the handler template baseline relative to this file.

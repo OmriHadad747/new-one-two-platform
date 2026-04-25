@@ -11,10 +11,6 @@ on:
     paths:
       - "platform-ai/**"
       - ".github/workflows/platform-ai-tests.yml"
-  push:
-    branches: [main, staging]
-    paths:
-      - "platform-ai/**"
 
 concurrency:
   group: platform-ai-tests-${{ github.ref }}

@@ -1,16 +1,15 @@
-# ─── Auto-format on merge ─────────────────────────────────────────────────────
+# ─── Auto-format on push ──────────────────────────────────────────────────────
 #
-# Runs after every merge to main. Formats all workspaces and commits any
+# Runs on every push to any branch. Formats all workspaces and commits any
 # changes back. A no-op if code is already formatted.
 #
 # Formatters:
 #   platform-back / platform-front  — Prettier
 
-name: Format on merge
+name: Format on push
 
 on:
   push:
-    branches: [main]
 
 jobs:
   format:

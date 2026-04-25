@@ -411,6 +411,10 @@ async function requestWithThrottleRetry(
   query: string,
   variables?: Record<string, unknown>,
 ): Promise<unknown> {
+  // Soft-throttle pre-sleeps and hard-throttle retry sleeps intentionally
+  // share the same budget. A run that burns most of the budget on pre-emptive
+  // soft-throttle waits will exhaust the hard-throttle retries sooner — the
+  // combined cap bounds total wall-clock time regardless of which path fires.
   let totalWaitedMs = 0;
 
   for (let attempt = 1; attempt <= MAX_THROTTLE_RETRIES; attempt++) {
@@ -576,7 +580,7 @@ function is401(err: unknown): boolean {
     if (anyErr.response?.statusCode === 401) return true;
     if (anyErr.code === 401) return true;
   }
-  return String(err).includes("401");
+  return false;
 }
 
 function getByPath(obj: unknown, path: string): unknown {
