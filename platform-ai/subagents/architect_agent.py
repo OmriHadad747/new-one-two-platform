@@ -6,9 +6,8 @@ The Architect is the single source of truth for:
   - The exact typed interfaces between all components (appContracts contracts)
 
 Code generators (handler, migration, widget, admin_ui) implement directly from
-these contracts. The Handler receives the full Shopify API context and is the
-authority on which REST/GraphQL calls to make — the Architect declares WHAT data
-is needed, not HOW to fetch it.
+these contracts. The Handler is the authority on which REST/GraphQL calls to
+make — the Architect declares WHAT data is needed, not HOW to fetch it.
 
 Output: { shopifyPlan, appContracts }
 
@@ -136,7 +135,7 @@ Feature intent:
 {intent_json}
 
 App archetype: {archetype}
-{quality_brief_section}{component_descriptions_section}{api_context_section}
+{quality_brief_section}{component_descriptions_section}
 Produce the structural plan and binding contracts."""
 
 
@@ -144,7 +143,6 @@ def run_architect_agent(
     prompt: str,
     intent: Dict[str, Any],
     app_archetype: str,
-    api_context: str,
     validation_errors: Optional[List[str]] = None,
 ) -> Tuple[Dict[str, Any], int, int]:
     """
@@ -158,10 +156,6 @@ def run_architect_agent(
         Parsed intent from run_product_agent().
     app_archetype:
         "storefront_backend" | "storefront_backend_admin" | "backend" | "backend_admin"
-    api_context:
-        Live Shopify API context from prefetch_for_run() — webhook payload shapes,
-        resource fields. Used to populate webhookContract.payloadFields and
-        inform what data the handler must produce.
     validation_errors:
         Errors from validate_architect_plan() on a prior attempt, or None.
 
@@ -176,13 +170,6 @@ def run_architect_agent(
             f"PREVIOUS ATTEMPT FAILED VALIDATION:\n{lines}\n"
             f"Fix ALL listed errors in this attempt.\n\n"
         )
-
-    api_context_section = (
-        f"\nShopify API context (webhook payload shapes, resource fields — use as ground truth):\n"
-        f"{api_context}\n"
-        if api_context
-        else ""
-    )
 
     quality_brief = intent.get("qualityBrief", "")
     quality_brief_section = (
@@ -217,7 +204,6 @@ def run_architect_agent(
         archetype=app_archetype,
         quality_brief_section=quality_brief_section,
         component_descriptions_section=component_descriptions_section,
-        api_context_section=api_context_section,
     )
 
     system_shared, system_tail = _build_system_prompt(app_archetype)

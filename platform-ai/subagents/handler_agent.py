@@ -2,10 +2,10 @@
 Handler Generator — produces the TypeScript route / lib files that drop
 into the platform-back handler template.
 
-The handler is the Shopify API authority: it receives the full MCP
-api_context and decides independently which REST/GraphQL calls to make.
-The architect's contracts tell it WHAT data is needed; the api_context
-tells it WHAT is available in the Shopify schema.
+The handler is the Shopify API authority: it decides independently which
+REST/GraphQL calls to make against the architect's contracts. The contracts
+tell it WHAT data is needed; the handler picks HOW to fetch it via the
+shopify client (see ../lib/shopify.ts).
 
 System prompt: HARNESS_BASE (always) — core-only (file-bundle output
 format, req.platform, sql tagged template, platform.* SDK, absolute
@@ -43,7 +43,6 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from shopify_mcp.client import validate_handler_graphql
 from subagents.base import (
     CodegenContext,
     Generator,
@@ -87,7 +86,6 @@ class HandlerGenerator(Generator):
         gaps_block = _format_platform_gaps(ctx.plan)
         widget_catalog_block = _format_widget_catalog(ctx.platform_api_catalog)
         admin_catalog_block = _format_admin_catalog(ctx.plan)
-        api_context_block = _format_api_context(ctx.api_context)
         prior_block = _format_prior_handler(ctx.prior_handler_code)
         # db_contracts, routing_checklist, edge_cases, quality_checklist are
         # placed at the END of the prompt — exact column names and required
@@ -109,7 +107,6 @@ class HandlerGenerator(Generator):
             f"{gaps_block}"
             f"{widget_catalog_block}"
             f"{admin_catalog_block}"
-            f"{api_context_block}"
             f"{prior_block}"
             f"{db_contracts_block}"
             f"{routing_checklist}"
@@ -200,7 +197,6 @@ class HandlerGenerator(Generator):
             cron_schedule=cron_schedule,
             declared_capabilities=declared_caps,
         )
-        errors += validate_handler_graphql(artifact)
         errors += _validate_email_metadata(
             ctx.handler_email_metadata, declared_caps, artifact
         )
@@ -412,9 +408,8 @@ def _format_webhook_contract(plan: Dict[str, Any]) -> str:
     if must_produce:
         lines.append(f"Handler must resolve before DB writes: {must_produce}")
     lines.append(
-        "Use the Shopify API context below to decide which GraphQL queries\n"
-        "and mutations to make via the shopify client (see capability docs\n"
-        "above) to produce the required data.\n"
+        "Decide which GraphQL queries and mutations to make via the shopify\n"
+        "client (see capability docs above) to produce the required data.\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
     return "\n".join(lines)
@@ -497,25 +492,6 @@ def _format_admin_catalog(plan: Dict[str, Any]) -> str:
         lines.append(f"    receive:  const {{ ... }} = req.body  →  {req}")
         lines.append(f"    return:   {resp}")
     return "\n".join(lines) + "\n"
-
-
-def _format_api_context(api_context: Any) -> str:
-    """
-    Inject the live Shopify API context so the handler can decide which
-    REST/GraphQL calls to make to produce the data required by the contracts.
-    """
-    if not api_context:
-        return ""
-    return (
-        "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "SHOPIFY API CONTEXT — webhook payload shapes and resource schemas.\n"
-        "Use this to decide which REST/GraphQL calls to make (via the\n"
-        "shopify client from ../lib/shopify.js) and how to traverse the\n"
-        "response to produce the data declared in the contracts above.\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{api_context}\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    )
 
 
 def _format_platform_gaps(plan: Dict[str, Any]) -> str:

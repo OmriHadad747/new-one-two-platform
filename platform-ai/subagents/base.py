@@ -50,9 +50,6 @@ class CodegenContext:
     platform_api_catalog widgetApiCatalog entries for widget host.call() paths.
                         Empty for backend apps but always present so generators
                         don't need to guard against None.
-    api_context         Live Shopify API context from MCP prefetch — webhook payload
-                        shapes, resource field schemas. The handler uses this to decide
-                        which REST/GraphQL calls to make. None for non-handler agents.
     previous_errors     Validation errors from the prior attempt on THIS generator.
                         None on the first attempt. Used to build a retry prompt.
     prior_handler_code  The currently deployed handler source, present only on revision runs.
@@ -81,7 +78,6 @@ class CodegenContext:
     intent: Dict[str, Any]
     plan: Dict[str, Any]
     platform_api_catalog: List[Dict[str, str]] = field(default_factory=list)
-    api_context: Optional[str] = None
     previous_errors: Optional[List[str]] = None
     prior_handler_code: Optional[Any] = None  # str | List[Dict[str, str]]
     prior_widget_code: Optional[str] = None
@@ -154,7 +150,7 @@ class Generator(ABC):
         IMPORTANT: do NOT include retry error blocks here. The generate() method
         handles retry errors separately so the stable prefix can be cached by
         Anthropic's prompt cache — retry attempts only pay for the new error block,
-        not the full stable content (db schema, api_context, JIT sections, etc.).
+        not the full stable content (db schema, JIT sections, etc.).
         """
 
     @abstractmethod

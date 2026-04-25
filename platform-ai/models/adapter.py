@@ -207,7 +207,7 @@ def _build_user_message(stable: str, retry_suffix: str = "") -> HumanMessage:
     When retry_suffix is absent and the content is short: plain string (no overhead).
     When the stable prefix is large enough: mark it with cache_control so that
     retry attempts (which send the same stable content + a new retry_suffix) hit
-    the cache for the expensive portion — db schema, api_context, JIT sections.
+    the cache for the expensive portion — db schema, JIT sections, capabilities.
     The retry_suffix is always uncached because it changes between attempts.
     """
     if not retry_suffix and len(stable) < _CACHE_MIN_CHARS:
@@ -270,7 +270,7 @@ def invoke(
     retry_suffix: validation error block from a prior attempt. When provided, it
     is sent as a separate uncached content block appended after the cached stable
     user prefix. This means the second and third retry calls hit the cache for
-    the stable portion (db schema, api_context, JIT sections) and only pay full
+    the stable portion (db schema, JIT sections, capabilities) and only pay full
     price for the new retry_suffix.
     """
     start = time.monotonic()

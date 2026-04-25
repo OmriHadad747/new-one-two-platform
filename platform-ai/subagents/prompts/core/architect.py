@@ -151,9 +151,9 @@ edgeCases: Array of 3–6 specific edge cases the handler MUST handle for this
   - Specific to THIS app's domain (not generic "handle errors" advice)
   - Likely to cause data corruption, duplicate actions, or broken UX if ignored
   Describe scenarios SEMANTICALLY — never cite literal Shopify API enum
-  values ("fulfilled", "subscribed", "paid", etc.). The handler has live
-  API context and picks the real enum; a guessed value silently no-ops
-  the guard when it doesn't match Shopify's response.
+  values ("fulfilled", "subscribed", "paid", etc.). The handler picks the
+  real enum from the Shopify response; a guessed value silently no-ops the
+  guard when it doesn't match Shopify's response.
   Examples:
     ✅ "Duplicate webhooks for the same resource — deduplicate writes"
     ❌ "Handle errors gracefully" — too generic, not actionable

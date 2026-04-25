@@ -46,7 +46,6 @@ from contract.validators import (
     TechnicalExplanation,
     AgentTraceEntry,
 )
-from shopify_mcp.client import prefetch_for_run
 from subagents.product_agent import run_product_agent
 from subagents.explanation_agent import run_explanation_agent
 from subagents.base import CodegenContext, Generator
@@ -265,7 +264,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
             is_admin_ui,
         )
 
-        plan, api_context = _phase_architect(request, intent, agent_trace)
+        plan = _phase_architect(request, intent, agent_trace)
         _check_deadline(request, start_ms, "architect")
 
         prior_bundle = request.priorBundle or {}
@@ -290,7 +289,6 @@ def run_feature_generation(request: GenerationRequest) -> None:
                 "widgetApiCatalog"
             )
             or [],
-            api_context=api_context,
             prior_handler_code=prior_handler,
             prior_widget_code=(prior_bundle.get("widgetModule") or None),
             prior_migration_sql=prior_migration_sql,
@@ -376,20 +374,16 @@ def _phase_architect(
     request: GenerationRequest,
     intent: Dict,
     agent_trace: List[AgentTraceEntry],
-) -> Tuple[Dict, str]:
+) -> Dict:
     """
     Agent 2: produce shopifyPlan + appContracts (typed contracts for all components).
 
-    Returns (plan, api_context) where plan IS the architect output and api_context
-    is the live MCP context passed directly to the Handler agent.
+    Returns the architect plan dict.
     """
     _emit(request, "architect", "running", "Planning Shopify API surface…")
     t0 = _now_ms()
 
     archetype = intent.get("appCategory")
-    api_context = prefetch_for_run(
-        intent.get("resources", []), intent.get("desiredOutcome", "")
-    )
 
     plan: Optional[Dict] = None
     arch_errors: List[str] = []
@@ -401,7 +395,6 @@ def _phase_architect(
             prompt=request.prompt,
             intent=intent,
             app_archetype=archetype,
-            api_context=api_context,
             validation_errors=arch_errors if attempt > 1 else None,
         )
         arch_in += attempt_in
@@ -466,7 +459,7 @@ def _phase_architect(
         bool(contracts.get("adminApiCatalog")),
     )
 
-    return plan, api_context
+    return plan
 
 
 def _phase_codegen(
@@ -1154,7 +1147,6 @@ def _build_codegen_context(
         intent=base_ctx.intent,
         plan=base_ctx.plan,
         platform_api_catalog=base_ctx.platform_api_catalog,
-        api_context=base_ctx.api_context,
         previous_errors=previous_errors,
         prior_handler_code=base_ctx.prior_handler_code,
         prior_widget_code=base_ctx.prior_widget_code,

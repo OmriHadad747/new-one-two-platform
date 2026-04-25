@@ -8,9 +8,6 @@ __pycache__/
 **/*.pyo
 **/*.pyd
 
-# Shopify MCP cache
-shopify_mcp/cache/
-
 # Git / env / IDE
 .git/
 .gitignore

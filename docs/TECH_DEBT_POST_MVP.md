@@ -4,28 +4,6 @@ Items that are known gaps but deliberately deferred until after MVP. Each entry 
 
 ---
 
-## TD-001 — MCP umbrella session: one NPX spawn per pipeline run
-
-**Current state**
-The MCP pipeline makes two separate `_call_mcp` calls that each spawn their own NPX process:
-1. `prefetch_for_run` — `search_docs_chunks` for api_context (+ `introspect_graphql_schema` when topics cache is cold).
-2. `validate_handler_graphql` in `HandlerGenerator.validate()` — `validate_graphql_codeblocks` per retry round.
-
-Each NPX spawn takes ~3–5s. On a run with a cold topics cache + one validation retry, that's 3 separate processes.
-
-**What to do**
-Open one MCP session at the start of `_phase_architect` (or at the crew entry point), keep the conversationId in a run-scoped context object, and reuse it for both the prefetch search and the post-handler validation. All MCP calls go through the same process.
-
-**Affected files**
-- `platform-ai/shopify_mcp/client.py` — expose a session context object or async session manager.
-- `platform-ai/crews/feature_generator/crew.py` — open session once, pass context through to codegen phase.
-- `platform-ai/subagents/base.py` — add optional `mcp_session` to `CodegenContext`.
-- `platform-ai/subagents/handler_agent.py` — use session context in `validate()`.
-
-**Complexity:** Medium — requires threading a session handle through the pipeline without breaking the sync/async boundary that `_run_async` already manages.
-
----
-
 ## TD-002 — SQL schema validation via Postgres EXPLAIN
 
 **Current state**
@@ -46,7 +24,7 @@ VALUES ($1, $2, $3, $4);
 
 **What to do**
 1. After generation, spin up a short-lived Postgres instance (Docker or `pg_tmp`-style ephemeral), create the per-app schema, apply `migration.sql` inside it, and pin `search_path` to that schema — mirroring the handler's runtime setup.
-2. Extract SQL template literals from `handler.js` by scanning `sql` tagged-template blocks (same general regex approach as the existing `_GQL_TEMPLATE_RE` in [platform-ai/shopify_mcp/client.py](platform-ai/shopify_mcp/client.py), re-targeted at `sql\`` rather than `#graphql`).
+2. Extract SQL template literals from `handler.js` by scanning `sql` tagged-template blocks with a regex over the bundled file contents.
 3. Replace `${...}` interpolations with positional `$N` placeholders.
 4. Run `EXPLAIN <statement>` for each extracted query and collect Postgres errors.
 5. Return errors in the same `List[str]` format as `static_errors` so they feed into the existing retry loop.

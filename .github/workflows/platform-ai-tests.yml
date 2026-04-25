@@ -1,8 +1,8 @@
 # ─── platform-ai tests ────────────────────────────────────────────────────────
 #
 # Runs on every PR that touches platform-ai/**. Installs Python deps and
-# runs pytest. Currently only test_mcp_gql_loop.py exists; add more tests
-# alongside new capabilities.
+# runs pytest against subagents/ and any other test_*.py modules. Add more
+# tests alongside new capabilities.
 
 name: platform-ai tests
 

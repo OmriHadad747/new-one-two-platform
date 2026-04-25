@@ -53,7 +53,6 @@ _log.basicConfig(
     force=True,
 )
 
-from shopify_mcp.client import prefetch_for_run
 from subagents.architect_agent import run_architect_agent, _ARCHITECT_USER_TEMPLATE
 from subagents.base import CodegenContext
 from subagents.explanation_agent import run_explanation_agent
@@ -720,25 +719,12 @@ def _pick_components(intent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 def _phase_architect(
     intent: Dict[str, Any], prompt: str
-) -> Tuple[Dict[str, Any], str, str, int, int]:
+) -> Tuple[Dict[str, Any], str, int, int]:
     """
-    Run product prefetch + architect with validation retry.
-    Returns (plan, api_context, arch_prompt, total_in_tokens, total_out_tokens).
+    Run architect with validation retry.
+    Returns (plan, arch_prompt, total_in_tokens, total_out_tokens).
     """
     archetype = intent.get("appCategory", "")
-
-    _spinner("Prefetch")
-    t0 = time.monotonic()
-    api_context = prefetch_for_run(intent.get("resources", []), intent.get("desiredOutcome", ""))
-    ms = int((time.monotonic() - t0) * 1000)
-    docs_chars   = len(api_context) if api_context else 0
-    prefetch_notes = f"docs: {docs_chars} chars" if docs_chars else "docs: empty (MCP miss)"
-    _agent_line("Prefetch", ok=True, ms=ms, notes=prefetch_notes)
-
-    api_context_section = (
-        f"\nShopify API context (webhook payload shapes, resource fields — use as ground truth):\n{api_context}\n"
-        if api_context else ""
-    )
 
     quality_brief = intent.get("qualityBrief", "")
     quality_brief_section = (
@@ -765,7 +751,6 @@ def _phase_architect(
         archetype=archetype,
         quality_brief_section=quality_brief_section,
         component_descriptions_section=component_descriptions_section,
-        api_context_section=api_context_section,
     )
 
     plan: Dict[str, Any] = {}
@@ -779,7 +764,6 @@ def _phase_architect(
             prompt=prompt,
             intent=intent,
             app_archetype=archetype,
-            api_context=api_context,
             validation_errors=errors if attempt > 1 else None,
         )
         ms = int((time.monotonic() - t0) * 1000)
@@ -799,7 +783,7 @@ def _phase_architect(
                 )
                 print(f"\n  {_RED}Platform limitation:{_RESET} {blocked_reason}")
                 sys.exit(1)
-            return plan, api_context, product_prompt, total_in, total_out
+            return plan, product_prompt, total_in, total_out
 
         _agent_line("Architect", ok=False, ms=ms,
                     notes=f"attempt {attempt} — {len(errors)} error(s)  " + _tok_note(arch_in, arch_out))
@@ -1547,7 +1531,7 @@ def main() -> None:
     # ── Phase: Architect ───────────────────────────────────────────────────────
     _phase_header("ARCHITECT")
     try:
-        plan, api_context, product_prompt, arch_in, arch_out = _phase_architect(intent, prompt)
+        plan, product_prompt, arch_in, arch_out = _phase_architect(intent, prompt)
     except SystemExit:
         _fail_db("Architect phase failed")
         raise
@@ -1572,7 +1556,6 @@ def main() -> None:
         intent=intent,
         plan=plan,
         platform_api_catalog=(plan.get("appContracts") or {}).get("widgetApiCatalog") or [],
-        api_context=api_context,
     )
     try:
         artifacts, retry_log, codegen_tokens = _phase_codegen(base_ctx, is_storefront, is_admin_ui)

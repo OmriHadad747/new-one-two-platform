@@ -23,10 +23,7 @@ is already verified statically by validate_handler_artifact() in step 2.
 
 from __future__ import annotations
 
-import json
 import re
-import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from subagents.prompts.capabilities import (
@@ -36,81 +33,12 @@ from subagents.prompts.capabilities import (
     NPM,
 )
 from subagents.prompts.topics.template_tables import TEMPLATE_OWNED_TABLES
+from subagents.prompts.topics.webhook import WEBHOOK_TOPICS as _VALID_WEBHOOK_TOPICS
 
 # ── Webhook topic registry ────────────────────────────────────────────────────
-#
-# Primary source: shopify_mcp/cache/webhook_topics.json — populated by
-#   shopify_mcp.client.prefetch_for_run() before each pipeline run (24 h TTL).
-# Fallback: hardcoded set below — covers the most common topics so validation
-#   never fails with a false-positive on a cache miss or MCP outage.
-
-_FALLBACK_WEBHOOK_TOPICS: frozenset[str] = frozenset(
-    {
-        "orders/create",
-        "orders/updated",
-        "orders/cancelled",
-        "orders/paid",
-        "orders/fulfilled",
-        "orders/partially_fulfilled",
-        "products/create",
-        "products/update",
-        "products/delete",
-        "customers/create",
-        "customers/update",
-        "customers/delete",
-        "customers/enable",
-        "customers/disable",
-        "inventory_levels/update",
-        "inventory_levels/connect",
-        "inventory_levels/disconnect",
-        "inventory_items/create",
-        "inventory_items/update",
-        "inventory_items/delete",
-        "app/uninstalled",
-        "app/subscriptions/update",
-        "collections/create",
-        "collections/update",
-        "collections/delete",
-        "draft_orders/create",
-        "draft_orders/update",
-        "fulfillments/create",
-        "fulfillments/update",
-        "refunds/create",
-        "checkouts/create",
-        "checkouts/update",
-        "checkouts/delete",
-        "carts/create",
-        "carts/update",
-        "disputes/create",
-        "disputes/redacted",
-    }
-)
-
-_MCP_TOPICS_CACHE = (
-    Path(__file__).parent.parent / "shopify_mcp" / "cache" / "webhook_topics.json"
-)
-_TOPICS_CACHE_TTL = 24 * 60 * 60
-
-
-def _get_valid_webhook_topics() -> frozenset[str]:
-    """Return the current valid webhook topic set (MCP cache → fallback)."""
-    try:
-        if _MCP_TOPICS_CACHE.exists():
-            entry = json.loads(_MCP_TOPICS_CACHE.read_text(encoding="utf-8"))
-            if time.time() - entry.get("fetched_at", 0) < entry.get(
-                "ttl_seconds", _TOPICS_CACHE_TTL
-            ):
-                live = frozenset(entry.get("data") or [])
-                if live:
-                    return live
-    except Exception:
-        pass
-    return _FALLBACK_WEBHOOK_TOPICS
-
-
-# Snapshot at import time for callers that do `from validation import VALID_WEBHOOK_TOPICS`.
-# Prefer _get_valid_webhook_topics() inside validators so they always see the freshest cache.
-VALID_WEBHOOK_TOPICS = _get_valid_webhook_topics()
+# SSoT lives in topics.webhook.WEBHOOK_TOPICS. Both the architect prompt and
+# this static validator pull from the same set; add or remove a topic in one
+# place. Imported above as _VALID_WEBHOOK_TOPICS.
 
 
 def _is_valid_cron(expr: str) -> bool:
@@ -168,7 +96,7 @@ def validate_architect_plan(
 
     # 1. Webhook topics must be known
     webhook_topics = shopify.get("webhookTopics") or []
-    valid_topics = _get_valid_webhook_topics()
+    valid_topics = _VALID_WEBHOOK_TOPICS
     for topic in webhook_topics:
         if topic not in valid_topics:
             errors.append(
@@ -1242,7 +1170,7 @@ def _validate_webhook_handlers(code: str, plan_topics: List[str]) -> List[str]:
         )
     real_keys = topic_keys - bogus_cron
 
-    valid_topics = _get_valid_webhook_topics()
+    valid_topics = _VALID_WEBHOOK_TOPICS
     unknown = real_keys - valid_topics
     if unknown:
         errors.append(
