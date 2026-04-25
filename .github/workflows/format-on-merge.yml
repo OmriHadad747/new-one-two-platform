@@ -1,6 +1,6 @@
 # ─── Auto-format on push ──────────────────────────────────────────────────────
 #
-# Runs on every push to any branch. Formats all workspaces and commits any
+# Runs on every push to main, staging, development branches. Formats all workspaces and commits any
 # changes back. A no-op if code is already formatted.
 #
 # Formatters:
@@ -10,6 +10,7 @@ name: Format on push
 
 on:
   push:
+    branches: [main, staging, development]
 
 jobs:
   format:
