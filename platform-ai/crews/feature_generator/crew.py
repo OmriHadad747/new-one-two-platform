@@ -1286,4 +1286,16 @@ def validate_artifacts(
             if errs:
                 error_map.setdefault(gen_name, []).extend(errs)
 
+    # tsc --noEmit gate. Run only when the cheap regex/contract checks
+    # already pass for the handler — if the bundle has obvious bugs, tsc's
+    # downstream errors won't add signal and just burn time. When the gate
+    # finds problems, append to the handler bucket so the retry loop
+    # regenerates the handler with tsc messages as feedback.
+    if "handler" not in error_map:
+        from subagents.typecheck_validation import validate_handler_typecheck
+
+        tsc_errors = validate_handler_typecheck(artifacts.get("handler", ""))
+        if tsc_errors:
+            error_map["handler"] = tsc_errors
+
     return error_map
