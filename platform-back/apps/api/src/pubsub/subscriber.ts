@@ -56,10 +56,13 @@ async function handleMessage(msg: Message): Promise<void> {
       }
       // Keep app_archetype in sync so listAdminAppsForShop stays accurate.
       const archetype =
-        widgetJs && adminUiJs ? "storefront_backend_admin"
-        : adminUiJs ? "backend_admin"
-        : widgetJs ? "storefront_backend"
-        : "backend";
+        widgetJs && adminUiJs
+          ? "storefront_backend_admin"
+          : adminUiJs
+            ? "backend_admin"
+            : widgetJs
+              ? "storefront_backend"
+              : "backend";
       await updateAppArchetype(parsed.appId, archetype);
     }
 
@@ -103,9 +106,7 @@ function attachHandlers(sub: Subscription): void {
     if (err.code === 5) {
       setTimeout(() => {
         completedSub?.removeAllListeners();
-        completedSub = getPubSubClient().subscription(
-          SUB_PLATFORM_BACK_COMPLETED,
-        );
+        completedSub = getPubSubClient().subscription(SUB_PLATFORM_BACK_COMPLETED);
         attachHandlers(completedSub);
         logger.info("Re-attached completed subscription after NOT_FOUND");
       }, 3000);

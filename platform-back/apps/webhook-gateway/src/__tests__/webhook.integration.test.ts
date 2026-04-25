@@ -27,13 +27,19 @@ vi.mock("../queue/webhook-queue.js", () => ({
 }));
 vi.mock("@platform-back/logger", () => ({
   createRequestLogger: vi.fn(() => ({
-    info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
   })),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 import {
-  resolveWebhookContext, createWebhookInvocationLog, checkUsageQuota, trackAppExecution,
+  resolveWebhookContext,
+  createWebhookInvocationLog,
+  checkUsageQuota,
+  trackAppExecution,
 } from "@platform-back/db";
 import { getSecret, validateShopifyHmac, hashPayload } from "@platform-back/crypto";
 import { enqueueWebhook } from "../queue/webhook-queue.js";
@@ -43,10 +49,10 @@ import { webhookRoutes } from "../routes/webhook.js";
 // ─── Shared fixtures ──────────────────────────────────────────────────────────
 
 const TENANT_SLUG = "acme";
-const APP_SLUG    = "my-app";
-const TOPIC       = "orders/create";
-const WEBHOOK_ID  = "shopify-webhook-id-1";
-const SECRET      = "webhook-signing-secret";
+const APP_SLUG = "my-app";
+const TOPIC = "orders/create";
+const WEBHOOK_ID = "shopify-webhook-id-1";
+const SECRET = "webhook-signing-secret";
 
 const MOCK_CTX = {
   tenant: { id: "t-1", billingPlan: "starter" },
@@ -80,7 +86,10 @@ beforeEach(() => {
   vi.mocked(getSecret).mockResolvedValue(SECRET);
   vi.mocked(validateShopifyHmac).mockReturnValue(true);
   vi.mocked(hashPayload).mockReturnValue("hash-abc");
-  vi.mocked(createWebhookInvocationLog).mockResolvedValue({ id: "log-1", isDuplicate: false } as never);
+  vi.mocked(createWebhookInvocationLog).mockResolvedValue({
+    id: "log-1",
+    isDuplicate: false,
+  } as never);
   vi.mocked(checkUsageQuota).mockResolvedValue({ allowed: true, current: 10, limit: 10_000 });
   vi.mocked(trackAppExecution).mockResolvedValue(undefined);
   vi.mocked(enqueueWebhook).mockResolvedValue({ id: "job-1" });
@@ -189,7 +198,10 @@ describe("context resolution", () => {
 
 describe("idempotency", () => {
   it("returns 200 with status=duplicate for a repeated webhookId — does not re-enqueue", async () => {
-    vi.mocked(createWebhookInvocationLog).mockResolvedValue({ id: "log-dup", isDuplicate: true } as never);
+    vi.mocked(createWebhookInvocationLog).mockResolvedValue({
+      id: "log-dup",
+      isDuplicate: true,
+    } as never);
     const server = await buildApp();
     const res = await server.inject({
       method: "POST",

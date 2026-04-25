@@ -2,10 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 
 const { mockSqlEnd, mockSqlFn, mockPostgres } = vi.hoisted(() => {
   const mockSqlEnd = vi.fn().mockResolvedValue(undefined);
-  const mockSqlFn = Object.assign(
-    vi.fn().mockResolvedValue([{ exists: true }]),
-    { end: mockSqlEnd, unsafe: vi.fn().mockResolvedValue(undefined) },
-  );
+  const mockSqlFn = Object.assign(vi.fn().mockResolvedValue([{ exists: true }]), {
+    end: mockSqlEnd,
+    unsafe: vi.fn().mockResolvedValue(undefined),
+  });
   const mockPostgres = vi.fn(() => mockSqlFn);
   return { mockSqlEnd, mockSqlFn, mockPostgres };
 });
@@ -15,7 +15,7 @@ vi.mock("postgres", () => ({ default: mockPostgres }));
 import { appSchemaName, dropAppSchema } from "../migration-runner.js";
 
 const TENANT_ID = "11111111-2222-3333-4444-555555555555";
-const APP_ID    = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+const APP_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 
 // ─── appSchemaName (pure function) ───────────────────────────────────────────
 
@@ -90,9 +90,7 @@ describe("dropAppSchema", () => {
       tenantSchema: VALID_SCHEMA,
       databaseUrl: "postgresql://user:pass@localhost/db",
     });
-    expect(mockSqlFn.unsafe).toHaveBeenCalledWith(
-      expect.stringMatching(/DROP SCHEMA/i),
-    );
+    expect(mockSqlFn.unsafe).toHaveBeenCalledWith(expect.stringMatching(/DROP SCHEMA/i));
   });
 
   it("returns { dropped: false } when schema does not exist (idempotent)", async () => {
@@ -102,9 +100,7 @@ describe("dropAppSchema", () => {
       databaseUrl: "postgresql://user:pass@localhost/db",
     });
     expect(result.dropped).toBe(false);
-    expect(mockSqlFn.unsafe).not.toHaveBeenCalledWith(
-      expect.stringMatching(/DROP/i),
-    );
+    expect(mockSqlFn.unsafe).not.toHaveBeenCalledWith(expect.stringMatching(/DROP/i));
   });
 
   it("always closes the connection pool, even on error", async () => {

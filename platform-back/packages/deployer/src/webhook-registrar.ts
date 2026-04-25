@@ -27,18 +27,9 @@ export interface RegisterWebhooksInput {
  *
  * Idempotent: safe to retry on partial failure.
  */
-export async function registerWebhooks(
-  input: RegisterWebhooksInput,
-): Promise<void> {
-  const {
-    appId,
-    appSlug,
-    tenantId,
-    tenantSlug,
-    shopDomain,
-    deployedFunctionId,
-    webhookTopics,
-  } = input;
+export async function registerWebhooks(input: RegisterWebhooksInput): Promise<void> {
+  const { appId, appSlug, tenantId, tenantSlug, shopDomain, deployedFunctionId, webhookTopics } =
+    input;
 
   const gatewayUrl = requireEnv("WEBHOOK_GATEWAY_URL");
   const callbackUrl = `${gatewayUrl}/${tenantSlug}/${appSlug}`;
@@ -46,9 +37,7 @@ export async function registerWebhooks(
   // Fetch admin token from Secret Manager.
   const secretName = await getTenantAccessTokenSecretName(tenantId);
   if (!secretName) {
-    throw new Error(
-      `registerWebhooks: no Shopify admin token on file for tenant ${tenantId}`,
-    );
+    throw new Error(`registerWebhooks: no Shopify admin token on file for tenant ${tenantId}`);
   }
   const adminToken = await getSecret(secretName);
 
@@ -71,12 +60,7 @@ export async function registerWebhooks(
   for (const topic of webhookTopics) {
     let shopifyId = shopifyById.get(topic);
     if (!shopifyId) {
-      shopifyId = await createShopifyWebhook(
-        shopDomain,
-        adminToken,
-        topic,
-        callbackUrl,
-      );
+      shopifyId = await createShopifyWebhook(shopDomain, adminToken, topic, callbackUrl);
       logger.info({ appId, topic, shopifyId }, "Shopify webhook registered");
     } else {
       logger.info(
@@ -97,14 +81,12 @@ export async function registerWebhooks(
   // Delete stale Shopify webhooks (topics dropped from this version).
   for (const [topic, shopifyId] of shopifyById) {
     if (!activeTopicSet.has(topic)) {
-      await deleteShopifyWebhook(shopDomain, adminToken, shopifyId).catch(
-        (err) => {
-          logger.warn(
-            { err, appId, topic, shopifyId },
-            "Failed to delete stale Shopify webhook — continuing",
-          );
-        },
-      );
+      await deleteShopifyWebhook(shopDomain, adminToken, shopifyId).catch((err) => {
+        logger.warn(
+          { err, appId, topic, shopifyId },
+          "Failed to delete stale Shopify webhook — continuing",
+        );
+      });
     }
   }
 
@@ -136,9 +118,7 @@ async function listShopifyWebhooks(
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(
-      `listShopifyWebhooks failed [${res.status}]: ${body}`,
-    );
+    throw new Error(`listShopifyWebhooks failed [${res.status}]: ${body}`);
   }
   const data = (await res.json()) as { webhooks?: ShopifyWebhook[] };
   return (data.webhooks ?? []).map((w) => ({
@@ -154,24 +134,19 @@ async function createShopifyWebhook(
   topic: string,
   callbackUrl: string,
 ): Promise<string> {
-  const res = await fetch(
-    `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/webhooks.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": adminToken,
-      },
-      body: JSON.stringify({
-        webhook: { topic, address: callbackUrl, format: "json" },
-      }),
+  const res = await fetch(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/webhooks.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": adminToken,
     },
-  );
+    body: JSON.stringify({
+      webhook: { topic, address: callbackUrl, format: "json" },
+    }),
+  });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(
-      `createShopifyWebhook [${topic}] failed [${res.status}]: ${body}`,
-    );
+    throw new Error(`createShopifyWebhook [${topic}] failed [${res.status}]: ${body}`);
   }
   const data = (await res.json()) as { webhook?: { id?: number | string } };
   const id = data.webhook?.id;
@@ -193,9 +168,7 @@ async function deleteShopifyWebhook(
   );
   if (!res.ok && res.status !== 404) {
     const body = await res.text();
-    throw new Error(
-      `deleteShopifyWebhook [${shopifyWebhookId}] failed [${res.status}]: ${body}`,
-    );
+    throw new Error(`deleteShopifyWebhook [${shopifyWebhookId}] failed [${res.status}]: ${body}`);
   }
 }
 
@@ -248,14 +221,12 @@ export async function reregisterTenantWebhooks(
       // Delete stale Shopify subscriptions by known ID before re-registering.
       // Handles the case where the gateway URL changed between deploys.
       for (const row of rows) {
-        await deleteShopifyWebhook(shopDomain, adminToken, row.shopifyWebhookId).catch(
-          (err) => {
-            logger.warn(
-              { err, appId, topic: row.topic, shopifyWebhookId: row.shopifyWebhookId },
-              "reregisterTenantWebhooks: delete failed — continuing",
-            );
-          },
-        );
+        await deleteShopifyWebhook(shopDomain, adminToken, row.shopifyWebhookId).catch((err) => {
+          logger.warn(
+            { err, appId, topic: row.topic, shopifyWebhookId: row.shopifyWebhookId },
+            "reregisterTenantWebhooks: delete failed — continuing",
+          );
+        });
       }
 
       const { appSlug, tenantSlug, deployedFunctionId } = rows[0]!;

@@ -6,11 +6,7 @@ vi.mock("@platform-back/db", () => ({
 }));
 
 import { sql } from "@platform-back/db";
-import {
-  resolveAppFromSaEmail,
-  invalidateSaCache,
-  clearSaCache,
-} from "../lib/sa-to-app.js";
+import { resolveAppFromSaEmail, invalidateSaCache, clearSaCache } from "../lib/sa-to-app.js";
 
 const mockSql = vi.mocked(sql);
 
@@ -24,9 +20,7 @@ beforeEach(() => {
 
 describe("resolveAppFromSaEmail — DB lookup", () => {
   it("returns identity for a known active SA", async () => {
-    mockSql.mockResolvedValueOnce([
-      { tenantId: IDENTITY.tenantId, appId: IDENTITY.appId },
-    ]);
+    mockSql.mockResolvedValueOnce([{ tenantId: IDENTITY.tenantId, appId: IDENTITY.appId }]);
     const result = await resolveAppFromSaEmail(SA_EMAIL);
     expect(result).toEqual(IDENTITY);
     expect(mockSql).toHaveBeenCalledOnce();
@@ -41,9 +35,7 @@ describe("resolveAppFromSaEmail — DB lookup", () => {
 
 describe("resolveAppFromSaEmail — caching", () => {
   it("caches the result and skips DB on second call", async () => {
-    mockSql.mockResolvedValueOnce([
-      { tenantId: IDENTITY.tenantId, appId: IDENTITY.appId },
-    ]);
+    mockSql.mockResolvedValueOnce([{ tenantId: IDENTITY.tenantId, appId: IDENTITY.appId }]);
 
     const first = await resolveAppFromSaEmail(SA_EMAIL);
     const second = await resolveAppFromSaEmail(SA_EMAIL);
@@ -66,18 +58,14 @@ describe("resolveAppFromSaEmail — caching", () => {
 
   it("re-queries DB after TTL expiry", async () => {
     // Seed cache with an entry whose expiry is already in the past
-    mockSql.mockResolvedValueOnce([
-      { tenantId: IDENTITY.tenantId, appId: IDENTITY.appId },
-    ]);
+    mockSql.mockResolvedValueOnce([{ tenantId: IDENTITY.tenantId, appId: IDENTITY.appId }]);
     await resolveAppFromSaEmail(SA_EMAIL);
 
     // Manually expire the entry by replacing it with a stale one
     // We do this by directly invalidating (same as TTL eviction)
     invalidateSaCache(SA_EMAIL);
 
-    mockSql.mockResolvedValueOnce([
-      { tenantId: "new-tenant", appId: "new-app" },
-    ]);
+    mockSql.mockResolvedValueOnce([{ tenantId: "new-tenant", appId: "new-app" }]);
     const result = await resolveAppFromSaEmail(SA_EMAIL);
 
     expect(result).toEqual({ tenantId: "new-tenant", appId: "new-app" });
@@ -87,9 +75,7 @@ describe("resolveAppFromSaEmail — caching", () => {
 
 describe("invalidateSaCache", () => {
   it("removes a specific entry so the next call hits DB", async () => {
-    mockSql.mockResolvedValue([
-      { tenantId: IDENTITY.tenantId, appId: IDENTITY.appId },
-    ]);
+    mockSql.mockResolvedValue([{ tenantId: IDENTITY.tenantId, appId: IDENTITY.appId }]);
     await resolveAppFromSaEmail(SA_EMAIL);
 
     invalidateSaCache(SA_EMAIL);
@@ -126,9 +112,7 @@ describe("invalidateSaCache", () => {
 
 describe("clearSaCache", () => {
   it("removes all entries", async () => {
-    mockSql.mockResolvedValue([
-      { tenantId: IDENTITY.tenantId, appId: IDENTITY.appId },
-    ]);
+    mockSql.mockResolvedValue([{ tenantId: IDENTITY.tenantId, appId: IDENTITY.appId }]);
     await resolveAppFromSaEmail(SA_EMAIL);
     await resolveAppFromSaEmail("other@example.com");
 

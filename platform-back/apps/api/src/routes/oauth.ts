@@ -11,17 +11,9 @@
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type {
-  FastifyInstance,
-  FastifyRequest,
-  FastifyReply,
-} from "fastify";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { storeSecret } from "@platform-back/crypto";
-import {
-  createTenant,
-  getTenantByShopDomain,
-  updateTenantAccessToken,
-} from "@platform-back/db";
+import { createTenant, getTenantByShopDomain, updateTenantAccessToken } from "@platform-back/db";
 import { reregisterTenantWebhooks } from "@platform-back/deployer";
 import { logger } from "@platform-back/logger";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
@@ -39,9 +31,7 @@ const DASHBOARD_URL = process.env["DASHBOARD_URL"] ?? "http://localhost:3000";
 const KMS_KEY_NAME = process.env["KMS_KEY_NAME"] ?? "";
 
 if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) {
-  throw new Error(
-    "FATAL: SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET must be set",
-  );
+  throw new Error("FATAL: SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET must be set");
 }
 
 const SCOPES = [
@@ -84,12 +74,7 @@ async function installHandler(
   if (!shop || !shop.endsWith(".myshopify.com")) {
     return reply
       .code(400)
-      .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Missing or invalid shop parameter",
-        ),
-      );
+      .send(errorResponse(ErrorCode.InvalidRequest, "Missing or invalid shop parameter"));
   }
 
   // State encodes a nonce + shop and is HMAC-signed with the client
@@ -122,26 +107,17 @@ async function callbackHandler(
   if (!code || !shop || !state || !hmac) {
     return reply
       .code(400)
-      .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Missing required OAuth parameters",
-        ),
-      );
+      .send(errorResponse(ErrorCode.InvalidRequest, "Missing required OAuth parameters"));
   }
 
   // 1. HMAC verify (Shopify-signed query params).
   if (!verifyShopifyHmac(req.query as Record<string, string>, hmac)) {
-    return reply
-      .code(401)
-      .send(errorResponse(ErrorCode.Forbidden, "HMAC validation failed"));
+    return reply.code(401).send(errorResponse(ErrorCode.Forbidden, "HMAC validation failed"));
   }
 
   // 2. State verify (CSRF + shop binding).
   if (!verifyState(state, shop)) {
-    return reply
-      .code(400)
-      .send(errorResponse(ErrorCode.InvalidRequest, "Invalid state parameter"));
+    return reply.code(400).send(errorResponse(ErrorCode.InvalidRequest, "Invalid state parameter"));
   }
 
   // 3. Exchange the code for an access token.
@@ -152,12 +128,7 @@ async function callbackHandler(
     logger.error({ err, shop }, "Failed to exchange OAuth code");
     return reply
       .code(502)
-      .send(
-        errorResponse(
-          ErrorCode.BadGateway,
-          "Failed to obtain access token from Shopify",
-        ),
-      );
+      .send(errorResponse(ErrorCode.BadGateway, "Failed to obtain access token from Shopify"));
   }
 
   // 4. Write the platform_app.base_url shop metafield. Non-fatal — handlers
@@ -165,18 +136,9 @@ async function callbackHandler(
   //    a transient Shopify failure here just means storefronts won't
   //    auto-discover the URL until reinstall.
   try {
-    await writeShopMetafield(
-      shop,
-      accessToken,
-      "platform_app",
-      "base_url",
-      PLATFORM_URL,
-    );
+    await writeShopMetafield(shop, accessToken, "platform_app", "base_url", PLATFORM_URL);
   } catch (err) {
-    logger.warn(
-      { err, shop },
-      "Failed to write platform_app.base_url metafield — continuing",
-    );
+    logger.warn({ err, shop }, "Failed to write platform_app.base_url metafield — continuing");
   }
 
   // 5. Persist tenant + access tokens.
@@ -188,10 +150,7 @@ async function callbackHandler(
     // error on first call but admin flows are unaffected. Re-install retries.
     let storefrontSecretName: string | undefined;
     try {
-      storefrontSecretName = await provisionStorefrontToken(
-        shop,
-        accessToken,
-      );
+      storefrontSecretName = await provisionStorefrontToken(shop, accessToken);
     } catch (err) {
       logger.warn(
         { err, shop },
@@ -199,7 +158,11 @@ async function callbackHandler(
       );
     }
 
-    const { tenantId: id, isReinstall } = await upsertTenant(shop, secretName, storefrontSecretName);
+    const { tenantId: id, isReinstall } = await upsertTenant(
+      shop,
+      secretName,
+      storefrontSecretName,
+    );
     tenantId = id;
     logger.info({ shop, tenantId, isReinstall }, "OAuth install complete");
 
@@ -210,9 +173,7 @@ async function callbackHandler(
     }
   } catch (err) {
     logger.error({ err, shop }, "Failed to persist tenant after OAuth");
-    return reply
-      .code(500)
-      .send(errorResponse(ErrorCode.Internal, "Internal error during install"));
+    return reply.code(500).send(errorResponse(ErrorCode.Internal, "Internal error during install"));
   }
 
   // 6. Mint platform JWT and redirect to dashboard with token in querystring.
@@ -226,12 +187,8 @@ async function callbackHandler(
 
 function buildState(shop: string): string {
   const nonce = crypto.randomUUID();
-  const payload = Buffer.from(JSON.stringify({ nonce, shop })).toString(
-    "base64url",
-  );
-  const sig = createHmac("sha256", SHOPIFY_CLIENT_SECRET)
-    .update(payload)
-    .digest("hex");
+  const payload = Buffer.from(JSON.stringify({ nonce, shop })).toString("base64url");
+  const sig = createHmac("sha256", SHOPIFY_CLIENT_SECRET).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
 
@@ -239,13 +196,9 @@ function verifyState(state: string, shop: string): boolean {
   const [payload, sig] = state.split(".");
   if (!payload || !sig) return false;
 
-  const expected = createHmac("sha256", SHOPIFY_CLIENT_SECRET)
-    .update(payload)
-    .digest("hex");
+  const expected = createHmac("sha256", SHOPIFY_CLIENT_SECRET).update(payload).digest("hex");
   try {
-    if (
-      !timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"))
-    ) {
+    if (!timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expected, "hex"))) {
       return false;
     }
   } catch {
@@ -253,9 +206,7 @@ function verifyState(state: string, shop: string): boolean {
   }
 
   try {
-    const decoded = JSON.parse(
-      Buffer.from(payload, "base64url").toString(),
-    ) as { shop: string };
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString()) as { shop: string };
     return decoded.shop === shop;
   } catch {
     return false;
@@ -264,23 +215,15 @@ function verifyState(state: string, shop: string): boolean {
 
 // ─── Shopify HMAC over query params (callback signature) ─────────────────────
 
-function verifyShopifyHmac(
-  params: Record<string, string>,
-  hmac: string,
-): boolean {
+function verifyShopifyHmac(params: Record<string, string>, hmac: string): boolean {
   const message = Object.keys(params)
     .filter((k) => k !== "hmac")
     .sort()
     .map((k) => `${k}=${params[k]}`)
     .join("&");
-  const computed = createHmac("sha256", SHOPIFY_CLIENT_SECRET)
-    .update(message)
-    .digest("hex");
+  const computed = createHmac("sha256", SHOPIFY_CLIENT_SECRET).update(message).digest("hex");
   try {
-    return timingSafeEqual(
-      Buffer.from(computed, "hex"),
-      Buffer.from(hmac, "hex"),
-    );
+    return timingSafeEqual(Buffer.from(computed, "hex"), Buffer.from(hmac, "hex"));
   } catch {
     return false;
   }
@@ -288,10 +231,7 @@ function verifyShopifyHmac(
 
 // ─── Shopify Admin API helpers ───────────────────────────────────────────────
 
-async function exchangeCodeForToken(
-  shop: string,
-  code: string,
-): Promise<string> {
+async function exchangeCodeForToken(shop: string, code: string): Promise<string> {
   const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -317,25 +257,22 @@ async function writeShopMetafield(
   key: string,
   value: string,
 ): Promise<void> {
-  const res = await fetch(
-    `https://${shop}/admin/api/2026-01/metafields.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": accessToken,
-      },
-      body: JSON.stringify({
-        metafield: {
-          namespace,
-          key,
-          value,
-          type: "single_line_text_field",
-          owner_resource: "shop",
-        },
-      }),
+  const res = await fetch(`https://${shop}/admin/api/2026-01/metafields.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": accessToken,
     },
-  );
+    body: JSON.stringify({
+      metafield: {
+        namespace,
+        key,
+        value,
+        type: "single_line_text_field",
+        owner_resource: "shop",
+      },
+    }),
+  });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Shopify metafield write failed [${res.status}]: ${body}`);
@@ -353,10 +290,7 @@ async function writeShopMetafield(
  * .env so getSecret() can resolve it (needed by Shopify Admin API
  * callers like the future webhook re-register flow).
  */
-async function persistAccessToken(
-  shop: string,
-  accessToken: string,
-): Promise<string> {
+async function persistAccessToken(shop: string, accessToken: string): Promise<string> {
   if (process.env["NODE_ENV"] === "development") {
     const shopPrefix = shop.replace(".myshopify.com", "");
     const secretName = `projects/local/secrets/${shopPrefix}-access-token/versions/latest`;
@@ -373,9 +307,7 @@ async function persistAccessToken(
     return secretName;
   }
 
-  const secretId = `${shop
-    .replace(".myshopify.com", "")
-    .replace(/[^a-z0-9]/g, "-")}-shopify-token`;
+  const secretId = `${shop.replace(".myshopify.com", "").replace(/[^a-z0-9]/g, "-")}-shopify-token`;
   return storeSecret(secretId, accessToken);
 }
 
@@ -390,20 +322,17 @@ async function upsertTenant(
 ): Promise<{ tenantId: string; isReinstall: boolean }> {
   const existing = await getTenantByShopDomain(shop);
   if (existing) {
-    await updateTenantAccessToken(
-      existing.id,
-      accessTokenSecretName,
-      storefrontSecretName,
-    );
+    await updateTenantAccessToken(existing.id, accessTokenSecretName, storefrontSecretName);
     return { tenantId: existing.id, isReinstall: true };
   }
 
-  const slug = shop
-    .replace(".myshopify.com", "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") // trim edge hyphens from aggressive replace
-    || "shop"; // guard against empty string (shouldn't happen with valid Shopify domains)
+  const slug =
+    shop
+      .replace(".myshopify.com", "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || // trim edge hyphens from aggressive replace
+    "shop"; // guard against empty string (shouldn't happen with valid Shopify domains)
 
   const { id } = await createTenant({
     slug,
@@ -422,28 +351,20 @@ async function upsertTenant(
  * Creates a Shopify Storefront API access token via the Admin REST API,
  * persists it to Secret Manager, and returns the versioned secret name.
  */
-async function provisionStorefrontToken(
-  shop: string,
-  adminAccessToken: string,
-): Promise<string> {
-  const res = await fetch(
-    `https://${shop}/admin/api/2026-01/storefront_access_tokens.json`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": adminAccessToken,
-      },
-      body: JSON.stringify({
-        storefront_access_token: { title: "platform-app" },
-      }),
+async function provisionStorefrontToken(shop: string, adminAccessToken: string): Promise<string> {
+  const res = await fetch(`https://${shop}/admin/api/2026-01/storefront_access_tokens.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": adminAccessToken,
     },
-  );
+    body: JSON.stringify({
+      storefront_access_token: { title: "platform-app" },
+    }),
+  });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(
-      `Shopify Storefront token creation failed [${res.status}]: ${body}`,
-    );
+    throw new Error(`Shopify Storefront token creation failed [${res.status}]: ${body}`);
   }
   const data = (await res.json()) as {
     storefront_access_token?: { access_token?: string };

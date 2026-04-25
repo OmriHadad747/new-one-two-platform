@@ -63,9 +63,7 @@ function makeStream(body: string): ReadableStream<Uint8Array> {
 function throttledError(currentlyAvailable = 0, requestedQueryCost = 100) {
   return {
     response: {
-      errors: [
-        { extensions: { code: "THROTTLED" }, message: "Throttled" },
-      ],
+      errors: [{ extensions: { code: "THROTTLED" }, message: "Throttled" }],
       extensions: {
         cost: {
           requestedQueryCost,
@@ -101,9 +99,7 @@ describe("graphql throttle retry", () => {
   it("throws clear MAX_COST_EXCEEDED error without retry", async () => {
     graphqlRequestMock.mockRejectedValue({
       response: {
-        errors: [
-          { extensions: { code: "MAX_COST_EXCEEDED" }, message: "Query cost too high" },
-        ],
+        errors: [{ extensions: { code: "MAX_COST_EXCEEDED" }, message: "Query cost too high" }],
       },
     });
     const shopify = await shopifyClientFor({
@@ -158,9 +154,7 @@ describe("bulkQuery", () => {
       accessToken: "tok",
     });
     const collected: unknown[] = [];
-    for await (const item of shopify.bulkQuery(
-      "{ orders { edges { node { id } } } }",
-    )) {
+    for await (const item of shopify.bulkQuery("{ orders { edges { node { id } } } }")) {
       collected.push(item);
     }
     expect(collected).toEqual([]);
@@ -271,7 +265,9 @@ describe("bulkQuery", () => {
       data: {
         bulkOperationRunQuery: {
           bulkOperation: null,
-          userErrors: [{ field: ["query"], message: "A bulk query operation is already in progress." }],
+          userErrors: [
+            { field: ["query"], message: "A bulk query operation is already in progress." },
+          ],
         },
       },
     });
@@ -281,7 +277,9 @@ describe("bulkQuery", () => {
       accessToken: "tok",
     });
     const promise = (async () => {
-      for await (const _ of shopify.bulkQuery("{ }")) { /* empty */ }
+      for await (const _ of shopify.bulkQuery("{ }")) {
+        /* empty */
+      }
     })();
     await expect(promise).rejects.toThrow(/already in progress/);
   });

@@ -1,8 +1,4 @@
-import {
-  shopifyApi,
-  LATEST_API_VERSION,
-  Session,
-} from "@shopify/shopify-api";
+import { shopifyApi, LATEST_API_VERSION, Session } from "@shopify/shopify-api";
 import "@shopify/shopify-api/adapters/node";
 import { callPlatformService } from "./platform-call.js";
 
@@ -70,10 +66,7 @@ function makeSession(shopDomain: string, accessToken: string): Session {
 // ─── Public helper interface ─────────────────────────────────────────────────
 
 export interface ShopifyHelper {
-  graphql(
-    query: string,
-    variables?: Record<string, unknown>,
-  ): Promise<unknown>;
+  graphql(query: string, variables?: Record<string, unknown>): Promise<unknown>;
   graphqlPaginate(
     query: string,
     variables: Record<string, unknown>,
@@ -88,14 +81,8 @@ export interface ShopifyHelper {
    * the operation is best-effort cancelled so the shop's bulk-op slot is
    * released.
    */
-  bulkQuery(
-    query: string,
-    opts?: { maxPollMs?: number },
-  ): AsyncGenerator<unknown, void, unknown>;
-  storefront(
-    query: string,
-    variables?: Record<string, unknown>,
-  ): Promise<unknown>;
+  bulkQuery(query: string, opts?: { maxPollMs?: number }): AsyncGenerator<unknown, void, unknown>;
+  storefront(query: string, variables?: Record<string, unknown>): Promise<unknown>;
 }
 
 /**
@@ -110,9 +97,7 @@ export interface ShopifyClientContext {
   accessToken?: string;
 }
 
-export async function shopifyClientFor(
-  platform?: ShopifyClientContext,
-): Promise<ShopifyHelper> {
+export async function shopifyClientFor(platform?: ShopifyClientContext): Promise<ShopifyHelper> {
   const shopDomain = platform?.shopDomain ?? process.env["SHOP_DOMAIN"];
   if (!shopDomain) {
     throw new Error("shopifyClientFor: shopDomain not available");
@@ -139,10 +124,7 @@ export async function shopifyClientFor(
   // with method-this binding inside async generators. Handles both 401 refresh
   // and cost-based-throttle backoff internally — callers see only `data`
   // (or a thrown error after retries are exhausted).
-  async function graphqlImpl(
-    query: string,
-    variables?: Record<string, unknown>,
-  ): Promise<unknown> {
+  async function graphqlImpl(query: string, variables?: Record<string, unknown>): Promise<unknown> {
     return with401Retry(async (session) => {
       const client = new api.clients.Graphql({ session });
       return requestWithThrottleRetry(client, query, variables);
@@ -189,8 +171,7 @@ export async function shopifyClientFor(
       const maxPollMs = opts?.maxPollMs ?? BULK_DEFAULT_MAX_POLL_MS;
       // Test/ops escape hatch — production uses BULK_POLL_INTERVAL_MS.
       const pollIntervalMs =
-        Number(process.env["SHOPIFY_BULK_POLL_INTERVAL_MS"]) ||
-        BULK_POLL_INTERVAL_MS;
+        Number(process.env["SHOPIFY_BULK_POLL_INTERVAL_MS"]) || BULK_POLL_INTERVAL_MS;
 
       // 1. Start the bulk operation and capture its id.
       const startResult = (await graphqlImpl(
@@ -316,10 +297,7 @@ export async function shopifyClientFor(
       if (remaining) yield parseLine(remaining);
     },
 
-    async storefront(
-      query: string,
-      variables?: Record<string, unknown>,
-    ): Promise<unknown> {
+    async storefront(query: string, variables?: Record<string, unknown>): Promise<unknown> {
       // Storefront uses a SEPARATE access token (public, scoped to unauthed
       // shopper context). platform-back mints it at OAuth time alongside the
       // admin access token and exposes it via a dedicated /services/ endpoint.
@@ -344,9 +322,7 @@ export async function shopifyClientFor(
         body: JSON.stringify({ query, variables: variables ?? {} }),
       });
       if (!resp.ok) {
-        throw new Error(
-          `shopifyClientFor.storefront: fetch failed (status=${resp.status})`,
-        );
+        throw new Error(`shopifyClientFor.storefront: fetch failed (status=${resp.status})`);
       }
       const json = (await resp.json()) as {
         data?: unknown;
@@ -460,8 +436,7 @@ async function requestWithThrottleRetry(
 
       const wait = computeHardThrottleWait(throttle.cost);
       const exhausted =
-        attempt >= MAX_THROTTLE_RETRIES ||
-        totalWaitedMs + wait > MAX_THROTTLE_TOTAL_WAIT_MS;
+        attempt >= MAX_THROTTLE_RETRIES || totalWaitedMs + wait > MAX_THROTTLE_TOTAL_WAIT_MS;
 
       console.warn(
         {
@@ -500,10 +475,7 @@ function computeHardThrottleWait(cost?: ShopifyCost): number {
   if (!cost || cost.throttleStatus.restoreRate <= 0) {
     return DEFAULT_HARD_THROTTLE_WAIT_MS;
   }
-  const deficit = Math.max(
-    cost.requestedQueryCost - cost.throttleStatus.currentlyAvailable,
-    1,
-  );
+  const deficit = Math.max(cost.requestedQueryCost - cost.throttleStatus.currentlyAvailable, 1);
   const waitMs = Math.ceil((deficit / cost.throttleStatus.restoreRate) * 1000);
   return Math.max(MIN_THROTTLE_WAIT_MS, waitMs + HARD_THROTTLE_SAFETY_PAD_MS);
 }
@@ -523,19 +495,17 @@ function extractThrottleInfo(err: unknown): { cost?: ShopifyCost } | null {
     code?: number;
   };
 
-  const responseLike =
-    anyErr.response ?? anyErr.body ?? anyErr;
+  const responseLike = anyErr.response ?? anyErr.body ?? anyErr;
   const errors = (responseLike as { errors?: unknown }).errors;
-  const cost = (responseLike as { extensions?: { cost?: ShopifyCost } })
-    .extensions?.cost;
+  const cost = (responseLike as { extensions?: { cost?: ShopifyCost } }).extensions?.cost;
 
   if (Array.isArray(errors)) {
     const isThrottled = errors.some((e) => {
       if (!e || typeof e !== "object") return false;
       const entry = e as { extensions?: { code?: string }; message?: string };
       if (entry.extensions?.code === "THROTTLED") return true;
-      if (typeof entry.message === "string" &&
-          entry.message.toLowerCase().includes("throttled")) return true;
+      if (typeof entry.message === "string" && entry.message.toLowerCase().includes("throttled"))
+        return true;
       return false;
     });
     if (isThrottled) return cost ? { cost } : {};
@@ -560,10 +530,7 @@ function extractMaxCostExceeded(err: unknown): boolean {
   if (!Array.isArray(errors)) return false;
   return errors.some((e) => {
     if (!e || typeof e !== "object") return false;
-    return (
-      (e as { extensions?: { code?: string } }).extensions?.code ===
-      "MAX_COST_EXCEEDED"
-    );
+    return (e as { extensions?: { code?: string } }).extensions?.code === "MAX_COST_EXCEEDED";
   });
 }
 
@@ -587,8 +554,7 @@ function getByPath(obj: unknown, path: string): unknown {
   return path
     .split(".")
     .reduce<unknown>(
-      (o, k) =>
-        o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined,
+      (o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined),
       obj,
     );
 }

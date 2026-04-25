@@ -15,10 +15,7 @@ export async function emailPublicRoutes(app: FastifyInstance): Promise<void> {
   // ── GET /email/u/:token — landing page ─────────────────────────────────────
   app.get<{ Params: { token: string } }>(
     "/:token",
-    async (
-      req: FastifyRequest<{ Params: { token: string } }>,
-      reply: FastifyReply,
-    ) => {
+    async (req: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
       const parsed = verifyUnsubscribeToken(req.params.token);
       if (!parsed) {
         return reply
@@ -42,40 +39,37 @@ export async function emailPublicRoutes(app: FastifyInstance): Promise<void> {
   );
 
   // ── POST /email/u/:token/confirm — commit suppression ──────────────────────
-  app.post<{ Params: { token: string } }>(
-    "/:token/confirm",
-    async (req, reply) => {
-      const parsed = verifyUnsubscribeToken(req.params.token);
-      if (!parsed) {
-        return reply
-          .type("text/html")
-          .code(400)
-          .send(renderUnsubscribePage({ state: "invalid" }));
-      }
+  app.post<{ Params: { token: string } }>("/:token/confirm", async (req, reply) => {
+    const parsed = verifyUnsubscribeToken(req.params.token);
+    if (!parsed) {
+      return reply
+        .type("text/html")
+        .code(400)
+        .send(renderUnsubscribePage({ state: "invalid" }));
+    }
 
-      await insertEmailSuppression({
-        tenantId: parsed.tenantId,
+    await insertEmailSuppression({
+      tenantId: parsed.tenantId,
+      email: parsed.email,
+      reason: "unsubscribed",
+    });
+
+    const tenant = await getTenantBasics(parsed.tenantId);
+    const merchantName = tenant?.storeName ?? "this merchant";
+
+    logger.info(
+      { tenantId: parsed.tenantId, email: parsed.email },
+      "customer unsubscribed via public page",
+    );
+
+    return reply.type("text/html").send(
+      renderUnsubscribePage({
+        state: "done",
+        merchantName,
         email: parsed.email,
-        reason: "unsubscribed",
-      });
-
-      const tenant = await getTenantBasics(parsed.tenantId);
-      const merchantName = tenant?.storeName ?? "this merchant";
-
-      logger.info(
-        { tenantId: parsed.tenantId, email: parsed.email },
-        "customer unsubscribed via public page",
-      );
-
-      return reply.type("text/html").send(
-        renderUnsubscribePage({
-          state: "done",
-          merchantName,
-          email: parsed.email,
-        }),
-      );
-    },
-  );
+      }),
+    );
+  });
 }
 
 // ─── Static page renderer ────────────────────────────────────────────────────

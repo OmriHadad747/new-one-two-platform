@@ -17,7 +17,14 @@ interface ChatInputProps {
   onStop?: () => void;
 }
 
-export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, onStop }: ChatInputProps) {
+export function ChatInput({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+  placeholder,
+  onStop,
+}: ChatInputProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   const autoResize = useCallback(() => {
@@ -28,7 +35,9 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, on
   }, []);
 
   // Resize whenever value changes — catches both typing and external resets (e.g. after submit).
-  useEffect(() => { autoResize(); }, [value, autoResize]);
+  useEffect(() => {
+    autoResize();
+  }, [value, autoResize]);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     onChange(e.target.value);
@@ -43,7 +52,6 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, on
 
   return (
     <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-2 px-4 pointer-events-none">
-
       {/* Hint pills */}
       {!placeholder && (
         <div className="flex gap-2 flex-wrap justify-center pointer-events-auto">
@@ -51,7 +59,11 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, on
             <button
               key={h}
               type="button"
-              onClick={() => { onChange(h); ref.current?.focus(); autoResize(); }}
+              onClick={() => {
+                onChange(h);
+                ref.current?.focus();
+                autoResize();
+              }}
               className="text-[11px] text-faint px-2.5 py-1 rounded-full hover:text-accent hover:bg-accent/[0.06] transition-all duration-150 cursor-pointer bg-surface/80 backdrop-blur-sm"
             >
               {h}
@@ -65,7 +77,7 @@ export function ChatInput({ value, onChange, onSubmit, disabled, placeholder, on
         className={cn(
           "w-full max-w-[600px] pointer-events-auto",
           "flex gap-2.5 items-end bg-surface/90 backdrop-blur-xl rounded-2xl px-4 py-3 transition-colors duration-150",
-          "shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
+          "shadow-[0_8px_32px_rgba(0,0,0,0.35)]",
         )}
       >
         <textarea

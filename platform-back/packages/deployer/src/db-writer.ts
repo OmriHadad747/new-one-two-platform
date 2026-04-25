@@ -8,10 +8,7 @@ import { sql } from "@platform-back/db";
 //
 // Webhook-subscription writes are handled by webhook-registrar.ts.
 
-export async function writeHandlerSaEmail(
-  appId: string,
-  saEmail: string,
-): Promise<void> {
+export async function writeHandlerSaEmail(appId: string, saEmail: string): Promise<void> {
   await sql`
     UPDATE apps
        SET handler_sa_email = ${saEmail},

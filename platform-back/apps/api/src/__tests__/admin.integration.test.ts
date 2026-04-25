@@ -23,7 +23,10 @@ vi.mock("@platform-back/logger", () => ({
     debug: vi.fn(),
   })),
   logger: {
-    info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
     child: vi.fn().mockReturnThis(),
   },
 }));
@@ -51,9 +54,7 @@ function makeSessionToken(overrides: Record<string, unknown> = {}): string {
     iat: now - 10,
     ...overrides,
   };
-  const header = Buffer.from(
-    JSON.stringify({ alg: "HS256", typ: "JWT" }),
-  ).toString("base64url");
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
   const sig = createHmac("sha256", CLIENT_SECRET)
     .update(`${header}.${payload}`)

@@ -1,7 +1,11 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
 import { useSearchParams, useParams, useNavigate } from "react-router";
 import { TopBar } from "@/components/layout/TopBar";
-import { ChatMessages, type ChatMessage, type DeployBundle } from "@/components/features/generation/ChatMessages";
+import {
+  ChatMessages,
+  type ChatMessage,
+  type DeployBundle,
+} from "@/components/features/generation/ChatMessages";
 import { ChatInput } from "@/components/features/generation/ChatInput";
 import { useGeneration, useLatestSession } from "@/hooks/useGeneration";
 import { useSessionStore } from "@/stores/session";
@@ -9,7 +13,13 @@ import { useGenerationStore } from "@/stores/generation";
 import { useApps, useApp } from "@/hooks/useApps";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { SessionBundle, GenerationBundle, AppArchetype, AnalyzeMessage, App } from "@/types/dashboard";
+import type {
+  SessionBundle,
+  GenerationBundle,
+  AppArchetype,
+  AnalyzeMessage,
+  App,
+} from "@/types/dashboard";
 import { NameAppModal } from "@/components/features/generation/NameAppModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -22,9 +32,12 @@ function normalizeBundleFromApi(raw: Record<string, unknown>): GenerationBundle 
   const hasAdminUI = !!raw.adminUiModule;
   const explanation = raw.explanation as Record<string, unknown> | string | undefined;
   return {
-    explanation: typeof explanation === "string"
-      ? explanation
-      : (explanation as Record<string, unknown> | undefined)?.merchantFacing as string | undefined,
+    explanation:
+      typeof explanation === "string"
+        ? explanation
+        : ((explanation as Record<string, unknown> | undefined)?.merchantFacing as
+            | string
+            | undefined),
     triggerTopics: topics,
     triggerType: hasCron ? "cron" : hasAdminUI ? "admin" : hasWidget ? "widget" : "webhook",
     hasWidget,
@@ -33,10 +46,10 @@ function normalizeBundleFromApi(raw: Record<string, unknown>): GenerationBundle 
 }
 
 function computeArchetype(bundle: GenerationBundle | null): DeployBundle["archetype"] {
-  const hasAdmin  = !!bundle?.hasAdminUI;
+  const hasAdmin = !!bundle?.hasAdminUI;
   const hasWidget = !!bundle?.hasWidget;
   if (hasAdmin && hasWidget) return "storefront_backend_admin";
-  if (hasAdmin)  return "backend_admin";
+  if (hasAdmin) return "backend_admin";
   if (hasWidget) return "storefront_backend";
   return "backend";
 }
@@ -44,12 +57,12 @@ function computeArchetype(bundle: GenerationBundle | null): DeployBundle["archet
 function bundleToDeployBundle(bundle: GenerationBundle | null): DeployBundle | undefined {
   if (!bundle) return undefined;
   return {
-    triggerType:   bundle.triggerType   ?? "webhook",
+    triggerType: bundle.triggerType ?? "webhook",
     triggerTopics: bundle.triggerTopics ?? [],
-    hasWidget:     !!bundle.hasWidget,
-    hasAdminUI:    !!bundle.hasAdminUI,
-    archetype:     computeArchetype(bundle),
-    explanation:   typeof bundle.explanation === "string" ? bundle.explanation : null,
+    hasWidget: !!bundle.hasWidget,
+    hasAdminUI: !!bundle.hasAdminUI,
+    archetype: computeArchetype(bundle),
+    explanation: typeof bundle.explanation === "string" ? bundle.explanation : null,
   };
 }
 
@@ -67,8 +80,13 @@ function nameFromPrompt(prompt: string): string {
 
 function slugFromName(name: string): string {
   return (
-    name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "").slice(0, 30) +
-    "-" + Math.random().toString(36).slice(2, 6)
+    name
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "")
+      .slice(0, 30) +
+    "-" +
+    Math.random().toString(36).slice(2, 6)
   );
 }
 
@@ -96,7 +114,9 @@ function parseGenError(raw: string): { text: string; upgradeHint?: string; code?
         };
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return { text: raw };
 }
 
@@ -111,17 +131,22 @@ export function NewAppPage() {
   const queryClient = useQueryClient();
 
   const [selectedAppId, setSelectedAppId] = useState<string | null>(
-    routeAppId ?? searchParams.get("appId")
+    routeAppId ?? searchParams.get("appId"),
   );
   const apps = appsQuery.data ?? [];
 
-  const [input, setInput]     = useState(searchParams.get("prompt") ?? "");
+  const [input, setInput] = useState(searchParams.get("prompt") ?? "");
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevStatus = useRef<string>("idle");
   const genMsgIdRef = useRef<string | null>(null);
   const prevRouteAppId = useRef<string | undefined | null>(null);
-  const lastStartParamsRef = useRef<{ appId: string; tenantId: string; prompt: string; preComputedIntent?: Record<string, unknown> } | null>(null);
+  const lastStartParamsRef = useRef<{
+    appId: string;
+    tenantId: string;
+    prompt: string;
+    preComputedIntent?: Record<string, unknown>;
+  } | null>(null);
   // Tracks whether hydration has run for the current mount of this component.
   // Resets to false on every mount so navigation back to the same app re-hydrates.
   const hasHydratedRef = useRef(false);
@@ -139,15 +164,26 @@ export function NewAppPage() {
   } | null>(null);
 
   const { state: gen, start, startRevision, reconnect, restore, reset, cancel } = useGeneration();
-  const { setActive, updateStatus, updateEvents, updateMessages, active: activeGenStore,
-          setDraftMessages, clearDraftMessages, draftMessages,
-          analyzePhase, analyzeHistory, setAnalyzePhase, setAnalyzeHistory } = useGenerationStore();
-  const isStreaming  = gen.status === "running";
-  const isAnalyzing  = analyzePhase === "thinking";
+  const {
+    setActive,
+    updateStatus,
+    updateEvents,
+    updateMessages,
+    active: activeGenStore,
+    setDraftMessages,
+    clearDraftMessages,
+    draftMessages,
+    analyzePhase,
+    analyzeHistory,
+    setAnalyzePhase,
+    setAnalyzeHistory,
+  } = useGenerationStore();
+  const isStreaming = gen.status === "running";
+  const isAnalyzing = analyzePhase === "thinking";
   const [stuckWarning, setStuckWarning] = useState(false);
 
-  const activeAppQuery   = useApp(tenantId, selectedAppId);
-  const activeApp        = activeAppQuery.data ?? null;
+  const activeAppQuery = useApp(tenantId, selectedAppId);
+  const activeApp = activeAppQuery.data ?? null;
   const latestSessionQuery = useLatestSession(selectedAppId);
 
   // ── Reset all state when the user navigates to a different app's revise page ─
@@ -187,7 +223,11 @@ export function NewAppPage() {
         restore(session.jobId, "failed");
         setMessages([
           WELCOME,
-          { id: crypto.randomUUID(), role: "ai", text: "The previous generation appears to have stalled. Please try again." },
+          {
+            id: crypto.randomUUID(),
+            role: "ai",
+            text: "The previous generation appears to have stalled. Please try again.",
+          },
         ]);
         return;
       }
@@ -228,13 +268,19 @@ export function NewAppPage() {
       return;
     }
 
-    if (session.status !== "completed" && session.status !== "failed" && session.status !== "cancelled") return;
+    if (
+      session.status !== "completed" &&
+      session.status !== "failed" &&
+      session.status !== "cancelled"
+    )
+      return;
     if (!activeAppQuery.isSuccess) return;
 
     hasHydratedRef.current = true;
 
     const sb = session.bundle as SessionBundle | null | undefined;
-    if (session.jobId) restore(session.jobId, session.status as "completed" | "failed" | "cancelled");
+    if (session.jobId)
+      restore(session.jobId, session.status as "completed" | "failed" | "cancelled");
 
     // Priority 1: DB-persisted chat history (survives page reload, most durable).
     const dbMessages = session.chatMessages as ChatMessage[] | null | undefined;
@@ -259,8 +305,13 @@ export function NewAppPage() {
       explanation: sb.explanation?.merchantFacing,
       triggerTopics: sb.handlerModule.webhookTopics ?? session.webhookTopics,
       triggerType: sb.handlerModule.cronSchedule
-        ? "cron" : sb.adminUiModule ? "admin" : sb.widgetModule ? "widget" : "webhook",
-      hasWidget:  !!sb.widgetModule,
+        ? "cron"
+        : sb.adminUiModule
+          ? "admin"
+          : sb.widgetModule
+            ? "widget"
+            : "webhook",
+      hasWidget: !!sb.widgetModule,
       hasAdminUI: !!sb.adminUiModule,
     };
     const resumeMsgId = "resume-card";
@@ -272,10 +323,13 @@ export function NewAppPage() {
         id: resumeMsgId,
         role: "ai",
         type: "deploy-ready",
-        deployBundle: { ...bundleToDeployBundle(restoredBundle)!, appId: selectedAppId ?? undefined },
+        deployBundle: {
+          ...bundleToDeployBundle(restoredBundle)!,
+          appId: selectedAppId ?? undefined,
+        },
       },
     ]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latestSessionQuery.data, gen.status, activeApp?.status, activeAppQuery.isSuccess]);
 
   // Restore pre-generation messages from store when there's no session yet
@@ -296,7 +350,7 @@ export function NewAppPage() {
       });
       setMessages(restored);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAppId, latestSessionQuery.isSuccess, latestSessionQuery.data]);
 
   useEffect(() => {
@@ -305,7 +359,10 @@ export function NewAppPage() {
 
   // Watchdog: if generation runs for 5 minutes without new SSE events, show a stuck warning.
   useEffect(() => {
-    if (gen.status !== "running") { setStuckWarning(false); return; }
+    if (gen.status !== "running") {
+      setStuckWarning(false);
+      return;
+    }
     const timer = setTimeout(() => setStuckWarning(true), 5 * 60 * 1000);
     return () => clearTimeout(timer);
   }, [gen.status, gen.events.length]);
@@ -335,10 +392,12 @@ export function NewAppPage() {
   // Memoize serializable messages (actions stripped) to avoid re-serializing on every render.
   const serializableMessages = useMemo(
     () => messages.map(({ actions: _actions, ...msg }) => msg as Record<string, unknown>),
-    [messages]
+    [messages],
   );
   // Always hold the latest save state so the unmount flush can use it.
-  const pendingSaveRef = useRef<{ jobId: string; messages: Array<Record<string, unknown>> } | null>(null);
+  const pendingSaveRef = useRef<{ jobId: string; messages: Array<Record<string, unknown>> } | null>(
+    null,
+  );
   useEffect(() => {
     if (!gen.jobId || messages.length <= 1) return;
     pendingSaveRef.current = { jobId: gen.jobId, messages: serializableMessages };
@@ -361,41 +420,51 @@ export function NewAppPage() {
   // Sync global generation store
   useEffect(() => {
     if (gen.jobId && selectedAppId) {
-      setActive(selectedAppId, gen.jobId, gen.status as "idle" | "running" | "completed" | "failed");
+      setActive(
+        selectedAppId,
+        gen.jobId,
+        gen.status as "idle" | "running" | "completed" | "failed",
+      );
     } else if (gen.jobId) {
       updateStatus(gen.jobId, gen.status as "idle" | "running" | "completed" | "failed");
     }
 
     if (prevStatus.current === "running" && gen.status === "completed") {
       if (gen.jobId) {
-        api.generation.result(gen.jobId)
+        api.generation
+          .result(gen.jobId)
           .then((res) => {
             const newBundle = res.bundle
               ? normalizeBundleFromApi(res.bundle as Record<string, unknown>)
               : null;
             const genMsgId = genMsgIdRef.current;
-            setMessages((prev) => prev.map((m) =>
-              m.id === genMsgId
-                ? {
-                    id: m.id,
-                    role: "ai" as const,
-                    type: "deploy-ready" as const,
-                    deployBundle: {
-                      ...bundleToDeployBundle(newBundle)!,
-                      appId: selectedAppId ?? undefined,
-                    },
-                  }
-                : m
-            ));
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === genMsgId
+                  ? {
+                      id: m.id,
+                      role: "ai" as const,
+                      type: "deploy-ready" as const,
+                      deployBundle: {
+                        ...bundleToDeployBundle(newBundle)!,
+                        appId: selectedAppId ?? undefined,
+                      },
+                    }
+                  : m,
+              ),
+            );
           })
           .catch((err: unknown) => {
             const genMsgId = genMsgIdRef.current;
-            const errText = err instanceof Error ? err.message : "Failed to load generation result.";
-            setMessages((prev) => prev.map((m) =>
-              m.id === genMsgId
-                ? { id: m.id, role: "ai" as const, text: `Generation failed: ${errText}` }
-                : m
-            ));
+            const errText =
+              err instanceof Error ? err.message : "Failed to load generation result.";
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === genMsgId
+                  ? { id: m.id, role: "ai" as const, text: `Generation failed: ${errText}` }
+                  : m,
+              ),
+            );
           });
       }
     }
@@ -403,25 +472,37 @@ export function NewAppPage() {
     if (prevStatus.current === "running" && gen.status === "failed") {
       const genMsgId = genMsgIdRef.current;
       if (gen.error === "Cancelled") {
-        setMessages((prev) => prev.map((m) =>
-          m.id === genMsgId ? { id: m.id, role: "ai" as const, text: "Generation cancelled." } : m
-        ));
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === genMsgId
+              ? { id: m.id, role: "ai" as const, text: "Generation cancelled." }
+              : m,
+          ),
+        );
       } else {
-        const { text, upgradeHint, code } = parseGenError(gen.error ?? "Unknown error. Please try again.");
-        const blockedArchetype = code === "category_not_allowed"
-          ? lastStartParamsRef.current?.preComputedIntent?.appCategory as string | undefined
-          : undefined;
+        const { text, upgradeHint, code } = parseGenError(
+          gen.error ?? "Unknown error. Please try again.",
+        );
+        const blockedArchetype =
+          code === "category_not_allowed"
+            ? (lastStartParamsRef.current?.preComputedIntent?.appCategory as string | undefined)
+            : undefined;
 
         if (blockedArchetype && upgradeHint) {
-          setMessages((prev) => prev.map((m) =>
-            m.id === genMsgId
-              ? {
-                  id: m.id, role: "ai" as const,
-                  planBlock: { archetype: blockedArchetype as AppArchetype, upgradeHint },
-                  actions: [{ label: "Upgrade plan →", onClick: () => navigate("/app/settings") }],
-                }
-              : m
-          ));
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === genMsgId
+                ? {
+                    id: m.id,
+                    role: "ai" as const,
+                    planBlock: { archetype: blockedArchetype as AppArchetype, upgradeHint },
+                    actions: [
+                      { label: "Upgrade plan →", onClick: () => navigate("/app/settings") },
+                    ],
+                  }
+                : m,
+            ),
+          );
         } else {
           const actions = upgradeHint
             ? [{ label: "Upgrade plan →", onClick: () => navigate("/app/settings") }]
@@ -432,20 +513,32 @@ export function NewAppPage() {
                     const params = lastStartParamsRef.current;
                     if (!params || !genMsgIdRef.current) return;
                     const retryMsgId = genMsgIdRef.current;
-                    setMessages((prev) => prev.map((m) =>
-                      m.id === retryMsgId ? { id: m.id, role: "ai" as const, type: "generating" as const } : m
-                    ));
+                    setMessages((prev) =>
+                      prev.map((m) =>
+                        m.id === retryMsgId
+                          ? { id: m.id, role: "ai" as const, type: "generating" as const }
+                          : m,
+                      ),
+                    );
                     void start(params);
                   },
                 },
               ];
           // Keep the generating card in place — show failure inside it + actions below.
           // This preserves the step-by-step context so the user can see where it failed.
-          setMessages((prev) => prev.map((m) =>
-            m.id === genMsgId
-              ? { ...m, type: "generating" as const, text: upgradeHint ? text : `Generation failed: ${text}`, generatingFailed: true, actions }
-              : m
-          ));
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === genMsgId
+                ? {
+                    ...m,
+                    type: "generating" as const,
+                    text: upgradeHint ? text : `Generation failed: ${text}`,
+                    generatingFailed: true,
+                    actions,
+                  }
+                : m,
+            ),
+          );
         }
       }
     }
@@ -455,24 +548,117 @@ export function NewAppPage() {
 
   // ── Confirm action builder (shared between runAnalyze and hydration) ─────────
 
-  const buildConfirmActions = useCallback((
-    confirmMsgId: string,
-    confirmData: { intent: Record<string, unknown>; originalPrompt: string },
-    appIdForGen: string | null,
-  ) => {
-    const handleConfirm = () => {
+  const buildConfirmActions = useCallback(
+    (
+      confirmMsgId: string,
+      confirmData: { intent: Record<string, unknown>; originalPrompt: string },
+      appIdForGen: string | null,
+    ) => {
+      const handleConfirm = () => {
+        if (confirmingRef.current) return;
+        confirmingRef.current = true;
+        const suggestedName = appIdForGen
+          ? (apps.find((a) => a.id === appIdForGen)?.name ??
+            nameFromPrompt(confirmData.originalPrompt))
+          : nameFromPrompt(confirmData.originalPrompt);
+
+        setNameModal({
+          suggestedName,
+          onConfirm: async (chosenName: string) => {
+            setNameModal(null);
+            setMessages((prev) =>
+              prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m)),
+            );
+
+            let appId = appIdForGen;
+            if (!appId) {
+              const slug = slugFromName(chosenName);
+              try {
+                const newApp = await api.apps.create(tenantId!, { slug, name: chosenName });
+                appId = newApp.id;
+                setSelectedAppId(newApp.id);
+                await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+              } catch (err) {
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: crypto.randomUUID(),
+                    role: "ai",
+                    text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}`,
+                  },
+                ]);
+                setAnalyzePhase("idle");
+                confirmingRef.current = false;
+                return;
+              }
+            } else {
+              // Always rename — the draft app may not be in the cached apps list yet
+              await api.apps.rename(tenantId!, appId, chosenName).catch(() => null);
+              await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+              await queryClient.invalidateQueries({ queryKey: ["app", tenantId, appId] });
+            }
+
+            setAnalyzePhase("idle");
+            setAnalyzeHistory([]);
+
+            const genMsgId = crypto.randomUUID();
+            genMsgIdRef.current = genMsgId;
+            setMessages((prev) => [...prev, { id: genMsgId, role: "ai", type: "generating" }]);
+            // Clear draft messages — generation now takes over persistence
+            if (appId) clearDraftMessages(appId);
+            lastStartParamsRef.current = {
+              appId: appId!,
+              tenantId: tenantId!,
+              prompt: confirmData.originalPrompt,
+              preComputedIntent: confirmData.intent,
+            };
+            await start({
+              appId: appId!,
+              tenantId: tenantId!,
+              prompt: confirmData.originalPrompt,
+              preComputedIntent: confirmData.intent,
+            });
+          },
+        });
+      };
+
+      return [
+        { label: "Generate →", onClick: handleConfirm },
+        {
+          label: "Change request",
+          variant: "ghost" as const,
+          onClick: () => {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m)),
+            );
+            setAnalyzePhase("idle");
+            setAnalyzeHistory([]);
+            confirmingRef.current = false;
+          },
+        },
+      ];
+    },
+    [apps, tenantId, start, queryClient, clearDraftMessages, setAnalyzePhase, setAnalyzeHistory],
+  );
+
+  // ── Component-picker confirm handlers ─────────────────────────────────────
+
+  const handleConfirmGenerate = useCallback(
+    (msgId: string, updatedIntent: Record<string, unknown>, originalPrompt: string) => {
       if (confirmingRef.current) return;
       confirmingRef.current = true;
+
+      const appIdForGen = selectedAppId;
       const suggestedName = appIdForGen
-        ? (apps.find((a) => a.id === appIdForGen)?.name ?? nameFromPrompt(confirmData.originalPrompt))
-        : nameFromPrompt(confirmData.originalPrompt);
+        ? (apps.find((a) => a.id === appIdForGen)?.name ?? nameFromPrompt(originalPrompt))
+        : nameFromPrompt(originalPrompt);
 
       setNameModal({
         suggestedName,
         onConfirm: async (chosenName: string) => {
           setNameModal(null);
           setMessages((prev) =>
-            prev.map((m) => (m.id === confirmMsgId ? { ...m, actions: [] } : m))
+            prev.map((m) => (m.id === msgId ? { ...m, confirmData: undefined } : m)),
           );
 
           let appId = appIdForGen;
@@ -488,7 +674,7 @@ export function NewAppPage() {
                 ...prev,
                 {
                   id: crypto.randomUUID(),
-                  role: "ai",
+                  role: "ai" as const,
                   text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}`,
                 },
               ]);
@@ -497,7 +683,6 @@ export function NewAppPage() {
               return;
             }
           } else {
-            // Always rename — the draft app may not be in the cached apps list yet
             await api.apps.rename(tenantId!, appId, chosenName).catch(() => null);
             await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
             await queryClient.invalidateQueries({ queryKey: ["app", tenantId, appId] });
@@ -510,161 +695,108 @@ export function NewAppPage() {
           genMsgIdRef.current = genMsgId;
           setMessages((prev) => [
             ...prev,
-            { id: genMsgId, role: "ai", type: "generating" },
+            { id: genMsgId, role: "ai" as const, type: "generating" as const },
           ]);
-          // Clear draft messages — generation now takes over persistence
           if (appId) clearDraftMessages(appId);
-          lastStartParamsRef.current = { appId: appId!, tenantId: tenantId!, prompt: confirmData.originalPrompt, preComputedIntent: confirmData.intent };
-          await start({ appId: appId!, tenantId: tenantId!, prompt: confirmData.originalPrompt, preComputedIntent: confirmData.intent });
+          lastStartParamsRef.current = {
+            appId: appId!,
+            tenantId: tenantId!,
+            prompt: originalPrompt,
+            preComputedIntent: updatedIntent,
+          };
+          await start({
+            appId: appId!,
+            tenantId: tenantId!,
+            prompt: originalPrompt,
+            preComputedIntent: updatedIntent,
+          });
         },
       });
-    };
+    },
+    [
+      selectedAppId,
+      apps,
+      tenantId,
+      start,
+      queryClient,
+      clearDraftMessages,
+      setAnalyzePhase,
+      setAnalyzeHistory,
+    ],
+  );
 
-    return [
-      { label: "Generate →", onClick: handleConfirm },
-      {
-        label: "Change request",
-        variant: "ghost" as const,
-        onClick: () => {
-          setMessages((prev) => prev.map((m) =>
-            m.id === confirmMsgId ? { ...m, actions: [] } : m
-          ));
-          setAnalyzePhase("idle");
-          setAnalyzeHistory([]);
-          confirmingRef.current = false;
-        },
-      },
-    ];
-  }, [apps, tenantId, start, queryClient, clearDraftMessages, setAnalyzePhase, setAnalyzeHistory]);
-
-  // ── Component-picker confirm handlers ─────────────────────────────────────
-
-  const handleConfirmGenerate = useCallback((
-    msgId: string,
-    updatedIntent: Record<string, unknown>,
-    originalPrompt: string,
-  ) => {
-    if (confirmingRef.current) return;
-    confirmingRef.current = true;
-
-    const appIdForGen = selectedAppId;
-    const suggestedName = appIdForGen
-      ? (apps.find((a) => a.id === appIdForGen)?.name ?? nameFromPrompt(originalPrompt))
-      : nameFromPrompt(originalPrompt);
-
-    setNameModal({
-      suggestedName,
-      onConfirm: async (chosenName: string) => {
-        setNameModal(null);
-        setMessages((prev) =>
-          prev.map((m) => (m.id === msgId ? { ...m, confirmData: undefined } : m)),
-        );
-
-        let appId = appIdForGen;
-        if (!appId) {
-          const slug = slugFromName(chosenName);
-          try {
-            const newApp = await api.apps.create(tenantId!, { slug, name: chosenName });
-            appId = newApp.id;
-            setSelectedAppId(newApp.id);
-            await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
-          } catch (err) {
-            setMessages((prev) => [
-              ...prev,
-              { id: crypto.randomUUID(), role: "ai" as const, text: `Couldn't create the app: ${err instanceof Error ? err.message : "Unknown error"}` },
-            ]);
-            setAnalyzePhase("idle");
-            confirmingRef.current = false;
-            return;
-          }
-        } else {
-          await api.apps.rename(tenantId!, appId, chosenName).catch(() => null);
-          await queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
-          await queryClient.invalidateQueries({ queryKey: ["app", tenantId, appId] });
-        }
-
-        setAnalyzePhase("idle");
-        setAnalyzeHistory([]);
-
-        const genMsgId = crypto.randomUUID();
-        genMsgIdRef.current = genMsgId;
-        setMessages((prev) => [
-          ...prev,
-          { id: genMsgId, role: "ai" as const, type: "generating" as const },
-        ]);
-        if (appId) clearDraftMessages(appId);
-        lastStartParamsRef.current = { appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: updatedIntent };
-        await start({ appId: appId!, tenantId: tenantId!, prompt: originalPrompt, preComputedIntent: updatedIntent });
-      },
-    });
-  }, [selectedAppId, apps, tenantId, start, queryClient, clearDraftMessages, setAnalyzePhase, setAnalyzeHistory]);
-
-  const handleConfirmChangeRequest = useCallback((msgId: string) => {
-    setMessages((prev) => prev.map((m) =>
-      m.id === msgId ? { ...m, confirmData: undefined } : m,
-    ));
-    setAnalyzePhase("idle");
-    setAnalyzeHistory([]);
-    confirmingRef.current = false;
-  }, [setAnalyzePhase, setAnalyzeHistory]);
+  const handleConfirmChangeRequest = useCallback(
+    (msgId: string) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === msgId ? { ...m, confirmData: undefined } : m)),
+      );
+      setAnalyzePhase("idle");
+      setAnalyzeHistory([]);
+      confirmingRef.current = false;
+    },
+    [setAnalyzePhase, setAnalyzeHistory],
+  );
 
   // ── Analyze ──────────────────────────────────────────────────────────────────
 
-  const runAnalyze = useCallback(async (history: AnalyzeMessage[], appIdForGen: string | null) => {
-    confirmingRef.current = false;
-    setAnalyzePhase("thinking");
-    let result;
-    try {
-      result = await api.generation.analyze(history);
-    } catch (err) {
-      setAnalyzePhase("idle");
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "ai",
-          text: `Couldn't analyze your request: ${err instanceof Error ? err.message : "Unknown error"}`,
-        },
-      ]);
-      return;
-    }
+  const runAnalyze = useCallback(
+    async (history: AnalyzeMessage[], appIdForGen: string | null) => {
+      confirmingRef.current = false;
+      setAnalyzePhase("thinking");
+      let result;
+      try {
+        result = await api.generation.analyze(history);
+      } catch (err) {
+        setAnalyzePhase("idle");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "ai",
+            text: `Couldn't analyze your request: ${err instanceof Error ? err.message : "Unknown error"}`,
+          },
+        ]);
+        return;
+      }
 
-    if (result.status === "needs_clarification") {
-      const question    = result.question    ?? "Could you tell me more about what you want to build?";
-      const suggestions = result.suggestions ?? [];
-      setAnalyzeHistory([...history, { role: "assistant", content: question }]);
-      setAnalyzePhase("idle");
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "ai",
-          text: question,
-          type: "clarifying" as const,
-          clarifyingData: { suggestions },
-        },
-      ]);
-    } else {
-      const summary = result.summary ?? "I understand your request. Ready to generate.";
-      const intent  = result.intent ?? {};
-      const confirmMsgId = crypto.randomUUID();
-      const originalPrompt = history[0]?.content ?? "New App";
-      const confirmData = { intent, originalPrompt };
-      setAnalyzePhase("awaiting_confirm");
+      if (result.status === "needs_clarification") {
+        const question = result.question ?? "Could you tell me more about what you want to build?";
+        const suggestions = result.suggestions ?? [];
+        setAnalyzeHistory([...history, { role: "assistant", content: question }]);
+        setAnalyzePhase("idle");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "ai",
+            text: question,
+            type: "clarifying" as const,
+            clarifyingData: { suggestions },
+          },
+        ]);
+      } else {
+        const summary = result.summary ?? "I understand your request. Ready to generate.";
+        const intent = result.intent ?? {};
+        const confirmMsgId = crypto.randomUUID();
+        const originalPrompt = history[0]?.content ?? "New App";
+        const confirmData = { intent, originalPrompt };
+        setAnalyzePhase("awaiting_confirm");
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: confirmMsgId,
-          role: "ai",
-          text: summary,
-          type: "confirm" as const,
-          confirmData,
-          actions: buildConfirmActions(confirmMsgId, confirmData, appIdForGen),
-        },
-      ]);
-    }
-  }, [tenantId, appsQuery, start, buildConfirmActions, setAnalyzePhase, setAnalyzeHistory]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: confirmMsgId,
+            role: "ai",
+            text: summary,
+            type: "confirm" as const,
+            confirmData,
+            actions: buildConfirmActions(confirmMsgId, confirmData, appIdForGen),
+          },
+        ]);
+      }
+    },
+    [tenantId, appsQuery, start, buildConfirmActions, setAnalyzePhase, setAnalyzeHistory],
+  );
 
   // ── Send ─────────────────────────────────────────────────────────────────────
 
@@ -699,11 +831,17 @@ export function NewAppPage() {
       draftCreatedRef.current = true;
       try {
         // Use "..." as placeholder — real name is set after the name modal confirms
-        const newApp = await api.apps.create(tenantId, { slug: slugFromName("draft-" + Date.now()), name: "..." });
+        const newApp = await api.apps.create(tenantId, {
+          slug: slugFromName("draft-" + Date.now()),
+          name: "...",
+        });
         appIdForAnalyze = newApp.id;
         setSelectedAppId(newApp.id);
         // Immediately prepend to cache so the sidebar updates synchronously, then refetch.
-        queryClient.setQueryData<App[]>(["apps", tenantId], (old) => [newApp as App, ...(old ?? [])]);
+        queryClient.setQueryData<App[]>(["apps", tenantId], (old) => [
+          newApp as App,
+          ...(old ?? []),
+        ]);
         void queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
       } catch {
         draftCreatedRef.current = false; // allow retry if creation failed
@@ -712,33 +850,44 @@ export function NewAppPage() {
 
     await runAnalyze(newHistory, appIdForAnalyze);
   }, [
-    input, isStreaming, isAnalyzing, tenantId, selectedAppId,
-    gen.jobId, gen.status, analyzeHistory, analyzePhase,
-    startRevision, runAnalyze,
+    input,
+    isStreaming,
+    isAnalyzing,
+    tenantId,
+    selectedAppId,
+    gen.jobId,
+    gen.status,
+    analyzeHistory,
+    analyzePhase,
+    startRevision,
+    runAnalyze,
   ]);
 
   const handleStop = useCallback(() => {
     if (gen.jobId) void cancel(gen.jobId);
   }, [gen.jobId, cancel]);
 
-  const handleClarifyAnswer = useCallback((text: string) => {
-    // Mark the last unanswered clarifying message as answered
-    setMessages((prev) => {
-      const lastClarifyIdx = [...prev].reverse().findIndex(
-        (m) => m.type === "clarifying" && !m.clarifyingData?.answeredText
-      );
-      if (lastClarifyIdx === -1) return prev;
-      const idx = prev.length - 1 - lastClarifyIdx;
-      return prev.map((m, i) =>
-        i === idx ? { ...m, clarifyingData: { ...m.clarifyingData!, answeredText: text } } : m
-      );
-    });
-    // Add user message and continue the analyze loop
-    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", text }]);
-    const newHistory: AnalyzeMessage[] = [...analyzeHistory, { role: "user", content: text }];
-    setAnalyzeHistory(newHistory);
-    void runAnalyze(newHistory, selectedAppId);
-  }, [analyzeHistory, runAnalyze, selectedAppId]);
+  const handleClarifyAnswer = useCallback(
+    (text: string) => {
+      // Mark the last unanswered clarifying message as answered
+      setMessages((prev) => {
+        const lastClarifyIdx = [...prev]
+          .reverse()
+          .findIndex((m) => m.type === "clarifying" && !m.clarifyingData?.answeredText);
+        if (lastClarifyIdx === -1) return prev;
+        const idx = prev.length - 1 - lastClarifyIdx;
+        return prev.map((m, i) =>
+          i === idx ? { ...m, clarifyingData: { ...m.clarifyingData!, answeredText: text } } : m,
+        );
+      });
+      // Add user message and continue the analyze loop
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", text }]);
+      const newHistory: AnalyzeMessage[] = [...analyzeHistory, { role: "user", content: text }];
+      setAnalyzeHistory(newHistory);
+      void runAnalyze(newHistory, selectedAppId);
+    },
+    [analyzeHistory, runAnalyze, selectedAppId],
+  );
 
   const chatPlaceholder = isStreaming
     ? "Generating your app…"
@@ -760,17 +909,19 @@ export function NewAppPage() {
         <NameAppModal
           initialName={nameModal.suggestedName}
           onConfirm={nameModal.onConfirm}
-          onCancel={() => { setNameModal(null); confirmingRef.current = false; }}
+          onCancel={() => {
+            setNameModal(null);
+            confirmingRef.current = false;
+          }}
         />
       )}
       <TopBar
         title={activeApp ? activeApp.name : "New App"}
         subtitle={
-          activeApp && (
-            gen.status === "completed" ||
+          activeApp &&
+          (gen.status === "completed" ||
             latestSessionQuery.data?.status === "completed" ||
-            (gen.status === "running" && activeApp.status !== "draft")
-          )
+            (gen.status === "running" && activeApp.status !== "draft"))
             ? "Revision"
             : "New app"
         }

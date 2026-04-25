@@ -4,11 +4,7 @@ export interface ErrorBody {
   details?: unknown;
 }
 
-export function errorResponse(
-  code: string,
-  message: string,
-  details?: unknown,
-): ErrorBody {
+export function errorResponse(code: string, message: string, details?: unknown): ErrorBody {
   const body: ErrorBody = { error: message, code };
   if (details !== undefined) body.details = details;
   return body;

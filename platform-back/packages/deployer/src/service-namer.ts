@@ -3,13 +3,9 @@
 // — the SA name format is also baked into apps.handler_sa_email which
 // platform-back's /services/* routes look up.
 
-const GCP_PROJECT =
-  process.env["GCP_PROJECT"] ??
-  process.env["GOOGLE_CLOUD_PROJECT"] ??
-  "local";
+const GCP_PROJECT = process.env["GCP_PROJECT"] ?? process.env["GOOGLE_CLOUD_PROJECT"] ?? "local";
 const GCP_REGION = process.env["GCP_REGION"] ?? "us-central1";
-const DOCKER_REGISTRY =
-  process.env["DOCKER_REGISTRY"] ?? `gcr.io/${GCP_PROJECT}`;
+const DOCKER_REGISTRY = process.env["DOCKER_REGISTRY"] ?? `gcr.io/${GCP_PROJECT}`;
 
 // ─── Cloud Run service ───────────────────────────────────────────────────────
 //
@@ -72,15 +68,11 @@ export function handlerSaLocalPart(shopDomain: string, n: number): string {
   }
   const prefix = sanitizeShopPrefix(shopDomain);
   if (prefix.length === 0) {
-    throw new Error(
-      `handlerSaLocalPart: shop "${shopDomain}" produced an empty prefix`,
-    );
+    throw new Error(`handlerSaLocalPart: shop "${shopDomain}" produced an empty prefix`);
   }
   const local = `${SA_PREFIX}${prefix}-${n}`;
   if (local.length > SA_LOCAL_MAX) {
-    throw new Error(
-      `handlerSaLocalPart: name "${local}" exceeds ${SA_LOCAL_MAX} chars`,
-    );
+    throw new Error(`handlerSaLocalPart: name "${local}" exceeds ${SA_LOCAL_MAX} chars`);
   }
   return local;
 }

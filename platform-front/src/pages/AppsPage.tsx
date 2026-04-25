@@ -9,7 +9,7 @@ import { ArchetypePills } from "@/components/ui/ArchetypePills";
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 3_600_000)  return `${Math.round(diff / 60_000)}m ago`;
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
   return `${Math.round(diff / 86_400_000)}d ago`;
 }
@@ -31,18 +31,29 @@ function AppCard({
   onOpen,
   onRevise,
 }: {
-  app: { id: string; name: string; slug: string; status: string; appArchetype: string; updatedAt: string };
+  app: {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+    appArchetype: string;
+    updatedAt: string;
+  };
   isGenerating: boolean;
   onOpen: () => void;
   onRevise: (e: React.MouseEvent) => void;
 }) {
-  const initials = app.name.split(" ").slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
+  const initials =
+    app.name
+      .split(" ")
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? "")
+      .join("") || "?";
   const seed = app.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
   const gradient = AVATAR_GRADIENTS[seed % AVATAR_GRADIENTS.length];
 
   return (
     <div className="group bg-white/[0.03] rounded-xl overflow-hidden hover:bg-white/[0.05] transition-colors duration-150 flex flex-col">
-
       {/* Clickable body */}
       <button
         type="button"
@@ -51,7 +62,9 @@ function AppCard({
       >
         {/* Avatar + name + status */}
         <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${gradient} flex items-center justify-center shrink-0`}>
+          <div
+            className={`w-10 h-10 rounded-xl bg-gradient-to-br ${gradient} flex items-center justify-center shrink-0`}
+          >
             <span className="text-white text-[13px] font-bold">{initials}</span>
           </div>
           <div className="flex-1 min-w-0">
@@ -65,10 +78,11 @@ function AppCard({
 
         {/* Pills — flex-nowrap so they never wrap to a second line */}
         <div className="mt-4 flex items-center gap-1.5 flex-nowrap overflow-hidden">
-          {isGenerating
-            ? <span className="text-[11px] text-accent animate-pulse-subtle">Building…</span>
-            : <ArchetypePills archetype={app.appArchetype as never} />
-          }
+          {isGenerating ? (
+            <span className="text-[11px] text-accent animate-pulse-subtle">Building…</span>
+          ) : (
+            <ArchetypePills archetype={app.appArchetype as never} />
+          )}
         </div>
       </button>
 
@@ -81,7 +95,12 @@ function AppCard({
             onClick={onRevise}
             className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium text-accent hover:bg-accent/10 border-0 cursor-pointer transition-colors bg-transparent"
           >
-            <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+            <span
+              className="material-symbols-outlined text-[12px]"
+              style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+            >
+              auto_awesome
+            </span>
             Revise
           </button>
           <button
@@ -110,7 +129,6 @@ export function AppsPage() {
       <TopBar title="My Apps" />
 
       <main className="flex-1 overflow-y-auto p-7">
-
         {/* Loading skeleton */}
         {appsQuery.isLoading && (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
@@ -138,11 +156,18 @@ export function AppsPage() {
         {!appsQuery.isLoading && !appsQuery.isError && apps.length === 0 && (
           <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
             <div className="w-14 h-14 rounded-2xl bg-white/[0.04] flex items-center justify-center">
-              <span className="material-symbols-outlined text-faint text-[28px]" style={{ fontVariationSettings: "'wght' 200" }}>layers</span>
+              <span
+                className="material-symbols-outlined text-faint text-[28px]"
+                style={{ fontVariationSettings: "'wght' 200" }}
+              >
+                layers
+              </span>
             </div>
             <div>
               <p className="text-sm font-semibold text-faint">No apps yet</p>
-              <p className="text-[12px] text-faint mt-1 opacity-60">Describe your first feature and Ton will build it.</p>
+              <p className="text-[12px] text-faint mt-1 opacity-60">
+                Describe your first feature and Ton will build it.
+              </p>
             </div>
             <Button variant="primary" onClick={() => navigate("/app/new")}>
               Build your first app
@@ -161,7 +186,10 @@ export function AppsPage() {
                   app={app}
                   isGenerating={isGenerating}
                   onOpen={() => navigate(`/app/apps/${app.id}`)}
-                  onRevise={(e) => { e.stopPropagation(); navigate(`/app/apps/${app.id}/revise`); }}
+                  onRevise={(e) => {
+                    e.stopPropagation();
+                    navigate(`/app/apps/${app.id}/revise`);
+                  }}
                 />
               );
             })}
@@ -173,10 +201,14 @@ export function AppsPage() {
               className="group flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-white/[0.09] hover:border-accent/40 hover:bg-accent/[0.04] transition-all duration-200 cursor-pointer bg-transparent min-h-[130px]"
             >
               <div className="w-10 h-10 rounded-xl bg-white/[0.04] group-hover:bg-accent/12 flex items-center justify-center transition-colors duration-200">
-                <span className="material-symbols-outlined text-faint group-hover:text-accent text-[22px] transition-colors duration-200">add</span>
+                <span className="material-symbols-outlined text-faint group-hover:text-accent text-[22px] transition-colors duration-200">
+                  add
+                </span>
               </div>
               <div className="text-center">
-                <p className="text-[13px] font-semibold text-faint group-hover:text-ink transition-colors duration-200">New app</p>
+                <p className="text-[13px] font-semibold text-faint group-hover:text-ink transition-colors duration-200">
+                  New app
+                </p>
                 <p className="text-[11px] text-faint/60 mt-0.5">Build with Ton</p>
               </div>
             </button>

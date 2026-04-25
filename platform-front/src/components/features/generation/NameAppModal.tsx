@@ -25,7 +25,9 @@ export function NameAppModal({ initialName, onConfirm, onCancel }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-surface rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6">
         <h2 className="text-[15px] font-bold text-ink mb-1">Name your app</h2>
-        <p className="text-[12px] text-faint mb-5">You can change this later from the app detail page.</p>
+        <p className="text-[12px] text-faint mb-5">
+          You can change this later from the app detail page.
+        </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <input

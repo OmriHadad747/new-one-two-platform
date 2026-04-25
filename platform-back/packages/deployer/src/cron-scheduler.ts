@@ -86,9 +86,7 @@ export interface ScheduleAppCronInput {
  * pg_cron doesn't need a search_path or role impersonation to reach the
  * right rows.
  */
-export async function scheduleAppCron(
-  input: ScheduleAppCronInput,
-): Promise<void> {
+export async function scheduleAppCron(input: ScheduleAppCronInput): Promise<void> {
   if (!TENANT_SCHEMA_RE.test(input.tenantSchema)) {
     throw new Error(
       `scheduleAppCron: refusing schema "${input.tenantSchema}" — must match ${TENANT_SCHEMA_RE}`,
@@ -161,10 +159,7 @@ export async function unscheduleAppCron(
       SELECT cron.unschedule(${jobName}) AS unschedule
     `;
     const removed = rows[0]?.unschedule === true;
-    logger.info(
-      { appId: input.appId, jobName, removed },
-      "pg_cron schedule removal attempted",
-    );
+    logger.info({ appId: input.appId, jobName, removed }, "pg_cron schedule removal attempted");
     return { removed };
   } finally {
     await sql.end({ timeout: 5 });

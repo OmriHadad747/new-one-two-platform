@@ -44,11 +44,7 @@ export interface ForwardResult {
 export class ForwardError extends Error {
   public readonly kind: "timeout" | "fetch" | "auth";
 
-  constructor(
-    kind: "timeout" | "fetch" | "auth",
-    message: string,
-    cause?: unknown,
-  ) {
+  constructor(kind: "timeout" | "fetch" | "auth", message: string, cause?: unknown) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "ForwardError";
     this.kind = kind;
@@ -57,9 +53,7 @@ export class ForwardError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 25_000;
 
-export async function forwardToHandler(
-  input: ForwardInput,
-): Promise<ForwardResult> {
+export async function forwardToHandler(input: ForwardInput): Promise<ForwardResult> {
   const { targetUrl, method, body, contentType, ctx, log } = input;
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -71,11 +65,7 @@ export async function forwardToHandler(
     authHeader = await getHandlerAuthHeader(targetUrl);
   } catch (err) {
     log.error({ err, targetUrl }, "Failed to mint Cloud Run ID token");
-    throw new ForwardError(
-      "auth",
-      "Could not obtain Cloud Run ID token for handler",
-      err,
-    );
+    throw new ForwardError("auth", "Could not obtain Cloud Run ID token for handler", err);
   }
 
   const headers: Record<string, string> = { ...(input.extraHeaders ?? {}) };
@@ -98,11 +88,7 @@ export async function forwardToHandler(
     res = await fetch(targetUrl, init);
   } catch (err) {
     if (ac.signal.aborted) {
-      throw new ForwardError(
-        "timeout",
-        `Handler did not respond within ${timeoutMs}ms`,
-        err,
-      );
+      throw new ForwardError("timeout", `Handler did not respond within ${timeoutMs}ms`, err);
     }
     throw new ForwardError("fetch", "Handler fetch failed", err);
   } finally {

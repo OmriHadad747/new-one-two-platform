@@ -1,11 +1,7 @@
 import { sql } from "@platform-back/db";
 import { logger } from "@platform-back/logger";
 import { createServiceAccount, grantCloudRunInvoker } from "./iam-ops.js";
-import {
-  handlerSaEmail,
-  handlerSaLocalPart,
-  GCP_PROJECT_VALUE,
-} from "./service-namer.js";
+import { handlerSaEmail, handlerSaLocalPart, GCP_PROJECT_VALUE } from "./service-namer.js";
 import { writeHandlerSaEmail } from "./db-writer.js";
 
 // High-level SA provisioning. Two entry points, both idempotent:
@@ -29,9 +25,7 @@ const IS_LOCAL = process.env["NODE_ENV"] === "development";
  * The DB index on apps.handler_sa_email makes this O(log n) lookup +
  * filter; the count is bounded by app count per shop (small).
  */
-export async function nextHandlerSaCounter(
-  shopDomain: string,
-): Promise<number> {
+export async function nextHandlerSaCounter(shopDomain: string): Promise<number> {
   // Match on the SA local-part prefix so we count by the canonical shop
   // segment, not by arbitrary substring.
   const prefix = handlerSaLocalPart(shopDomain, 1).replace(/-1$/, "-");
@@ -133,9 +127,7 @@ export async function provisionHandlerSa(
  *   - In dev (NODE_ENV=development): no-op, since local platform-back
  *     calls handlers without minting a real ID token.
  */
-export async function grantPlatformBackInvokerOnHandler(
-  appId: string,
-): Promise<void> {
+export async function grantPlatformBackInvokerOnHandler(appId: string): Promise<void> {
   if (IS_LOCAL) {
     logger.info(
       { appId },

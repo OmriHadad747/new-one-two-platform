@@ -21,9 +21,7 @@ import { verifyCallerIdToken } from "../../lib/verify-id-token.js";
 
 // ─── Plugin ─────────────────────────────────────────────────────────────────
 
-export async function shopifyServiceRoutes(
-  app: FastifyInstance,
-): Promise<void> {
+export async function shopifyServiceRoutes(app: FastifyInstance): Promise<void> {
   app.post("/access-token", accessTokenHandler);
   app.post("/storefront-access-token", storefrontAccessTokenHandler);
 }
@@ -38,9 +36,7 @@ async function accessTokenHandler(
   const verified = await verifyCallerIdToken(request.headers.authorization);
   if (!verified.ok) {
     const status = verified.reason === "missing_token" ? 401 : 403;
-    return reply
-      .code(status)
-      .send(errorResponse(ErrorCode.Unauthorized, verified.reason));
+    return reply.code(status).send(errorResponse(ErrorCode.Unauthorized, verified.reason));
   }
 
   // 2. Map SA email → (tenantId, appId).
@@ -53,10 +49,7 @@ async function accessTokenHandler(
     return reply
       .code(403)
       .send(
-        errorResponse(
-          ErrorCode.Forbidden,
-          "Caller service account is not bound to an active app",
-        ),
+        errorResponse(ErrorCode.Forbidden, "Caller service account is not bound to an active app"),
       );
   }
 
@@ -70,10 +63,7 @@ async function accessTokenHandler(
     return reply
       .code(404)
       .send(
-        errorResponse(
-          ErrorCode.NotFound,
-          "No Shopify access token registered for this tenant",
-        ),
+        errorResponse(ErrorCode.NotFound, "No Shopify access token registered for this tenant"),
       );
   }
 
@@ -91,12 +81,7 @@ async function accessTokenHandler(
     );
     return reply
       .code(500)
-      .send(
-        errorResponse(
-          ErrorCode.Internal,
-          "Failed to fetch access token from secret store",
-        ),
-      );
+      .send(errorResponse(ErrorCode.Internal, "Failed to fetch access token from secret store"));
   }
 }
 
@@ -109,9 +94,7 @@ async function storefrontAccessTokenHandler(
   const verified = await verifyCallerIdToken(request.headers.authorization);
   if (!verified.ok) {
     const status = verified.reason === "missing_token" ? 401 : 403;
-    return reply
-      .code(status)
-      .send(errorResponse(ErrorCode.Unauthorized, verified.reason));
+    return reply.code(status).send(errorResponse(ErrorCode.Unauthorized, verified.reason));
   }
 
   const identity = await resolveAppFromSaEmail(verified.caller.email);
@@ -123,10 +106,7 @@ async function storefrontAccessTokenHandler(
     return reply
       .code(403)
       .send(
-        errorResponse(
-          ErrorCode.Forbidden,
-          "Caller service account is not bound to an active app",
-        ),
+        errorResponse(ErrorCode.Forbidden, "Caller service account is not bound to an active app"),
       );
   }
 

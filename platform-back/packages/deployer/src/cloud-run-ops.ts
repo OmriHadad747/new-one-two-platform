@@ -76,9 +76,7 @@ function buildServiceSpec(input: CloudRunDeployInput) {
   };
 }
 
-export async function deployToCloudRun(
-  input: CloudRunDeployInput,
-): Promise<CloudRunDeployResult> {
+export async function deployToCloudRun(input: CloudRunDeployInput): Promise<CloudRunDeployResult> {
   const serviceName = cloudRunServiceName(input.appId);
   const parent = cloudRunParent();
   const spec = buildServiceSpec(input);
@@ -103,10 +101,7 @@ export async function deployToCloudRun(
     });
     const svc = await (operation as { promise(): Promise<{ uri?: string }> }).promise();
     serviceUrl = svc.uri ?? "";
-    logger.info(
-      { appId: input.appId, serviceUrl },
-      "Cloud Run service updated",
-    );
+    logger.info({ appId: input.appId, serviceUrl }, "Cloud Run service updated");
   } catch (err: unknown) {
     const code = (err as { code?: number }).code;
     if (code !== 5 /* NOT_FOUND */) throw err;
@@ -119,16 +114,11 @@ export async function deployToCloudRun(
     });
     const svc = await (operation as { promise(): Promise<{ uri?: string }> }).promise();
     serviceUrl = svc.uri ?? "";
-    logger.info(
-      { appId: input.appId, serviceUrl },
-      "Cloud Run service created",
-    );
+    logger.info({ appId: input.appId, serviceUrl }, "Cloud Run service created");
   }
 
   if (!serviceUrl) {
-    throw new Error(
-      `Cloud Run service for app ${input.appId} has no URI after deployment`,
-    );
+    throw new Error(`Cloud Run service for app ${input.appId} has no URI after deployment`);
   }
 
   return { functionUrl: serviceUrl, serviceName };
@@ -145,10 +135,7 @@ export async function deleteCloudRunService(appId: string): Promise<void> {
   } catch (err: unknown) {
     const code = (err as { code?: number }).code;
     if (code === 5 /* NOT_FOUND */) {
-      logger.info(
-        { appId },
-        "Cloud Run service already gone — skipping delete",
-      );
+      logger.info({ appId }, "Cloud Run service already gone — skipping delete");
       return;
     }
     throw err;

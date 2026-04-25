@@ -27,9 +27,7 @@ export interface RunHandlerLocallyResult {
   functionUrl: string;
 }
 
-export function runHandlerLocally(
-  input: RunHandlerLocallyInput,
-): RunHandlerLocallyResult {
+export function runHandlerLocally(input: RunHandlerLocallyInput): RunHandlerLocallyResult {
   const containerName = `handler-${input.appId.slice(0, 8)}`;
 
   // Stop + remove any existing container for this app (idempotent).
@@ -48,10 +46,14 @@ export function runHandlerLocally(
   const result = spawnSync(
     "docker",
     [
-      "run", "-d",
-      "--name", containerName,
-      "--network", NETWORK,
-      "-p", `${PORT}:8080`,
+      "run",
+      "-d",
+      "--name",
+      containerName,
+      "--network",
+      NETWORK,
+      "-p",
+      `${PORT}:8080`,
       ...envArgs,
       input.imageName,
     ],
@@ -59,9 +61,7 @@ export function runHandlerLocally(
   );
 
   if (result.status !== 0) {
-    throw new Error(
-      `docker run failed: ${result.stderr?.toString().trim() ?? "unknown error"}`,
-    );
+    throw new Error(`docker run failed: ${result.stderr?.toString().trim() ?? "unknown error"}`);
   }
 
   const functionUrl = `http://localhost:${PORT}`;

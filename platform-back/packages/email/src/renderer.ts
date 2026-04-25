@@ -37,15 +37,12 @@ export function substituteVariables(
   opts: { escape?: boolean } = {},
 ): string {
   const escape = opts.escape ?? true;
-  return template.replace(
-    /\{\{\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\}\}/g,
-    (_, key) => {
-      const raw = variables[key];
-      if (raw === undefined || raw === null) return "";
-      const str = String(raw);
-      return escape ? escapeHtml(str) : str;
-    },
-  );
+  return template.replace(/\{\{\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\}\}/g, (_, key) => {
+    const raw = variables[key];
+    if (raw === undefined || raw === null) return "";
+    const str = String(raw);
+    return escape ? escapeHtml(str) : str;
+  });
 }
 
 function escapeHtml(s: string): string {

@@ -150,20 +150,15 @@ export function validateMigrationSql(migrationSql: string): void {
  * a DO block that the validator would reject.
  */
 export function makeIdempotent(sql: string): string {
-  return (
-    sql
-      .replace(
-        /\bCREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS\s)/gi,
-        "CREATE TABLE IF NOT EXISTS ",
-      )
-      .replace(
-        /\bCREATE\s+(UNIQUE\s+)?INDEX\s+(?!IF\s+NOT\s+EXISTS\s)/gi,
-        (_, unique) => `CREATE ${unique ?? ""}INDEX IF NOT EXISTS `,
-      )
-      .replace(
-        /(CREATE\s+POLICY\b[^;]+;)/gi,
-        (match) =>
-          `DO $migration$ BEGIN ${match} EXCEPTION WHEN duplicate_object THEN NULL; END $migration$;`,
-      )
-  );
+  return sql
+    .replace(/\bCREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS\s)/gi, "CREATE TABLE IF NOT EXISTS ")
+    .replace(
+      /\bCREATE\s+(UNIQUE\s+)?INDEX\s+(?!IF\s+NOT\s+EXISTS\s)/gi,
+      (_, unique) => `CREATE ${unique ?? ""}INDEX IF NOT EXISTS `,
+    )
+    .replace(
+      /(CREATE\s+POLICY\b[^;]+;)/gi,
+      (match) =>
+        `DO $migration$ BEGIN ${match} EXCEPTION WHEN duplicate_object THEN NULL; END $migration$;`,
+    );
 }

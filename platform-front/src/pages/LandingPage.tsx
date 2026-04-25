@@ -45,7 +45,6 @@ export function LandingPage() {
 
   return (
     <div className="min-h-screen bg-base text-ink overflow-x-hidden">
-
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="fixed top-0 inset-x-0 z-50 flex items-center justify-between px-8 h-16 bg-base/80 backdrop-blur-xl border-b border-white/[0.04]">
         <div className="flex items-center gap-6">
@@ -68,28 +67,27 @@ export function LandingPage() {
             </span>
           </button>
           {isConnected ? (
-          <button
-            type="button"
-            onClick={() => navigate("/app")}
-            className="kinetic-btn bg-accent text-white px-5 py-1.5 rounded-full font-bold text-sm transition-all duration-200 border-0 cursor-pointer"
-          >
-            Open Dashboard →
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => navigate("/install")}
-            className="bg-accent/10 border border-accent/30 text-accent px-5 py-1.5 rounded-full font-bold text-sm hover:bg-accent/20 transition-colors border-0 cursor-pointer"
-          >
-            Get Started
-          </button>
+            <button
+              type="button"
+              onClick={() => navigate("/app")}
+              className="kinetic-btn bg-accent text-white px-5 py-1.5 rounded-full font-bold text-sm transition-all duration-200 border-0 cursor-pointer"
+            >
+              Open Dashboard →
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => navigate("/install")}
+              className="bg-accent/10 border border-accent/30 text-accent px-5 py-1.5 rounded-full font-bold text-sm hover:bg-accent/20 transition-colors border-0 cursor-pointer"
+            >
+              Get Started
+            </button>
           )}
         </div>
       </header>
 
       {/* ── Main ───────────────────────────────────────────────────────────── */}
       <main className="pt-24 px-8 max-w-6xl mx-auto">
-
         {/* ── Hero ─────────────────────────────────────────────────────────── */}
         <section className="flex flex-col lg:flex-row items-center gap-16 py-20 relative">
           <div className="hero-glow -top-24 -left-24" />
@@ -110,8 +108,8 @@ export function LandingPage() {
             </h1>
 
             <p className="text-muted text-lg leading-relaxed max-w-md">
-              Describe what you want. New One Two generates the widget, backend handler,
-              and database migration — then deploys it to your store.
+              Describe what you want. New One Two generates the widget, backend handler, and
+              database migration — then deploys it to your store.
             </p>
 
             <button
@@ -143,7 +141,8 @@ export function LandingPage() {
                 <div className="flex justify-end">
                   <div className="bg-accent/15 rounded-lg rounded-tr-sm px-4 py-3 max-w-[80%]">
                     <p className="text-sm text-ink leading-relaxed">
-                      "Build a back-in-stock notifier with email capture for my luxury apparel store."
+                      "Build a back-in-stock notifier with email capture for my luxury apparel
+                      store."
                     </p>
                   </div>
                 </div>
@@ -192,8 +191,12 @@ export function LandingPage() {
                 key={f.title}
                 className="bg-surface relative overflow-hidden group rounded-xl p-7 flex flex-col gap-5 hover:bg-white/[0.04] transition-colors"
               >
-                <div className={`absolute left-0 top-0 w-[3px] h-full ${f.accentBar} opacity-50 group-hover:opacity-100 transition-opacity`} />
-                <div className={`w-10 h-10 rounded-lg ${f.iconBg} flex items-center justify-center ${f.iconColor}`}>
+                <div
+                  className={`absolute left-0 top-0 w-[3px] h-full ${f.accentBar} opacity-50 group-hover:opacity-100 transition-opacity`}
+                />
+                <div
+                  className={`w-10 h-10 rounded-lg ${f.iconBg} flex items-center justify-center ${f.iconColor}`}
+                >
                   <span className="material-symbols-outlined text-[22px]">{f.icon}</span>
                 </div>
                 <div>
@@ -208,7 +211,6 @@ export function LandingPage() {
         {/* ── Meet Ton ─────────────────────────────────────────────────────── */}
         <section className="py-16 border-t border-white/[0.04]">
           <div className="flex flex-col lg:flex-row gap-12 items-start">
-
             {/* Left — headline */}
             <div className="lg:w-2/5 space-y-4 lg:sticky lg:top-24">
               <span className="inline-flex items-center gap-2 px-3 py-1 bg-accent/10 rounded-full text-[10px] font-bold text-accent tracking-widest uppercase">
@@ -216,10 +218,14 @@ export function LandingPage() {
                 The engine inside
               </span>
               <h2 className="text-3xl font-bold text-ink leading-tight">
-                Meet <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-teal">Ton.</span>
+                Meet{" "}
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-teal">
+                  Ton.
+                </span>
               </h2>
               <p className="text-muted text-sm leading-relaxed">
-                Ton is the AI at the core of New One Two. Not a generic code assistant — a Shopify specialist that plans, builds, reviews, and ships, all in one shot.
+                Ton is the AI at the core of New One Two. Not a generic code assistant — a Shopify
+                specialist that plans, builds, reviews, and ships, all in one shot.
               </p>
             </div>
 
@@ -255,9 +261,19 @@ export function LandingPage() {
                   desc: "When something is beyond the platform's current scope, Ton says so upfront instead of generating code that won't work.",
                 },
               ].map(({ icon, color, bg, title, desc }) => (
-                <div key={title} className="bg-surface rounded-xl p-5 flex flex-col gap-3 hover:bg-white/[0.04] transition-colors">
-                  <div className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center ${color} shrink-0`}>
-                    <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>{icon}</span>
+                <div
+                  key={title}
+                  className="bg-surface rounded-xl p-5 flex flex-col gap-3 hover:bg-white/[0.04] transition-colors"
+                >
+                  <div
+                    className={`w-9 h-9 rounded-lg ${bg} flex items-center justify-center ${color} shrink-0`}
+                  >
+                    <span
+                      className="material-symbols-outlined text-[18px]"
+                      style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                    >
+                      {icon}
+                    </span>
                   </div>
                   <div>
                     <p className="text-[13px] font-bold text-ink mb-1">{title}</p>
@@ -272,11 +288,15 @@ export function LandingPage() {
         {/* ── Artifacts ────────────────────────────────────────────────────── */}
         <section className="py-16 border-t border-white/[0.04]">
           <div className="text-center mb-10 space-y-3">
-            <p className="text-[10px] font-bold tracking-widest uppercase text-faint">Generated output</p>
+            <p className="text-[10px] font-bold tracking-widest uppercase text-faint">
+              Generated output
+            </p>
             <h2 className="text-3xl font-bold text-ink leading-tight">
               Exactly what your feature needs.
               <br />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-teal">Nothing it doesn't.</span>
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-teal">
+                Nothing it doesn't.
+              </span>
             </h2>
             <p className="text-sm text-muted max-w-sm mx-auto">
               Ton reads your prompt and decides which pieces to build — no bloat, no missing parts.
@@ -291,46 +311,105 @@ export function LandingPage() {
 
             {/* Always generated */}
             <div className="px-5 pt-3 pb-1">
-              <span className="text-[9px] font-bold uppercase tracking-widest text-faint/60">Always generated</span>
+              <span className="text-[9px] font-bold uppercase tracking-widest text-faint/60">
+                Always generated
+              </span>
             </div>
             <div className="divide-y divide-white/[0.04]">
               {[
-                { file: "handler.js",    icon: "bolt",        color: theme === "light" ? "text-emerald-700" : "text-emerald-300", bg: theme === "light" ? "bg-emerald-600/[.08]" : "bg-emerald-400/[.12]", label: "API Handler",        desc: "Secure serverless endpoint with Shopify auth baked in." },
-                { file: "migration.sql", icon: "table_chart", color: theme === "light" ? "text-emerald-700" : "text-emerald-300", bg: theme === "light" ? "bg-emerald-600/[.08]" : "bg-emerald-400/[.12]", label: "Database Migration", desc: "Schema changes applied automatically on deploy." },
+                {
+                  file: "handler.js",
+                  icon: "bolt",
+                  color: theme === "light" ? "text-emerald-700" : "text-emerald-300",
+                  bg: theme === "light" ? "bg-emerald-600/[.08]" : "bg-emerald-400/[.12]",
+                  label: "API Handler",
+                  desc: "Secure serverless endpoint with Shopify auth baked in.",
+                },
+                {
+                  file: "migration.sql",
+                  icon: "table_chart",
+                  color: theme === "light" ? "text-emerald-700" : "text-emerald-300",
+                  bg: theme === "light" ? "bg-emerald-600/[.08]" : "bg-emerald-400/[.12]",
+                  label: "Database Migration",
+                  desc: "Schema changes applied automatically on deploy.",
+                },
               ].map(({ file, icon, color, bg, label, desc }) => (
                 <div key={file} className="flex items-center gap-4 px-5 py-3.5">
-                  <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
-                    <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>{icon}</span>
+                  <div
+                    className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0`}
+                  >
+                    <span
+                      className={`material-symbols-outlined text-[16px] ${color}`}
+                      style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                    >
+                      {icon}
+                    </span>
                   </div>
-                  <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0`}>{file}</span>
+                  <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0`}>
+                    {file}
+                  </span>
                   <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                     <span className="text-[12px] font-semibold text-ink">{label}</span>
                     <span className="text-[11px] text-faint">{desc}</span>
                   </div>
-                  <span className={`material-symbols-outlined text-[14px] shrink-0 ${theme === "light" ? "text-emerald-600/60" : "text-emerald-400/60"}`} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>check_circle</span>
+                  <span
+                    className={`material-symbols-outlined text-[14px] shrink-0 ${theme === "light" ? "text-emerald-600/60" : "text-emerald-400/60"}`}
+                    style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                  >
+                    check_circle
+                  </span>
                 </div>
               ))}
             </div>
 
             {/* Conditional */}
             <div className="px-5 pt-3 pb-1 border-t border-white/[0.04] mt-1">
-              <span className="text-[9px] font-bold uppercase tracking-widest text-faint/60">Added when your feature calls for it</span>
+              <span className="text-[9px] font-bold uppercase tracking-widest text-faint/60">
+                Added when your feature calls for it
+              </span>
             </div>
             <div className="divide-y divide-white/[0.04]">
               {[
-                { file: "widget.js",   icon: "widgets",              color: theme === "light" ? "text-sky-700"    : "text-sky-300",    bg: theme === "light" ? "bg-sky-600/[.08]"    : "bg-sky-400/[.12]",    label: "Storefront Widget", desc: "Rendered inside your Shopify theme — no iframe." },
-                { file: "admin_ui.js", icon: "admin_panel_settings", color: theme === "light" ? "text-orange-700" : "text-orange-300", bg: theme === "light" ? "bg-orange-600/[.08]" : "bg-orange-400/[.12]", label: "Admin UI",          desc: "Merchant controls embedded in Shopify Admin." },
+                {
+                  file: "widget.js",
+                  icon: "widgets",
+                  color: theme === "light" ? "text-sky-700" : "text-sky-300",
+                  bg: theme === "light" ? "bg-sky-600/[.08]" : "bg-sky-400/[.12]",
+                  label: "Storefront Widget",
+                  desc: "Rendered inside your Shopify theme — no iframe.",
+                },
+                {
+                  file: "admin_ui.js",
+                  icon: "admin_panel_settings",
+                  color: theme === "light" ? "text-orange-700" : "text-orange-300",
+                  bg: theme === "light" ? "bg-orange-600/[.08]" : "bg-orange-400/[.12]",
+                  label: "Admin UI",
+                  desc: "Merchant controls embedded in Shopify Admin.",
+                },
               ].map(({ file, icon, color, bg, label, desc }) => (
                 <div key={file} className="flex items-center gap-4 px-5 py-3.5">
-                  <div className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0 opacity-60`}>
-                    <span className={`material-symbols-outlined text-[16px] ${color}`} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>{icon}</span>
+                  <div
+                    className={`w-8 h-8 rounded-lg ${bg} flex items-center justify-center shrink-0 opacity-60`}
+                  >
+                    <span
+                      className={`material-symbols-outlined text-[16px] ${color}`}
+                      style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                    >
+                      {icon}
+                    </span>
                   </div>
-                  <span className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0 opacity-60`}>{file}</span>
+                  <span
+                    className={`font-mono text-[12px] font-semibold ${color} w-32 shrink-0 opacity-60`}
+                  >
+                    {file}
+                  </span>
                   <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                     <span className="text-[12px] font-semibold text-ink">{label}</span>
                     <span className="text-[11px] text-faint">{desc}</span>
                   </div>
-                  <span className="material-symbols-outlined text-faint/20 text-[14px] shrink-0 opacity-60">radio_button_unchecked</span>
+                  <span className="material-symbols-outlined text-faint/20 text-[14px] shrink-0 opacity-60">
+                    radio_button_unchecked
+                  </span>
                 </div>
               ))}
             </div>
@@ -357,7 +436,11 @@ export function LandingPage() {
           <span className="text-sm font-bold text-accent">New One Two</span>
           <div className="flex gap-6">
             {["Privacy", "Terms", "Support"].map((item) => (
-              <a key={item} href="#" className="text-[11px] uppercase tracking-widest text-faint hover:text-ink transition-colors no-underline">
+              <a
+                key={item}
+                href="#"
+                className="text-[11px] uppercase tracking-widest text-faint hover:text-ink transition-colors no-underline"
+              >
                 {item}
               </a>
             ))}

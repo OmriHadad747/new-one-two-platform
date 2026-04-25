@@ -23,10 +23,7 @@ export type ProgressEvent = z.infer<typeof ProgressEventSchema>;
 type ProgressListener = (event: ProgressEvent) => void;
 const progressListeners = new Map<string, Set<ProgressListener>>();
 
-export function registerProgressListener(
-  jobId: string,
-  fn: ProgressListener,
-): () => void {
+export function registerProgressListener(jobId: string, fn: ProgressListener): () => void {
   if (!progressListeners.has(jobId)) {
     progressListeners.set(jobId, new Set());
   }
@@ -79,7 +76,9 @@ export async function startProgressSubscription(): Promise<void> {
 
 export async function stopProgressSubscription(): Promise<void> {
   if (!progressSub) return;
-  try { await progressSub.close(); } catch {}
+  try {
+    await progressSub.close();
+  } catch {}
   progressSub = null;
   logger.info("generation.progress subscription closed");
 }

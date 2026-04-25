@@ -48,11 +48,7 @@ export interface EmailDelivery {
   bouncedAt: Date | null;
 }
 
-export type EmailSuppressionReason =
-  | "unsubscribed"
-  | "bounced"
-  | "complained"
-  | "manual";
+export type EmailSuppressionReason = "unsubscribed" | "bounced" | "complained" | "manual";
 
 export interface EmailSuppression {
   tenantId: string;

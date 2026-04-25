@@ -33,9 +33,7 @@ async function getBillingPeriodStart(tenantId: string): Promise<string> {
   return periodStart.toISOString().slice(0, 10);
 }
 
-export async function getOrCreateUsageRecord(
-  tenantId: string,
-): Promise<UsageRecord> {
+export async function getOrCreateUsageRecord(tenantId: string): Promise<UsageRecord> {
   const periodStr = await getBillingPeriodStart(tenantId);
   const rows = await sql<UsageRecord[]>`
     INSERT INTO usage_records (tenant_id, period_start)
@@ -62,10 +60,7 @@ export async function getOrCreateUsageRecord(
  * Atomically increment a usage counter for the current billing period.
  * Race-safe via INSERT … ON CONFLICT DO UPDATE.
  */
-export async function incrementUsage(
-  tenantId: string,
-  column: UsageCounter,
-): Promise<void> {
+export async function incrementUsage(tenantId: string, column: UsageCounter): Promise<void> {
   const periodStr = await getBillingPeriodStart(tenantId);
   await sql`
     INSERT INTO usage_records (tenant_id, period_start, ${sql(column)})

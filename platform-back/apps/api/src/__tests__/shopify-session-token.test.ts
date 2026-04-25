@@ -5,17 +5,10 @@ import { verifyShopifySessionToken } from "../lib/shopify-session-token.js";
 const CLIENT_ID = "test-client-id";
 const CLIENT_SECRET = "test-client-secret";
 
-function makeJwt(
-  claims: Record<string, unknown>,
-  secret: string = CLIENT_SECRET,
-): string {
-  const header = Buffer.from(
-    JSON.stringify({ alg: "HS256", typ: "JWT" }),
-  ).toString("base64url");
+function makeJwt(claims: Record<string, unknown>, secret: string = CLIENT_SECRET): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
-  const sig = createHmac("sha256", secret)
-    .update(`${header}.${payload}`)
-    .digest("base64url");
+  const sig = createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
   return `${header}.${payload}.${sig}`;
 }
 
@@ -93,27 +86,21 @@ describe("verifyShopifySessionToken — valid tokens", () => {
 describe("verifyShopifySessionToken — invalid signature", () => {
   it("returns null for wrong signature", () => {
     const token = makeJwt(VALID_CLAIMS, "wrong-secret");
-    expect(
-      verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET),
-    ).toBeNull();
+    expect(verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET)).toBeNull();
   });
 
   it("returns null for tampered payload", () => {
     const token = makeJwt(VALID_CLAIMS);
     const [h, _p, s] = token.split(".");
-    const fakePayload = Buffer.from(
-      JSON.stringify({ ...VALID_CLAIMS, sub: "attacker" }),
-    ).toString("base64url");
+    const fakePayload = Buffer.from(JSON.stringify({ ...VALID_CLAIMS, sub: "attacker" })).toString(
+      "base64url",
+    );
     const tampered = `${h}.${fakePayload}.${s}`;
-    expect(
-      verifyShopifySessionToken(tampered, CLIENT_ID, CLIENT_SECRET),
-    ).toBeNull();
+    expect(verifyShopifySessionToken(tampered, CLIENT_ID, CLIENT_SECRET)).toBeNull();
   });
 
   it("returns null for missing parts", () => {
-    expect(
-      verifyShopifySessionToken("only.two", CLIENT_ID, CLIENT_SECRET),
-    ).toBeNull();
+    expect(verifyShopifySessionToken("only.two", CLIENT_ID, CLIENT_SECRET)).toBeNull();
   });
 
   it("returns null for empty token", () => {
@@ -124,62 +111,46 @@ describe("verifyShopifySessionToken — invalid signature", () => {
 describe("verifyShopifySessionToken — expired / not-yet-valid", () => {
   it("returns null for expired token (outside skew)", () => {
     const token = makeJwt({ ...VALID_CLAIMS, exp: nowSec() - 10 });
-    expect(
-      verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET),
-    ).toBeNull();
+    expect(verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET)).toBeNull();
   });
 
   it("accepts token expired within the 5-second skew", () => {
     const token = makeJwt({ ...VALID_CLAIMS, exp: nowSec() - 3 });
-    expect(
-      verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET),
-    ).not.toBeNull();
+    expect(verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET)).not.toBeNull();
   });
 
   it("returns null for nbf in the future (outside skew)", () => {
     const token = makeJwt({ ...VALID_CLAIMS, nbf: nowSec() + 10 });
-    expect(
-      verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET),
-    ).toBeNull();
+    expect(verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET)).toBeNull();
   });
 
   it("accepts token with nbf within the 5-second skew", () => {
     const token = makeJwt({ ...VALID_CLAIMS, nbf: nowSec() + 3 });
-    expect(
-      verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET),
-    ).not.toBeNull();
+    expect(verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET)).not.toBeNull();
   });
 });
 
 describe("verifyShopifySessionToken — invalid claims", () => {
   it("returns null when aud does not match clientId", () => {
     const token = makeJwt({ ...VALID_CLAIMS, aud: "wrong-client" });
-    expect(
-      verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET),
-    ).toBeNull();
+    expect(verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET)).toBeNull();
   });
 
   it("returns null when aud array does not include clientId", () => {
     const token = makeJwt({ ...VALID_CLAIMS, aud: ["other-client"] });
-    expect(
-      verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET),
-    ).toBeNull();
+    expect(verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET)).toBeNull();
   });
 
   it("returns null when dest is missing", () => {
     const { dest: _dest, ...claims } = VALID_CLAIMS;
     const token = makeJwt(claims);
-    expect(
-      verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET),
-    ).toBeNull();
+    expect(verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET)).toBeNull();
   });
 
   it("returns null when sub is missing", () => {
     const { sub: _sub, ...claims } = VALID_CLAIMS;
     const token = makeJwt(claims);
-    expect(
-      verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET),
-    ).toBeNull();
+    expect(verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET)).toBeNull();
   });
 
   it("returns null when dest is not a valid myshopify domain", () => {
@@ -187,9 +158,7 @@ describe("verifyShopifySessionToken — invalid claims", () => {
       ...VALID_CLAIMS,
       dest: "https://evil.example.com",
     });
-    expect(
-      verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET),
-    ).toBeNull();
+    expect(verifyShopifySessionToken(token, CLIENT_ID, CLIENT_SECRET)).toBeNull();
   });
 
   it("returns null when clientId or clientSecret are empty", () => {

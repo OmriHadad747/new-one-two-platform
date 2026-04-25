@@ -45,9 +45,7 @@ const cache = new Map<string, CacheEntry>();
  * tenant's status — a paused or uninstalled tenant must not be able
  * to send through us even if its handler is somehow still running.
  */
-export async function resolveAppFromSaEmail(
-  saEmail: string,
-): Promise<AppIdentity | null> {
+export async function resolveAppFromSaEmail(saEmail: string): Promise<AppIdentity | null> {
   const now = Date.now();
   const cached = cache.get(saEmail);
   if (cached && cached.expiresAt > now) {

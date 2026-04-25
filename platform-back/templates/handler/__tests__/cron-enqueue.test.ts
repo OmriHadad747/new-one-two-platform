@@ -33,16 +33,14 @@ describe("enqueueJob — input validation", () => {
   });
 
   it("throws when dedupKey is provided but empty", async () => {
-    await expect(
-      enqueueJob("main", {}, { dedupKey: "" }),
-    ).rejects.toThrow(/dedupKey/);
+    await expect(enqueueJob("main", {}, { dedupKey: "" })).rejects.toThrow(/dedupKey/);
     expect(sqlMock).not.toHaveBeenCalled();
   });
 
   it("throws when dedupKey exceeds 256 chars", async () => {
-    await expect(
-      enqueueJob("main", {}, { dedupKey: "a".repeat(257) }),
-    ).rejects.toThrow(/dedupKey.*≤256/);
+    await expect(enqueueJob("main", {}, { dedupKey: "a".repeat(257) })).rejects.toThrow(
+      /dedupKey.*≤256/,
+    );
     expect(sqlMock).not.toHaveBeenCalled();
   });
 });
@@ -65,11 +63,7 @@ describe("enqueueJob — SQL shape", () => {
     expect(sqlMock).toHaveBeenCalledOnce();
 
     const [, ...values] = sqlMock.mock.calls[0] as [string[], ...unknown[]];
-    expect(values).toEqual([
-      "reconcile",
-      JSON.stringify({ orderId: "42" }),
-      "order-42",
-    ]);
+    expect(values).toEqual(["reconcile", JSON.stringify({ orderId: "42" }), "order-42"]);
   });
 
   it("propagates DB errors to the caller", async () => {

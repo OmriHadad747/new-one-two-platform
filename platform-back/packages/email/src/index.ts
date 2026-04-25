@@ -5,7 +5,4 @@ export {
   type RenderInput,
   type RenderOutput,
 } from "./renderer.js";
-export {
-  signUnsubscribeToken,
-  verifyUnsubscribeToken,
-} from "./unsubscribe-token.js";
+export { signUnsubscribeToken, verifyUnsubscribeToken } from "./unsubscribe-token.js";

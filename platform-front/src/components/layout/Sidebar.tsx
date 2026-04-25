@@ -9,10 +9,14 @@ import type { App } from "@/types/dashboard";
 
 function AppStatusDot({ app, isGenerating }: { app: App; isGenerating: boolean }) {
   if (isGenerating) {
-    return <span className="w-2 h-2 rounded-full bg-accent animate-pulse shrink-0" title="Generating…" />;
+    return (
+      <span className="w-2 h-2 rounded-full bg-accent animate-pulse shrink-0" title="Generating…" />
+    );
   }
   if (app.status === "active")
-    return <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" title="Live" />;
+    return (
+      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" title="Live" />
+    );
   if (app.status === "draft")
     return <span className="w-2 h-2 rounded-full bg-faint opacity-50 shrink-0" title="Draft" />;
   if (app.status === "inactive")
@@ -31,7 +35,7 @@ export function Sidebar() {
   const activeGen = useGenerationStore((s) => s.active);
 
   const appsQuery = useApps(tenantId);
-  const apps = (appsQuery.data ?? []);
+  const apps = appsQuery.data ?? [];
 
   const handleDisconnect = () => {
     clear();
@@ -40,7 +44,6 @@ export function Sidebar() {
 
   return (
     <aside className="w-[220px] min-w-[220px] bg-surface border-r border-white/[0.04] flex flex-col z-10 select-none">
-
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-4 py-[18px] border-b border-white/[0.04]">
         <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-teal flex items-center justify-center text-[13px] font-extrabold text-white leading-none">
@@ -62,7 +65,12 @@ export function Sidebar() {
             <span className="text-accent text-[14px] leading-none">✦</span>
             <span>New app</span>
           </div>
-          <span className="material-symbols-outlined text-[8px] text-faint/40" style={{ fontVariationSettings: "'wght' 200" }}>edit</span>
+          <span
+            className="material-symbols-outlined text-[8px] text-faint/40"
+            style={{ fontVariationSettings: "'wght' 200" }}
+          >
+            edit
+          </span>
         </button>
       </div>
 
@@ -77,10 +85,19 @@ export function Sidebar() {
           className="group w-full flex items-center justify-between px-1.5 py-1 rounded-md hover:bg-white/[0.05] transition-colors bg-transparent border-0 cursor-pointer"
         >
           <div className="flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-[13px] text-faint/60 group-hover:text-ink transition-colors" style={{ fontVariationSettings: "'wght' 200" }}>layers</span>
-            <span className="text-[11px] font-semibold text-faint group-hover:text-ink transition-colors">My apps</span>
+            <span
+              className="material-symbols-outlined text-[13px] text-faint/60 group-hover:text-ink transition-colors"
+              style={{ fontVariationSettings: "'wght' 200" }}
+            >
+              layers
+            </span>
+            <span className="text-[11px] font-semibold text-faint group-hover:text-ink transition-colors">
+              My apps
+            </span>
           </div>
-          <span className="material-symbols-outlined text-[13px] text-faint/50 group-hover:text-accent transition-colors">chevron_right</span>
+          <span className="material-symbols-outlined text-[13px] text-faint/50 group-hover:text-accent transition-colors">
+            chevron_right
+          </span>
         </button>
       </div>
 
@@ -113,11 +130,13 @@ export function Sidebar() {
                   "w-full flex items-center gap-2.5 pl-2.5 pr-8 py-2 rounded-lg text-left transition-all duration-150 border-0 cursor-pointer",
                   isActive
                     ? "bg-accent/10 text-ink"
-                    : "text-muted hover:bg-white/[0.05] hover:text-ink"
+                    : "text-muted hover:bg-white/[0.05] hover:text-ink",
                 )}
               >
                 <AppStatusDot app={app} isGenerating={isGenerating} />
-                <span className={`flex-1 text-[13px] font-medium truncate min-w-0 ${app.name === "..." ? "text-faint italic" : ""}`}>
+                <span
+                  className={`flex-1 text-[13px] font-medium truncate min-w-0 ${app.name === "..." ? "text-faint italic" : ""}`}
+                >
                   {app.name === "..." ? "Untitled app" : app.name}
                 </span>
               </button>
@@ -129,10 +148,15 @@ export function Sidebar() {
                   "absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-md transition-all border-0 cursor-pointer bg-transparent",
                   isActive
                     ? "opacity-100 text-accent/60 hover:text-accent hover:bg-accent/10"
-                    : "opacity-0 group-hover/app:opacity-100 text-faint hover:text-accent hover:bg-accent/10"
+                    : "opacity-0 group-hover/app:opacity-100 text-faint hover:text-accent hover:bg-accent/10",
                 )}
               >
-                <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                <span
+                  className="material-symbols-outlined text-[13px]"
+                  style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                >
+                  auto_awesome
+                </span>
               </button>
             </div>
           );
@@ -146,7 +170,9 @@ export function Sidebar() {
           className={({ isActive }) =>
             cn(
               "flex items-center gap-2 px-2.5 py-2 rounded-lg text-[12.5px] font-medium transition-colors no-underline",
-              isActive ? "bg-accent/10 text-accent" : "text-faint hover:text-ink hover:bg-white/[0.05]"
+              isActive
+                ? "bg-accent/10 text-accent"
+                : "text-faint hover:text-ink hover:bg-white/[0.05]",
             )
           }
         >
@@ -155,7 +181,9 @@ export function Sidebar() {
         </NavLink>
 
         <div className="flex items-center gap-2 px-2.5 py-2 bg-white/[0.03] rounded-lg mt-1">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${shopDomain ? "bg-teal" : "bg-faint"}`} />
+          <span
+            className={`w-2 h-2 rounded-full shrink-0 ${shopDomain ? "bg-teal" : "bg-faint"}`}
+          />
           <div className="min-w-0 flex-1">
             <div className="text-[11px] font-semibold text-ink truncate">
               {shopDomain ?? "Not connected"}

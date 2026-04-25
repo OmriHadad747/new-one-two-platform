@@ -19,9 +19,7 @@ const logger = baseLogger.child({ service: "files" });
 
 const BUCKET_NAME = process.env["FILES_BUCKET"] ?? "";
 if (!BUCKET_NAME) {
-  throw new Error(
-    "FATAL: FILES_BUCKET env var must be set (or __skip__ for local dev)",
-  );
+  throw new Error("FATAL: FILES_BUCKET env var must be set (or __skip__ for local dev)");
 }
 
 export const SKIP_GCS = BUCKET_NAME === "__skip__";
@@ -44,11 +42,7 @@ function getStorage(): Storage {
  * the key — only platform-assigned UUIDs. Name is preserved in the DB
  * row for Content-Disposition on download.
  */
-export function buildObjectKey(
-  tenantId: string,
-  appId: string,
-  fileId: string,
-): string {
+export function buildObjectKey(tenantId: string, appId: string, fileId: string): string {
   return `tenants/${tenantId}/apps/${appId}/${fileId}`;
 }
 
@@ -72,10 +66,7 @@ export async function storeFile(input: StoreFileInput): Promise<void> {
     resumable: false, // inline path only; see FILES_INTEGRATION.md Future work
     validation: "md5",
   });
-  logger.info(
-    { gcsObject: input.gcsObject, sizeBytes: input.buffer.length },
-    "GCS object stored",
-  );
+  logger.info({ gcsObject: input.gcsObject, sizeBytes: input.buffer.length }, "GCS object stored");
 }
 
 const INLINE_MIME_TYPES = new Set([
@@ -106,12 +97,11 @@ export interface SignReadUrlInput {
  * service account; the signed URL carries that identity so GCS will
  * honour it regardless of the caller. Handlers never see SA credentials.
  */
-export async function signReadUrl(
-  input: SignReadUrlInput,
-): Promise<{ url: string }> {
+export async function signReadUrl(input: SignReadUrlInput): Promise<{ url: string }> {
   const bucket = getStorage().bucket(BUCKET_NAME);
   const file = bucket.file(input.gcsObject);
-  const disp = input.disposition ?? (INLINE_MIME_TYPES.has(input.mimeType) ? "inline" : "attachment");
+  const disp =
+    input.disposition ?? (INLINE_MIME_TYPES.has(input.mimeType) ? "inline" : "attachment");
   const [url] = await file.getSignedUrl({
     version: "v4",
     action: "read",
@@ -236,9 +226,7 @@ export async function createResumableUploadUrl(
  * bytes (crashed mid-upload, user cancelled). Finalize maps null to a
  * retry error so the handler can react.
  */
-export async function getObjectSize(
-  gcsObject: string,
-): Promise<number | null> {
+export async function getObjectSize(gcsObject: string): Promise<number | null> {
   if (SKIP_GCS) return null;
   const bucket = getStorage().bucket(BUCKET_NAME);
   const file = bucket.file(gcsObject);

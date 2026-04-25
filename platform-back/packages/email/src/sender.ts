@@ -10,22 +10,16 @@ import {
   updateEmailDeliveryStatus,
 } from "@platform-back/db";
 import type { Logger } from "@platform-back/logger";
-import {
-  getPlanLimits,
-  type BillingPlan,
-  type EmailSendResult,
-} from "@platform-back/types";
+import { getPlanLimits, type BillingPlan, type EmailSendResult } from "@platform-back/types";
 import { renderEmail } from "./renderer.js";
 import { signUnsubscribeToken } from "./unsubscribe-token.js";
 
 const RESEND_API_KEY = process.env["RESEND_API_KEY"] ?? "";
 const RESEND_FROM_TRANSACTIONAL =
-  process.env["RESEND_FROM_TRANSACTIONAL"] ??
-  "notifications@mail.ton-platform.com";
+  process.env["RESEND_FROM_TRANSACTIONAL"] ?? "notifications@mail.ton-platform.com";
 const RESEND_FROM_MARKETING =
   process.env["RESEND_FROM_MARKETING"] ?? "marketing@mail.ton-platform.com";
-const UNSUBSCRIBE_BASE_URL =
-  process.env["UNSUBSCRIBE_BASE_URL"] ?? "https://ton-platform.com/u";
+const UNSUBSCRIBE_BASE_URL = process.env["UNSUBSCRIBE_BASE_URL"] ?? "https://ton-platform.com/u";
 
 let _resend: Resend | null = null;
 function getResend(): Resend {
@@ -76,11 +70,8 @@ export class QuotaExceededError extends Error {
  * other "delivered=false" outcomes are returned as 200 results so the
  * route layer doesn't need to map exceptions.
  */
-export async function sendEmail(
-  input: SendEmailInput,
-): Promise<EmailSendResult> {
-  const { tenantId, appId, storeName, plan, log, isTest, subjectPrefix } =
-    input;
+export async function sendEmail(input: SendEmailInput): Promise<EmailSendResult> {
+  const { tenantId, appId, storeName, plan, log, isTest, subjectPrefix } = input;
   const recipient = input.recipient.trim().toLowerCase();
   const data = input.data ?? {};
 
@@ -101,10 +92,7 @@ export async function sendEmail(
     const emailLimit = getPlanLimits(plan).maxEmailsPerMonth;
     const quota = await checkUsageQuota(tenantId, "emails_sent", emailLimit);
     if (!quota.allowed) {
-      log.warn(
-        { tenantId, current: quota.current, limit: quota.limit },
-        "Email quota exceeded",
-      );
+      log.warn({ tenantId, current: quota.current, limit: quota.limit }, "Email quota exceeded");
       throw new QuotaExceededError(quota.limit, quota.current, null);
     }
   }
@@ -175,14 +163,10 @@ export async function sendEmail(
 
   // 7. Submit to Resend.
   const fromAddress =
-    config.emailType === "marketing"
-      ? RESEND_FROM_MARKETING
-      : RESEND_FROM_TRANSACTIONAL;
+    config.emailType === "marketing" ? RESEND_FROM_MARKETING : RESEND_FROM_TRANSACTIONAL;
   const from = `${storeName} <${fromAddress}>`;
 
-  const finalSubject = subjectPrefix
-    ? `${subjectPrefix}${rendered.subject}`
-    : rendered.subject;
+  const finalSubject = subjectPrefix ? `${subjectPrefix}${rendered.subject}` : rendered.subject;
 
   try {
     const result = await getResend().emails.send({
@@ -201,8 +185,7 @@ export async function sendEmail(
       },
     });
 
-    const providerMsgId =
-      (result as { data?: { id?: string } })?.data?.id ?? null;
+    const providerMsgId = (result as { data?: { id?: string } })?.data?.id ?? null;
     await updateEmailDeliveryStatus(deliveryId, {
       status: "sent",
       providerMsgId,

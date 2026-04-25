@@ -45,11 +45,7 @@ export async function webhookRoutes(app: FastifyInstance) {
         },
         headers: {
           type: "object",
-          required: [
-            "x-shopify-hmac-sha256",
-            "x-shopify-topic",
-            "x-shopify-webhook-id",
-          ],
+          required: ["x-shopify-hmac-sha256", "x-shopify-topic", "x-shopify-webhook-id"],
         },
       },
     },

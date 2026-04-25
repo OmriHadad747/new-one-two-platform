@@ -68,9 +68,7 @@ export function BrandPanel({ tenantId }: Props) {
         <div
           className={cn(
             "mt-3 mb-1 px-3 py-2 rounded-lg text-[12px]",
-            toast.kind === "ok"
-              ? "bg-teal/10 text-teal"
-              : "bg-danger/10 text-danger"
+            toast.kind === "ok" ? "bg-teal/10 text-teal" : "bg-danger/10 text-danger",
           )}
         >
           {toast.msg}
@@ -78,11 +76,17 @@ export function BrandPanel({ tenantId }: Props) {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-        <Field label="Logo URL" hint="Paste a URL from your Shopify CDN or image host. Leave empty to use your store name as text.">
+        <Field
+          label="Logo URL"
+          hint="Paste a URL from your Shopify CDN or image host. Leave empty to use your store name as text."
+        >
           <input
             type="text"
             value={logoUrl}
-            onChange={(e) => { setLogoUrl(e.target.value); markDirty(); }}
+            onChange={(e) => {
+              setLogoUrl(e.target.value);
+              markDirty();
+            }}
             placeholder="https://cdn.shopify.com/..."
             className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
           />
@@ -90,7 +94,11 @@ export function BrandPanel({ tenantId }: Props) {
             // Previewing raw user input — safe because it's a merchant's own logo URL
             // rendered in their own dashboard; no cross-tenant exposure.
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={logoUrl} alt="Logo preview" className="mt-2 max-h-12 rounded-lg bg-white/[0.03] p-1" />
+            <img
+              src={logoUrl}
+              alt="Logo preview"
+              className="mt-2 max-h-12 rounded-lg bg-white/[0.03] p-1"
+            />
           )}
         </Field>
 
@@ -99,23 +107,35 @@ export function BrandPanel({ tenantId }: Props) {
             <input
               type="color"
               value={primaryColor}
-              onChange={(e) => { setPrimaryColor(e.target.value); markDirty(); }}
+              onChange={(e) => {
+                setPrimaryColor(e.target.value);
+                markDirty();
+              }}
               className="w-10 h-9 border border-white/[0.08] rounded-lg bg-transparent cursor-pointer"
             />
             <input
               type="text"
               value={primaryColor}
-              onChange={(e) => { setPrimaryColor(e.target.value); markDirty(); }}
+              onChange={(e) => {
+                setPrimaryColor(e.target.value);
+                markDirty();
+              }}
               placeholder="#1a73e8"
               className="flex-1 px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none font-mono"
             />
           </div>
         </Field>
 
-        <Field label="Footer text" hint="Business info shown at the bottom of every email (address, phone, etc).">
+        <Field
+          label="Footer text"
+          hint="Business info shown at the bottom of every email (address, phone, etc)."
+        >
           <textarea
             value={footerText}
-            onChange={(e) => { setFooterText(e.target.value); markDirty(); }}
+            onChange={(e) => {
+              setFooterText(e.target.value);
+              markDirty();
+            }}
             rows={3}
             placeholder="Acme Coffee Co. · 123 Main St, Austin TX · (555) 555-5555"
             className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
@@ -126,7 +146,10 @@ export function BrandPanel({ tenantId }: Props) {
           <input
             type="email"
             value={supportEmail}
-            onChange={(e) => { setSupportEmail(e.target.value); markDirty(); }}
+            onChange={(e) => {
+              setSupportEmail(e.target.value);
+              markDirty();
+            }}
             placeholder="support@yourstore.com"
             className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
           />
@@ -143,10 +166,20 @@ export function BrandPanel({ tenantId }: Props) {
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-ink mb-0.5">{label}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-ink mb-0.5">
+        {label}
+      </div>
       {hint && <div className="text-[11px] text-faint mb-1.5 leading-relaxed">{hint}</div>}
       {children}
     </div>

@@ -23,10 +23,7 @@
 import type { BillingPlan } from "@platform-back/types";
 import { getPlanLimits } from "@platform-back/types";
 import type { TenantRecord } from "@platform-back/db";
-import {
-  getActiveAppCount,
-  getOrCreateUsageRecord,
-} from "@platform-back/db";
+import { getActiveAppCount, getOrCreateUsageRecord } from "@platform-back/db";
 
 export interface EnforcementResult {
   allowed: boolean;
@@ -43,9 +40,7 @@ export interface EnforcementResult {
  * the activate transition. Creation itself is unlimited so merchants can
  * prepare apps before flipping one live.
  */
-export async function canActivateApp(
-  tenant: TenantRecord,
-): Promise<EnforcementResult> {
+export async function canActivateApp(tenant: TenantRecord): Promise<EnforcementResult> {
   const limits = getPlanLimits(tenant.billingPlan);
   const active = await getActiveAppCount(tenant.id);
   if (active >= limits.maxApps) {
@@ -60,9 +55,7 @@ export async function canActivateApp(
 
 // ─── Generation (per-month) ──────────────────────────────────────────────────
 
-export async function canStartGeneration(
-  tenant: TenantRecord,
-): Promise<EnforcementResult> {
+export async function canStartGeneration(tenant: TenantRecord): Promise<EnforcementResult> {
   const limits = getPlanLimits(tenant.billingPlan);
   const usage = await getOrCreateUsageRecord(tenant.id);
   if (usage.generations >= limits.maxGenerationsPerMonth) {
@@ -77,16 +70,10 @@ export async function canStartGeneration(
 
 // ─── App category gate ───────────────────────────────────────────────────────
 
-export function isCategoryAllowed(
-  plan: BillingPlan,
-  archetype: string,
-): EnforcementResult {
+export function isCategoryAllowed(plan: BillingPlan, archetype: string): EnforcementResult {
   const limits = getPlanLimits(plan);
   if (!limits.allowedCategories.includes(archetype)) {
-    return denied(
-      `Your ${plan} plan doesn't support ${formatArchetype(archetype)} apps.`,
-      plan,
-    );
+    return denied(`Your ${plan} plan doesn't support ${formatArchetype(archetype)} apps.`, plan);
   }
   return { allowed: true };
 }

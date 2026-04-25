@@ -11,9 +11,7 @@ const SHOPIFY_CLIENT_SECRET = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
 if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) {
   // Fail at boot, not on first request: a misconfigured edge that silently
   // 401s every admin click is worse than a noisy startup crash.
-  throw new Error(
-    "FATAL: SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET must be set",
-  );
+  throw new Error("FATAL: SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET must be set");
 }
 
 // Hop-by-hop headers (RFC 7230 §6.1) plus a few headers we never want to
@@ -48,10 +46,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   // Serve the generated admin panel ES module. Must be registered before the
   // wildcard proxy route so Fastify picks the more-specific path first.
-  app.get<{ Params: { appId: string } }>(
-    "/:appId/panel.js",
-    adminBundleHandler,
-  );
+  app.get<{ Params: { appId: string } }>("/:appId/panel.js", adminBundleHandler);
 
   app.route<{ Params: AdminRouteParams }>({
     method: ["POST", "OPTIONS"],
@@ -77,9 +72,7 @@ async function adminAppsListHandler(
     apps = await listAdminAppsForShop(shop);
   } catch (err) {
     log.error({ err, shop }, "admin apps list: db query failed");
-    return reply
-      .code(500)
-      .send(errorResponse(ErrorCode.Internal, "Failed to list admin apps"));
+    return reply.code(500).send(errorResponse(ErrorCode.Internal, "Failed to list admin apps"));
   }
 
   log.debug({ shop, count: apps.length }, "admin apps list");
@@ -105,9 +98,7 @@ async function adminBundleHandler(
 
   if (!bundle) {
     log.info({ appId }, "admin bundle: not found");
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Admin bundle not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Admin bundle not found"));
   }
 
   return reply
@@ -137,9 +128,7 @@ async function adminProxyHandler(
     log.warn({ appId, subPath }, "admin edge: missing Authorization header");
     return reply
       .code(401)
-      .send(
-        errorResponse(ErrorCode.TokenMissing, "Missing Authorization header"),
-      );
+      .send(errorResponse(ErrorCode.TokenMissing, "Missing Authorization header"));
   }
 
   const claims = verifyShopifySessionToken(
@@ -151,12 +140,7 @@ async function adminProxyHandler(
     log.warn({ appId, subPath }, "admin edge: invalid session token");
     return reply
       .code(401)
-      .send(
-        errorResponse(
-          ErrorCode.TokenInvalid,
-          "Invalid or expired session token",
-        ),
-      );
+      .send(errorResponse(ErrorCode.TokenInvalid, "Invalid or expired session token"));
   }
 
   // ── 2. Resolve the active handler for (shop, app) ────────────────────────
@@ -164,28 +148,15 @@ async function adminProxyHandler(
   try {
     resolved = await resolveAppHandler(claims.shop, appId);
   } catch (err) {
-    log.error(
-      { err, shop: claims.shop, appId },
-      "admin edge: handler lookup failed",
-    );
-    return reply
-      .code(500)
-      .send(errorResponse(ErrorCode.Internal, "Failed to resolve handler"));
+    log.error({ err, shop: claims.shop, appId }, "admin edge: handler lookup failed");
+    return reply.code(500).send(errorResponse(ErrorCode.Internal, "Failed to resolve handler"));
   }
 
   if (!resolved) {
-    log.info(
-      { shop: claims.shop, appId },
-      "admin edge: no active deployed handler",
-    );
+    log.info({ shop: claims.shop, appId }, "admin edge: no active deployed handler");
     return reply
       .code(503)
-      .send(
-        errorResponse(
-          ErrorCode.BackendNotDeployed,
-          "App backend is not deployed",
-        ),
-      );
+      .send(errorResponse(ErrorCode.BackendNotDeployed, "App backend is not deployed"));
   }
 
   // ── 3. Build target URL and forward ──────────────────────────────────────
@@ -224,29 +195,17 @@ async function adminProxyHandler(
         log.error({ targetUrl }, "admin edge: handler timeout");
         return reply
           .code(504)
-          .send(
-            errorResponse(
-              ErrorCode.UpstreamTimeout,
-              "Handler did not respond in time",
-            ),
-          );
+          .send(errorResponse(ErrorCode.UpstreamTimeout, "Handler did not respond in time"));
       }
       if (err.kind === "auth") {
         log.error({ targetUrl }, "admin edge: ID-token mint failed");
         return reply
           .code(502)
-          .send(
-            errorResponse(
-              ErrorCode.BadGateway,
-              "Could not authenticate to handler",
-            ),
-          );
+          .send(errorResponse(ErrorCode.BadGateway, "Could not authenticate to handler"));
       }
     }
     log.error({ err, targetUrl }, "admin edge: upstream fetch failed");
-    return reply
-      .code(502)
-      .send(errorResponse(ErrorCode.BadGateway, "Handler upstream failure"));
+    return reply.code(502).send(errorResponse(ErrorCode.BadGateway, "Handler upstream failure"));
   }
 
   // ── 4. Pipe response back ────────────────────────────────────────────────

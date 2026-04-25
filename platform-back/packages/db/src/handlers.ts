@@ -45,10 +45,7 @@ export interface AppRecord {
  * tenantId in its path (dashboard, lifecycle, teardown). See
  * REFACTOR_GAPS §7 (defence-in-depth over the prior unscoped signature).
  */
-export async function getAppById(
-  tenantId: string,
-  appId: string,
-): Promise<AppFullRecord | null> {
+export async function getAppById(tenantId: string, appId: string): Promise<AppFullRecord | null> {
   const rows = await sql<AppFullRecord[]>`
     SELECT
       a.id,
@@ -85,9 +82,7 @@ export async function getAppById(
  * this exists for routes that don't have tenantId in the path (e.g.
  * deploy, generation lifecycle) and do the check themselves.
  */
-export async function getAppByIdUnsafe(
-  appId: string,
-): Promise<AppRecord | null> {
+export async function getAppByIdUnsafe(appId: string): Promise<AppRecord | null> {
   const rows = await sql<AppRecord[]>`
     SELECT
       id,
@@ -134,9 +129,7 @@ export async function resolveAppHandler(
   shopDomain: string,
   appId: string,
 ): Promise<ResolvedHandler | null> {
-  const rows = await sql<
-    Array<{ functionUrl: string | null; tenantId: string }>
-  >`
+  const rows = await sql<Array<{ functionUrl: string | null; tenantId: string }>>`
     SELECT df.function_url AS "functionUrl", t.id AS "tenantId"
     FROM apps a
     JOIN tenants t ON t.id = a.tenant_id
@@ -177,10 +170,7 @@ export async function listAdminAppsForShop(
   `;
 }
 
-export async function updateAppArchetype(
-  appId: string,
-  archetype: string,
-): Promise<void> {
+export async function updateAppArchetype(appId: string, archetype: string): Promise<void> {
   await sql`
     UPDATE apps SET app_archetype = ${archetype}, updated_at = NOW()
      WHERE id = ${appId}
@@ -191,9 +181,7 @@ export async function updateAppArchetype(
  * List all non-deleted apps for a tenant, newest first. Powers the
  * dashboard's app picker.
  */
-export async function listAppsForTenant(
-  tenantId: string,
-): Promise<AppFullRecord[]> {
+export async function listAppsForTenant(tenantId: string): Promise<AppFullRecord[]> {
   return sql<AppFullRecord[]>`
     SELECT
       a.id,
@@ -256,9 +244,7 @@ export interface CreateAppInput {
  * If `id` is provided it's used verbatim (dashboard allocates up front
  * for idempotent retries); otherwise Postgres's default generates one.
  */
-export async function createApp(
-  input: CreateAppInput,
-): Promise<{ id: string }> {
+export async function createApp(input: CreateAppInput): Promise<{ id: string }> {
   const clientId = input.shopifyClientId ?? "";
   const secretName = input.shopifySecretName ?? "";
   const rows = input.id
@@ -285,11 +271,7 @@ export async function createApp(
   return rows[0]!;
 }
 
-export async function updateAppName(
-  tenantId: string,
-  appId: string,
-  name: string,
-): Promise<void> {
+export async function updateAppName(tenantId: string, appId: string, name: string): Promise<void> {
   await sql`
     UPDATE apps
        SET name = ${name}, updated_at = NOW()
@@ -298,10 +280,7 @@ export async function updateAppName(
   `;
 }
 
-export async function updateAppStatus(
-  appId: string,
-  status: AppStatus,
-): Promise<void> {
+export async function updateAppStatus(appId: string, status: AppStatus): Promise<void> {
   await sql`
     UPDATE apps
        SET status = ${status}, updated_at = NOW()
@@ -309,10 +288,7 @@ export async function updateAppStatus(
   `;
 }
 
-export async function setThemeInjection(
-  appId: string,
-  themeId: string,
-): Promise<void> {
+export async function setThemeInjection(appId: string, themeId: string): Promise<void> {
   await sql`
     UPDATE apps
        SET theme_injection_status = 'injected',
@@ -336,9 +312,7 @@ export async function clearThemeInjection(appId: string): Promise<void> {
  * Mark all infrastructure inactive without removing rows — used by
  * teardownApp so a later reactivateApp can walk the history.
  */
-export async function deactivateAppInfrastructure(
-  appId: string,
-): Promise<void> {
+export async function deactivateAppInfrastructure(appId: string): Promise<void> {
   await sql.begin(async (tx) => {
     await tx`
       UPDATE deployed_functions
@@ -499,4 +473,3 @@ export async function getLatestDeployedVersionForApp(
     cronSchedule: row.cronSchedule,
   };
 }
-

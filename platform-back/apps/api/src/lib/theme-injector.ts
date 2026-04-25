@@ -18,7 +18,7 @@ import { logger } from "@platform-back/logger";
 const API_VERSION = "2026-01";
 
 // Block handle = filename of blocks/app-block.liquid (not the extension handle)
-const WIDGET_BLOCK_HANDLE  = "app-block";
+const WIDGET_BLOCK_HANDLE = "app-block";
 const WIDGET_EXTENSION_UID = process.env["SHOPIFY_WIDGET_EXTENSION_UID"] ?? "";
 
 // Shopify app client ID — needed to build the block type path
@@ -76,7 +76,6 @@ async function shopifyGet<T>(shop: string, token: string, path: string): Promise
   return res.json() as Promise<T>;
 }
 
-
 async function shopifyPut<T>(shop: string, token: string, path: string, body: unknown): Promise<T> {
   const res = await fetch(`https://${shop}/admin/api/${API_VERSION}${path}`, {
     method: "PUT",
@@ -123,7 +122,9 @@ export interface ActiveTheme {
 
 export async function getActiveTheme(shop: string, token: string): Promise<ActiveTheme> {
   const data = await shopifyGet<{ themes: Array<{ id: number; name: string; role: string }> }>(
-    shop, token, "/themes.json"
+    shop,
+    token,
+    "/themes.json",
   );
   const main = data.themes.find((t) => t.role === "main");
   if (!main) throw new Error("No active (main) theme found");
@@ -139,7 +140,10 @@ const templateCache = new Map<string, { data: ThemeTemplate[]; expiresAt: number
 function getCached(shop: string, themeId: number): ThemeTemplate[] | null {
   const entry = templateCache.get(`${shop}:${themeId}`);
   if (!entry) return null;
-  if (Date.now() > entry.expiresAt) { templateCache.delete(`${shop}:${themeId}`); return null; }
+  if (Date.now() > entry.expiresAt) {
+    templateCache.delete(`${shop}:${themeId}`);
+    return null;
+  }
   return entry.data;
 }
 
@@ -147,12 +151,15 @@ function setCached(shop: string, themeId: number, data: ThemeTemplate[]): void {
   templateCache.set(`${shop}:${themeId}`, { data, expiresAt: Date.now() + TEMPLATE_CACHE_TTL_MS });
 }
 
-type SectionRecord = Record<string, {
-  type: string;
-  blocks?: Record<string, { type: string; settings?: Record<string, unknown> }>;
-  block_order?: string[];
-  settings?: Record<string, unknown>;
-}>;
+type SectionRecord = Record<
+  string,
+  {
+    type: string;
+    blocks?: Record<string, { type: string; settings?: Record<string, unknown> }>;
+    block_order?: string[];
+    settings?: Record<string, unknown>;
+  }
+>;
 
 /** Returns true for auto-generated hex/UUID section IDs like `a1b2c3d4` or `550e8400-e29b-41d4-a716-446655440000`. */
 function isHexId(id: string): boolean {
@@ -189,7 +196,7 @@ function parseSections(sections: SectionRecord): ParsedSection[] {
 function resolveBlockName(
   blockType: string,
   sectionType: string,
-  blockSchemaMap: Map<string, Map<string, string>>
+  blockSchemaMap: Map<string, Map<string, string>>,
 ): string {
   const fromSchema = blockSchemaMap.get(sectionType)?.get(blockType);
   // Only use schema value if it was fully resolved (not a raw t: key)
@@ -206,27 +213,36 @@ function resolveBlockName(
 function resolveSection(
   s: ParsedSection,
   sectionName: string,
-  blockSchemaMap: Map<string, Map<string, string>>
+  blockSchemaMap: Map<string, Map<string, string>>,
 ): TemplateSection {
   const blockNames: Record<string, string> = {};
   for (const id of s.blockOrder) {
     const type = s.rawBlockTypes[id];
     if (type) blockNames[id] = resolveBlockName(type, s.sectionType, blockSchemaMap);
   }
-  return { sectionId: s.sectionId, sectionType: s.sectionType, sectionName, blockOrder: s.blockOrder, blockNames, hasOurBlock: s.hasOurBlock };
+  return {
+    sectionId: s.sectionId,
+    sectionType: s.sectionType,
+    sectionName,
+    blockOrder: s.blockOrder,
+    blockNames,
+    hasOurBlock: s.hasOurBlock,
+  };
 }
 
 export async function getThemeTemplates(
   shop: string,
   token: string,
-  themeId: number
+  themeId: number,
 ): Promise<ThemeTemplate[]> {
   const cached = getCached(shop, themeId);
   if (cached) return cached;
 
   // Fetch asset list to find which JSON templates and section group files exist
   const assetsData = await shopifyGet<{ assets: Array<{ key: string }> }>(
-    shop, token, `/themes/${themeId}/assets.json`
+    shop,
+    token,
+    `/themes/${themeId}/assets.json`,
   );
 
   const allKeys = assetsData.assets.map((a) => a.key);
@@ -245,7 +261,9 @@ export async function getThemeTemplates(
   for (const key of sectionGroupKeys) {
     try {
       const groupAsset = await shopifyGet<{ asset: { value: string } }>(
-        shop, token, `/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`
+        shop,
+        token,
+        `/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`,
       );
       const groupJson = JSON.parse(groupAsset.asset.value) as { sections?: SectionRecord };
       globalSections.push(...parseSections(groupJson.sections ?? {}));
@@ -262,7 +280,9 @@ export async function getThemeTemplates(
   for (const key of templateKeys) {
     try {
       const assetData = await shopifyGet<{ asset: { value: string } }>(
-        shop, token, `/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`
+        shop,
+        token,
+        `/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(key)}`,
       );
       const templateJson = JSON.parse(assetData.asset.value) as {
         sections?: SectionRecord;
@@ -282,7 +302,9 @@ export async function getThemeTemplates(
   let locale: Record<string, unknown> = {};
   try {
     const localeAsset = await shopifyGet<{ asset: { value: string } }>(
-      shop, token, `/themes/${themeId}/assets.json?asset[key]=locales%2Fen.default.json`
+      shop,
+      token,
+      `/themes/${themeId}/assets.json?asset[key]=locales%2Fen.default.json`,
     );
     locale = JSON.parse(localeAsset.asset.value) as Record<string, unknown>;
   } catch {
@@ -308,9 +330,13 @@ export async function getThemeTemplates(
     if (!type || type.startsWith("@")) continue;
     try {
       const liquidAsset = await shopifyGet<{ asset: { value: string } }>(
-        shop, token, `/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(`sections/${type}.liquid`)}`
+        shop,
+        token,
+        `/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(`sections/${type}.liquid`)}`,
       );
-      const schemaMatch = /\{%-?\s*schema\s*-?%\}([\s\S]*?)\{%-?\s*endschema\s*-?%\}/i.exec(liquidAsset.asset.value);
+      const schemaMatch = /\{%-?\s*schema\s*-?%\}([\s\S]*?)\{%-?\s*endschema\s*-?%\}/i.exec(
+        liquidAsset.asset.value,
+      );
       if (schemaMatch?.[1]) {
         const schema = JSON.parse(schemaMatch[1]) as {
           name?: string;
@@ -336,19 +362,16 @@ export async function getThemeTemplates(
 
   // Resolve ParsedSection → TemplateSection with names applied
   const globalWithNames = globalSections.map((s) =>
-    resolveSection(s, sectionNameMap.get(s.sectionType) ?? s.sectionType, blockSchemaMap)
+    resolveSection(s, sectionNameMap.get(s.sectionType) ?? s.sectionType, blockSchemaMap),
   );
 
   const templates: ThemeTemplate[] = rawTemplates.map(({ key, sections }) => {
     const withNames = sections.map((s) =>
-      resolveSection(s, sectionNameMap.get(s.sectionType) ?? s.sectionType, blockSchemaMap)
+      resolveSection(s, sectionNameMap.get(s.sectionType) ?? s.sectionType, blockSchemaMap),
     );
     // Merge global sections, deduplicating by sectionId (template-local wins)
     const localIds = new Set(withNames.map((s) => s.sectionId));
-    const merged = [
-      ...withNames,
-      ...globalWithNames.filter((s) => !localIds.has(s.sectionId)),
-    ];
+    const merged = [...withNames, ...globalWithNames.filter((s) => !localIds.has(s.sectionId))];
     const templateName = key.replace("templates/", "").replace(".json", "");
     return { name: templateName, key, sections: merged };
   });
@@ -367,7 +390,7 @@ async function shopifyGraphQL<T>(
   shop: string,
   token: string,
   query: string,
-  variables?: Record<string, unknown>
+  variables?: Record<string, unknown>,
 ): Promise<T> {
   const res = await fetch(`https://${shop}/admin/api/${API_VERSION}/graphql.json`, {
     method: "POST",
@@ -381,7 +404,7 @@ async function shopifyGraphQL<T>(
     const text = await res.text();
     throw new Error(`Shopify GraphQL failed [${res.status}]: ${text}`);
   }
-  const json = await res.json() as { data?: T; errors?: Array<{ message: string }> };
+  const json = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
   if (json.errors?.length) {
     throw new Error(`Shopify GraphQL: ${json.errors.map((e) => e.message).join(", ")}`);
   }
@@ -393,7 +416,7 @@ export async function duplicateTheme(
   shop: string,
   token: string,
   sourceThemeId: number,
-  newName: string
+  newName: string,
 ): Promise<{ id: number; name: string }> {
   const gid = `gid://shopify/OnlineStoreTheme/${sourceThemeId}`;
 
@@ -403,14 +426,15 @@ export async function duplicateTheme(
       userErrors: Array<{ field: string[]; message: string }>;
     };
   }>(
-    shop, token,
+    shop,
+    token,
     `mutation themeDuplicate($id: ID!) {
       themeDuplicate(id: $id) {
         newTheme { id name }
         userErrors { field message }
       }
     }`,
-    { id: gid }
+    { id: gid },
   );
 
   const { newTheme, userErrors } = result.themeDuplicate;
@@ -427,7 +451,9 @@ export async function duplicateTheme(
   while (attempts < 30) {
     await new Promise((r) => setTimeout(r, 2000));
     const check = await shopifyGet<{ theme: { processing: boolean } }>(
-      shop, token, `/themes/${numericId}.json`
+      shop,
+      token,
+      `/themes/${numericId}.json`,
     );
     if (!check.theme.processing) break;
     attempts++;
@@ -446,18 +472,24 @@ export async function duplicateTheme(
 // ─── 4. Inject app block into a section ──────────────────────────────────────
 
 export interface InjectionTarget {
-  templateKey: string;   // e.g. "templates/product.json"
-  sectionId: string;     // e.g. "main-product"
+  templateKey: string; // e.g. "templates/product.json"
+  sectionId: string; // e.g. "main-product"
   /** Index in block_order where the widget is inserted. 0 = before first block, length = after last. */
   position: number;
 }
 
 type TemplateJson = {
-  sections: Record<string, {
-    type: string;
-    blocks?: Record<string, { type: string; disabled?: boolean; settings?: Record<string, unknown> }>;
-    block_order?: string[];
-  }>;
+  sections: Record<
+    string,
+    {
+      type: string;
+      blocks?: Record<
+        string,
+        { type: string; disabled?: boolean; settings?: Record<string, unknown> }
+      >;
+      block_order?: string[];
+    }
+  >;
   order?: string[];
 };
 
@@ -467,11 +499,15 @@ function stripJsonComments(raw: string): string {
 }
 
 async function fetchTemplateJson(
-  shop: string, token: string, themeId: number, templateKey: string
+  shop: string,
+  token: string,
+  themeId: number,
+  templateKey: string,
 ): Promise<TemplateJson> {
   const assetData = await shopifyGet<{ asset: { value: string } }>(
-    shop, token,
-    `/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(templateKey)}`
+    shop,
+    token,
+    `/themes/${themeId}/assets.json?asset[key]=${encodeURIComponent(templateKey)}`,
   );
   return JSON.parse(stripJsonComments(assetData.asset.value)) as TemplateJson;
 }
@@ -481,7 +517,7 @@ export async function injectAppBlock(
   token: string,
   themeId: number,
   appId: string,
-  target: InjectionTarget
+  target: InjectionTarget,
 ): Promise<void> {
   const blockId = `platform-widget-${appId.slice(0, 8)}`;
   const blockType = widgetBlockType();
@@ -506,7 +542,7 @@ export async function injectAppBlock(
   if (!stableJson) {
     throw new Error(
       `Theme template "${target.templateKey}" never stabilized after duplication. ` +
-      `Try again in a moment once the theme has finished processing.`
+        `Try again in a moment once the theme has finished processing.`,
     );
   }
 
@@ -524,7 +560,10 @@ export async function injectAppBlock(
   const idx = Math.max(0, Math.min(target.position, section.block_order.length));
   section.block_order.splice(idx, 0, blockId);
 
-  logger.info({ blockId, blockType, template: target.templateKey, section: target.sectionId }, "Writing app block to theme template");
+  logger.info(
+    { blockId, blockType, template: target.templateKey, section: target.sectionId },
+    "Writing app block to theme template",
+  );
 
   await shopifyPut<{ asset: { key: string } }>(shop, token, `/themes/${themeId}/assets.json`, {
     asset: {
@@ -539,12 +578,17 @@ export async function injectAppBlock(
   const immediateRead = await fetchTemplateJson(shop, token, themeId, target.templateKey);
   const immediateSection = immediateRead.sections[target.sectionId];
   if (!immediateSection?.block_order?.includes(blockId) || !immediateSection.blocks?.[blockId]) {
-    const presentTypes = Object.values(immediateSection?.blocks ?? {}).map((b: unknown) => (b as { type?: string }).type ?? "?");
-    logger.error({ blockId, blockType, presentTypes }, "Block was stripped — extension not recognised by Shopify");
+    const presentTypes = Object.values(immediateSection?.blocks ?? {}).map(
+      (b: unknown) => (b as { type?: string }).type ?? "?",
+    );
+    logger.error(
+      { blockId, blockType, presentTypes },
+      "Block was stripped — extension not recognised by Shopify",
+    );
     throw new Error(
       `Shopify rejected the app block (stripped on write). ` +
-      `Block type: "${blockType}". ` +
-      `Make sure the extension is deployed: run \`shopify app deploy\` from the shopify-app directory.`
+        `Block type: "${blockType}". ` +
+        `Make sure the extension is deployed: run \`shopify app deploy\` from the shopify-app directory.`,
     );
   }
 
@@ -555,11 +599,14 @@ export async function injectAppBlock(
     const verify = await fetchTemplateJson(shop, token, themeId, target.templateKey);
     const vs = verify.sections[target.sectionId];
     if (vs?.block_order?.includes(blockId) && vs.blocks?.[blockId]) return;
-    logger.warn({ blockId, delay }, "Block accepted by Shopify but not yet visible in read-back — may still be syncing");
+    logger.warn(
+      { blockId, delay },
+      "Block accepted by Shopify but not yet visible in read-back — may still be syncing",
+    );
   }
   throw new Error(
     `Block was accepted by Shopify but did not appear in subsequent reads. ` +
-    `The theme may still be syncing — try again in a moment.`
+      `The theme may still be syncing — try again in a moment.`,
   );
 }
 

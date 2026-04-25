@@ -48,15 +48,11 @@ describe("handlerSaLocalPart", () => {
   });
 
   it("strips hyphens from shop in prefix", () => {
-    expect(handlerSaLocalPart("acme-store.myshopify.com", 1)).toBe(
-      "h-acmestore-1",
-    );
+    expect(handlerSaLocalPart("acme-store.myshopify.com", 1)).toBe("h-acmestore-1");
   });
 
   it("throws on zero", () => {
-    expect(() => handlerSaLocalPart("acme.myshopify.com", 0)).toThrow(
-      /positive integer/,
-    );
+    expect(() => handlerSaLocalPart("acme.myshopify.com", 0)).toThrow(/positive integer/);
   });
 
   it("throws on negative n", () => {
@@ -64,15 +60,11 @@ describe("handlerSaLocalPart", () => {
   });
 
   it("throws on non-integer n", () => {
-    expect(() => handlerSaLocalPart("acme.myshopify.com", 1.5)).toThrow(
-      /positive integer/,
-    );
+    expect(() => handlerSaLocalPart("acme.myshopify.com", 1.5)).toThrow(/positive integer/);
   });
 
   it("throws when shop produces an empty prefix", () => {
-    expect(() => handlerSaLocalPart("!!!.myshopify.com", 1)).toThrow(
-      /empty prefix/,
-    );
+    expect(() => handlerSaLocalPart("!!!.myshopify.com", 1)).toThrow(/empty prefix/);
   });
 
   it("throws when the 5-digit counter would exceed the 30-char SA limit", () => {

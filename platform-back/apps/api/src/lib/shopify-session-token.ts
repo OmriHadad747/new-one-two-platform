@@ -40,9 +40,7 @@ export function verifyShopifySessionToken(
   let expected: Buffer;
   let actual: Buffer;
   try {
-    expected = createHmac("sha256", clientSecret)
-      .update(`${headerB64}.${payloadB64}`)
-      .digest();
+    expected = createHmac("sha256", clientSecret).update(`${headerB64}.${payloadB64}`).digest();
     actual = Buffer.from(sigB64, "base64url");
   } catch {
     return null;
@@ -53,18 +51,14 @@ export function verifyShopifySessionToken(
   // Decode claims.
   let claims: RawClaims;
   try {
-    claims = JSON.parse(
-      Buffer.from(payloadB64, "base64url").toString("utf-8"),
-    ) as RawClaims;
+    claims = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf-8")) as RawClaims;
   } catch {
     return null;
   }
 
   const now = Math.floor(Date.now() / 1000);
-  if (claims.exp !== undefined && claims.exp + CLOCK_SKEW_SEC < now)
-    return null;
-  if (claims.nbf !== undefined && claims.nbf - CLOCK_SKEW_SEC > now)
-    return null;
+  if (claims.exp !== undefined && claims.exp + CLOCK_SKEW_SEC < now) return null;
+  if (claims.nbf !== undefined && claims.nbf - CLOCK_SKEW_SEC > now) return null;
 
   // `aud` may be string or array per JWT spec; Shopify sends a string.
   const aud = claims.aud;

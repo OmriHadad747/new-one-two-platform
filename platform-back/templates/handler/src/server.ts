@@ -1,17 +1,10 @@
-import express, {
-  type ErrorRequestHandler,
-  type RequestHandler,
-} from "express";
+import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import { closeDb } from "./lib/db.js";
 import { verifyPlatform } from "./middleware/verify-platform.js";
 import { adminRouter } from "./routes/admin.js";
 import { webhookRouter } from "./routes/webhook.js";
 import { widgetRouter } from "./routes/widget.js";
-import {
-  startCronRunner,
-  type CronRunnerHandle,
-  type JobsMap,
-} from "./lib/cron-runner.js";
+import { startCronRunner, type CronRunnerHandle, type JobsMap } from "./lib/cron-runner.js";
 
 const PORT = parseInt(process.env["PORT"] ?? "8080", 10);
 const HOST = process.env["HOST"] ?? "0.0.0.0";

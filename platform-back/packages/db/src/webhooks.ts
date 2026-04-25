@@ -79,9 +79,7 @@ export interface WebhookSubscriptionRow {
  * ON CONFLICT (app_id, topic) updates the deployed_function_id and
  * shopify_webhook_id so re-deploys stay consistent without creating duplicates.
  */
-export async function upsertWebhookSubscriptions(
-  rows: WebhookSubscriptionRow[],
-): Promise<void> {
+export async function upsertWebhookSubscriptions(rows: WebhookSubscriptionRow[]): Promise<void> {
   if (rows.length === 0) return;
   for (const row of rows) {
     await sql`

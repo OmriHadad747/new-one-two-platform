@@ -45,9 +45,14 @@ vi.mock("../service-namer.js", () => ({
 }));
 
 import {
-  getAppById, getTenantById, getActiveWebhookSubscriptionsForApp,
-  getLatestDeployedVersionForApp, getAppVersionSemvers, getGcsObjectsForApp,
-  deactivateAppInfrastructure, hardDeleteApp,
+  getAppById,
+  getTenantById,
+  getActiveWebhookSubscriptionsForApp,
+  getLatestDeployedVersionForApp,
+  getAppVersionSemvers,
+  getGcsObjectsForApp,
+  deactivateAppInfrastructure,
+  hardDeleteApp,
 } from "@platform-back/db";
 import { deleteObjectsBatch } from "@platform-back/files";
 import { deployToCloudRun, deleteCloudRunService } from "../cloud-run-ops.js";
@@ -61,8 +66,8 @@ import { teardownApp, reactivateApp, permanentDeleteApp } from "../lifecycle.js"
 // ─── Shared fixtures ──────────────────────────────────────────────────────────
 
 const TENANT_ID = "11111111-1111-1111-1111-111111111111";
-const APP_ID    = "22222222-2222-2222-2222-222222222222";
-const SA_EMAIL  = "h-acme-1@test-project.iam.gserviceaccount.com";
+const APP_ID = "22222222-2222-2222-2222-222222222222";
+const SA_EMAIL = "h-acme-1@test-project.iam.gserviceaccount.com";
 
 const MOCK_APP = {
   id: APP_ID,
@@ -80,9 +85,7 @@ const MOCK_TENANT = {
   shopifyAccessTokenSecretName: "projects/p/secrets/acme-token/versions/latest",
 };
 
-const MOCK_WEBHOOKS = [
-  { id: "ws-1", topic: "orders/create", shopifyWebhookId: "shp-1" },
-];
+const MOCK_WEBHOOKS = [{ id: "ws-1", topic: "orders/create", shopifyWebhookId: "shp-1" }];
 
 const MOCK_LATEST = {
   deployedFunctionId: "df-1",
@@ -108,7 +111,10 @@ beforeEach(() => {
   vi.mocked(deleteDockerImage).mockResolvedValue(undefined);
   vi.mocked(unregisterShopifyWebhooks).mockResolvedValue(undefined);
   vi.mocked(unscheduleAppCron).mockResolvedValue({ removed: true });
-  vi.mocked(deployToCloudRun).mockResolvedValue({ functionUrl: "https://handler.run.app", serviceName: "h-acme" } as never);
+  vi.mocked(deployToCloudRun).mockResolvedValue({
+    functionUrl: "https://handler.run.app",
+    serviceName: "h-acme",
+  } as never);
   vi.mocked(registerWebhooks).mockResolvedValue(undefined);
   vi.mocked(scheduleAppCron).mockResolvedValue(undefined);
   vi.mocked(dropAppSchema).mockResolvedValue({ dropped: true });
@@ -130,9 +136,7 @@ describe("teardownApp", () => {
     expect(unregisterShopifyWebhooks).toHaveBeenCalledWith(
       expect.objectContaining({ shopDomain: MOCK_APP.shopDomain }),
     );
-    expect(unscheduleAppCron).toHaveBeenCalledWith(
-      expect.objectContaining({ appId: APP_ID }),
-    );
+    expect(unscheduleAppCron).toHaveBeenCalledWith(expect.objectContaining({ appId: APP_ID }));
     expect(deleteCloudRunService).toHaveBeenCalledWith(APP_ID);
     expect(deactivateAppInfrastructure).toHaveBeenCalledWith(APP_ID);
   });
@@ -168,12 +172,16 @@ describe("reactivateApp", () => {
 
   it("throws when no prior deploy exists", async () => {
     vi.mocked(getLatestDeployedVersionForApp).mockResolvedValue(null);
-    await expect(reactivateApp({ tenantId: TENANT_ID, appId: APP_ID })).rejects.toThrow("no prior deploy");
+    await expect(reactivateApp({ tenantId: TENANT_ID, appId: APP_ID })).rejects.toThrow(
+      "no prior deploy",
+    );
   });
 
   it("throws when app has no handler_sa_email", async () => {
     vi.mocked(getAppById).mockResolvedValue({ ...MOCK_APP, handlerSaEmail: null } as never);
-    await expect(reactivateApp({ tenantId: TENANT_ID, appId: APP_ID })).rejects.toThrow("handler_sa_email");
+    await expect(reactivateApp({ tenantId: TENANT_ID, appId: APP_ID })).rejects.toThrow(
+      "handler_sa_email",
+    );
   });
 
   it("deploys the stored image — does NOT build a new one", async () => {
@@ -192,7 +200,10 @@ describe("reactivateApp", () => {
   });
 
   it("skips webhook re-register when the latest deploy had none", async () => {
-    vi.mocked(getLatestDeployedVersionForApp).mockResolvedValue({ ...MOCK_LATEST, webhookTopics: [] });
+    vi.mocked(getLatestDeployedVersionForApp).mockResolvedValue({
+      ...MOCK_LATEST,
+      webhookTopics: [],
+    });
     await reactivateApp({ tenantId: TENANT_ID, appId: APP_ID });
     expect(registerWebhooks).not.toHaveBeenCalled();
   });
@@ -205,7 +216,10 @@ describe("reactivateApp", () => {
   });
 
   it("skips cron when the latest deploy had none", async () => {
-    vi.mocked(getLatestDeployedVersionForApp).mockResolvedValue({ ...MOCK_LATEST, cronSchedule: null });
+    vi.mocked(getLatestDeployedVersionForApp).mockResolvedValue({
+      ...MOCK_LATEST,
+      cronSchedule: null,
+    });
     await reactivateApp({ tenantId: TENANT_ID, appId: APP_ID });
     expect(scheduleAppCron).not.toHaveBeenCalled();
   });
@@ -249,9 +263,7 @@ describe("permanentDeleteApp", () => {
 
   it("deletes the per-app SA when handlerSaEmail is set", async () => {
     await permanentDeleteApp({ tenantId: TENANT_ID, appId: APP_ID });
-    expect(deleteServiceAccount).toHaveBeenCalledWith(
-      expect.stringContaining("h-acme-1"),
-    );
+    expect(deleteServiceAccount).toHaveBeenCalledWith(expect.stringContaining("h-acme-1"));
   });
 
   it("skips SA delete when handlerSaEmail is null", async () => {

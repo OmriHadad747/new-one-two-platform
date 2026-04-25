@@ -14,10 +14,7 @@ import { deployToCloudRun, deleteCloudRunService } from "./cloud-run-ops.js";
 import { deleteServiceAccount } from "./iam-ops.js";
 import { dockerImageName } from "./service-namer.js";
 import { deleteDockerImage } from "./build-image.js";
-import {
-  registerWebhooks,
-  unregisterShopifyWebhooks,
-} from "./webhook-registrar.js";
+import { registerWebhooks, unregisterShopifyWebhooks } from "./webhook-registrar.js";
 import { scheduleAppCron, unscheduleAppCron } from "./cron-scheduler.js";
 import { appSchemaName, dropAppSchema } from "./migration-runner.js";
 
@@ -179,10 +176,7 @@ export async function reactivateApp(
         cronExpression: latest.cronSchedule,
         databaseUrl: requireEnv("DATABASE_URL"),
       });
-      logger.info(
-        { appId, cronSchedule: latest.cronSchedule },
-        "reactivateApp: cron re-asserted",
-      );
+      logger.info({ appId, cronSchedule: latest.cronSchedule }, "reactivateApp: cron re-asserted");
     } catch (err) {
       logger.warn({ err, appId }, "reactivateApp: cron re-assert failed");
     }
@@ -204,9 +198,7 @@ export interface PermanentDeleteAppInput {
   appId: string;
 }
 
-export async function permanentDeleteApp(
-  input: PermanentDeleteAppInput,
-): Promise<void> {
+export async function permanentDeleteApp(input: PermanentDeleteAppInput): Promise<void> {
   const { tenantId, appId } = input;
   const app = await getAppById(tenantId, appId);
   if (!app) {

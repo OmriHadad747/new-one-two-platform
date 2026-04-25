@@ -8,8 +8,7 @@ import type { TenantRecord } from "@platform-back/db";
 //   disabled — bypass Shopify entirely (required for custom apps + local dev)
 //   test     — call Shopify with test:true (no real charges, public/unlisted app staging)
 //   live     — call Shopify with test:false (production)
-const BILLING_TEST_MODE =
-  (process.env["SHOPIFY_BILLING_MODE"] ?? "disabled") === "test";
+const BILLING_TEST_MODE = (process.env["SHOPIFY_BILLING_MODE"] ?? "disabled") === "test";
 
 const PLATFORM_URL = process.env["PLATFORM_URL"] ?? "http://localhost:3002";
 
@@ -73,20 +72,15 @@ export async function createSubscription(
     ? (planDef.priceYearly / 100).toFixed(2)
     : (planDef.priceMonthly / 100).toFixed(2);
 
-  const result = await shopifyGraphql(
-    tenant.shopDomain,
-    accessToken,
-    APP_SUBSCRIPTION_CREATE,
-    {
-      name: `${planDef.name} Plan (${isAnnual ? "Annual" : "Monthly"})`,
-      returnUrl,
-      trialDays: planDef.limits.trialDays,
-      test: BILLING_TEST_MODE,
-      amount,
-      currencyCode: "USD",
-      interval: isAnnual ? "ANNUAL" : "EVERY_30_DAYS",
-    },
-  );
+  const result = await shopifyGraphql(tenant.shopDomain, accessToken, APP_SUBSCRIPTION_CREATE, {
+    name: `${planDef.name} Plan (${isAnnual ? "Annual" : "Monthly"})`,
+    returnUrl,
+    trialDays: planDef.limits.trialDays,
+    test: BILLING_TEST_MODE,
+    amount,
+    currencyCode: "USD",
+    interval: isAnnual ? "ANNUAL" : "EVERY_30_DAYS",
+  });
 
   const data = result.appSubscriptionCreate as {
     confirmationUrl: string;
@@ -94,9 +88,7 @@ export async function createSubscription(
     userErrors: Array<{ message: string }>;
   };
   if (data.userErrors?.length > 0) {
-    throw new Error(
-      `Shopify billing error: ${data.userErrors.map((e) => e.message).join(", ")}`,
-    );
+    throw new Error(`Shopify billing error: ${data.userErrors.map((e) => e.message).join(", ")}`);
   }
   logger.info(
     { tenantId: tenant.id, plan, subscriptionId: data.appSubscription.id },
@@ -117,20 +109,15 @@ export async function cancelSubscription(tenant: TenantRecord): Promise<void> {
     throw new Error("Tenant has no shop domain or access token");
   }
   const accessToken = await getSecret(tenant.shopifyAccessTokenSecretName);
-  const result = await shopifyGraphql(
-    tenant.shopDomain,
-    accessToken,
-    APP_SUBSCRIPTION_CANCEL,
-    { id: tenant.shopifySubscriptionId },
-  );
+  const result = await shopifyGraphql(tenant.shopDomain, accessToken, APP_SUBSCRIPTION_CANCEL, {
+    id: tenant.shopifySubscriptionId,
+  });
   const data = result.appSubscriptionCancel as {
     appSubscription: { id: string };
     userErrors: Array<{ message: string }>;
   };
   if (data.userErrors?.length > 0) {
-    throw new Error(
-      `Shopify cancel error: ${data.userErrors.map((e) => e.message).join(", ")}`,
-    );
+    throw new Error(`Shopify cancel error: ${data.userErrors.map((e) => e.message).join(", ")}`);
   }
   logger.info({ tenantId: tenant.id }, "Shopify subscription cancelled");
 }

@@ -72,9 +72,7 @@ async function main(): Promise<void> {
     `;
 
     const applied = new Set(
-      (
-        await sql<Array<{ name: string }>>`SELECT name FROM schema_migrations`
-      ).map((r) => r.name),
+      (await sql<Array<{ name: string }>>`SELECT name FROM schema_migrations`).map((r) => r.name),
     );
 
     const all = await loadMigrations();

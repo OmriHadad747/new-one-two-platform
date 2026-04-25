@@ -22,9 +22,7 @@ export interface BuildImageResult {
   output: string;
 }
 
-export async function buildAndPushImage(
-  input: BuildImageInput,
-): Promise<BuildImageResult> {
+export async function buildAndPushImage(input: BuildImageInput): Promise<BuildImageResult> {
   const imageName = dockerImageName(input.appId, input.version);
   if (IS_LOCAL) {
     return buildLocal(input.buildContextDir, imageName);
@@ -34,11 +32,7 @@ export async function buildAndPushImage(
 
 // ─── Local docker shell-out ──────────────────────────────────────────────────
 
-function runCommand(
-  cmd: string,
-  args: string[],
-  cwd: string,
-): Promise<string> {
+function runCommand(cmd: string, args: string[], cwd: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, args, { cwd, stdio: "pipe" });
     const chunks: Buffer[] = [];
@@ -49,33 +43,19 @@ function runCommand(
       if (code === 0) {
         resolve(output);
       } else {
-        reject(
-          new Error(
-            `${cmd} ${args.join(" ")} exited with code ${code}:\n${output}`,
-          ),
-        );
+        reject(new Error(`${cmd} ${args.join(" ")} exited with code ${code}:\n${output}`));
       }
     });
     proc.on("error", reject);
   });
 }
 
-async function buildLocal(
-  buildContextDir: string,
-  imageName: string,
-): Promise<BuildImageResult> {
+async function buildLocal(buildContextDir: string, imageName: string): Promise<BuildImageResult> {
   logger.info({ imageName, buildContextDir }, "[local] docker build");
-  const buildOut = await runCommand(
-    "docker",
-    ["build", "-t", imageName, "."],
-    buildContextDir,
-  );
+  const buildOut = await runCommand("docker", ["build", "-t", imageName, "."], buildContextDir);
   let pushOut = "";
   if (SKIP_DOCKER_PUSH) {
-    logger.info(
-      { imageName },
-      "[local] SKIP_DOCKER_PUSH=true — image stays in local daemon",
-    );
+    logger.info({ imageName }, "[local] SKIP_DOCKER_PUSH=true — image stays in local daemon");
   } else {
     logger.info({ imageName }, "[local] docker push");
     pushOut = await runCommand("docker", ["push", imageName], process.cwd());
@@ -141,15 +121,7 @@ export async function deleteDockerImage(imageName: string): Promise<void> {
   try {
     await runCommand(
       "gcloud",
-      [
-        "artifacts",
-        "docker",
-        "images",
-        "delete",
-        imageName,
-        "--quiet",
-        "--delete-tags",
-      ],
+      ["artifacts", "docker", "images", "delete", imageName, "--quiet", "--delete-tags"],
       process.cwd(),
     );
     logger.info({ imageName }, "Artifact Registry image deleted");

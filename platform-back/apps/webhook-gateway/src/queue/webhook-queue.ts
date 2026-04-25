@@ -37,9 +37,7 @@ queueEvents.on("stalled", ({ jobId }) => {
   logger.warn({ jobId }, "Webhook job stalled — will be retried");
 });
 
-export async function enqueueWebhook(
-  payload: WebhookJobPayload,
-): Promise<{ id: string }> {
+export async function enqueueWebhook(payload: WebhookJobPayload): Promise<{ id: string }> {
   const job = await webhookQueue.add(payload.topic, payload, {
     jobId: payload.executionLogId,
     priority: 1,

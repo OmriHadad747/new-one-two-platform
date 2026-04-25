@@ -101,9 +101,7 @@ beforeEach(() => {
   // Default DB mocks
   mockGetByDomain.mockResolvedValue(null); // new install
   mockCreateTenant.mockResolvedValue({ id: "new-tenant-id" });
-  mockStoreSecret.mockResolvedValue(
-    "projects/test/secrets/acme-shopify-token/versions/latest",
-  );
+  mockStoreSecret.mockResolvedValue("projects/test/secrets/acme-shopify-token/versions/latest");
   mockSignJwt.mockReturnValue("platform-jwt-token");
 });
 
@@ -158,9 +156,7 @@ describe("GET /oauth/callback — happy path (first install)", () => {
     expect(location).toContain("new-tenant-id");
     expect(location).toContain("token=platform-jwt-token");
 
-    expect(mockCreateTenant).toHaveBeenCalledWith(
-      expect.objectContaining({ shopDomain: SHOP }),
-    );
+    expect(mockCreateTenant).toHaveBeenCalledWith(expect.objectContaining({ shopDomain: SHOP }));
     await app.close();
   });
 
@@ -211,7 +207,10 @@ describe("GET /oauth/callback — security checks", () => {
   it("returns 400 when state shop binding doesn't match query shop", async () => {
     const state = buildState("other-shop.myshopify.com");
     const params = { code: "abc", shop: SHOP, state };
-    const message = Object.keys(params).sort().map((k) => `${k}=${params[k as keyof typeof params]}`).join("&");
+    const message = Object.keys(params)
+      .sort()
+      .map((k) => `${k}=${params[k as keyof typeof params]}`)
+      .join("&");
     const hmac = createHmac("sha256", CLIENT_SECRET).update(message).digest("hex");
     const app = await buildApp();
 

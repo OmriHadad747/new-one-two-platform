@@ -4,10 +4,7 @@ import { verifyShopifyAppProxy } from "../lib/shopify-app-proxy.js";
 
 const SECRET = "test-proxy-secret";
 
-function sign(
-  params: Record<string, string>,
-  secret: string = SECRET,
-): Record<string, string> {
+function sign(params: Record<string, string>, secret: string = SECRET): Record<string, string> {
   const keys = Object.keys(params).sort();
   const canonical = keys.map((k) => `${k}=${params[k]}`).join("");
   const sig = createHmac("sha256", secret).update(canonical).digest("hex");
@@ -123,8 +120,7 @@ describe("verifyShopifyAppProxy — canonical string construction", () => {
 
   it("params are sorted alphabetically for canonical string", () => {
     // Re-order params — result should still verify
-    const { timestamp, shop, logged_in_customer_id, path_prefix } =
-      VALID_PARAMS;
+    const { timestamp, shop, logged_in_customer_id, path_prefix } = VALID_PARAMS;
     const query = sign({
       path_prefix,
       logged_in_customer_id,

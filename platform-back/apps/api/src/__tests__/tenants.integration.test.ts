@@ -53,31 +53,57 @@ vi.mock("../plugins/auth.js", () => ({
 vi.mock("@platform-back/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   createRequestLogger: vi.fn(() => ({
-    info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
   })),
 }));
 
 import {
-  getAppById, listAppsForTenant, createApp, updateAppName, updateAppStatus, hardDeleteApp,
-  getTenantById, getTenantByShopDomain, createTenant,
+  getAppById,
+  listAppsForTenant,
+  createApp,
+  updateAppName,
+  updateAppStatus,
+  hardDeleteApp,
+  getTenantById,
+  getTenantByShopDomain,
+  createTenant,
 } from "@platform-back/db";
 import { teardownApp, reactivateApp, permanentDeleteApp } from "@platform-back/deployer";
 import { canActivateApp } from "../lib/plan-enforcement.js";
 import { tenantsRoutes } from "../routes/tenants.js";
 
 const TENANT_ID = "11111111-1111-1111-1111-111111111111";
-const APP_ID    = "22222222-2222-2222-2222-222222222222";
+const APP_ID = "22222222-2222-2222-2222-222222222222";
 
 const MOCK_APP = {
-  id: APP_ID, tenantId: TENANT_ID, slug: "my-app", name: "My App",
-  status: "active", shopDomain: "acme.myshopify.com", handlerSaEmail: null,
+  id: APP_ID,
+  tenantId: TENANT_ID,
+  slug: "my-app",
+  name: "My App",
+  status: "active",
+  shopDomain: "acme.myshopify.com",
+  handlerSaEmail: null,
 };
 const MOCK_TENANT = {
-  id: TENANT_ID, slug: "acme", name: "Acme", shopDomain: "acme.myshopify.com",
-  billingPlan: "starter", subscriptionStatus: "active", billingInterval: "monthly",
-  shopifySubscriptionId: null, trialEndsAt: null, billingCycleAnchor: new Date().toISOString(),
-  planUpdatedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-  status: "active", shopifyAccessTokenSecretName: null, storefrontAccessTokenSecretName: null,
+  id: TENANT_ID,
+  slug: "acme",
+  name: "Acme",
+  shopDomain: "acme.myshopify.com",
+  billingPlan: "starter",
+  subscriptionStatus: "active",
+  billingInterval: "monthly",
+  shopifySubscriptionId: null,
+  trialEndsAt: null,
+  billingCycleAnchor: new Date().toISOString(),
+  planUpdatedAt: new Date().toISOString(),
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  status: "active",
+  shopifyAccessTokenSecretName: null,
+  storefrontAccessTokenSecretName: null,
 };
 
 async function buildApp() {

@@ -50,9 +50,7 @@ async function invokeHandler(
   const body = JSON.stringify({
     webhook_id: payload.shopifyWebhookId,
     topic: payload.topic,
-    payload: JSON.parse(
-      Buffer.from(payload.rawBodyBase64, "base64").toString("utf-8"),
-    ),
+    payload: JSON.parse(Buffer.from(payload.rawBodyBase64, "base64").toString("utf-8")),
   });
 
   const extraHeaders: Record<string, string> = {
@@ -110,7 +108,10 @@ async function processWebhookJob(job: Job<WebhookJobPayload>): Promise<void> {
     const durationMs = Math.round(completedAt.getTime() - startedAt.getTime());
 
     if (err instanceof HandlerError) {
-      log.error({ jobId: job.id, httpStatus: err.httpStatus, body: err.body }, "Handler returned error");
+      log.error(
+        { jobId: job.id, httpStatus: err.httpStatus, body: err.body },
+        "Handler returned error",
+      );
       await updateWebhookInvocationLog(payload.executionLogId, {
         status: "failed",
         durationMs,
@@ -137,16 +138,12 @@ async function processWebhookJob(job: Job<WebhookJobPayload>): Promise<void> {
 
 const CONCURRENCY = parseInt(process.env["WORKER_CONCURRENCY"] ?? "10", 10);
 
-export const worker = new Worker<WebhookJobPayload>(
-  WEBHOOK_QUEUE_NAME,
-  processWebhookJob,
-  {
-    connection: redisConnection,
-    concurrency: CONCURRENCY,
-    lockDuration: 60_000,
-    lockRenewTime: 15_000,
-  },
-);
+export const worker = new Worker<WebhookJobPayload>(WEBHOOK_QUEUE_NAME, processWebhookJob, {
+  connection: redisConnection,
+  concurrency: CONCURRENCY,
+  lockDuration: 60_000,
+  lockRenewTime: 15_000,
+});
 
 worker.on("error", (err: Error) => {
   console.error("Worker error:", err);
@@ -161,7 +158,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   const PORT = parseInt(process.env["PORT"] ?? "8080", 10);
   const { createServer } = await import("node:http");
-  const server = createServer((_req, res) => { res.writeHead(200); res.end("ok"); });
+  const server = createServer((_req, res) => {
+    res.writeHead(200);
+    res.end("ok");
+  });
   server.listen(PORT, () => console.info(`Health check server on ${PORT}`));
 
   const shutdown = async () => {

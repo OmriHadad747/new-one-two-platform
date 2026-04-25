@@ -21,9 +21,7 @@ const TENANT_SCHEMA = required("TENANT_SCHEMA");
 // means a wiring bug (old-format env var, stale container) and we want to
 // crash loudly rather than risk a search_path injection.
 if (!/^tenant_[0-9a-f]{32}_app_[0-9a-f]{16}$/.test(TENANT_SCHEMA)) {
-  throw new Error(
-    `FATAL: TENANT_SCHEMA "${TENANT_SCHEMA}" does not match expected pattern`,
-  );
+  throw new Error(`FATAL: TENANT_SCHEMA "${TENANT_SCHEMA}" does not match expected pattern`);
 }
 
 export const sql = postgres(DATABASE_URL, {

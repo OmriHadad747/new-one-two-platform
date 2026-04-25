@@ -36,9 +36,15 @@ vi.mock("@platform-back/logger", () => ({
 }));
 
 import {
-  getTenantById, getOrCreateUsageRecord, getActiveAppCount,
-  updateTenantBilling, logBillingEvent, getBillingEvents,
-  getRevisionAnalytics, getUsageHistory, sql,
+  getTenantById,
+  getOrCreateUsageRecord,
+  getActiveAppCount,
+  updateTenantBilling,
+  logBillingEvent,
+  getBillingEvents,
+  getRevisionAnalytics,
+  getUsageHistory,
+  sql,
 } from "@platform-back/db";
 import { createSubscription, cancelSubscription } from "../lib/shopify-billing.js";
 import { billingRoutes } from "../routes/billing.js";
@@ -47,25 +53,46 @@ const TENANT_ID = "11111111-1111-1111-1111-111111111111";
 const CLIENT_SECRET = process.env["SHOPIFY_CLIENT_SECRET"]!;
 
 const MOCK_TENANT = {
-  id: TENANT_ID, slug: "acme", name: "Acme",
-  billingPlan: "starter" as const, billingInterval: "monthly" as const,
-  subscriptionStatus: "active", shopifySubscriptionId: null, trialEndsAt: null,
-  billingCycleAnchor: new Date().toISOString(), planUpdatedAt: new Date().toISOString(),
-  createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-  status: "active" as const, shopDomain: "acme.myshopify.com",
-  shopifyAccessTokenSecretName: "secret-name", storefrontAccessTokenSecretName: null,
+  id: TENANT_ID,
+  slug: "acme",
+  name: "Acme",
+  billingPlan: "starter" as const,
+  billingInterval: "monthly" as const,
+  subscriptionStatus: "active",
+  shopifySubscriptionId: null,
+  trialEndsAt: null,
+  billingCycleAnchor: new Date().toISOString(),
+  planUpdatedAt: new Date().toISOString(),
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  status: "active" as const,
+  shopDomain: "acme.myshopify.com",
+  shopifyAccessTokenSecretName: "secret-name",
+  storefrontAccessTokenSecretName: null,
 };
 
 const MOCK_USAGE = {
-  id: "u-1", tenantId: TENANT_ID, periodStart: new Date(),
-  generations: 2, revisions: 5, appExecutions: 100,
-  emailsSent: 10, smsSent: 0, filesUploaded: 0,
-  createdAt: new Date(), updatedAt: new Date(),
+  id: "u-1",
+  tenantId: TENANT_ID,
+  periodStart: new Date(),
+  generations: 2,
+  revisions: 5,
+  appExecutions: 100,
+  emailsSent: 10,
+  smsSent: 0,
+  filesUploaded: 0,
+  createdAt: new Date(),
+  updatedAt: new Date(),
 };
 
 async function buildApp() {
   const app = Fastify({ logger: false });
-  await app.register(rawBodyPlugin, { field: "rawBody", global: true, encoding: false, runFirst: true });
+  await app.register(rawBodyPlugin, {
+    field: "rawBody",
+    global: true,
+    encoding: false,
+    runFirst: true,
+  });
   await app.register(billingRoutes, { prefix: "/billing" });
   await app.ready();
   return app;
@@ -82,10 +109,18 @@ beforeEach(() => {
   vi.mocked(updateTenantBilling).mockResolvedValue(undefined);
   vi.mocked(logBillingEvent).mockResolvedValue(undefined);
   vi.mocked(getBillingEvents).mockResolvedValue([]);
-  vi.mocked(getRevisionAnalytics).mockResolvedValue({ total: 0, bugReports: 0, featureModifications: 0, newCapabilities: 0 });
+  vi.mocked(getRevisionAnalytics).mockResolvedValue({
+    total: 0,
+    bugReports: 0,
+    featureModifications: 0,
+    newCapabilities: 0,
+  });
   vi.mocked(getUsageHistory).mockResolvedValue([]);
   vi.mocked(sql as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-  vi.mocked(createSubscription).mockResolvedValue({ confirmationUrl: "https://shopify.com/confirm", subscriptionId: "gid://1" });
+  vi.mocked(createSubscription).mockResolvedValue({
+    confirmationUrl: "https://shopify.com/confirm",
+    subscriptionId: "gid://1",
+  });
   vi.mocked(cancelSubscription).mockResolvedValue(undefined);
   // Billing mode disabled by default for tests
   process.env["SHOPIFY_BILLING_MODE"] = "disabled";
@@ -290,7 +325,9 @@ describe("POST /billing/webhook — HMAC verification", () => {
     vi.mocked(sql as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: TENANT_ID, billingPlan: "starter" },
     ]);
-    const body = JSON.stringify({ app_subscription: { admin_graphql_api_id: "gid://1", status: "ACTIVE" } });
+    const body = JSON.stringify({
+      app_subscription: { admin_graphql_api_id: "gid://1", status: "ACTIVE" },
+    });
     const hmac = buildWebhookHmac(body);
     const server = await buildApp();
     const res = await server.inject({
@@ -360,7 +397,9 @@ describe("POST /billing/webhook — subscription state machine", () => {
 
   it("unknown tenant → returns 200 (no error, just ignored)", async () => {
     vi.mocked(sql as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    const body = JSON.stringify({ app_subscription: { admin_graphql_api_id: "gid://unknown", status: "ACTIVE" } });
+    const body = JSON.stringify({
+      app_subscription: { admin_graphql_api_id: "gid://unknown", status: "ACTIVE" },
+    });
     const hmac = buildWebhookHmac(body);
     const server = await buildApp();
     const res = await server.inject({

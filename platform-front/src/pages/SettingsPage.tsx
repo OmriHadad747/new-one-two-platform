@@ -29,14 +29,18 @@ function RingProgress({ pct, color }: { pct: number; color: string }) {
     >
       {/* Track — uses CSS var so it adapts to data-theme="light" */}
       <circle
-        cx={RING_CX} cy={RING_CX} r={RING_R}
+        cx={RING_CX}
+        cy={RING_CX}
+        r={RING_R}
         fill="none"
         stroke="var(--color-ring-track)"
         strokeWidth="3.5"
       />
       {visual > 0 && (
         <circle
-          cx={RING_CX} cy={RING_CX} r={RING_R}
+          cx={RING_CX}
+          cy={RING_CX}
+          r={RING_R}
           fill="none"
           stroke={color}
           strokeWidth="3.5"
@@ -65,28 +69,24 @@ function StatTile({
 }) {
   const pct = unlimited ? 0 : Math.min(100, Math.round((used / Math.max(max, 1)) * 100));
   const danger = !unlimited && pct >= 90;
-  const warn   = !unlimited && pct >= 70;
+  const warn = !unlimited && pct >= 70;
   // Use accent (violet) for normal state — readable in both light and dark themes.
   // Teal (#5de6ff) is too faint at small sizes in light mode.
-  const color  = danger ? "var(--color-danger)" : warn ? "#f59e0b" : "var(--color-accent)";
+  const color = danger ? "var(--color-danger)" : warn ? "#f59e0b" : "var(--color-accent)";
   const maxLabel = unlimited ? "∞" : max.toLocaleString();
 
   return (
-    <div className={`rounded-xl p-3 flex flex-col gap-2 ${
-      danger
-        ? "bg-danger/[0.06]"
-        : warn
-        ? "bg-amber-400/[0.06]"
-        : "bg-white/[0.05]"
-    }`}>
+    <div
+      className={`rounded-xl p-3 flex flex-col gap-2 ${
+        danger ? "bg-danger/[0.06]" : warn ? "bg-amber-400/[0.06]" : "bg-white/[0.05]"
+      }`}
+    >
       <div className="flex items-start justify-between">
         <div>
           <div className="text-[22px] font-bold text-ink tabular-nums leading-none tracking-tight">
             {used.toLocaleString()}
           </div>
-          <div className="text-[11px] text-faint mt-1.5 tabular-nums">
-            of {maxLabel}
-          </div>
+          <div className="text-[11px] text-faint mt-1.5 tabular-nums">of {maxLabel}</div>
         </div>
         <div className="relative w-[46px] h-[46px] shrink-0">
           <RingProgress pct={unlimited ? 0 : pct} color={unlimited ? "currentColor" : color} />
@@ -197,12 +197,13 @@ function PlanModal({
       style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)" }}
     >
       <div className="bg-surface rounded-xl w-full max-w-[580px] overflow-hidden shadow-2xl">
-
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5">
           <div>
             <div className="text-[15px] font-bold text-ink">Upgrade your plan</div>
-            <div className="text-[12px] text-faint mt-0.5">Unlock more apps, builds, and executions</div>
+            <div className="text-[12px] text-faint mt-0.5">
+              Unlock more apps, builds, and executions
+            </div>
           </div>
           <button
             type="button"
@@ -232,7 +233,9 @@ function PlanModal({
                   <span
                     className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white"
                     style={{ background: "linear-gradient(135deg, #a78bfa 0%, #5de6ff 100%)" }}
-                  >−17%</span>
+                  >
+                    −17%
+                  </span>
                 )}
               </button>
             ))}
@@ -251,16 +254,15 @@ function PlanModal({
         <div className="px-6 pb-6 grid grid-cols-3 gap-3">
           {PLAN_DEFS.map((plan) => {
             const isCurrent = plan.id === currentPlan;
-            const price = interval === "monthly" ? plan.priceMonthly : Math.round(plan.priceYearly / 12);
+            const price =
+              interval === "monthly" ? plan.priceMonthly : Math.round(plan.priceYearly / 12);
             const isLoading = loading === plan.id;
 
             return (
               <div
                 key={plan.id}
                 className={`rounded-xl p-4 flex flex-col gap-3 relative ${
-                  plan.highlight
-                    ? "bg-accent/[0.05] ring-1 ring-accent/25"
-                    : "bg-white/[0.03]"
+                  plan.highlight ? "bg-accent/[0.05] ring-1 ring-accent/25" : "bg-white/[0.03]"
                 }`}
               >
                 {plan.highlight && (
@@ -274,20 +276,22 @@ function PlanModal({
                 <div>
                   <div className="text-[13px] font-bold text-ink">{plan.name}</div>
                   <div className="flex items-baseline gap-1 mt-1.5">
-                    <span className="text-[22px] font-extrabold text-ink tabular-nums">${price}</span>
+                    <span className="text-[22px] font-extrabold text-ink tabular-nums">
+                      ${price}
+                    </span>
                     <span className="text-[11px] text-faint">/mo</span>
                   </div>
                   {interval === "annual" && (
-                    <div className="text-[10px] text-teal mt-0.5">
-                      ${plan.priceYearly}/yr
-                    </div>
+                    <div className="text-[10px] text-teal mt-0.5">${plan.priceYearly}/yr</div>
                   )}
                 </div>
 
                 <ul className="space-y-1.5">
                   {[plan.apps, plan.builds, plan.executions, plan.emails].map((feat) => (
                     <li key={feat} className="flex items-center gap-2 text-[11px] text-faint">
-                      <span className="material-symbols-outlined text-[13px] text-teal shrink-0">check</span>
+                      <span className="material-symbols-outlined text-[13px] text-teal shrink-0">
+                        check
+                      </span>
                       {feat}
                     </li>
                   ))}
@@ -301,12 +305,15 @@ function PlanModal({
                     isCurrent
                       ? "bg-white/[0.05] text-faint cursor-default"
                       : plan.highlight
-                      ? "text-white hover:opacity-90"
-                      : "bg-white/[0.07] text-ink hover:bg-white/[0.12]"
+                        ? "text-white hover:opacity-90"
+                        : "bg-white/[0.07] text-ink hover:bg-white/[0.12]"
                   }`}
                   style={
                     !isCurrent && plan.highlight
-                      ? { background: "var(--color-accent)", boxShadow: "0 0 12px rgba(167,139,250,0.3)" }
+                      ? {
+                          background: "var(--color-accent)",
+                          boxShadow: "0 0 12px rgba(167,139,250,0.3)",
+                        }
                       : undefined
                   }
                 >
@@ -315,7 +322,11 @@ function PlanModal({
                       <span className="w-3 h-3 rounded-full border border-white/30 border-t-white animate-spin" />
                       Redirecting…
                     </span>
-                  ) : isCurrent ? "Current plan" : "Select"}
+                  ) : isCurrent ? (
+                    "Current plan"
+                  ) : (
+                    "Select"
+                  )}
                 </button>
               </div>
             );
@@ -333,62 +344,101 @@ function PlanModal({
 type PlanStyle = { color: string; borderColor: string; backgroundColor: string };
 
 const PLAN_BADGE_DARK: Record<string, PlanStyle> = {
-  free:     { color: "var(--color-faint)",  borderColor: "rgba(255,255,255,0.10)", backgroundColor: "rgba(255,255,255,0.04)" },
-  starter:  { color: "#7dd3fc",             borderColor: "rgba(56,189,248,0.25)",  backgroundColor: "rgba(56,189,248,0.08)"  },
-  growth:   { color: "#6ee7b7",             borderColor: "rgba(52,211,153,0.25)",  backgroundColor: "rgba(52,211,153,0.08)"  },
-  pro:      { color: "var(--color-accent)", borderColor: "rgba(167,139,250,0.25)", backgroundColor: "rgba(167,139,250,0.08)" },
-  internal: { color: "#fcd34d",             borderColor: "rgba(251,191,36,0.25)",  backgroundColor: "rgba(251,191,36,0.08)"  },
+  free: {
+    color: "var(--color-faint)",
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  starter: {
+    color: "#7dd3fc",
+    borderColor: "rgba(56,189,248,0.25)",
+    backgroundColor: "rgba(56,189,248,0.08)",
+  },
+  growth: {
+    color: "#6ee7b7",
+    borderColor: "rgba(52,211,153,0.25)",
+    backgroundColor: "rgba(52,211,153,0.08)",
+  },
+  pro: {
+    color: "var(--color-accent)",
+    borderColor: "rgba(167,139,250,0.25)",
+    backgroundColor: "rgba(167,139,250,0.08)",
+  },
+  internal: {
+    color: "#fcd34d",
+    borderColor: "rgba(251,191,36,0.25)",
+    backgroundColor: "rgba(251,191,36,0.08)",
+  },
 };
 
 const PLAN_BADGE_LIGHT: Record<string, PlanStyle> = {
-  free:     { color: "var(--color-faint)",  borderColor: "rgba(0,0,0,0.12)",       backgroundColor: "rgba(0,0,0,0.04)"       },
-  starter:  { color: "#075985",             borderColor: "#7dd3fc",                backgroundColor: "#f0f9ff"                 },
-  growth:   { color: "#065f46",             borderColor: "#6ee7b7",                backgroundColor: "#ecfdf5"                 },
-  pro:      { color: "var(--color-accent)", borderColor: "rgba(124,58,237,0.35)",  backgroundColor: "#f5f3ff"                 },
-  internal: { color: "#92400e",             borderColor: "#f59e0b",                backgroundColor: "#fffbeb"                 },
+  free: {
+    color: "var(--color-faint)",
+    borderColor: "rgba(0,0,0,0.12)",
+    backgroundColor: "rgba(0,0,0,0.04)",
+  },
+  starter: { color: "#075985", borderColor: "#7dd3fc", backgroundColor: "#f0f9ff" },
+  growth: { color: "#065f46", borderColor: "#6ee7b7", backgroundColor: "#ecfdf5" },
+  pro: {
+    color: "var(--color-accent)",
+    borderColor: "rgba(124,58,237,0.35)",
+    backgroundColor: "#f5f3ff",
+  },
+  internal: { color: "#92400e", borderColor: "#f59e0b", backgroundColor: "#fffbeb" },
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
   const { tenantId, shopDomain } = useSessionStore();
-  const tenantQuery  = useTenant(tenantId);
-  const statsQuery   = useTenantStats(tenantId);
-  const usageQuery   = useBillingUsage(tenantId);
-  const { theme }    = useThemeStore();
+  const tenantQuery = useTenant(tenantId);
+  const statsQuery = useTenantStats(tenantId);
+  const usageQuery = useBillingUsage(tenantId);
+  const { theme } = useThemeStore();
   const [showUpgrade, setShowUpgrade] = useState(false);
 
-  const tenant  = tenantQuery.data;
-  const stats   = statsQuery.data;
+  const tenant = tenantQuery.data;
+  const stats = statsQuery.data;
   const billing = usageQuery.data;
 
-  const plan      = tenant?.billingPlan ?? "free";
+  const plan = tenant?.billingPlan ?? "free";
   const planTable = theme === "light" ? PLAN_BADGE_LIGHT : PLAN_BADGE_DARK;
   const planStyle = planTable[plan] ?? planTable["free"]!;
   const canUpgrade = plan !== "pro" && plan !== "internal";
   const connectedDomain = shopDomain ?? tenant?.shopDomain ?? null;
 
   const limits = billing?.limits;
-  const usage  = billing?.usage;
+  const usage = billing?.usage;
 
   return (
     <>
       <TopBar title="Settings" />
       <main className="flex-1 overflow-y-auto py-5 px-8 w-full max-w-[680px] mx-auto space-y-3">
-
         {/* ── Plan ──────────────────────────────────────────────────────── */}
         <section className="bg-white/[0.03] rounded-xl overflow-hidden">
-
           <div className="px-6 pt-4 pb-2">
-            <span className="text-[11px] font-semibold text-faint uppercase tracking-widest">Plan</span>
+            <span className="text-[11px] font-semibold text-faint uppercase tracking-widest">
+              Plan
+            </span>
           </div>
 
           <div className="flex items-center justify-between px-6 pb-3">
             <div className="flex items-center gap-3">
-              <span className="text-[12px] font-semibold px-3 py-1 rounded-full border capitalize" style={planStyle}>{plan}</span>
-              {tenant?.subscriptionStatus === "active" && <span className="text-[12px] text-teal">· Active</span>}
-              {tenant?.subscriptionStatus === "frozen" && <span className="text-[12px] text-danger">· Payment issue</span>}
-              {tenant?.subscriptionStatus === "pending" && <span className="text-[12px] text-faint">· Pending</span>}
+              <span
+                className="text-[12px] font-semibold px-3 py-1 rounded-full border capitalize"
+                style={planStyle}
+              >
+                {plan}
+              </span>
+              {tenant?.subscriptionStatus === "active" && (
+                <span className="text-[12px] text-teal">· Active</span>
+              )}
+              {tenant?.subscriptionStatus === "frozen" && (
+                <span className="text-[12px] text-danger">· Payment issue</span>
+              )}
+              {tenant?.subscriptionStatus === "pending" && (
+                <span className="text-[12px] text-faint">· Pending</span>
+              )}
             </div>
             {canUpgrade && (
               <button
@@ -416,10 +466,30 @@ export function SettingsPage() {
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
-                <StatTile label="Active apps"      used={stats?.liveApps ?? 0}        max={limits?.maxApps ?? 1}                    unlimited={(limits?.maxApps ?? 0) >= 999}        />
-                <StatTile label="Generations / mo" used={usage?.generations ?? 0}      max={limits?.maxGenerationsPerMonth ?? 1}      unlimited={(limits?.maxGenerationsPerMonth ?? 0) >= 999}    />
-                <StatTile label="Invocations / mo" used={usage?.appExecutions ?? 0}    max={limits?.maxAppExecutionsPerMonth ?? 1000} unlimited={(limits?.maxAppExecutionsPerMonth ?? 0) >= 999_999} />
-                <StatTile label="Emails / mo"      used={usage?.emailsSent ?? 0}       max={limits?.maxEmailsPerMonth ?? 0}           unlimited={(limits?.maxEmailsPerMonth ?? 0) >= 999_999}       />
+                <StatTile
+                  label="Active apps"
+                  used={stats?.liveApps ?? 0}
+                  max={limits?.maxApps ?? 1}
+                  unlimited={(limits?.maxApps ?? 0) >= 999}
+                />
+                <StatTile
+                  label="Generations / mo"
+                  used={usage?.generations ?? 0}
+                  max={limits?.maxGenerationsPerMonth ?? 1}
+                  unlimited={(limits?.maxGenerationsPerMonth ?? 0) >= 999}
+                />
+                <StatTile
+                  label="Invocations / mo"
+                  used={usage?.appExecutions ?? 0}
+                  max={limits?.maxAppExecutionsPerMonth ?? 1000}
+                  unlimited={(limits?.maxAppExecutionsPerMonth ?? 0) >= 999_999}
+                />
+                <StatTile
+                  label="Emails / mo"
+                  used={usage?.emailsSent ?? 0}
+                  max={limits?.maxEmailsPerMonth ?? 0}
+                  unlimited={(limits?.maxEmailsPerMonth ?? 0) >= 999_999}
+                />
               </div>
             )}
           </div>
@@ -427,9 +497,10 @@ export function SettingsPage() {
 
         {/* ── Workspace ─────────────────────────────────────────────────── */}
         <section className="bg-white/[0.03] rounded-xl overflow-hidden">
-
           <div className="px-6 pt-4 pb-2">
-            <span className="text-[11px] font-semibold text-faint uppercase tracking-widest">Workspace</span>
+            <span className="text-[11px] font-semibold text-faint uppercase tracking-widest">
+              Workspace
+            </span>
           </div>
 
           {/* Store identity */}
@@ -445,17 +516,35 @@ export function SettingsPage() {
                 {connectedDomain ?? "No store connected"}
               </div>
               <div className="text-[12px] text-faint mt-0.5">
-                {connectedDomain ? "Connected via Shopify OAuth" : "Install on your Shopify store to begin"}
+                {connectedDomain
+                  ? "Connected via Shopify OAuth"
+                  : "Install on your Shopify store to begin"}
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {connectedDomain ? (
                 <>
                   <Badge variant="live">Live</Badge>
-                  <Button variant="ghost" size="sm" onClick={() => { window.location.href = "/install"; }}>Reconnect</Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      window.location.href = "/install";
+                    }}
+                  >
+                    Reconnect
+                  </Button>
                 </>
               ) : (
-                <Button variant="primary" size="sm" onClick={() => { window.location.href = "/install"; }}>Connect</Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    window.location.href = "/install";
+                  }}
+                >
+                  Connect
+                </Button>
               )}
             </div>
           </div>
@@ -464,13 +553,25 @@ export function SettingsPage() {
           <div className="px-6 border-t border-white/[0.04] pt-1 pb-2">
             {tenantQuery.isLoading ? (
               <div className="py-4 space-y-3">
-                {[1, 2, 3].map((i) => <div key={i} className="h-4 bg-white/[0.04] rounded animate-pulse-subtle" />)}
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="h-4 bg-white/[0.04] rounded animate-pulse-subtle" />
+                ))}
               </div>
             ) : (
               <>
-                <Row label="Name"       value={tenant?.name ?? "—"} />
-                <Row label="Workspace"  value={<span className="font-mono text-[12px]">{tenant?.slug ?? "—"}</span>} />
-                <Row label="Tenant ID"  value={<span className="font-mono text-[12px] text-faint">{tenantId ? `${tenantId.slice(0, 8)}…` : "—"}</span>} />
+                <Row label="Name" value={tenant?.name ?? "—"} />
+                <Row
+                  label="Workspace"
+                  value={<span className="font-mono text-[12px]">{tenant?.slug ?? "—"}</span>}
+                />
+                <Row
+                  label="Tenant ID"
+                  value={
+                    <span className="font-mono text-[12px] text-faint">
+                      {tenantId ? `${tenantId.slice(0, 8)}…` : "—"}
+                    </span>
+                  }
+                />
               </>
             )}
           </div>
@@ -479,28 +580,29 @@ export function SettingsPage() {
         {/* ── Danger Zone ───────────────────────────────────────────────── */}
         <section className="bg-danger/[0.03] rounded-xl overflow-hidden">
           <div className="px-6 pt-4 pb-2">
-            <span className="text-[11px] font-semibold text-danger/60 uppercase tracking-widest">Danger Zone</span>
+            <span className="text-[11px] font-semibold text-danger/60 uppercase tracking-widest">
+              Danger Zone
+            </span>
           </div>
           <div className="flex items-center justify-between px-6 pb-4">
             <div>
               <div className="text-[14px] font-medium text-ink">Disconnect store</div>
-              <div className="text-[12px] text-faint mt-1">Removes OAuth access and pauses all live apps</div>
+              <div className="text-[12px] text-faint mt-1">
+                Removes OAuth access and pauses all live apps
+              </div>
             </div>
-            <Button variant="danger" size="sm">Disconnect</Button>
+            <Button variant="danger" size="sm">
+              Disconnect
+            </Button>
           </div>
         </section>
 
         {/* Email brand — tenant-level, shared across every email-using app */}
         {tenantId && <BrandPanel tenantId={tenantId} />}
-
       </main>
 
       {showUpgrade && tenantId && (
-        <PlanModal
-          currentPlan={plan}
-          tenantId={tenantId}
-          onClose={() => setShowUpgrade(false)}
-        />
+        <PlanModal currentPlan={plan} tenantId={tenantId} onClose={() => setShowUpgrade(false)} />
       )}
     </>
   );

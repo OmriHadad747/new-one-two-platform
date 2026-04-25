@@ -38,11 +38,9 @@ export function parseBody<TSchema extends z.ZodTypeAny>(
     void reply
       .status(400)
       .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Request body failed validation",
-          { issues: formatIssues(result.error) },
-        ),
+        errorResponse(ErrorCode.InvalidRequest, "Request body failed validation", {
+          issues: formatIssues(result.error),
+        }),
       );
     return null;
   }
@@ -59,11 +57,9 @@ export function parseQuery<TSchema extends z.ZodTypeAny>(
     void reply
       .status(400)
       .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Query parameters failed validation",
-          { issues: formatIssues(result.error) },
-        ),
+        errorResponse(ErrorCode.InvalidRequest, "Query parameters failed validation", {
+          issues: formatIssues(result.error),
+        }),
       );
     return null;
   }

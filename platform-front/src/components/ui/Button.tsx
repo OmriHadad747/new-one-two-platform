@@ -21,14 +21,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           "bg-accent text-white border-0 hover:bg-accent-hi active:scale-[0.98]",
         variant === "ghost" &&
           "bg-white/[0.04] text-muted border-0 hover:bg-white/[0.08] hover:text-ink",
-        variant === "danger" &&
-          "bg-danger/10 text-danger border-0 hover:bg-danger/15",
-        className
+        variant === "danger" && "bg-danger/10 text-danger border-0 hover:bg-danger/15",
+        className,
       )}
       {...props}
     >
       {children}
     </button>
-  )
+  ),
 );
 Button.displayName = "Button";

@@ -8,9 +8,7 @@ vi.mock("../src/lib/platform-call.js", () => ({ callPlatformService: callMock })
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
-const { platform, QuotaExceeded, PayloadTooLarge } = await import(
-  "../src/lib/platform.js"
-);
+const { platform, QuotaExceeded, PayloadTooLarge } = await import("../src/lib/platform.js");
 
 describe("platform.email.send", () => {
   it("returns delivered result on 200", async () => {

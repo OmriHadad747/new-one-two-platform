@@ -17,10 +17,7 @@ export type FileStatus = "active" | "pending" | "failed";
 
 export type GenerationStatus = "success" | "failed";
 
-export type RevisionClassification =
-  | "bug_report"
-  | "feature_modification"
-  | "new_capability";
+export type RevisionClassification = "bug_report" | "feature_modification" | "new_capability";
 
 // Subset of execution_status enum used on webhook invocation log updates.
 export type WebhookInvocationLogStatus = "running" | "success" | "failed";

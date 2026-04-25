@@ -105,11 +105,7 @@ const FinalizeUploadBodySchema = z.object({
 // ─── Plugin ─────────────────────────────────────────────────────────────────
 
 export async function filesServiceRoutes(app: FastifyInstance): Promise<void> {
-  app.post(
-    "/upload",
-    { bodyLimit: UPLOAD_BODY_LIMIT },
-    uploadHandler,
-  );
+  app.post("/upload", { bodyLimit: UPLOAD_BODY_LIMIT }, uploadHandler);
   app.post("/sign-read-url", signReadUrlHandler);
   app.post("/create-upload-url", createUploadUrlHandler);
   app.post("/finalize-upload", finalizeUploadHandler);
@@ -130,9 +126,7 @@ async function resolveCaller(
   const verified = await verifyCallerIdToken(request.headers.authorization);
   if (!verified.ok) {
     const status = verified.reason === "missing_token" ? 401 : 403;
-    void reply
-      .code(status)
-      .send(errorResponse(ErrorCode.Unauthorized, verified.reason));
+    void reply.code(status).send(errorResponse(ErrorCode.Unauthorized, verified.reason));
     return null;
   }
   const identity = await resolveAppFromSaEmail(verified.caller.email);
@@ -144,10 +138,7 @@ async function resolveCaller(
     void reply
       .code(403)
       .send(
-        errorResponse(
-          ErrorCode.Forbidden,
-          "Caller service account is not bound to an active app",
-        ),
+        errorResponse(ErrorCode.Forbidden, "Caller service account is not bound to an active app"),
       );
     return null;
   }
@@ -164,10 +155,7 @@ async function uploadHandler(
     return reply
       .code(501)
       .send(
-        errorResponse(
-          ErrorCode.Internal,
-          "Files service is in skip mode (FILES_BUCKET=__skip__)",
-        ),
+        errorResponse(ErrorCode.Internal, "Files service is in skip mode (FILES_BUCKET=__skip__)"),
       );
   }
 
@@ -180,13 +168,7 @@ async function uploadHandler(
   if (!parsed.success) {
     return reply
       .code(400)
-      .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Invalid upload body",
-          parsed.error.flatten(),
-        ),
-      );
+      .send(errorResponse(ErrorCode.InvalidRequest, "Invalid upload body", parsed.error.flatten()));
   }
   const body = parsed.data;
 
@@ -248,9 +230,7 @@ async function uploadHandler(
     });
   } catch (err) {
     log.error({ err, gcsObject }, "GCS storeFile failed");
-    return reply
-      .code(502)
-      .send(errorResponse(ErrorCode.BadGateway, "Object store write failed"));
+    return reply.code(502).send(errorResponse(ErrorCode.BadGateway, "Object store write failed"));
   }
 
   // 5. Atomic quota check + DB insert. Uses a per-tenant advisory lock so
@@ -275,9 +255,7 @@ async function uploadHandler(
     await deleteObject(gcsObject).catch((e) =>
       log.warn({ err: e, gcsObject }, "compensating GCS delete failed"),
     );
-    return reply
-      .code(500)
-      .send(errorResponse(ErrorCode.Internal, "Failed to record file"));
+    return reply.code(500).send(errorResponse(ErrorCode.Internal, "Failed to record file"));
   }
 
   if (!record) {
@@ -339,10 +317,7 @@ async function signReadUrlHandler(
     return reply
       .code(501)
       .send(
-        errorResponse(
-          ErrorCode.Internal,
-          "Files service is in skip mode (FILES_BUCKET=__skip__)",
-        ),
+        errorResponse(ErrorCode.Internal, "Files service is in skip mode (FILES_BUCKET=__skip__)"),
       );
   }
 
@@ -373,9 +348,7 @@ async function signReadUrlHandler(
 
   const record = await getFileForApp(body.fileId, caller.tenantId, caller.appId);
   if (!record) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "File not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "File not found"));
   }
 
   const expiresAt = new Date(Date.now() + ttlSec * 1000);
@@ -407,10 +380,7 @@ async function createUploadUrlHandler(
     return reply
       .code(501)
       .send(
-        errorResponse(
-          ErrorCode.Internal,
-          "Files service is in skip mode (FILES_BUCKET=__skip__)",
-        ),
+        errorResponse(ErrorCode.Internal, "Files service is in skip mode (FILES_BUCKET=__skip__)"),
       );
   }
 
@@ -474,9 +444,7 @@ async function createUploadUrlHandler(
     });
   } catch (err) {
     log.error({ err, gcsObject, fileId }, "insertPendingFile failed");
-    return reply
-      .code(500)
-      .send(errorResponse(ErrorCode.Internal, "Failed to reserve file slot"));
+    return reply.code(500).send(errorResponse(ErrorCode.Internal, "Failed to reserve file slot"));
   }
 
   const uploadExpiresAt = new Date(Date.now() + UPLOAD_URL_TTL_SEC * 1000);
@@ -514,9 +482,7 @@ async function createUploadUrlHandler(
     await deleteFileRow(fileId).catch((e) =>
       log.warn({ err: e, fileId }, "pending row rollback failed"),
     );
-    return reply
-      .code(502)
-      .send(errorResponse(ErrorCode.BadGateway, "Could not mint upload URL"));
+    return reply.code(502).send(errorResponse(ErrorCode.BadGateway, "Could not mint upload URL"));
   }
 }
 
@@ -535,10 +501,7 @@ async function finalizeUploadHandler(
     return reply
       .code(501)
       .send(
-        errorResponse(
-          ErrorCode.Internal,
-          "Files service is in skip mode (FILES_BUCKET=__skip__)",
-        ),
+        errorResponse(ErrorCode.Internal, "Files service is in skip mode (FILES_BUCKET=__skip__)"),
       );
   }
 
@@ -563,11 +526,7 @@ async function finalizeUploadHandler(
 
   // Accepts both 'pending' (first finalize) and 'active' (idempotent
   // re-finalize after a retry). Scoped to this caller's (tenant, app).
-  const row = await getFinalizableFileForApp(
-    fileId,
-    caller.tenantId,
-    caller.appId,
-  );
+  const row = await getFinalizableFileForApp(fileId, caller.tenantId, caller.appId);
   if (!row) {
     return reply
       .code(404)
@@ -591,17 +550,10 @@ async function finalizeUploadHandler(
   // declared expectedSizeBytes at create-upload-url time and GCS
   // enforced that ceiling via x-goog-content-length-range; what
   // arrived is authoritative.
-  const finalized = await finalizeFile(
-    fileId,
-    caller.tenantId,
-    caller.appId,
-    actualSize,
-  );
+  const finalized = await finalizeFile(fileId, caller.tenantId, caller.appId, actualSize);
   if (!finalized) {
     // Should be impossible — the row existed in the SELECT above.
-    return reply
-      .code(500)
-      .send(errorResponse(ErrorCode.Internal, "Failed to finalize file"));
+    return reply.code(500).send(errorResponse(ErrorCode.Internal, "Failed to finalize file"));
   }
 
   const expiresAt = new Date(Date.now() + DEFAULT_READ_URL_TTL_SEC * 1000);
@@ -658,10 +610,7 @@ async function cancelUploadHandler(
     return reply
       .code(501)
       .send(
-        errorResponse(
-          ErrorCode.Internal,
-          "Files service is in skip mode (FILES_BUCKET=__skip__)",
-        ),
+        errorResponse(ErrorCode.Internal, "Files service is in skip mode (FILES_BUCKET=__skip__)"),
       );
   }
 
@@ -688,9 +637,7 @@ async function cancelUploadHandler(
   // finalised and need a full delete-app flow.
   const row = await getFinalizableFileForApp(fileId, caller.tenantId, caller.appId);
   if (!row) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Pending upload not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Pending upload not found"));
   }
   if (row.status !== "pending") {
     return reply
@@ -704,9 +651,6 @@ async function cancelUploadHandler(
   );
   await deleteFileRow(fileId);
 
-  log.info(
-    { fileId, tenantId: caller.tenantId, appId: caller.appId },
-    "upload cancelled",
-  );
+  log.info({ fileId, tenantId: caller.tenantId, appId: caller.appId }, "upload cancelled");
   return reply.code(200).send({ cancelled: true });
 }

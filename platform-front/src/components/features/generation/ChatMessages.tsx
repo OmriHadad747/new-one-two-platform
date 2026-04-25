@@ -54,19 +54,19 @@ export interface ChatMessage {
 // ─── Generation step logic ────────────────────────────────────────────────────
 
 const STATIC_STEPS: { agent: string; label: string }[] = [
-  { agent: "product",     label: "Understanding your request"   },
-  { agent: "architect",   label: "Planning app architecture"    },
-  { agent: "handler",     label: "Generating backend handler"   },
-  { agent: "migration",   label: "Writing DB migration"         },
-  { agent: "validation",  label: "Validating output"            },
-  { agent: "explanation", label: "Preparing summary"            },
+  { agent: "product", label: "Understanding your request" },
+  { agent: "architect", label: "Planning app architecture" },
+  { agent: "handler", label: "Generating backend handler" },
+  { agent: "migration", label: "Writing DB migration" },
+  { agent: "validation", label: "Validating output" },
+  { agent: "explanation", label: "Preparing summary" },
 ];
 
 const OPTIONAL_AGENTS: Record<string, string> = {
   widget_js: "Generating storefront widget",
-  admin_ui:  "Generating admin panel",
+  admin_ui: "Generating admin panel",
   validator: "Semantic alignment check",
-  revision:  "Applying revisions",
+  revision: "Applying revisions",
 };
 
 function buildSteps(byAgent: Record<string, ProgressEvent>) {
@@ -121,7 +121,10 @@ function resolveStepStatus(
   const event = byAgent[agent];
 
   // Furthest step index that has received any event
-  const furthestActive = steps.reduce((max, s, i) => (byAgent[s.agent] ? Math.max(max, i) : max), -1);
+  const furthestActive = steps.reduce(
+    (max, s, i) => (byAgent[s.agent] ? Math.max(max, i) : max),
+    -1,
+  );
 
   if (event) {
     if (isCompleted && event.status === "running") return "completed";
@@ -133,7 +136,17 @@ function resolveStepStatus(
   return "waiting";
 }
 
-function GeneratingCard({ events, isCompleted, stuckWarning, isFailed }: { events: ProgressEvent[]; isCompleted?: boolean; stuckWarning?: boolean; isFailed?: boolean }) {
+function GeneratingCard({
+  events,
+  isCompleted,
+  stuckWarning,
+  isFailed,
+}: {
+  events: ProgressEvent[];
+  isCompleted?: boolean;
+  stuckWarning?: boolean;
+  isFailed?: boolean;
+}) {
   const byAgent = events.reduce<Record<string, ProgressEvent>>((acc, e) => {
     acc[e.agent] = e;
     return acc;
@@ -156,9 +169,8 @@ function GeneratingCard({ events, isCompleted, stuckWarning, isFailed }: { event
   }, [runningAgents.length]);
 
   // The one agent whose message and dot are "highlighted" this cycle.
-  const activeAgent = runningAgents.length > 0
-    ? runningAgents[cycleIdx % runningAgents.length]
-    : null;
+  const activeAgent =
+    runningAgents.length > 0 ? runningAgents[cycleIdx % runningAgents.length] : null;
 
   const latestMessage = activeAgent ? (byAgent[activeAgent]?.message ?? null) : null;
 
@@ -176,7 +188,12 @@ function GeneratingCard({ events, isCompleted, stuckWarning, isFailed }: { event
             <div key={agent} className="flex items-center gap-3">
               <div className="w-5 h-5 flex items-center justify-center shrink-0">
                 {status === "completed" && (
-                  <span className="material-symbols-outlined text-accent/70 text-[16px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>task_alt</span>
+                  <span
+                    className="material-symbols-outlined text-accent/70 text-[16px]"
+                    style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                  >
+                    task_alt
+                  </span>
                 )}
                 {status === "running" && !isParallelSibling && (
                   <span className="w-2 h-2 rounded-full bg-accent animate-pulse-subtle block" />
@@ -188,21 +205,30 @@ function GeneratingCard({ events, isCompleted, stuckWarning, isFailed }: { event
                   <span className="material-symbols-outlined text-danger text-[15px]">cancel</span>
                 )}
                 {status === "retrying" && (
-                  <span className="material-symbols-outlined text-amber text-[15px] animate-spin">refresh</span>
+                  <span className="material-symbols-outlined text-amber text-[15px] animate-spin">
+                    refresh
+                  </span>
                 )}
                 {status === "waiting" && (
                   <span className="w-2 h-2 rounded-full bg-faint/30 block" />
                 )}
               </div>
-              <span className={cn(
-                "text-[12.5px]",
-                status === "completed"              ? "text-muted" :
-                status === "running" && !isParallelSibling ? "text-ink font-medium" :
-                status === "running" && isParallelSibling  ? "text-muted" :
-                status === "failed"                 ? "text-danger" :
-                status === "retrying"               ? "text-amber" :
-                "text-faint"
-              )}>
+              <span
+                className={cn(
+                  "text-[12.5px]",
+                  status === "completed"
+                    ? "text-muted"
+                    : status === "running" && !isParallelSibling
+                      ? "text-ink font-medium"
+                      : status === "running" && isParallelSibling
+                        ? "text-muted"
+                        : status === "failed"
+                          ? "text-danger"
+                          : status === "retrying"
+                            ? "text-amber"
+                            : "text-faint",
+                )}
+              >
                 {label}
               </span>
             </div>
@@ -211,7 +237,9 @@ function GeneratingCard({ events, isCompleted, stuckWarning, isFailed }: { event
       </div>
       {latestMessage && (
         <div className="mt-3 pt-3 border-t border-white/[0.04]">
-          <p className="text-[11px] text-accent animate-pulse-subtle leading-relaxed">{latestMessage}</p>
+          <p className="text-[11px] text-accent animate-pulse-subtle leading-relaxed">
+            {latestMessage}
+          </p>
         </div>
       )}
       {isFailed && (
@@ -249,7 +277,9 @@ function ExplanationText({ text }: { text: string }) {
       <p>{preview}</p>
       {expanded && rest.length > 0 && (
         <div className="mt-2 space-y-2">
-          {rest.map((s, i) => <p key={i}>{s}</p>)}
+          {rest.map((s, i) => (
+            <p key={i}>{s}</p>
+          ))}
         </div>
       )}
       {rest.length > 0 && (
@@ -272,10 +302,10 @@ function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
   const navigate = useNavigate();
   const triggerLabel = (() => {
     const labels: string[] = [];
-    if (bundle?.triggerType === "cron")   labels.push("Scheduled (cron)");
-    if (bundle?.triggerType === "admin")  labels.push("Admin-triggered");
+    if (bundle?.triggerType === "cron") labels.push("Scheduled (cron)");
+    if (bundle?.triggerType === "admin") labels.push("Admin-triggered");
     if (bundle?.triggerType === "widget") labels.push("Widget interaction");
-    if (bundle?.triggerTopics?.length)    labels.push(...bundle.triggerTopics);
+    if (bundle?.triggerTopics?.length) labels.push(...bundle.triggerTopics);
     return labels.length > 0 ? labels.join(", ") : "Webhook-triggered";
   })();
 
@@ -284,18 +314,29 @@ function DeployReadyCard({ bundle }: { bundle?: DeployBundle }) {
       {/* Summary card */}
       <div className="bg-white/[0.04] rounded-xl p-4 space-y-3">
         <div className="flex items-center gap-2">
-          <span className="material-symbols-outlined text-accent text-[19px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+          <span
+            className="material-symbols-outlined text-accent text-[19px]"
+            style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+          >
+            auto_awesome
+          </span>
           <span className="text-[15px] font-bold text-ink">Generation complete</span>
         </div>
         {bundle && (
           <div className="space-y-2.5 pt-1">
             <div className="flex items-center gap-2">
-              <span className="text-[10.5px] font-semibold text-faint uppercase tracking-wider w-16 shrink-0">Type</span>
+              <span className="text-[10.5px] font-semibold text-faint uppercase tracking-wider w-16 shrink-0">
+                Type
+              </span>
               <ArchetypePills archetype={bundle.archetype} />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10.5px] font-semibold text-faint uppercase tracking-wider w-16 shrink-0">Trigger</span>
-              <span className="text-[12px] px-2.5 py-0.5 bg-teal/10 text-teal rounded-full font-mono">{triggerLabel}</span>
+              <span className="text-[10.5px] font-semibold text-faint uppercase tracking-wider w-16 shrink-0">
+                Trigger
+              </span>
+              <span className="text-[12px] px-2.5 py-0.5 bg-teal/10 text-teal rounded-full font-mono">
+                {triggerLabel}
+              </span>
             </div>
           </div>
         )}
@@ -332,7 +373,9 @@ function LiveCard({ appId }: { appId?: string }) {
         <span className="w-2 h-2 rounded-full bg-teal shrink-0 animate-pulse" />
         <div>
           <p className="text-[13px] font-semibold text-teal">App is live</p>
-          <p className="text-[11px] text-muted mt-0.5">Describe what's wrong here to revise and redeploy.</p>
+          <p className="text-[11px] text-muted mt-0.5">
+            Describe what's wrong here to revise and redeploy.
+          </p>
         </div>
       </div>
       {appId && (
@@ -354,7 +397,13 @@ function LiveCard({ appId }: { appId?: string }) {
 
 // ─── Plan blocked card ────────────────────────────────────────────────────────
 
-function PlanBlockedCard({ archetype, upgradeHint }: { archetype: AppArchetype; upgradeHint: string }) {
+function PlanBlockedCard({
+  archetype,
+  upgradeHint,
+}: {
+  archetype: AppArchetype;
+  upgradeHint: string;
+}) {
   return (
     <div className="mt-2.5 max-w-[380px] bg-white/[0.03] rounded-xl overflow-hidden">
       {/* Header */}
@@ -371,7 +420,9 @@ function PlanBlockedCard({ archetype, upgradeHint }: { archetype: AppArchetype; 
       {/* Body */}
       <div className="px-4 py-3 space-y-2.5">
         <div className="space-y-1.5">
-          <p className="text-[10.5px] font-semibold text-faint uppercase tracking-wider">App type requested</p>
+          <p className="text-[10.5px] font-semibold text-faint uppercase tracking-wider">
+            App type requested
+          </p>
           <ArchetypePills archetype={archetype} />
         </div>
         <p className="text-[11.5px] text-muted leading-relaxed">{upgradeHint}</p>
@@ -400,18 +451,25 @@ function ClarifyingCard({
     return (
       <div className="mt-2">
         <span className="inline-flex items-center gap-1.5 text-[12.5px] px-3 py-1.5 rounded-xl bg-accent/10 text-accent border border-accent/20 font-medium">
-          <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>check_circle</span>
+          <span
+            className="material-symbols-outlined text-[13px]"
+            style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+          >
+            check_circle
+          </span>
           {data.answeredText}
         </span>
       </div>
     );
   }
 
-  const submit = (val: string) => { const v = val.trim(); if (v) onAnswer?.(v); };
+  const submit = (val: string) => {
+    const v = val.trim();
+    if (v) onAnswer?.(v);
+  };
 
   return (
     <div className="mt-3 max-w-[440px] space-y-2">
-
       {/* Stacked option buttons */}
       {data.suggestions.length > 0 && (
         <div className="space-y-1.5">
@@ -434,7 +492,9 @@ function ClarifyingCard({
           ref={inputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") submit(text); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit(text);
+          }}
           placeholder={data.suggestions.length > 0 ? "Or type your own…" : "Type your answer…"}
           className="flex-1 text-[13px] bg-white/[0.04] rounded-xl px-3.5 py-2 text-ink placeholder:text-faint outline-none transition-colors"
         />
@@ -447,7 +507,6 @@ function ClarifyingCard({
           <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
         </button>
       </div>
-
     </div>
   );
 }
@@ -469,22 +528,40 @@ const COMPONENTS: ComponentDef[] = [
     icon: "bolt",
     label: "Backend",
     locked: true,
-    darkCls:  { active: "bg-emerald-400/[.12] text-emerald-300 border-emerald-400/20", inactive: "" },
-    lightCls: { active: "bg-emerald-600/[.08] text-emerald-700 border-emerald-600/15", inactive: "" },
+    darkCls: {
+      active: "bg-emerald-400/[.12] text-emerald-300 border-emerald-400/20",
+      inactive: "",
+    },
+    lightCls: {
+      active: "bg-emerald-600/[.08] text-emerald-700 border-emerald-600/15",
+      inactive: "",
+    },
   },
   {
     key: "widget",
     icon: "widgets",
     label: "Storefront Widget",
-    darkCls:  { active: "bg-sky-400/[.12] text-sky-300 border-sky-400/20",          inactive: "bg-white/[0.03] text-faint border-white/[0.06]" },
-    lightCls: { active: "bg-sky-600/[.08] text-sky-700 border-sky-600/15",          inactive: "bg-black/[0.02] text-muted/60 border-black/[0.06]" },
+    darkCls: {
+      active: "bg-sky-400/[.12] text-sky-300 border-sky-400/20",
+      inactive: "bg-white/[0.03] text-faint border-white/[0.06]",
+    },
+    lightCls: {
+      active: "bg-sky-600/[.08] text-sky-700 border-sky-600/15",
+      inactive: "bg-black/[0.02] text-muted/60 border-black/[0.06]",
+    },
   },
   {
     key: "admin",
     icon: "admin_panel_settings",
     label: "Admin UI",
-    darkCls:  { active: "bg-orange-400/[.12] text-orange-300 border-orange-400/20", inactive: "bg-white/[0.03] text-faint border-white/[0.06]" },
-    lightCls: { active: "bg-orange-600/[.08] text-orange-700 border-orange-600/15", inactive: "bg-black/[0.02] text-muted/60 border-black/[0.06]" },
+    darkCls: {
+      active: "bg-orange-400/[.12] text-orange-300 border-orange-400/20",
+      inactive: "bg-white/[0.03] text-faint border-white/[0.06]",
+    },
+    lightCls: {
+      active: "bg-orange-600/[.08] text-orange-700 border-orange-600/15",
+      inactive: "bg-black/[0.02] text-muted/60 border-black/[0.06]",
+    },
   },
 ];
 
@@ -502,30 +579,36 @@ function ConfirmCard({
   const appCategory = (confirmData.intent.appCategory as string) ?? "backend";
 
   // What the AI originally suggested
-  const aiSuggestedWidget = appCategory === "storefront_backend" || appCategory === "storefront_backend_admin";
-  const aiSuggestedAdmin  = appCategory === "storefront_backend_admin" || appCategory === "backend_admin";
+  const aiSuggestedWidget =
+    appCategory === "storefront_backend" || appCategory === "storefront_backend_admin";
+  const aiSuggestedAdmin =
+    appCategory === "storefront_backend_admin" || appCategory === "backend_admin";
 
   const [hasWidget, setHasWidget] = useState(aiSuggestedWidget);
-  const [hasAdmin, setHasAdmin]   = useState(aiSuggestedAdmin);
+  const [hasAdmin, setHasAdmin] = useState(aiSuggestedAdmin);
 
   // Mandatory clarification when merchant adds a component the AI didn't suggest
   const widgetAdded = hasWidget && !aiSuggestedWidget;
-  const adminAdded  = hasAdmin  && !aiSuggestedAdmin;
+  const adminAdded = hasAdmin && !aiSuggestedAdmin;
   const [widgetDesc, setWidgetDesc] = useState("");
-  const [adminDesc, setAdminDesc]   = useState("");
+  const [adminDesc, setAdminDesc] = useState("");
 
-  const needsClarification = (widgetAdded && !widgetDesc.trim()) || (adminAdded && !adminDesc.trim());
+  const needsClarification =
+    (widgetAdded && !widgetDesc.trim()) || (adminAdded && !adminDesc.trim());
 
   const handleGenerate = () => {
     const cat =
-      hasWidget && hasAdmin ? "storefront_backend_admin" :
-      hasWidget             ? "storefront_backend" :
-      hasAdmin              ? "backend_admin" :
-      "backend";
+      hasWidget && hasAdmin
+        ? "storefront_backend_admin"
+        : hasWidget
+          ? "storefront_backend"
+          : hasAdmin
+            ? "backend_admin"
+            : "backend";
 
     const extra: Record<string, unknown> = {};
     if (widgetAdded && widgetDesc.trim()) extra.widgetDescription = widgetDesc.trim();
-    if (adminAdded && adminDesc.trim())   extra.adminDescription = adminDesc.trim();
+    if (adminAdded && adminDesc.trim()) extra.adminDescription = adminDesc.trim();
 
     onGenerate({ ...confirmData.intent, appCategory: cat, ...extra }, confirmData.originalPrompt);
   };
@@ -547,14 +630,12 @@ function ConfirmCard({
               disabled={comp.locked}
               onClick={() => {
                 if (comp.key === "widget") setHasWidget((v) => !v);
-                if (comp.key === "admin")  setHasAdmin((v) => !v);
+                if (comp.key === "admin") setHasAdmin((v) => !v);
               }}
               className={cn(
                 "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold border transition-all duration-150",
                 cls,
-                comp.locked
-                  ? "cursor-default opacity-80"
-                  : "cursor-pointer hover:opacity-90",
+                comp.locked ? "cursor-default opacity-80" : "cursor-pointer hover:opacity-90",
               )}
             >
               <span
@@ -565,14 +646,23 @@ function ConfirmCard({
               </span>
               {comp.label}
               {!comp.locked && (
-                <span className={cn(
-                  "w-3.5 h-3.5 rounded-[4px] border flex items-center justify-center ml-0.5 transition-colors",
-                  isActive
-                    ? isDark ? "bg-white/20 border-white/25" : "bg-current/15 border-current/25"
-                    : isDark ? "bg-white/[0.04] border-white/[0.08]" : "bg-black/[0.04] border-black/[0.08]",
-                )}>
+                <span
+                  className={cn(
+                    "w-3.5 h-3.5 rounded-[4px] border flex items-center justify-center ml-0.5 transition-colors",
+                    isActive
+                      ? isDark
+                        ? "bg-white/20 border-white/25"
+                        : "bg-current/15 border-current/25"
+                      : isDark
+                        ? "bg-white/[0.04] border-white/[0.08]"
+                        : "bg-black/[0.04] border-black/[0.08]",
+                  )}
+                >
                   {isActive && (
-                    <span className="material-symbols-outlined text-[10px] leading-none" style={{ fontVariationSettings: "'wght' 600" }}>
+                    <span
+                      className="material-symbols-outlined text-[10px] leading-none"
+                      style={{ fontVariationSettings: "'wght' 600" }}
+                    >
                       check
                     </span>
                   )}
@@ -587,7 +677,8 @@ function ConfirmCard({
       {widgetAdded && (
         <div className="mb-2">
           <label className="block text-[10px] font-semibold text-danger mb-1">
-            You added Storefront Widget — what should it display? <span className="opacity-60">*</span>
+            You added Storefront Widget — what should it display?{" "}
+            <span className="opacity-60">*</span>
           </label>
           <input
             type="text"
@@ -623,7 +714,9 @@ function ConfirmCard({
         </div>
       )}
 
-      <p className="text-[10px] text-faint mb-3">Backend is always included. Toggle optional components.</p>
+      <p className="text-[10px] text-faint mb-3">
+        Backend is always included. Toggle optional components.
+      </p>
 
       <div className="flex gap-2">
         <button
@@ -663,103 +756,121 @@ interface ChatMessagesProps {
   stuckWarning?: boolean;
   onClarifyAnswer?: (text: string) => void;
   /** Called when user clicks "Generate →" on the confirm card (with component picker selections). */
-  onConfirmGenerate?: (msgId: string, updatedIntent: Record<string, unknown>, originalPrompt: string) => void;
+  onConfirmGenerate?: (
+    msgId: string,
+    updatedIntent: Record<string, unknown>,
+    originalPrompt: string,
+  ) => void;
   /** Called when user clicks "Change request" on the confirm card. */
   onConfirmChangeRequest?: (msgId: string) => void;
 }
 
 export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
-  ({ messages, isAnalyzing, liveGenEvents = [], generationCompleted, stuckWarning, onClarifyAnswer, onConfirmGenerate, onConfirmChangeRequest }, ref) => {
+  (
+    {
+      messages,
+      isAnalyzing,
+      liveGenEvents = [],
+      generationCompleted,
+      stuckWarning,
+      onClarifyAnswer,
+      onConfirmGenerate,
+      onConfirmChangeRequest,
+    },
+    ref,
+  ) => {
     return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="px-5 pt-6 pb-32 flex flex-col gap-6 w-full max-w-[760px] mx-auto">
-        {messages.map((msg) => {
-          if (msg.role === "user") {
+      <div className="flex-1 overflow-y-auto">
+        <div className="px-5 pt-6 pb-32 flex flex-col gap-6 w-full max-w-[760px] mx-auto">
+          {messages.map((msg) => {
+            if (msg.role === "user") {
+              return (
+                <div key={msg.id} className="flex justify-end">
+                  <div className="max-w-[72%] bg-raised rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-sm">
+                    {msg.text && <p className="text-[13px] text-ink leading-relaxed">{msg.text}</p>}
+                  </div>
+                </div>
+              );
+            }
+
+            // AI message
             return (
-              <div key={msg.id} className="flex justify-end">
-                <div className="max-w-[72%] bg-raised rounded-2xl rounded-tr-sm px-4 py-2.5 shadow-sm">
-                  {msg.text && (
-                    <p className="text-[13px] text-ink leading-relaxed">{msg.text}</p>
+              <div key={msg.id} className="flex gap-3 items-start">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] font-bold text-accent mb-2 tracking-wide">Ton</div>
+
+                  {msg.text && <p className="text-[13px] text-ink leading-relaxed">{msg.text}</p>}
+
+                  {msg.type === "generating" && (
+                    <GeneratingCard
+                      events={liveGenEvents}
+                      isCompleted={generationCompleted}
+                      stuckWarning={stuckWarning}
+                      isFailed={msg.generatingFailed}
+                    />
                   )}
+
+                  {msg.type === "deploy-ready" && <DeployReadyCard bundle={msg.deployBundle} />}
+
+                  {msg.type === "live" && <LiveCard appId={msg.liveAppId} />}
+
+                  {msg.type === "clarifying" && msg.clarifyingData && (
+                    <ClarifyingCard data={msg.clarifyingData} onAnswer={onClarifyAnswer} />
+                  )}
+
+                  {msg.type === "confirm" && msg.confirmData && onConfirmGenerate && (
+                    <ConfirmCard
+                      confirmData={msg.confirmData}
+                      onGenerate={(intent, prompt) => onConfirmGenerate(msg.id, intent, prompt)}
+                      onChangeRequest={() => onConfirmChangeRequest?.(msg.id)}
+                    />
+                  )}
+
+                  {msg.planBlock && (
+                    <PlanBlockedCard
+                      archetype={msg.planBlock.archetype}
+                      upgradeHint={msg.planBlock.upgradeHint}
+                    />
+                  )}
+
+                  {msg.actions &&
+                    msg.actions.length > 0 &&
+                    !(msg.type === "confirm" && onConfirmGenerate) && (
+                      <div className="flex gap-2 mt-3 flex-wrap">
+                        {msg.actions.map((action) => (
+                          <button
+                            key={action.label}
+                            type="button"
+                            onClick={action.onClick}
+                            className={
+                              action.variant === "ghost"
+                                ? "text-xs px-3 py-1.5 rounded-lg bg-white/[0.04] text-muted hover:text-ink hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
+                                : "text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hi transition-all duration-150 cursor-pointer border-0"
+                            }
+                          >
+                            {action.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                 </div>
               </div>
             );
-          }
+          })}
 
-          // AI message
-          return (
-            <div key={msg.id} className="flex gap-3 items-start">
+          {isAnalyzing && (
+            <div className="flex gap-3 items-start">
               <div className="flex-1 min-w-0">
                 <div className="text-[11px] font-bold text-accent mb-2 tracking-wide">Ton</div>
-
-                {msg.text && (
-                  <p className="text-[13px] text-ink leading-relaxed">{msg.text}</p>
-                )}
-
-                {msg.type === "generating" && (
-                  <GeneratingCard events={liveGenEvents} isCompleted={generationCompleted} stuckWarning={stuckWarning} isFailed={msg.generatingFailed} />
-                )}
-
-                {msg.type === "deploy-ready" && (
-                  <DeployReadyCard bundle={msg.deployBundle} />
-                )}
-
-                {msg.type === "live" && (
-                  <LiveCard appId={msg.liveAppId} />
-                )}
-
-                {msg.type === "clarifying" && msg.clarifyingData && (
-                  <ClarifyingCard data={msg.clarifyingData} onAnswer={onClarifyAnswer} />
-                )}
-
-                {msg.type === "confirm" && msg.confirmData && onConfirmGenerate && (
-                  <ConfirmCard
-                    confirmData={msg.confirmData}
-                    onGenerate={(intent, prompt) => onConfirmGenerate(msg.id, intent, prompt)}
-                    onChangeRequest={() => onConfirmChangeRequest?.(msg.id)}
-                  />
-                )}
-
-                {msg.planBlock && (
-                  <PlanBlockedCard archetype={msg.planBlock.archetype} upgradeHint={msg.planBlock.upgradeHint} />
-                )}
-
-                {msg.actions && msg.actions.length > 0 && !(msg.type === "confirm" && onConfirmGenerate) && (
-                  <div className="flex gap-2 mt-3 flex-wrap">
-                    {msg.actions.map((action) => (
-                      <button
-                        key={action.label}
-                        type="button"
-                        onClick={action.onClick}
-                        className={
-                          action.variant === "ghost"
-                            ? "text-xs px-3 py-1.5 rounded-lg bg-white/[0.04] text-muted hover:text-ink hover:bg-white/[0.08] transition-all duration-150 cursor-pointer"
-                            : "text-xs px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent-hi transition-all duration-150 cursor-pointer border-0"
-                        }
-                      >
-                        {action.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <p className="text-[13px] text-faint animate-pulse">Thinking…</p>
               </div>
             </div>
-          );
-        })}
+          )}
 
-        {isAnalyzing && (
-          <div className="flex gap-3 items-start">
-            <div className="flex-1 min-w-0">
-              <div className="text-[11px] font-bold text-accent mb-2 tracking-wide">Ton</div>
-              <p className="text-[13px] text-faint animate-pulse">Thinking…</p>
-            </div>
-          </div>
-        )}
-
-        <div ref={ref} />
+          <div ref={ref} />
+        </div>
       </div>
-    </div>
     );
-  }
+  },
 );
 ChatMessages.displayName = "ChatMessages";

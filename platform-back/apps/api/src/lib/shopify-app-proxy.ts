@@ -57,9 +57,7 @@ export function verifyShopifyAppProxy(
     })
     .join("");
 
-  const expectedHex = createHmac("sha256", clientSecret)
-    .update(canonical)
-    .digest("hex");
+  const expectedHex = createHmac("sha256", clientSecret).update(canonical).digest("hex");
 
   let expectedBuf: Buffer;
   let actualBuf: Buffer;
@@ -74,8 +72,7 @@ export function verifyShopifyAppProxy(
   if (!timingSafeEqual(expectedBuf, actualBuf)) return null;
 
   // Signature verified — the rest of the query is now trusted.
-  const shopRaw =
-    typeof query["shop"] === "string" ? query["shop"].toLowerCase() : "";
+  const shopRaw = typeof query["shop"] === "string" ? query["shop"].toLowerCase() : "";
   if (!SHOP_DOMAIN_RE.test(shopRaw)) return null;
 
   const tsRaw = typeof query["timestamp"] === "string" ? query["timestamp"] : "";
@@ -86,15 +83,11 @@ export function verifyShopifyAppProxy(
 
   const loggedInRaw = query["logged_in_customer_id"];
   const loggedInCustomerId =
-    typeof loggedInRaw === "string" && loggedInRaw.length > 0
-      ? loggedInRaw
-      : null;
+    typeof loggedInRaw === "string" && loggedInRaw.length > 0 ? loggedInRaw : null;
 
   const pathPrefixRaw = query["path_prefix"];
   const pathPrefix =
-    typeof pathPrefixRaw === "string" && pathPrefixRaw.length > 0
-      ? pathPrefixRaw
-      : null;
+    typeof pathPrefixRaw === "string" && pathPrefixRaw.length > 0 ? pathPrefixRaw : null;
 
   return {
     shop: shopRaw,

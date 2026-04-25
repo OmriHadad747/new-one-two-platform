@@ -7,9 +7,5 @@
     "incremental": true
   },
   "include": ["src"],
-  "references": [
-    { "path": "../db" },
-    { "path": "../logger" },
-    { "path": "../types" }
-  ]
+  "references": [{ "path": "../db" }, { "path": "../logger" }, { "path": "../types" }]
 }

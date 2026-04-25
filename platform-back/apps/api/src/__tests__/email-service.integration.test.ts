@@ -105,9 +105,7 @@ describe("POST /services/email/send — happy path", () => {
       headers: { authorization: "Bearer fake-oidc-token" },
       payload: { to: "me@example.com", data: {}, isTest: true },
     });
-    expect(mockSend).toHaveBeenCalledWith(
-      expect.objectContaining({ isTest: true }),
-    );
+    expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({ isTest: true }));
     await app.close();
   });
 

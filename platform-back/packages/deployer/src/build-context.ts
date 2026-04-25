@@ -51,9 +51,7 @@ export async function assembleBuildContext(
   input: AssembleBuildContextInput,
 ): Promise<AssembleBuildContextResult> {
   const templatePath = input.templatePath ?? DEFAULT_TEMPLATE_PATH;
-  const buildDir = await mkdtemp(
-    join(tmpdir(), `handler-build-${input.appId}-`),
-  );
+  const buildDir = await mkdtemp(join(tmpdir(), `handler-build-${input.appId}-`));
 
   // 1. Copy handler-template, skipping node_modules / dist / dotenv files.
   await cp(templatePath, buildDir, {

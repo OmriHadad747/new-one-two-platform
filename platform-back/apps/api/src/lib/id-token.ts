@@ -48,18 +48,14 @@ async function getClient(audience: string): Promise<IdTokenClient> {
  * to the merchant, since the request cannot be safely forwarded without
  * proof of identity.
  */
-export async function getHandlerAuthHeader(
-  targetUrl: string,
-): Promise<string | null> {
+export async function getHandlerAuthHeader(targetUrl: string): Promise<string | null> {
   if (SKIP_AUTH) return null;
   const audience = audienceFor(targetUrl);
   const client = await getClient(audience);
   const headers = await client.getRequestHeaders(targetUrl);
   const authHeader = headers["Authorization"] ?? headers["authorization"];
   if (typeof authHeader !== "string" || authHeader.length === 0) {
-    throw new Error(
-      `google-auth-library returned no Authorization header for ${audience}`,
-    );
+    throw new Error(`google-auth-library returned no Authorization header for ${audience}`);
   }
   return authHeader;
 }

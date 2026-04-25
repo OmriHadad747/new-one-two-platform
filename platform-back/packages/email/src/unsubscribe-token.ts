@@ -6,40 +6,25 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 // works. Rotation is intentionally deferred (rotating breaks every
 // in-flight email link).
 
-const UNSUBSCRIBE_SECRET =
-  process.env["EMAIL_UNSUBSCRIBE_SECRET"] ?? "dev-secret-change-me";
+const UNSUBSCRIBE_SECRET = process.env["EMAIL_UNSUBSCRIBE_SECRET"] ?? "dev-secret-change-me";
 
-if (
-  process.env["NODE_ENV"] !== "development" &&
-  UNSUBSCRIBE_SECRET === "dev-secret-change-me"
-) {
-  throw new Error(
-    "FATAL: EMAIL_UNSUBSCRIBE_SECRET must be set to a real secret outside local dev",
-  );
+if (process.env["NODE_ENV"] !== "development" && UNSUBSCRIBE_SECRET === "dev-secret-change-me") {
+  throw new Error("FATAL: EMAIL_UNSUBSCRIBE_SECRET must be set to a real secret outside local dev");
 }
 
-export function signUnsubscribeToken(
-  tenantId: string,
-  email: string,
-): string {
+export function signUnsubscribeToken(tenantId: string, email: string): string {
   const payload = `${tenantId}.${email.toLowerCase()}`;
   const payloadB64 = Buffer.from(payload, "utf8").toString("base64url");
-  const hmac = createHmac("sha256", UNSUBSCRIBE_SECRET)
-    .update(payloadB64)
-    .digest("base64url");
+  const hmac = createHmac("sha256", UNSUBSCRIBE_SECRET).update(payloadB64).digest("base64url");
   return `${payloadB64}.${hmac}`;
 }
 
-export function verifyUnsubscribeToken(
-  token: string,
-): { tenantId: string; email: string } | null {
+export function verifyUnsubscribeToken(token: string): { tenantId: string; email: string } | null {
   const parts = token.split(".");
   if (parts.length !== 2) return null;
   const [payloadB64, signature] = parts as [string, string];
 
-  const expected = createHmac("sha256", UNSUBSCRIBE_SECRET)
-    .update(payloadB64)
-    .digest();
+  const expected = createHmac("sha256", UNSUBSCRIBE_SECRET).update(payloadB64).digest();
   let actual: Buffer;
   try {
     actual = Buffer.from(signature, "base64url");

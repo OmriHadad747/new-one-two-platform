@@ -24,7 +24,8 @@ export function MerchantCallbackPage() {
       return;
     }
 
-    api.tenants.get(tenantId)
+    api.tenants
+      .get(tenantId)
       .then((tenant) => {
         setTenant(tenant.id, tenant.shopDomain ?? "");
         navigate("/app/apps", { replace: true });

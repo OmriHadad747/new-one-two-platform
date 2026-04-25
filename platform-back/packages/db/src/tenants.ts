@@ -3,8 +3,7 @@ import { sql } from "./connection.js";
 
 // Default KMS key name used for new tenants when no GCP project is set
 // (local dev). Production callers should pass an explicit kmsKeyName.
-const DEV_KMS_KEY_NAME =
-  "projects/local/locations/global/keyRings/dev/cryptoKeys/dev-key";
+const DEV_KMS_KEY_NAME = "projects/local/locations/global/keyRings/dev/cryptoKeys/dev-key";
 
 export interface TenantBasics {
   id: string;
@@ -21,9 +20,7 @@ export interface TenantBasics {
  * Intentionally does NOT return secrets, access tokens, or anything
  * that would let a compromised service spoof tenant identity downstream.
  */
-export async function getTenantBasics(
-  tenantId: string,
-): Promise<TenantBasics | null> {
+export async function getTenantBasics(tenantId: string): Promise<TenantBasics | null> {
   const rows = await sql<
     Array<{
       id: string;
@@ -93,9 +90,7 @@ export async function createTenant(params: {
  * Tenant lookup by shop domain. The OAuth callback uses this to detect
  * re-installs (existing → update token; missing → createTenant).
  */
-export async function getTenantByShopDomain(
-  shopDomain: string,
-): Promise<{ id: string } | null> {
+export async function getTenantByShopDomain(shopDomain: string): Promise<{ id: string } | null> {
   const rows = await sql<Array<{ id: string }>>`
     SELECT id FROM tenants WHERE shop_domain = ${shopDomain} LIMIT 1
   `;
@@ -126,9 +121,7 @@ export async function updateTenantAccessToken(
  * cron runner needs the token (no inbound request to read the header
  * off).
  */
-export async function getTenantAccessTokenSecretName(
-  tenantId: string,
-): Promise<string | null> {
+export async function getTenantAccessTokenSecretName(tenantId: string): Promise<string | null> {
   const rows = await sql<Array<{ secretName: string | null }>>`
     SELECT shopify_access_token_secret_name AS "secretName"
     FROM tenants
@@ -142,9 +135,7 @@ export async function getTenantAccessTokenSecretName(
  * Resolve the Secret Manager name holding this tenant's Shopify Storefront
  * API access token. Used by /services/shopify/storefront-access-token.
  */
-export async function getTenantStorefrontTokenSecretName(
-  tenantId: string,
-): Promise<string | null> {
+export async function getTenantStorefrontTokenSecretName(tenantId: string): Promise<string | null> {
   const rows = await sql<Array<{ secretName: string | null }>>`
     SELECT storefront_access_token_secret_name AS "secretName"
     FROM tenants
@@ -180,9 +171,7 @@ export interface TenantRecord {
  * (which is tuned for /services/* auth). Used by /tenants/:tenantId and the
  * upgrade / subscription-state UX.
  */
-export async function getTenantById(
-  tenantId: string,
-): Promise<TenantRecord | null> {
+export async function getTenantById(tenantId: string): Promise<TenantRecord | null> {
   const rows = await sql<TenantRecord[]>`
     SELECT
       id,

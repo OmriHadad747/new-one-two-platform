@@ -73,7 +73,7 @@ export const useGenerationStore = create<GenerationStoreState>()(
             appId,
             jobId,
             status,
-            events:   s.active?.jobId === jobId ? s.active.events   : [],
+            events: s.active?.jobId === jobId ? s.active.events : [],
             messages: s.active?.jobId === jobId ? s.active.messages : [],
           },
         })),
@@ -109,7 +109,7 @@ export const useGenerationStore = create<GenerationStoreState>()(
               ...state.active,
               messages: state.active.messages.map(
                 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                ({ actions: _actions, ...msg }) => msg
+                ({ actions: _actions, ...msg }) => msg,
               ),
             }
           : null,
@@ -117,11 +117,11 @@ export const useGenerationStore = create<GenerationStoreState>()(
           Object.entries(state.draftMessages).map(([appId, msgs]) => [
             appId,
             msgs.map(({ actions: _actions, ...msg }) => msg),
-          ])
+          ]),
         ),
         analyzePhase: state.analyzePhase,
         analyzeHistory: state.analyzeHistory,
       }),
-    }
-  )
+    },
+  ),
 );

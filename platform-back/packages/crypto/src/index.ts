@@ -56,14 +56,9 @@ export async function storeSecret(
   value: string,
   projectId?: string,
 ): Promise<string> {
-  const project =
-    projectId ??
-    process.env["GCP_PROJECT"] ??
-    process.env["GOOGLE_CLOUD_PROJECT"];
+  const project = projectId ?? process.env["GCP_PROJECT"] ?? process.env["GOOGLE_CLOUD_PROJECT"];
   if (!project) {
-    throw new Error(
-      "GCP_PROJECT (or GOOGLE_CLOUD_PROJECT) not set and no projectId provided",
-    );
+    throw new Error("GCP_PROJECT (or GOOGLE_CLOUD_PROJECT) not set and no projectId provided");
   }
 
   const client = secretManager();

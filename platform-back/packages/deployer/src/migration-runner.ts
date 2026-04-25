@@ -31,8 +31,7 @@ import { makeIdempotent, validateMigrationSql } from "./sql-validator.js";
 // via `appSchemaName(tenantId, appId)` — the single canonical builder.
 const TENANT_SCHEMA_RE = /^tenant_[0-9a-f]{32}_app_[0-9a-f]{16}$/;
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Canonical per-app schema name. Every app gets its own Postgres schema so
@@ -110,9 +109,7 @@ export async function runMigrations(input: RunMigrationsInput): Promise<{
     // Idempotent schema create — the orchestrator may call into us
     // before any handler has ever run, so the schema may not exist yet.
     await sql.unsafe(`CREATE SCHEMA IF NOT EXISTS ${input.tenantSchema}`);
-    await sql.unsafe(
-      `SET search_path TO ${input.tenantSchema}, public`,
-    );
+    await sql.unsafe(`SET search_path TO ${input.tenantSchema}, public`);
 
     await sql`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -122,9 +119,7 @@ export async function runMigrations(input: RunMigrationsInput): Promise<{
     `;
 
     const alreadyApplied = new Set(
-      (
-        await sql<Array<{ name: string }>>`SELECT name FROM schema_migrations`
-      ).map((r) => r.name),
+      (await sql<Array<{ name: string }>>`SELECT name FROM schema_migrations`).map((r) => r.name),
     );
 
     const validatorGate = new Set(input.generatorAuthoredNames ?? []);
@@ -140,20 +135,12 @@ export async function runMigrations(input: RunMigrationsInput): Promise<{
       if (validatorGate.has(file.name)) {
         validateMigrationSql(file.sql);
         sqlToApply = makeIdempotent(file.sql);
-        logger.debug(
-          { name: file.name },
-          "Migration passed LLM-author validation gate",
-        );
+        logger.debug({ name: file.name }, "Migration passed LLM-author validation gate");
       }
 
-      logger.info(
-        { name: file.name, schema: input.tenantSchema },
-        "Applying migration",
-      );
+      logger.info({ name: file.name, schema: input.tenantSchema }, "Applying migration");
       await sql.begin(async (tx) => {
-        await tx.unsafe(
-          `SET LOCAL search_path TO ${input.tenantSchema}, public`,
-        );
+        await tx.unsafe(`SET LOCAL search_path TO ${input.tenantSchema}, public`);
         await tx.unsafe(sqlToApply);
         await tx`INSERT INTO schema_migrations (name) VALUES (${file.name})`;
       });
@@ -211,9 +198,7 @@ export interface DropAppSchemaInput {
  * when the app never applied any migrations (schema may not exist yet).
  * Called by permanentDeleteApp.
  */
-export async function dropAppSchema(
-  input: DropAppSchemaInput,
-): Promise<{ dropped: boolean }> {
+export async function dropAppSchema(input: DropAppSchemaInput): Promise<{ dropped: boolean }> {
   if (!TENANT_SCHEMA_RE.test(input.tenantSchema)) {
     throw new Error(
       `dropAppSchema: refusing schema "${input.tenantSchema}" — must match ${TENANT_SCHEMA_RE}`,
@@ -242,10 +227,7 @@ export async function dropAppSchema(
       return { dropped: false };
     }
     await sql.unsafe(`DROP SCHEMA IF EXISTS ${input.tenantSchema} CASCADE`);
-    logger.info(
-      { schema: input.tenantSchema },
-      "dropAppSchema: schema dropped",
-    );
+    logger.info({ schema: input.tenantSchema }, "dropAppSchema: schema dropped");
     return { dropped: true };
   } finally {
     await sql.end({ timeout: 5 });

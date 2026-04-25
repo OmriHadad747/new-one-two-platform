@@ -30,7 +30,8 @@ export interface EmailSendInput {
 
 async function emailSend(input: EmailSendInput): Promise<EmailSendResult> {
   const { status, body } = await callPlatformService<
-    EmailSendResult | { error: "quota_exceeded"; limit: number; current: number; resetsAt: string | null }
+    | EmailSendResult
+    | { error: "quota_exceeded"; limit: number; current: number; resetsAt: string | null }
   >({ path: "/services/email/send", body: input });
 
   if (status === 200) return body as EmailSendResult;
@@ -56,7 +57,9 @@ async function emailSendBatch(items: EmailSendInput[]): Promise<{ items: EmailBa
     body: { items },
   });
   if (status === 207) return body;
-  throw new Error(`platform.email.sendBatch: unexpected status ${status} (${JSON.stringify(body)})`);
+  throw new Error(
+    `platform.email.sendBatch: unexpected status ${status} (${JSON.stringify(body)})`,
+  );
 }
 
 // ─── Files service ───────────────────────────────────────────────────────────
@@ -107,9 +110,7 @@ const RESUMABLE_UPLOAD_CAP_BYTES = 500 * 1024 * 1024;
  * short JSON bundles. Bytes transit platform-back.
  */
 async function filesUpload(input: FileUploadInput): Promise<FileUploadResult> {
-  const buf = Buffer.isBuffer(input.contents)
-    ? input.contents
-    : Buffer.from(input.contents);
+  const buf = Buffer.isBuffer(input.contents) ? input.contents : Buffer.from(input.contents);
   if (buf.length >= INLINE_UPLOAD_CAP_BYTES) {
     // Client-side guard — surfaces as the same error the server would
     // return, but saves the round-trip and makes the "wrong method"
@@ -128,22 +129,15 @@ async function filesUpload(input: FileUploadInput): Promise<FileUploadResult> {
  * whole-store CSV exports, theme archives, high-res image batches.
  * Small files should use upload() so the simpler control flow wins.
  */
-async function filesUploadLarge(
-  input: FileUploadInput,
-): Promise<FileUploadResult> {
-  const buf = Buffer.isBuffer(input.contents)
-    ? input.contents
-    : Buffer.from(input.contents);
+async function filesUploadLarge(input: FileUploadInput): Promise<FileUploadResult> {
+  const buf = Buffer.isBuffer(input.contents) ? input.contents : Buffer.from(input.contents);
   if (buf.length > RESUMABLE_UPLOAD_CAP_BYTES) {
     throw new PayloadTooLarge(RESUMABLE_UPLOAD_CAP_BYTES);
   }
   return uploadResumable(input, buf);
 }
 
-async function uploadInline(
-  input: FileUploadInput,
-  buf: Buffer,
-): Promise<FileUploadResult> {
+async function uploadInline(input: FileUploadInput, buf: Buffer): Promise<FileUploadResult> {
   const body = {
     name: input.name,
     mimeType: input.mimeType,
@@ -168,20 +162,13 @@ async function uploadInline(
   if (status >= 500) {
     // Platform / GCS transient. Surface as a thrown error; callers that
     // want to continue without the file must catch and log.
-    throw new Error(
-      `platform.files.upload: transient platform error (status ${status})`,
-    );
+    throw new Error(`platform.files.upload: transient platform error (status ${status})`);
   }
   // 400 / 415 / other 4xx — programming errors (bad MIME, empty body, etc.)
-  throw new Error(
-    `platform.files.upload: unexpected status ${status} (${JSON.stringify(resp)})`,
-  );
+  throw new Error(`platform.files.upload: unexpected status ${status} (${JSON.stringify(resp)})`);
 }
 
-async function uploadResumable(
-  input: FileUploadInput,
-  buf: Buffer,
-): Promise<FileUploadResult> {
+async function uploadResumable(input: FileUploadInput, buf: Buffer): Promise<FileUploadResult> {
   // 1. Reserve quota + get a signed PUT URL.
   const create = await callPlatformService<
     | {
@@ -210,8 +197,7 @@ async function uploadResumable(
   // surface both as PayloadTooLarge for caller simplicity.
   if (create.status === 400 || create.status === 413) {
     throw new PayloadTooLarge(
-      (create.body as { limitBytes?: number }).limitBytes ??
-        RESUMABLE_UPLOAD_CAP_BYTES,
+      (create.body as { limitBytes?: number }).limitBytes ?? RESUMABLE_UPLOAD_CAP_BYTES,
     );
   }
   if (create.status !== 200) {
@@ -239,16 +225,12 @@ async function uploadResumable(
       body: buf,
     });
     if (!putRes.ok) {
-      throw new Error(
-        `platform.files.upload (resumable PUT): GCS returned ${putRes.status}`,
-      );
+      throw new Error(`platform.files.upload (resumable PUT): GCS returned ${putRes.status}`);
     }
 
     // 3. Finalize — reconciles actual size, flips row to 'active',
     //    returns the same shape as the inline path.
-    const finalize = await callPlatformService<
-      FileUploadResult | { error: string }
-    >({
+    const finalize = await callPlatformService<FileUploadResult | { error: string }>({
       path: "/services/files/finalize-upload",
       body: { fileId },
     });
@@ -279,13 +261,9 @@ export interface FileSignReadUrlResult {
   expiresAt: string;
 }
 
-async function filesSignReadUrl(
-  input: FileSignReadUrlInput,
-): Promise<FileSignReadUrlResult> {
+async function filesSignReadUrl(input: FileSignReadUrlInput): Promise<FileSignReadUrlResult> {
   const { status, body } = await callPlatformService<
-    | FileSignReadUrlResult
-    | { error: "not_found" }
-    | { error: "invalid_expires_in"; maxSec: number }
+    FileSignReadUrlResult | { error: "not_found" } | { error: "invalid_expires_in"; maxSec: number }
   >({ path: "/services/files/sign-read-url", body: input });
 
   if (status === 200) return body as FileSignReadUrlResult;

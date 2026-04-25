@@ -88,9 +88,7 @@ export async function insertActiveFileAtomic(
  * holds the *expected* size at this point (what the handler claimed);
  * finalizeFile replaces it with the actual size GCS reports.
  */
-export async function insertPendingFile(
-  input: InsertFileInput,
-): Promise<FileRecord> {
+export async function insertPendingFile(input: InsertFileInput): Promise<FileRecord> {
   const rows = await sql<FileRecord[]>`
     INSERT INTO files (
       id, tenant_id, app_id, name, mime_type, size_bytes, gcs_object, status
@@ -163,10 +161,7 @@ export async function deleteFileRow(fileId: string): Promise<void> {
  * this query captures the object keys BEFORE the cascade makes them
  * unreadable.
  */
-export async function getGcsObjectsForApp(
-  tenantId: string,
-  appId: string,
-): Promise<string[]> {
+export async function getGcsObjectsForApp(tenantId: string, appId: string): Promise<string[]> {
   const rows = await sql<Array<{ gcsObject: string }>>`
     SELECT gcs_object AS "gcsObject"
       FROM files
@@ -273,9 +268,7 @@ export async function getFinalizableFileForApp(
  * Including pending prevents concurrent create-upload-url calls from
  * each reading usage=X and collectively blowing past the cap.
  */
-export async function getTenantStorageUsage(
-  tenantId: string,
-): Promise<number> {
+export async function getTenantStorageUsage(tenantId: string): Promise<number> {
   const rows = await sql<Array<{ total: string | null }>>`
     SELECT COALESCE(SUM(size_bytes), 0)::text AS total
       FROM files
@@ -293,9 +286,7 @@ export async function getTenantStorageUsage(
  * Mirrors the plan-lookup pattern used for email/executions quotas —
  * plan → PLANS[plan].limits.*, no per-tenant limit columns on the DB.
  */
-export async function getTenantBillingPlan(
-  tenantId: string,
-): Promise<BillingPlan> {
+export async function getTenantBillingPlan(tenantId: string): Promise<BillingPlan> {
   const rows = await sql<Array<{ plan: BillingPlan | null }>>`
     SELECT billing_plan AS "plan"
       FROM tenants

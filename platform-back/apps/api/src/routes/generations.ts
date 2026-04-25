@@ -52,24 +52,18 @@ async function getGenerationHandler(
 
   const appRecord = await getAppByIdUnsafe(appId);
   if (!appRecord) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
   if (!requireTenant(req, reply, appRecord.tenantId)) return;
 
   const row = await getGenerationByJobId(jobId);
   if (!row) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Generation not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Generation not found"));
   }
   // Scope check — a jobId that exists but belongs to a different app in the
   // same tenant shouldn't leak through the app-scoped URL.
   if (row.appId !== appId) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Generation not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Generation not found"));
   }
 
   return reply.send(row);
@@ -83,27 +77,18 @@ async function deployGenerationHandler(
 ): Promise<FastifyReply | void> {
   const { appId, jobId } = req.params;
 
-  const [appRecord, slugs] = await Promise.all([
-    getAppByIdUnsafe(appId),
-    getAppSlugs(appId),
-  ]);
+  const [appRecord, slugs] = await Promise.all([getAppByIdUnsafe(appId), getAppSlugs(appId)]);
   if (!appRecord || !slugs) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
   if (!requireTenant(req, reply, appRecord.tenantId)) return;
 
   const row = await getGenerationByJobId(jobId);
   if (!row) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Generation not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Generation not found"));
   }
   if (row.appId !== appId) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Generation not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Generation not found"));
   }
   if (row.status !== "success") {
     return reply
@@ -119,10 +104,7 @@ async function deployGenerationHandler(
     return reply
       .code(500)
       .send(
-        errorResponse(
-          ErrorCode.Internal,
-          "Generation marked success but no bundle was persisted",
-        ),
+        errorResponse(ErrorCode.Internal, "Generation marked success but no bundle was persisted"),
       );
   }
 
@@ -135,10 +117,7 @@ async function deployGenerationHandler(
     return reply
       .code(500)
       .send(
-        errorResponse(
-          ErrorCode.Internal,
-          "Bundle is missing handlerModule.files or dbMigration",
-        ),
+        errorResponse(ErrorCode.Internal, "Bundle is missing handlerModule.files or dbMigration"),
       );
   }
   const generatedFiles = [...handlerFiles, migrationFile];
@@ -196,17 +175,7 @@ async function deployGenerationHandler(
 
     return reply.code(202).send({ jobId: deployJobId });
   } catch (err) {
-    req.log.error(
-      { err, appId, jobId },
-      "Failed to start deploy from generation",
-    );
-    return reply
-      .code(500)
-      .send(
-        errorResponse(
-          ErrorCode.Internal,
-          "Failed to start deploy",
-        ),
-      );
+    req.log.error({ err, appId, jobId }, "Failed to start deploy from generation");
+    return reply.code(500).send(errorResponse(ErrorCode.Internal, "Failed to start deploy"));
   }
 }

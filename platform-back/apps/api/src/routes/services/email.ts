@@ -51,9 +51,7 @@ async function resolveCaller(
   const verified = await verifyCallerIdToken(request.headers.authorization);
   if (!verified.ok) {
     const status = verified.reason === "missing_token" ? 401 : 403;
-    void reply
-      .code(status)
-      .send(errorResponse(ErrorCode.Unauthorized, verified.reason));
+    void reply.code(status).send(errorResponse(ErrorCode.Unauthorized, verified.reason));
     return null;
   }
 
@@ -67,10 +65,7 @@ async function resolveCaller(
     void reply
       .code(403)
       .send(
-        errorResponse(
-          ErrorCode.Forbidden,
-          "Caller service account is not bound to an active app",
-        ),
+        errorResponse(ErrorCode.Forbidden, "Caller service account is not bound to an active app"),
       );
     return null;
   }
@@ -79,11 +74,7 @@ async function resolveCaller(
   //    appears in the email From line.
   const tenant = await getTenantBasics(identity.tenantId);
   if (!tenant) {
-    void reply
-      .code(403)
-      .send(
-        errorResponse(ErrorCode.Forbidden, "Tenant is not active"),
-      );
+    void reply.code(403).send(errorResponse(ErrorCode.Forbidden, "Tenant is not active"));
     return null;
   }
 
@@ -111,11 +102,7 @@ async function sendHandler(
     return reply
       .code(400)
       .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Invalid request body",
-          parsed.error.flatten(),
-        ),
+        errorResponse(ErrorCode.InvalidRequest, "Invalid request body", parsed.error.flatten()),
       );
   }
   const body = parsed.data;
@@ -142,9 +129,7 @@ async function sendHandler(
       });
     }
     log.error({ err }, "/services/email/send: unexpected failure");
-    return reply
-      .code(500)
-      .send(errorResponse(ErrorCode.Internal, "Send failed unexpectedly"));
+    return reply.code(500).send(errorResponse(ErrorCode.Internal, "Send failed unexpectedly"));
   }
 }
 
@@ -169,11 +154,7 @@ async function sendBatchHandler(
     return reply
       .code(400)
       .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Invalid request body",
-          parsed.error.flatten(),
-        ),
+        errorResponse(ErrorCode.InvalidRequest, "Invalid request body", parsed.error.flatten()),
       );
   }
 

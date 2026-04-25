@@ -41,15 +41,12 @@ declare module "fastify" {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const JWT_SECRET =
-  process.env["JWT_SECRET"] || process.env["SHOPIFY_CLIENT_SECRET"] || "";
+const JWT_SECRET = process.env["JWT_SECRET"] || process.env["SHOPIFY_CLIENT_SECRET"] || "";
 const AUTH_REQUIRED = process.env["NODE_ENV"] !== "development";
 const TOKEN_EXPIRY_SEC = 60 * 60 * 24 * 7; // 7 days
 
 if (AUTH_REQUIRED && !JWT_SECRET) {
-  throw new Error(
-    "FATAL: JWT_SECRET (or SHOPIFY_CLIENT_SECRET) must be set outside local dev",
-  );
+  throw new Error("FATAL: JWT_SECRET (or SHOPIFY_CLIENT_SECRET) must be set outside local dev");
 }
 
 // ─── JWT helpers (HS256) ──────────────────────────────────────────────────────
@@ -66,14 +63,10 @@ export function signJwt(payload: Record<string, unknown>): string {
   if (!JWT_SECRET) {
     throw new Error("JWT_SECRET or SHOPIFY_CLIENT_SECRET must be set");
   }
-  const header = base64url(
-    Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })),
-  );
+  const header = base64url(Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })));
   const now = Math.floor(Date.now() / 1000);
   const body = base64url(
-    Buffer.from(
-      JSON.stringify({ ...payload, iat: now, exp: now + TOKEN_EXPIRY_SEC }),
-    ),
+    Buffer.from(JSON.stringify({ ...payload, iat: now, exp: now + TOKEN_EXPIRY_SEC })),
   );
   const signature = createHmac("sha256", JWT_SECRET)
     .update(`${header}.${body}`)
@@ -88,9 +81,7 @@ export function verifyJwt(token: string): TenantAuth | null {
     if (parts.length !== 3) return null;
     const [header, body, sig] = parts as [string, string, string];
 
-    const expected = createHmac("sha256", JWT_SECRET)
-      .update(`${header}.${body}`)
-      .digest();
+    const expected = createHmac("sha256", JWT_SECRET).update(`${header}.${body}`).digest();
     const actual = base64urlDecode(sig);
     if (expected.length !== actual.length) return null;
     if (!timingSafeEqual(expected, actual)) return null;
@@ -110,23 +101,13 @@ export function verifyJwt(token: string): TenantAuth | null {
 
 // ─── Route exemption ──────────────────────────────────────────────────────────
 
-const EXEMPT_PREFIXES = [
-  "/health",
-  "/admin",
-  "/widget",
-  "/services",
-  "/webhook",
-  "/oauth",
-];
+const EXEMPT_PREFIXES = ["/health", "/admin", "/widget", "/services", "/webhook", "/oauth"];
 
 // Routes that must be exempt exactly — a startsWith match would swallow
 // merchant-authed siblings. /billing/callback is hit by a cross-origin
 // browser redirect from Shopify (no JWT); /billing/webhook is an HMAC-
 // signed POST from Shopify. Both verify themselves inside the handler.
-const EXEMPT_EXACT = new Set<string>([
-  "/billing/callback",
-  "/billing/webhook",
-]);
+const EXEMPT_EXACT = new Set<string>(["/billing/callback", "/billing/webhook"]);
 
 function isExemptRoute(url: string): boolean {
   const path = url.split("?")[0]!;
@@ -152,10 +133,7 @@ function extractToken(request: FastifyRequest): string | undefined {
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
-export async function authHook(
-  request: FastifyRequest,
-  reply: FastifyReply,
-): Promise<void> {
+export async function authHook(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   if (isExemptRoute(request.url)) return;
 
   const token = extractToken(request);
@@ -168,19 +146,12 @@ export async function authHook(
     logger.warn({ url: request.url }, "Invalid or expired auth token");
     void reply
       .code(401)
-      .send(
-        errorResponse(
-          ErrorCode.TokenInvalid,
-          "Invalid or expired authentication token",
-        ),
-      );
+      .send(errorResponse(ErrorCode.TokenInvalid, "Invalid or expired authentication token"));
     return;
   }
 
   if (AUTH_REQUIRED) {
-    void reply
-      .code(401)
-      .send(errorResponse(ErrorCode.Unauthorized, "Authentication required"));
+    void reply.code(401).send(errorResponse(ErrorCode.Unauthorized, "Authentication required"));
     return;
   }
   // Dev mode: allow through without a token.
@@ -216,20 +187,12 @@ export function requireTenant(
  * Use on routes whose URL doesn't carry a tenantId but still need to
  * scope work to a single tenant.
  */
-export function requireAuthedTenantId(
-  req: FastifyRequest,
-  reply: FastifyReply,
-): string | null {
+export function requireAuthedTenantId(req: FastifyRequest, reply: FastifyReply): string | null {
   const tenantId = req.tenantAuth?.tenantId;
   if (!tenantId) {
     void reply
       .code(401)
-      .send(
-        errorResponse(
-          ErrorCode.Unauthorized,
-          "This endpoint requires an authenticated token",
-        ),
-      );
+      .send(errorResponse(ErrorCode.Unauthorized, "This endpoint requires an authenticated token"));
     return null;
   }
   return tenantId;

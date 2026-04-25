@@ -1,14 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import {
-  insertEmailSuppression,
-  updateEmailDeliveryByProviderId,
-} from "@platform-back/db";
+import { insertEmailSuppression, updateEmailDeliveryByProviderId } from "@platform-back/db";
 import { logger } from "@platform-back/logger";
-import type {
-  EmailDeliveryStatus,
-  EmailSuppressionReason,
-} from "@platform-back/types";
+import type { EmailDeliveryStatus, EmailSuppressionReason } from "@platform-back/types";
 
 // Resend delivers webhooks as Svix-format signed payloads:
 //   Svix-Id / Svix-Timestamp / Svix-Signature
@@ -80,16 +74,11 @@ function verifyResendSignature(
 ): boolean {
   if (!RESEND_WEBHOOK_SECRET) {
     // Dev-mode fallthrough — explicit warn so this is never silent.
-    logger.warn(
-      "RESEND_WEBHOOK_SECRET not set; accepting webhook without verification",
-    );
+    logger.warn("RESEND_WEBHOOK_SECRET not set; accepting webhook without verification");
     return true;
   }
 
-  const secretBytes = Buffer.from(
-    RESEND_WEBHOOK_SECRET.replace(/^whsec_/, ""),
-    "base64",
-  );
+  const secretBytes = Buffer.from(RESEND_WEBHOOK_SECRET.replace(/^whsec_/, ""), "base64");
   const toSign = `${svixId}.${svixTimestamp}.${rawBody}`;
   const expected = createHmac("sha256", secretBytes).update(toSign).digest();
 
@@ -113,9 +102,7 @@ function verifyResendSignature(
   return false;
 }
 
-export async function resendWebhookRoutes(
-  app: FastifyInstance,
-): Promise<void> {
+export async function resendWebhookRoutes(app: FastifyInstance): Promise<void> {
   app.post("/resend", async (req, reply) => {
     const rawBuf = (req as { rawBody?: Buffer }).rawBody;
     const rawBody = rawBuf ? rawBuf.toString("utf-8") : JSON.stringify(req.body ?? {});
@@ -138,12 +125,7 @@ export async function resendWebhookRoutes(
       typeof svixTimestamp === "string" &&
       typeof svixSignature === "string"
     ) {
-      const valid = verifyResendSignature(
-        rawBody,
-        svixId,
-        svixTimestamp,
-        svixSignature,
-      );
+      const valid = verifyResendSignature(rawBody, svixId, svixTimestamp, svixSignature);
       if (!valid) {
         logger.warn({ svixId }, "Resend webhook signature verification failed");
         return reply.code(401).send({ error: "invalid_signature" });
@@ -165,9 +147,7 @@ export async function resendWebhookRoutes(
 
     const failureReason =
       mapped.status === "bounced"
-        ? (event.data.bounce?.message ??
-          event.data.bounce?.type ??
-          "bounced")
+        ? (event.data.bounce?.message ?? event.data.bounce?.type ?? "bounced")
         : mapped.status === "failed"
           ? (event.data.error?.message ?? "failed")
           : null;
@@ -186,10 +166,7 @@ export async function resendWebhookRoutes(
       updateParams.bouncedAt = new Date();
     }
 
-    const row = await updateEmailDeliveryByProviderId(
-      providerMsgId,
-      updateParams,
-    );
+    const row = await updateEmailDeliveryByProviderId(providerMsgId, updateParams);
     if (!row) {
       logger.warn(
         { providerMsgId, type: event.type },

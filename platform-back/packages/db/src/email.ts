@@ -11,9 +11,7 @@ import { sql } from "./connection.js";
 
 // ─── Tenant brand ────────────────────────────────────────────────────────────
 
-export async function getTenantBrand(
-  tenantId: string,
-): Promise<TenantBrand | null> {
+export async function getTenantBrand(tenantId: string): Promise<TenantBrand | null> {
   const rows = await sql<TenantBrand[]>`
     SELECT
       tenant_id     AS "tenantId",
@@ -66,9 +64,7 @@ export async function upsertTenantBrand(params: {
 
 // ─── App email config ────────────────────────────────────────────────────────
 
-export async function getAppEmailConfig(
-  appId: string,
-): Promise<AppEmailConfig | null> {
+export async function getAppEmailConfig(appId: string): Promise<AppEmailConfig | null> {
   const rows = await sql<AppEmailConfig[]>`
     SELECT
       app_id                  AS "appId",
@@ -249,9 +245,7 @@ export async function updateEmailDeliveryByProviderId(
     bouncedAt?: Date | null;
   },
 ): Promise<{ tenantId: string; recipient: string; id: string } | null> {
-  const rows = await sql<
-    Array<{ tenantId: string; recipient: string; id: string }>
-  >`
+  const rows = await sql<Array<{ tenantId: string; recipient: string; id: string }>>`
     UPDATE email_deliveries SET
       status         = ${params.status},
       failure_reason = COALESCE(${params.failureReason ?? null}, failure_reason),
@@ -267,9 +261,7 @@ export async function updateEmailDeliveryByProviderId(
 }
 
 /** 30-day stats for one app (test sends excluded). */
-export async function getAppEmailStats(
-  appId: string,
-): Promise<EmailStatsSummary> {
+export async function getAppEmailStats(appId: string): Promise<EmailStatsSummary> {
   const rows = await sql<Array<{ status: string; count: string }>>`
     SELECT status::TEXT AS status, COUNT(*)::TEXT AS count
     FROM email_deliveries
@@ -301,10 +293,7 @@ export async function getAppEmailStats(
 
 // ─── Suppression list ────────────────────────────────────────────────────────
 
-export async function isEmailSuppressed(
-  tenantId: string,
-  email: string,
-): Promise<boolean> {
+export async function isEmailSuppressed(tenantId: string, email: string): Promise<boolean> {
   const rows = await sql<Array<{ exists: boolean }>>`
     SELECT TRUE AS "exists"
     FROM email_suppressions
@@ -336,10 +325,7 @@ export async function insertEmailSuppression(params: {
 
 // ─── Deploy-time flags ───────────────────────────────────────────────────────
 
-export async function setAppUsesEmail(
-  appId: string,
-  usesEmail: boolean,
-): Promise<void> {
+export async function setAppUsesEmail(appId: string, usesEmail: boolean): Promise<void> {
   await sql`UPDATE apps SET uses_email = ${usesEmail} WHERE id = ${appId}`;
 }
 

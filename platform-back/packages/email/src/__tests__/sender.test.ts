@@ -13,9 +13,7 @@ vi.mock("resend", () => ({
 
 vi.mock("@platform-back/db", () => ({
   isEmailSuppressed: vi.fn().mockResolvedValue(false),
-  checkUsageQuota: vi
-    .fn()
-    .mockResolvedValue({ allowed: true, current: 0, limit: 1000 }),
+  checkUsageQuota: vi.fn().mockResolvedValue({ allowed: true, current: 0, limit: 1000 }),
   getAppEmailConfig: vi.fn().mockResolvedValue({
     subjectTemplate: "Hello {{name}}",
     headingTemplate: "Hi there",
@@ -27,9 +25,7 @@ vi.mock("@platform-back/db", () => ({
   }),
   getAppEmailVariables: vi.fn().mockResolvedValue([]),
   getTenantBrand: vi.fn().mockResolvedValue(null),
-  insertEmailDelivery: vi
-    .fn()
-    .mockResolvedValue({ id: "delivery-uuid-123" }),
+  insertEmailDelivery: vi.fn().mockResolvedValue({ id: "delivery-uuid-123" }),
   updateEmailDeliveryStatus: vi.fn().mockResolvedValue(undefined),
   incrementUsage: vi.fn().mockResolvedValue(undefined),
 }));

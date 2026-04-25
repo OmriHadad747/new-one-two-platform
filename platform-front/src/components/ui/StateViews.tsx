@@ -16,10 +16,7 @@ interface ErrorProps {
   onRetry?: () => void;
 }
 
-export function ErrorMessage({
-  message = "Something went wrong",
-  onRetry,
-}: ErrorProps) {
+export function ErrorMessage({ message = "Something went wrong", onRetry }: ErrorProps) {
   return (
     <div className="flex flex-col items-center justify-center flex-1 gap-4 py-20">
       <div className="text-3xl">⚠</div>
@@ -43,7 +40,8 @@ export function EmptyApps({ onNew }: { onNew: () => void }) {
       <div className="text-5xl">✦</div>
       <p className="text-base font-bold text-ink">No apps yet</p>
       <p className="text-sm text-faint text-center max-w-xs">
-        Describe a feature in plain English and New One Two will generate the widget, handler, and DB migration for you.
+        Describe a feature in plain English and New One Two will generate the widget, handler, and
+        DB migration for you.
       </p>
       <button
         type="button"

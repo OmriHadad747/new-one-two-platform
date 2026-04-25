@@ -37,10 +37,7 @@ export interface BundlePayload {
   adminUiJs?: string | null;
 }
 
-export async function saveBundles(
-  appId: string,
-  bundles: BundlePayload,
-): Promise<void> {
+export async function saveBundles(appId: string, bundles: BundlePayload): Promise<void> {
   const { widgetJs, adminUiJs } = bundles;
   if (!widgetJs && !adminUiJs) return;
 
@@ -80,10 +77,7 @@ export async function getAdminBundle(appId: string): Promise<string | null> {
  * Saves the full generation bundle JSON to GCS.
  * Returns the GCS path to store in the generations table.
  */
-export async function saveGenerationBundle(
-  jobId: string,
-  bundle: unknown,
-): Promise<string> {
+export async function saveGenerationBundle(jobId: string, bundle: unknown): Promise<string> {
   const gcsPath = `${jobId}/bundle.json`;
   await getStorage()
     .bucket(gcsBucket())

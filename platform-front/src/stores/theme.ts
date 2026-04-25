@@ -26,8 +26,8 @@ export const useThemeStore = create<ThemeState>()(
           document.documentElement.setAttribute("data-theme", state.theme);
         }
       },
-    }
-  )
+    },
+  ),
 );
 
 /** Call once at app startup to sync the DOM with the persisted value. */

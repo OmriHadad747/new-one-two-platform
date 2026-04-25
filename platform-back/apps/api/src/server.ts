@@ -20,10 +20,7 @@ import { oauthRoutes } from "./routes/oauth.js";
 import { resendWebhookRoutes } from "./routes/webhook/resend.js";
 import { generationsRoutes } from "./routes/generations.js";
 import { generationLifecycleRoutes } from "./routes/generation.js";
-import {
-  startCompletedSubscription,
-  stopCompletedSubscription,
-} from "./pubsub/subscriber.js";
+import { startCompletedSubscription, stopCompletedSubscription } from "./pubsub/subscriber.js";
 import {
   startProgressSubscription,
   stopProgressSubscription,
@@ -84,8 +81,7 @@ export async function buildServer() {
       max: 100,
       timeWindow: 60_000,
       keyGenerator: (req) => req.ip,
-      errorResponseBuilder: () =>
-        errorResponse(ErrorCode.InvalidRequest, "Rate limit exceeded"),
+      errorResponseBuilder: () => errorResponse(ErrorCode.InvalidRequest, "Rate limit exceeded"),
     });
     await pub.register(widgetRoutes, { prefix: "/widget" });
   });
@@ -94,8 +90,7 @@ export async function buildServer() {
       max: 20,
       timeWindow: 60_000,
       keyGenerator: (req) => req.ip,
-      errorResponseBuilder: () =>
-        errorResponse(ErrorCode.InvalidRequest, "Rate limit exceeded"),
+      errorResponseBuilder: () => errorResponse(ErrorCode.InvalidRequest, "Rate limit exceeded"),
     });
     await pub.register(oauthRoutes, { prefix: "/oauth" });
   });
@@ -104,8 +99,7 @@ export async function buildServer() {
       max: 30,
       timeWindow: 60_000,
       keyGenerator: (req) => req.ip,
-      errorResponseBuilder: () =>
-        errorResponse(ErrorCode.InvalidRequest, "Rate limit exceeded"),
+      errorResponseBuilder: () => errorResponse(ErrorCode.InvalidRequest, "Rate limit exceeded"),
     });
     await pub.register(emailPublicRoutes, { prefix: "/email/u" });
   });
@@ -128,9 +122,7 @@ export async function buildServer() {
   await app.register(generationLifecycleRoutes);
 
   app.setNotFoundHandler((_req, reply) => {
-    void reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Route not found"));
+    void reply.code(404).send(errorResponse(ErrorCode.NotFound, "Route not found"));
   });
 
   app.setErrorHandler((err, req, reply) => {
@@ -139,15 +131,9 @@ export async function buildServer() {
     // misuse-of-API conditions don't get masked as 500s.
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) {
-      logger.error(
-        { err, url: req.url, method: req.method },
-        "Unhandled error",
-      );
+      logger.error({ err, url: req.url, method: req.method }, "Unhandled error");
     } else {
-      logger.warn(
-        { err, url: req.url, method: req.method },
-        "Request error",
-      );
+      logger.warn({ err, url: req.url, method: req.method }, "Request error");
     }
 
     // Translate Fastify's auto-413 (body-limit exceeded) into the same
@@ -211,8 +197,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   startOrphanGc();
 
   await app.listen({ port: PORT, host: HOST });
-  logger.info(
-    { port: PORT, host: HOST, env: NODE_ENV },
-    "platform-back/api listening",
-  );
+  logger.info({ port: PORT, host: HOST, env: NODE_ENV }, "platform-back/api listening");
 }

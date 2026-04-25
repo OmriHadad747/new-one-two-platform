@@ -83,4 +83,3 @@ export function useAdminLogs(tenantId: string | null, appId: string | null, enab
     refetchInterval: 10_000,
   });
 }
-

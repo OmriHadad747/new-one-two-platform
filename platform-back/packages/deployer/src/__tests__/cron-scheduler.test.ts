@@ -4,27 +4,22 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // created with vi.hoisted() so they exist before the factory runs.
 const { mockSqlEnd, mockSqlFn, mockPostgres } = vi.hoisted(() => {
   const mockSqlEnd = vi.fn().mockResolvedValue(undefined);
-  const mockSqlFn = Object.assign(
-    vi.fn().mockResolvedValue([{ unschedule: true }]),
-    { end: mockSqlEnd },
-  );
+  const mockSqlFn = Object.assign(vi.fn().mockResolvedValue([{ unschedule: true }]), {
+    end: mockSqlEnd,
+  });
   const mockPostgres = vi.fn(() => mockSqlFn);
   return { mockSqlEnd, mockSqlFn, mockPostgres };
 });
 
 vi.mock("postgres", () => ({ default: mockPostgres }));
 
-import {
-  scheduleAppCron,
-  unscheduleAppCron,
-} from "../cron-scheduler.js";
+import { scheduleAppCron, unscheduleAppCron } from "../cron-scheduler.js";
 
 // Shape: tenant_<32 hex>_app_<16 hex> — mirrors migration-runner's
 // appSchemaName output. Loose shapes now throw.
 const VALID_INPUT = {
   appId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  tenantSchema:
-    "tenant_11111111222222223333333344444444_app_a1b2c3d4e5f67890",
+  tenantSchema: "tenant_11111111222222223333333344444444_app_a1b2c3d4e5f67890",
   cronExpression: "*/5 * * * *",
   databaseUrl: "postgresql://user:pass@localhost/db",
 };
@@ -45,9 +40,9 @@ describe("scheduleAppCron — validation", () => {
   });
 
   it("throws on tenant schema that doesn't start with tenant_", async () => {
-    await expect(
-      scheduleAppCron({ ...VALID_INPUT, tenantSchema: "public" }),
-    ).rejects.toThrow(/refusing schema/);
+    await expect(scheduleAppCron({ ...VALID_INPUT, tenantSchema: "public" })).rejects.toThrow(
+      /refusing schema/,
+    );
   });
 
   it("throws on cron expression with shell-injection chars", async () => {
@@ -60,9 +55,9 @@ describe("scheduleAppCron — validation", () => {
   });
 
   it("throws on cron expression with backtick", async () => {
-    await expect(
-      scheduleAppCron({ ...VALID_INPUT, cronExpression: "`id`" }),
-    ).rejects.toThrow(/cron expression/);
+    await expect(scheduleAppCron({ ...VALID_INPUT, cronExpression: "`id`" })).rejects.toThrow(
+      /cron expression/,
+    );
   });
 });
 

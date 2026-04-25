@@ -38,11 +38,7 @@ import {
   updateAppName,
   updateAppStatus,
 } from "@platform-back/db";
-import {
-  permanentDeleteApp,
-  reactivateApp,
-  teardownApp,
-} from "@platform-back/deployer";
+import { permanentDeleteApp, reactivateApp, teardownApp } from "@platform-back/deployer";
 import { getSecret } from "@platform-back/crypto";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import { parseBody } from "../lib/validate-body.js";
@@ -113,25 +109,16 @@ export async function tenantsRoutes(app: FastifyInstance): Promise<void> {
   app.post("/", createTenantHandler);
 
   app.get<{ Params: { tenantId: string } }>("/:tenantId", getTenantHandler);
-  app.get<{ Params: { tenantId: string } }>(
-    "/:tenantId/stats",
-    getTenantStatsHandler,
-  );
+  app.get<{ Params: { tenantId: string } }>("/:tenantId/stats", getTenantStatsHandler);
   app.get<{
     Params: { tenantId: string };
     Querystring: { limit?: string };
   }>("/:tenantId/logs", getTenantLogsHandler);
 
   app.get<{ Params: { tenantId: string } }>("/:tenantId/apps", listAppsHandler);
-  app.post<{ Params: { tenantId: string } }>(
-    "/:tenantId/apps",
-    createAppHandler,
-  );
+  app.post<{ Params: { tenantId: string } }>("/:tenantId/apps", createAppHandler);
 
-  app.get<{ Params: { tenantId: string; appId: string } }>(
-    "/:tenantId/apps/:appId",
-    getAppHandler,
-  );
+  app.get<{ Params: { tenantId: string; appId: string } }>("/:tenantId/apps/:appId", getAppHandler);
   app.patch<{ Params: { tenantId: string; appId: string } }>(
     "/:tenantId/apps/:appId",
     updateAppHandler,
@@ -194,9 +181,7 @@ async function getTenantHandler(
   if (!tenantId) return;
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
   }
   return reply.send(tenant);
 }
@@ -209,9 +194,7 @@ async function getTenantStatsHandler(
   if (!tenantId) return;
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
   }
   const stats = await getTenantStats(tenantId);
   return reply.send(stats);
@@ -252,9 +235,7 @@ async function createAppHandler(
 
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
   }
   if (!tenant.shopDomain) {
     return reply
@@ -292,9 +273,7 @@ async function getAppHandler(
   if (!tenantId) return;
   const app = await getAppById(tenantId, req.params.appId);
   if (!app) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
   return reply.send(app);
 }
@@ -312,9 +291,7 @@ async function updateAppHandler(
 
   const app = await getAppById(tenantId, appId);
   if (!app) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
 
   const { name, status } = body;
@@ -329,9 +306,7 @@ async function updateAppHandler(
       const gate = await canActivateApp(tenant);
       if (!gate.allowed) {
         const details =
-          gate.upgradeHint !== undefined
-            ? { upgradeHint: gate.upgradeHint }
-            : undefined;
+          gate.upgradeHint !== undefined ? { upgradeHint: gate.upgradeHint } : undefined;
         return reply
           .code(403)
           .send(
@@ -372,9 +347,7 @@ async function deleteAppHandler(
 
   const app = await getAppById(tenantId, appId);
   if (!app) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
 
   // Run permanentDeleteApp synchronously — the dashboard expects a real
@@ -385,9 +358,7 @@ async function deleteAppHandler(
     await permanentDeleteApp({ tenantId, appId });
   } catch (err) {
     req.log.error({ err, tenantId, appId }, "permanentDeleteApp failed");
-    return reply
-      .code(500)
-      .send(errorResponse(ErrorCode.Internal, "Delete failed"));
+    return reply.code(500).send(errorResponse(ErrorCode.Internal, "Delete failed"));
   }
   // Belt-and-braces: if the lifecycle helper threw after partial cleanup
   // before reaching hardDeleteApp, this direct row-delete ensures the UI
@@ -407,9 +378,7 @@ async function getWidgetLogsHandler(
   if (!tenantId) return;
   const app = await getAppById(tenantId, req.params.appId);
   if (!app) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
   const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
   const logs = await getWidgetInvocationLogs(req.params.appId, limit);
@@ -427,9 +396,7 @@ async function getAdminLogsHandler(
   if (!tenantId) return;
   const app = await getAppById(tenantId, req.params.appId);
   if (!app) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
   const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
   const logs = await getAdminInvocationLogs(req.params.appId, limit);
@@ -446,25 +413,17 @@ async function getThemeTemplatesHandler(
   if (!tenantId) return;
   const app = await getAppById(tenantId, req.params.appId);
   if (!app) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
 
   const tenant = await getTenantById(tenantId);
   if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
-    return reply
-      .code(409)
-      .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
+    return reply.code(409).send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
   }
 
   const token = await getSecret(tenant.shopifyAccessTokenSecretName);
   const activeTheme = await getActiveTheme(tenant.shopDomain, token);
-  const templates = await getThemeTemplates(
-    tenant.shopDomain,
-    token,
-    activeTheme.id,
-  );
+  const templates = await getThemeTemplates(tenant.shopDomain, token, activeTheme.id);
   return reply.send({ activeTheme, templates });
 }
 
@@ -481,16 +440,12 @@ async function injectThemeHandler(
 
   const app = await getAppById(tenantId, appId);
   if (!app) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
 
   const tenant = await getTenantById(tenantId);
   if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
-    return reply
-      .code(409)
-      .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
+    return reply.code(409).send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
   }
 
   const token = await getSecret(tenant.shopifyAccessTokenSecretName);
@@ -498,12 +453,7 @@ async function injectThemeHandler(
 
   const activeTheme = await getActiveTheme(shop, token);
   const newThemeName = `${activeTheme.name} — Widget Test (${app.name})`;
-  const duplicated = await duplicateTheme(
-    shop,
-    token,
-    activeTheme.id,
-    newThemeName,
-  );
+  const duplicated = await duplicateTheme(shop, token, activeTheme.id, newThemeName);
 
   for (const target of body.targets) {
     await injectAppBlock(shop, token, duplicated.id, appId, target);
@@ -530,24 +480,15 @@ async function deleteInjectedThemeHandler(
 
   const app = await getAppById(tenantId, appId);
   if (!app) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
-  if (
-    app.themeInjectionStatus !== "injected" ||
-    !app.themeInjectionThemeId
-  ) {
-    return reply
-      .code(409)
-      .send(errorResponse(ErrorCode.Conflict, "No injected theme to delete"));
+  if (app.themeInjectionStatus !== "injected" || !app.themeInjectionThemeId) {
+    return reply.code(409).send(errorResponse(ErrorCode.Conflict, "No injected theme to delete"));
   }
 
   const tenant = await getTenantById(tenantId);
   if (!tenant?.shopDomain || !tenant.shopifyAccessTokenSecretName) {
-    return reply
-      .code(409)
-      .send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
+    return reply.code(409).send(errorResponse(ErrorCode.ShopNotConnected, "Shop not connected"));
   }
 
   const token = await getSecret(tenant.shopifyAccessTokenSecretName);

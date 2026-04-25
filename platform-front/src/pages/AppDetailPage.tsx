@@ -5,9 +5,22 @@ import { cn } from "@/lib/cn";
 import { useSessionStore } from "@/stores/session";
 import { useGenerationStore } from "@/stores/generation";
 import { useApp, useWebhookAppLogs, useWidgetLogs, useAdminLogs } from "@/hooks/useApps";
-import { useLatestSession, useLatestCompletedSession, useGeneration, useAppSessions, useSessionBundle } from "@/hooks/useGeneration";
+import {
+  useLatestSession,
+  useLatestCompletedSession,
+  useGeneration,
+  useAppSessions,
+  useSessionBundle,
+} from "@/hooks/useGeneration";
 import type { SessionSummary } from "@/types/dashboard";
-import type { WebhookInvocationLogEntry, InvocationLogEntry, App, SessionBundle, ThemeTemplate, InjectionTarget } from "@/types/dashboard";
+import type {
+  WebhookInvocationLogEntry,
+  InvocationLogEntry,
+  App,
+  SessionBundle,
+  ThemeTemplate,
+  InjectionTarget,
+} from "@/types/dashboard";
 import { ArchetypePills } from "@/components/ui/ArchetypePills";
 import { Tag } from "@/components/ui/Badge";
 import { useState, useEffect, useRef } from "react";
@@ -27,7 +40,11 @@ function timeAgo(iso: string): string {
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function formatDuration(ms: number | null): string {
@@ -43,7 +60,8 @@ function humanizeCron(expr: string): string | null {
   if (min === "0" && hour === "*") return "every hour";
   if (hour.startsWith("*/")) return `every ${hour.slice(2)} hours`;
   if (min.startsWith("*/")) return `every ${min.slice(2)} minutes`;
-  const h = parseInt(hour, 10), m = parseInt(min, 10);
+  const h = parseInt(hour, 10),
+    m = parseInt(min, 10);
   if (!isNaN(h) && !isNaN(m) && dow === "*") {
     return `daily at ${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
   }
@@ -57,56 +75,163 @@ function humanizeCron(expr: string): string | null {
 // ─── Status configs ───────────────────────────────────────────────────────────
 
 const LOG_STATUS_CFG_DARK = {
-  success: { dot: "bg-emerald-500",              label: "success", cls: "text-emerald-400" },
-  failed:  { dot: "bg-danger",                   label: "failed",  cls: "text-danger"      },
-  running: { dot: "bg-accent animate-pulse",     label: "running", cls: "text-accent"      },
-  queued:  { dot: "bg-faint",                    label: "queued",  cls: "text-faint"       },
-  timeout: { dot: "bg-amber-400",                label: "timeout", cls: "text-amber-300"   },
-} satisfies Record<WebhookInvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
+  success: { dot: "bg-emerald-500", label: "success", cls: "text-emerald-400" },
+  failed: { dot: "bg-danger", label: "failed", cls: "text-danger" },
+  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent" },
+  queued: { dot: "bg-faint", label: "queued", cls: "text-faint" },
+  timeout: { dot: "bg-amber-400", label: "timeout", cls: "text-amber-300" },
+} satisfies Record<
+  WebhookInvocationLogEntry["status"],
+  { dot: string; label: string; cls: string }
+>;
 
 const LOG_STATUS_CFG_LIGHT = {
-  success: { dot: "bg-emerald-600",              label: "success", cls: "text-emerald-700" },
-  failed:  { dot: "bg-danger",                   label: "failed",  cls: "text-danger"      },
-  running: { dot: "bg-accent animate-pulse",     label: "running", cls: "text-accent"      },
-  queued:  { dot: "bg-faint",                    label: "queued",  cls: "text-faint"       },
-  timeout: { dot: "bg-amber-600",                label: "timeout", cls: "text-amber-700"   },
-} satisfies Record<WebhookInvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
+  success: { dot: "bg-emerald-600", label: "success", cls: "text-emerald-700" },
+  failed: { dot: "bg-danger", label: "failed", cls: "text-danger" },
+  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent" },
+  queued: { dot: "bg-faint", label: "queued", cls: "text-faint" },
+  timeout: { dot: "bg-amber-600", label: "timeout", cls: "text-amber-700" },
+} satisfies Record<
+  WebhookInvocationLogEntry["status"],
+  { dot: string; label: string; cls: string }
+>;
 
 const INVOCATION_STATUS_CFG_DARK = {
-  success: { dot: "bg-emerald-500",          label: "success", cls: "text-emerald-400" },
-  failed:  { dot: "bg-danger",               label: "failed",  cls: "text-danger"      },
-  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent"      },
+  success: { dot: "bg-emerald-500", label: "success", cls: "text-emerald-400" },
+  failed: { dot: "bg-danger", label: "failed", cls: "text-danger" },
+  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent" },
 } satisfies Record<InvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
 
 const INVOCATION_STATUS_CFG_LIGHT = {
-  success: { dot: "bg-emerald-600",          label: "success", cls: "text-emerald-700" },
-  failed:  { dot: "bg-danger",               label: "failed",  cls: "text-danger"      },
-  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent"      },
+  success: { dot: "bg-emerald-600", label: "success", cls: "text-emerald-700" },
+  failed: { dot: "bg-danger", label: "failed", cls: "text-danger" },
+  running: { dot: "bg-accent animate-pulse", label: "running", cls: "text-accent" },
 } satisfies Record<InvocationLogEntry["status"], { dot: string; label: string; cls: string }>;
 
 // ─── Syntax highlighting ──────────────────────────────────────────────────────
 
 const JS_KEYWORDS = new Set([
-  "export", "function", "async", "await", "const", "let", "var", "if", "else",
-  "return", "for", "while", "try", "catch", "throw", "new", "class", "extends",
-  "import", "from", "null", "undefined", "true", "false", "of", "in", "typeof",
-  "instanceof", "switch", "case", "break", "continue", "default", "delete", "do",
-  "finally", "this", "super", "static", "get", "set", "yield",
+  "export",
+  "function",
+  "async",
+  "await",
+  "const",
+  "let",
+  "var",
+  "if",
+  "else",
+  "return",
+  "for",
+  "while",
+  "try",
+  "catch",
+  "throw",
+  "new",
+  "class",
+  "extends",
+  "import",
+  "from",
+  "null",
+  "undefined",
+  "true",
+  "false",
+  "of",
+  "in",
+  "typeof",
+  "instanceof",
+  "switch",
+  "case",
+  "break",
+  "continue",
+  "default",
+  "delete",
+  "do",
+  "finally",
+  "this",
+  "super",
+  "static",
+  "get",
+  "set",
+  "yield",
 ]);
 
 const SQL_KEYWORDS = new Set([
-  "CREATE", "TABLE", "IF", "NOT", "EXISTS", "ALTER", "ADD", "COLUMN", "DROP",
-  "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
-  "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "UNIQUE", "INDEX", "ON", "DEFAULT",
-  "NULL", "AND", "OR", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "AS", "WITH",
-  "ENABLE", "ROW", "LEVEL", "SECURITY", "POLICY", "FOR", "USING", "TO", "GRANT",
-  "RETURNS", "BEGIN", "END", "LANGUAGE", "PLPGSQL", "DECLARE", "RAISE", "EXCEPTION",
+  "CREATE",
+  "TABLE",
+  "IF",
+  "NOT",
+  "EXISTS",
+  "ALTER",
+  "ADD",
+  "COLUMN",
+  "DROP",
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "INSERT",
+  "INTO",
+  "VALUES",
+  "UPDATE",
+  "SET",
+  "DELETE",
+  "PRIMARY",
+  "KEY",
+  "FOREIGN",
+  "REFERENCES",
+  "UNIQUE",
+  "INDEX",
+  "ON",
+  "DEFAULT",
+  "NULL",
+  "AND",
+  "OR",
+  "JOIN",
+  "LEFT",
+  "RIGHT",
+  "INNER",
+  "OUTER",
+  "AS",
+  "WITH",
+  "ENABLE",
+  "ROW",
+  "LEVEL",
+  "SECURITY",
+  "POLICY",
+  "FOR",
+  "USING",
+  "TO",
+  "GRANT",
+  "RETURNS",
+  "BEGIN",
+  "END",
+  "LANGUAGE",
+  "PLPGSQL",
+  "DECLARE",
+  "RAISE",
+  "EXCEPTION",
 ]);
 
 const SQL_TYPES = new Set([
-  "TEXT", "INTEGER", "BIGINT", "BIGSERIAL", "SERIAL", "BOOLEAN", "BOOL",
-  "TIMESTAMP", "TIMESTAMPTZ", "DATE", "JSONB", "JSON", "UUID", "VARCHAR",
-  "FLOAT", "DOUBLE", "NUMERIC", "REAL", "SMALLINT", "INT",
+  "TEXT",
+  "INTEGER",
+  "BIGINT",
+  "BIGSERIAL",
+  "SERIAL",
+  "BOOLEAN",
+  "BOOL",
+  "TIMESTAMP",
+  "TIMESTAMPTZ",
+  "DATE",
+  "JSONB",
+  "JSON",
+  "UUID",
+  "VARCHAR",
+  "FLOAT",
+  "DOUBLE",
+  "NUMERIC",
+  "REAL",
+  "SMALLINT",
+  "INT",
 ]);
 
 type TokenType = "kw" | "str" | "cmt" | "num" | "fn" | "ty" | "txt";
@@ -114,35 +239,56 @@ type Token = { text: string; type: TokenType };
 
 // Dark theme — slightly blue-tinted black (GitHub Dark-ish)
 const DARK_PAL = {
-  bg:       "#0d1219",
+  bg: "#0d1219",
   gutterBg: "#11161f",
-  border:   "rgba(255,255,255,0.045)",
-  shadow:   "rgba(0,0,0,0.55)",
-  lnum:     "rgba(149,142,160,0.28)",
-  kw:  "#c792ea",  str: "#c3e88d",  cmt: "#546e7a",
-  num: "#f78c6c",  fn:  "#82aaff",  ty:  "#89ddff",  txt: "#d4d4d4",
+  border: "rgba(255,255,255,0.045)",
+  shadow: "rgba(0,0,0,0.55)",
+  lnum: "rgba(149,142,160,0.28)",
+  kw: "#c792ea",
+  str: "#c3e88d",
+  cmt: "#546e7a",
+  num: "#f78c6c",
+  fn: "#82aaff",
+  ty: "#89ddff",
+  txt: "#d4d4d4",
 };
 
 // Light theme — GitHub Light-inspired
 const LIGHT_PAL = {
-  bg:       "#f6f8fa",
+  bg: "#f6f8fa",
   gutterBg: "#eef0f4",
-  border:   "rgba(0,0,0,0.07)",
-  shadow:   "rgba(0,0,0,0.06)",
-  lnum:     "rgba(80,70,110,0.38)",
-  kw:  "#a626a4",  str: "#50a14f",  cmt: "#9ca3af",
-  num: "#986801",  fn:  "#4078f2",  ty:  "#0184bb",  txt: "#383a42",
+  border: "rgba(0,0,0,0.07)",
+  shadow: "rgba(0,0,0,0.06)",
+  lnum: "rgba(80,70,110,0.38)",
+  kw: "#a626a4",
+  str: "#50a14f",
+  cmt: "#9ca3af",
+  num: "#986801",
+  fn: "#4078f2",
+  ty: "#0184bb",
+  txt: "#383a42",
 };
 
 function highlightJS(line: string): Token[] {
   const tokens: Token[] = [];
   let s = line;
   while (s.length > 0) {
-    if (s.startsWith("//")) { tokens.push({ text: s, type: "cmt" }); break; }
+    if (s.startsWith("//")) {
+      tokens.push({ text: s, type: "cmt" });
+      break;
+    }
     const strM = s.match(/^("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)/);
-    if (strM) { tokens.push({ text: strM[1], type: "str" }); s = s.slice(strM[1].length); continue; }
+    if (strM) {
+      tokens.push({ text: strM[1], type: "str" });
+      s = s.slice(strM[1].length);
+      continue;
+    }
     const numM = s.match(/^(\b\d+(?:\.\d+)?\b)/);
-    if (numM) { tokens.push({ text: numM[1], type: "num" }); s = s.slice(numM[1].length); continue; }
+    if (numM) {
+      tokens.push({ text: numM[1], type: "num" });
+      s = s.slice(numM[1].length);
+      continue;
+    }
     const wordM = s.match(/^([a-zA-Z_$][\w$]*)/);
     if (wordM) {
       const w = wordM[1];
@@ -162,16 +308,30 @@ function highlightSQL(line: string): Token[] {
   const tokens: Token[] = [];
   let s = line;
   while (s.length > 0) {
-    if (s.startsWith("--")) { tokens.push({ text: s, type: "cmt" }); break; }
+    if (s.startsWith("--")) {
+      tokens.push({ text: s, type: "cmt" });
+      break;
+    }
     const strM = s.match(/^('(?:''|[^'])*')/);
-    if (strM) { tokens.push({ text: strM[1], type: "str" }); s = s.slice(strM[1].length); continue; }
+    if (strM) {
+      tokens.push({ text: strM[1], type: "str" });
+      s = s.slice(strM[1].length);
+      continue;
+    }
     const numM = s.match(/^(\b\d+(?:\.\d+)?\b)/);
-    if (numM) { tokens.push({ text: numM[1], type: "num" }); s = s.slice(numM[1].length); continue; }
+    if (numM) {
+      tokens.push({ text: numM[1], type: "num" });
+      s = s.slice(numM[1].length);
+      continue;
+    }
     const wordM = s.match(/^([a-zA-Z_][\w]*)/);
     if (wordM) {
       const w = wordM[1];
       const up = w.toUpperCase();
-      tokens.push({ text: w, type: SQL_KEYWORDS.has(up) ? "kw" : SQL_TYPES.has(up) ? "ty" : "txt" });
+      tokens.push({
+        text: w,
+        type: SQL_KEYWORDS.has(up) ? "kw" : SQL_TYPES.has(up) ? "ty" : "txt",
+      });
       s = s.slice(w.length);
       continue;
     }
@@ -203,7 +363,6 @@ function CodeBlock({ code, lang }: { code: string; lang: "js" | "sql" }) {
           const tokens = highlight(line);
           return (
             <div key={i} style={{ display: "table-row" }}>
-
               {/* ── Gutter ─────────────────────────────────────────── */}
               <span
                 className="select-none text-right"
@@ -231,10 +390,13 @@ function CodeBlock({ code, lang }: { code: string; lang: "js" | "sql" }) {
                 style={{ display: "table-cell", paddingLeft: 20, paddingRight: 48 }}
               >
                 {tokens.length > 0
-                  ? tokens.map((t, j) => <span key={j} style={{ color: pal[t.type] }}>{t.text}</span>)
+                  ? tokens.map((t, j) => (
+                      <span key={j} style={{ color: pal[t.type] }}>
+                        {t.text}
+                      </span>
+                    ))
                   : "\u00a0"}
               </span>
-
             </div>
           );
         })}
@@ -257,22 +419,33 @@ const AVATAR_GRADIENTS = [
 ];
 
 function AppHeader({
-  app, isGenerating, statusPill,
+  app,
+  isGenerating,
+  statusPill,
 }: {
   app: App;
   isGenerating: boolean;
   statusPill: ReturnType<typeof buildStatusPill>;
 }) {
-  const initials = app.name.split(" ").slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
+  const initials =
+    app.name
+      .split(" ")
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? "")
+      .join("") || "?";
   const seed = app.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
   const gradient = AVATAR_GRADIENTS[seed % AVATAR_GRADIENTS.length];
 
   return (
     <div className="px-8 h-[124px] flex items-center border-b border-white/[0.04] shrink-0">
       <div className="flex items-center gap-5 flex-1 min-w-0">
-
         {/* Avatar */}
-        <div className={cn("w-11 h-11 rounded-2xl bg-gradient-to-br flex items-center justify-center shrink-0 shadow-lg", gradient)}>
+        <div
+          className={cn(
+            "w-11 h-11 rounded-2xl bg-gradient-to-br flex items-center justify-center shrink-0 shadow-lg",
+            gradient,
+          )}
+        >
           <span className="text-[13px] font-black text-white tracking-tight">{initials}</span>
         </div>
 
@@ -281,7 +454,9 @@ function AppHeader({
           <div className="flex items-center gap-2.5 flex-wrap">
             <h2 className="text-[17px] font-bold text-ink truncate">{app.name}</h2>
             {isGenerating && (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent animate-pulse">Building…</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide bg-accent/12 text-accent animate-pulse">
+                Building…
+              </span>
             )}
           </div>
           <div className="flex items-center gap-3 text-[11px] text-faint mt-1.5">
@@ -290,7 +465,9 @@ function AppHeader({
             <span>Updated {timeAgo(app.updatedAt)}</span>
           </div>
           <div className="flex items-center gap-2 mt-3">
-            <span className="text-[9px] font-bold uppercase tracking-widest text-faint/35">App types</span>
+            <span className="text-[9px] font-bold uppercase tracking-widest text-faint/35">
+              App types
+            </span>
             <ArchetypePills archetype={app.appArchetype} />
             {app.currentSemver && (
               <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-white/[0.06] text-faint/70">
@@ -302,8 +479,16 @@ function AppHeader({
 
         {/* Right: status */}
         <div className="w-72 shrink-0 flex flex-col items-start gap-1">
-          <span className="text-[9px] font-bold uppercase tracking-widest text-faint/35">Status</span>
-          <div className={cn("flex items-stretch rounded-full border overflow-hidden text-[11px] font-medium", statusPill.pillBorder, statusPill.pillBg)}>
+          <span className="text-[9px] font-bold uppercase tracking-widest text-faint/35">
+            Status
+          </span>
+          <div
+            className={cn(
+              "flex items-stretch rounded-full border overflow-hidden text-[11px] font-medium",
+              statusPill.pillBorder,
+              statusPill.pillBg,
+            )}
+          >
             <div className="flex items-center justify-center gap-1.5 px-3 py-1">
               <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", statusPill.statusDot)} />
               <span className="text-ink/80 whitespace-nowrap">{statusPill.statusText}</span>
@@ -316,10 +501,13 @@ function AppHeader({
                   onClick={statusPill.action.onClick}
                   className={cn(
                     "flex items-center justify-center gap-1 px-3 py-1 transition-colors cursor-pointer border-0 bg-transparent font-semibold whitespace-nowrap",
-                    statusPill.action.cls
+                    statusPill.action.cls,
                   )}
                 >
-                  <span className="material-symbols-outlined text-[11px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>
+                  <span
+                    className="material-symbols-outlined text-[11px]"
+                    style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                  >
                     {statusPill.action.icon}
                   </span>
                   {statusPill.action.label}
@@ -331,7 +519,6 @@ function AppHeader({
             {statusPill.note ?? ""}
           </p>
         </div>
-
       </div>
     </div>
   );
@@ -351,32 +538,58 @@ function EmptyLogs({ label, sub }: { label: string; sub: string }) {
   );
 }
 
-function LogTable({ pathHeader = "Event / Error", children }: { pathHeader?: string; children: React.ReactNode }) {
+function LogTable({
+  pathHeader = "Event / Error",
+  children,
+}: {
+  pathHeader?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="bg-surface rounded-xl overflow-hidden">
       <div className="grid grid-cols-[16px_1fr_100px] gap-4 px-5 py-2.5 border-b border-white/[0.04] bg-white/[0.02]">
         <span />
-        <span className="text-[10px] font-bold text-faint uppercase tracking-wider">{pathHeader}</span>
-        <span className="text-[10px] font-bold text-faint uppercase tracking-wider text-right">Duration</span>
+        <span className="text-[10px] font-bold text-faint uppercase tracking-wider">
+          {pathHeader}
+        </span>
+        <span className="text-[10px] font-bold text-faint uppercase tracking-wider text-right">
+          Duration
+        </span>
       </div>
       {children}
     </div>
   );
 }
 
-function LogRow({ entry, last, showSource }: { entry: WebhookInvocationLogEntry; last: boolean; showSource?: boolean }) {
+function LogRow({
+  entry,
+  last,
+  showSource,
+}: {
+  entry: WebhookInvocationLogEntry;
+  last: boolean;
+  showSource?: boolean;
+}) {
   const theme = useThemeStore((s) => s.theme);
   const cfg = (theme === "light" ? LOG_STATUS_CFG_LIGHT : LOG_STATUS_CFG_DARK)[entry.status];
   return (
-    <div className={cn("flex items-start gap-4 px-5 py-3", !last && "border-b border-white/[0.05]")}>
-      <div className="pt-1.5 shrink-0"><span className={cn("w-2 h-2 rounded-full block", cfg.dot)} /></div>
+    <div
+      className={cn("flex items-start gap-4 px-5 py-3", !last && "border-b border-white/[0.05]")}
+    >
+      <div className="pt-1.5 shrink-0">
+        <span className={cn("w-2 h-2 rounded-full block", cfg.dot)} />
+      </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12px] font-mono text-ink truncate">{entry.topic}</span>
           {showSource && <Tag variant="source">webhook</Tag>}
-          <span className={cn("text-[10px] font-bold uppercase tracking-wide", cfg.cls)}>{cfg.label}</span>
+          <span className={cn("text-[10px] font-bold uppercase tracking-wide", cfg.cls)}>
+            {cfg.label}
+          </span>
         </div>
-        {entry.errorMessage && <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>}
+        {entry.errorMessage && (
+          <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>
+        )}
       </div>
       <div className="text-right shrink-0 space-y-0.5">
         <div className="text-[10px] text-faint">{timeAgo(entry.queuedAt)}</div>
@@ -386,19 +599,37 @@ function LogRow({ entry, last, showSource }: { entry: WebhookInvocationLogEntry;
   );
 }
 
-function InvocationLogRow({ entry, last, source }: { entry: InvocationLogEntry; last: boolean; source?: "widget" | "admin" }) {
+function InvocationLogRow({
+  entry,
+  last,
+  source,
+}: {
+  entry: InvocationLogEntry;
+  last: boolean;
+  source?: "widget" | "admin";
+}) {
   const theme = useThemeStore((s) => s.theme);
-  const cfg = (theme === "light" ? INVOCATION_STATUS_CFG_LIGHT : INVOCATION_STATUS_CFG_DARK)[entry.status];
+  const cfg = (theme === "light" ? INVOCATION_STATUS_CFG_LIGHT : INVOCATION_STATUS_CFG_DARK)[
+    entry.status
+  ];
   return (
-    <div className={cn("flex items-start gap-4 px-5 py-3", !last && "border-b border-white/[0.05]")}>
-      <div className="pt-1.5 shrink-0"><span className={cn("w-2 h-2 rounded-full block", cfg.dot)} /></div>
+    <div
+      className={cn("flex items-start gap-4 px-5 py-3", !last && "border-b border-white/[0.05]")}
+    >
+      <div className="pt-1.5 shrink-0">
+        <span className={cn("w-2 h-2 rounded-full block", cfg.dot)} />
+      </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[12px] font-mono text-ink truncate">{entry.path}</span>
           {source && <Tag variant="source">{source}</Tag>}
-          <span className={cn("text-[10px] font-bold uppercase tracking-wide", cfg.cls)}>{cfg.label}</span>
+          <span className={cn("text-[10px] font-bold uppercase tracking-wide", cfg.cls)}>
+            {cfg.label}
+          </span>
         </div>
-        {entry.errorMessage && <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>}
+        {entry.errorMessage && (
+          <p className="text-[11px] text-danger mt-1 font-mono truncate">{entry.errorMessage}</p>
+        )}
       </div>
       <div className="text-right shrink-0 space-y-0.5">
         <div className="text-[10px] text-faint">{timeAgo(entry.invokedAt)}</div>
@@ -409,7 +640,11 @@ function InvocationLogRow({ entry, last, source }: { entry: InvocationLogEntry; 
 }
 
 function TabBar<T extends string>({
-  tabs, active, onChange, end, action,
+  tabs,
+  active,
+  onChange,
+  end,
+  action,
 }: {
   tabs: { id: T; label: string }[];
   active: T;
@@ -422,12 +657,19 @@ function TabBar<T extends string>({
   return (
     <div className="flex items-center gap-1 border-b border-white/[0.04] pb-0">
       {tabs.map((t) => (
-        <button key={t.id} type="button" onClick={() => onChange(t.id)}
+        <button
+          key={t.id}
+          type="button"
+          onClick={() => onChange(t.id)}
           className={cn(
             "px-3 py-2 text-[12px] font-medium border-b-2 -mb-px transition-colors bg-transparent border-x-0 border-t-0 cursor-pointer",
-            active === t.id ? "border-accent text-ink" : "border-transparent text-faint hover:text-ink"
+            active === t.id
+              ? "border-accent text-ink"
+              : "border-transparent text-faint hover:text-ink",
           )}
-        >{t.label}</button>
+        >
+          {t.label}
+        </button>
       ))}
       {action && (
         <>
@@ -443,15 +685,15 @@ function TabBar<T extends string>({
 // ─── Session status configs ───────────────────────────────────────────────────
 
 const SESSION_STATUS_CFG_DARK = {
-  completed: { dot: "bg-emerald-500",          label: "Generated", cls: "text-emerald-400" },
-  failed:    { dot: "bg-danger",               label: "Failed",    cls: "text-danger"      },
-  running:   { dot: "bg-accent animate-pulse", label: "Running",   cls: "text-accent"      },
+  completed: { dot: "bg-emerald-500", label: "Generated", cls: "text-emerald-400" },
+  failed: { dot: "bg-danger", label: "Failed", cls: "text-danger" },
+  running: { dot: "bg-accent animate-pulse", label: "Running", cls: "text-accent" },
 } satisfies Record<string, { dot: string; label: string; cls: string }>;
 
 const SESSION_STATUS_CFG_LIGHT = {
-  completed: { dot: "bg-emerald-600",          label: "Generated", cls: "text-emerald-700" },
-  failed:    { dot: "bg-danger",               label: "Failed",    cls: "text-danger"      },
-  running:   { dot: "bg-accent animate-pulse", label: "Running",   cls: "text-accent"      },
+  completed: { dot: "bg-emerald-600", label: "Generated", cls: "text-emerald-700" },
+  failed: { dot: "bg-danger", label: "Failed", cls: "text-danger" },
+  running: { dot: "bg-accent animate-pulse", label: "Running", cls: "text-accent" },
 } satisfies Record<string, { dot: string; label: string; cls: string }>;
 
 // ─── Code modal ───────────────────────────────────────────────────────────────
@@ -459,7 +701,11 @@ const SESSION_STATUS_CFG_LIGHT = {
 type CodeFile = { id: string; label: string; lang: "js" | "sql"; code: string };
 
 function CodeModal({
-  files, activeFile, onFileChange, onClose, theme,
+  files,
+  activeFile,
+  onFileChange,
+  onClose,
+  theme,
 }: {
   files: CodeFile[];
   activeFile: string;
@@ -474,8 +720,11 @@ function CodeModal({
   // Keyboard navigation
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") { onClose(); return; }
-      if (e.key === "ArrowLeft"  && idx > 0)               onFileChange(files[idx - 1]!.id);
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key === "ArrowLeft" && idx > 0) onFileChange(files[idx - 1]!.id);
       if (e.key === "ArrowRight" && idx < files.length - 1) onFileChange(files[idx + 1]!.id);
     }
     document.addEventListener("keydown", onKey);
@@ -485,7 +734,9 @@ function CodeModal({
   // Lock body scroll
   useEffect(() => {
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, []);
 
   const copyCode = () => {
@@ -495,10 +746,20 @@ function CodeModal({
     });
   };
 
-  const sep = <span className={cn("w-px h-4 mx-1.5 self-center shrink-0", theme === "light" ? "bg-black/[0.12]" : "bg-white/[0.12]")} />;
+  const sep = (
+    <span
+      className={cn(
+        "w-px h-4 mx-1.5 self-center shrink-0",
+        theme === "light" ? "bg-black/[0.12]" : "bg-white/[0.12]",
+      )}
+    />
+  );
 
   return createPortal(
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-5 animate-backdrop-in" style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}>
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center p-5 animate-backdrop-in"
+      style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}
+    >
       {/* Click-away */}
       <div className="absolute inset-0" onClick={onClose} />
 
@@ -507,20 +768,20 @@ function CodeModal({
         className={cn(
           "relative flex flex-col rounded-2xl border overflow-hidden shadow-2xl animate-modal-in",
           "w-[92vw] h-[88vh] max-w-7xl",
-          theme === "light"
-            ? "bg-white border-black/[0.08]"
-            : "bg-surface border-white/[0.08]"
+          theme === "light" ? "bg-white border-black/[0.08]" : "bg-surface border-white/[0.08]",
         )}
       >
         {/* Ambient violet glow */}
         <div
           className="absolute top-0 inset-x-0 h-48 pointer-events-none z-0"
-          style={{ background: "radial-gradient(ellipse 60% 100% at 50% 0%, rgba(167,139,250,0.10) 0%, transparent 100%)" }}
+          style={{
+            background:
+              "radial-gradient(ellipse 60% 100% at 50% 0%, rgba(167,139,250,0.10) 0%, transparent 100%)",
+          }}
         />
 
         {/* ── Header ───────────────────────────────────────── */}
         <div className="relative z-10 flex items-center gap-0.5 border-b border-white/[0.06] shrink-0 px-2">
-
           {/* File tabs */}
           {files.map((f) => (
             <button
@@ -529,9 +790,13 @@ function CodeModal({
               onClick={() => onFileChange(f.id)}
               className={cn(
                 "px-4 py-3 text-[12px] font-mono border-b-2 -mb-px transition-colors bg-transparent border-x-0 border-t-0 cursor-pointer",
-                f.id === activeFile ? "border-accent text-ink" : "border-transparent text-faint hover:text-ink"
+                f.id === activeFile
+                  ? "border-accent text-ink"
+                  : "border-transparent text-faint hover:text-ink",
               )}
-            >{f.label}</button>
+            >
+              {f.label}
+            </button>
           ))}
 
           <div className="flex-1" />
@@ -542,7 +807,9 @@ function CodeModal({
             onClick={copyCode}
             className="flex items-center gap-1.5 text-[11px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer px-3 py-2.5 rounded-lg hover:bg-white/[0.05]"
           >
-            <span className="material-symbols-outlined text-[14px]">{copied ? "check" : "content_copy"}</span>
+            <span className="material-symbols-outlined text-[14px]">
+              {copied ? "check" : "content_copy"}
+            </span>
             {copied ? "Copied" : "Copy"}
           </button>
 
@@ -565,14 +832,19 @@ function CodeModal({
         </div>
       </div>
     </div>,
-    document.body
+    document.body,
   );
 }
 
 // ─── Code viewer ──────────────────────────────────────────────────────────────
 
 function CodeViewer({
-  bundle, sessions, selectedSession, onSelectSession, sessionsLoading, app,
+  bundle,
+  sessions,
+  selectedSession,
+  onSelectSession,
+  sessionsLoading,
+  app,
 }: {
   bundle: SessionBundle | null | undefined;
   sessions: SessionSummary[];
@@ -600,7 +872,8 @@ function CodeViewer({
       if (
         pickerBtnRef.current?.contains(e.target as Node) ||
         pickerDropRef.current?.contains(e.target as Node)
-      ) return;
+      )
+        return;
       setPickerOpen(false);
     }
     document.addEventListener("mousedown", onMouseDown);
@@ -616,15 +889,51 @@ function CodeViewer({
   };
 
   const files = [
-    ...(bundle?.handlerModule?.code ? [{ id: "handler"   as const, label: "handler.js",   lang: "js"  as const, code: bundle.handlerModule.code }] : []),
-    ...(bundle?.dbMigration?.sql    ? [{ id: "migration" as const, label: "migration.sql", lang: "sql" as const, code: bundle.dbMigration.sql    }] : []),
-    ...(bundle?.widgetModule        ? [{ id: "widget"    as const, label: "widget.js",     lang: "js"  as const, code: bundle.widgetModule       }] : []),
-    ...(bundle?.adminUiModule       ? [{ id: "admin"     as const, label: "admin-ui.js",   lang: "js"  as const, code: bundle.adminUiModule      }] : []),
+    ...(bundle?.handlerModule?.code
+      ? [
+          {
+            id: "handler" as const,
+            label: "handler.js",
+            lang: "js" as const,
+            code: bundle.handlerModule.code,
+          },
+        ]
+      : []),
+    ...(bundle?.dbMigration?.sql
+      ? [
+          {
+            id: "migration" as const,
+            label: "migration.sql",
+            lang: "sql" as const,
+            code: bundle.dbMigration.sql,
+          },
+        ]
+      : []),
+    ...(bundle?.widgetModule
+      ? [
+          {
+            id: "widget" as const,
+            label: "widget.js",
+            lang: "js" as const,
+            code: bundle.widgetModule,
+          },
+        ]
+      : []),
+    ...(bundle?.adminUiModule
+      ? [
+          {
+            id: "admin" as const,
+            label: "admin-ui.js",
+            lang: "js" as const,
+            code: bundle.adminUiModule,
+          },
+        ]
+      : []),
   ];
 
   useEffect(() => {
     if (files.length && !files.find((f) => f.id === activeFile)) setActiveFile(files[0].id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bundle]);
 
   // Only completed sessions are numbered as versions
@@ -649,103 +958,147 @@ function CodeViewer({
 
   return (
     <div className="flex-1 overflow-hidden flex flex-row">
-
       {/* ── Left sidebar ──────────────────────────────────────── */}
       <div className={cn("w-44 shrink-0 flex flex-col border-r overflow-y-auto", borderFaint)}>
-
         {/* HISTORY */}
         <div className="shrink-0 pt-3 pb-2 px-2">
-          <p className="px-1 pb-1.5 text-[9px] font-bold uppercase tracking-widest text-faint/40 select-none">History</p>
+          <p className="px-1 pb-1.5 text-[9px] font-bold uppercase tracking-widest text-faint/40 select-none">
+            History
+          </p>
           {sessionsLoading ? (
             <div className="h-8 bg-white/[0.03] rounded-lg animate-pulse-subtle" />
           ) : sessions.length === 0 ? (
             <p className="px-1 text-[11px] text-faint/50">No versions yet</p>
-          ) : (() => {
-            const selCfg = selectedSession
-              ? (SESSION_STATUS_CFG[selectedSession.status as keyof typeof SESSION_STATUS_CFG] ?? { dot: "bg-faint/40", label: selectedSession.status, cls: "text-faint" })
-              : null;
-            const selVNum = selectedSession ? getVersionNum(selectedSession) : null;
-            return (
-              <button
-                ref={pickerBtnRef}
-                type="button"
-                onClick={openPicker}
-                className={cn(
-                  "w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-left transition-colors bg-transparent cursor-pointer",
-                  pickerOpen ? "border-accent/30 bg-accent/[0.07]" : "border-white/[0.06] hover:bg-white/[0.04]"
-                )}
-              >
-                {selCfg && <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", selCfg.dot)} />}
-                <span className="text-[11px] font-mono text-ink flex-1 truncate">
-                  {selVNum ? `v${selVNum}` : (selCfg?.label ?? "—")}
-                </span>
-                <span className="material-symbols-outlined text-[13px] text-faint/50 shrink-0">
-                  {pickerOpen ? "expand_less" : "expand_more"}
-                </span>
-              </button>
-            );
-          })()}
+          ) : (
+            (() => {
+              const selCfg = selectedSession
+                ? (SESSION_STATUS_CFG[
+                    selectedSession.status as keyof typeof SESSION_STATUS_CFG
+                  ] ?? { dot: "bg-faint/40", label: selectedSession.status, cls: "text-faint" })
+                : null;
+              const selVNum = selectedSession ? getVersionNum(selectedSession) : null;
+              return (
+                <button
+                  ref={pickerBtnRef}
+                  type="button"
+                  onClick={openPicker}
+                  className={cn(
+                    "w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-left transition-colors bg-transparent cursor-pointer",
+                    pickerOpen
+                      ? "border-accent/30 bg-accent/[0.07]"
+                      : "border-white/[0.06] hover:bg-white/[0.04]",
+                  )}
+                >
+                  {selCfg && (
+                    <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", selCfg.dot)} />
+                  )}
+                  <span className="text-[11px] font-mono text-ink flex-1 truncate">
+                    {selVNum ? `v${selVNum}` : (selCfg?.label ?? "—")}
+                  </span>
+                  <span className="material-symbols-outlined text-[13px] text-faint/50 shrink-0">
+                    {pickerOpen ? "expand_less" : "expand_more"}
+                  </span>
+                </button>
+              );
+            })()
+          )}
 
           {/* Portal dropdown */}
-          {pickerOpen && createPortal(
-            <div
-              ref={pickerDropRef}
-              className={cn(
-                "fixed z-[300] w-72 rounded-xl border shadow-2xl overflow-hidden",
-                theme === "light"
-                  ? "bg-white border-black/[0.08] shadow-black/10"
-                  : "bg-[#1a1a1f] border-white/[0.08] shadow-black/60"
-              )}
-              style={{ top: pickerPos.top, left: pickerPos.left }}
-            >
-              <div className="max-h-80 overflow-y-auto py-1">
-                {sessions.map((s) => {
-                  const cfg = SESSION_STATUS_CFG[s.status as keyof typeof SESSION_STATUS_CFG]
-                    ?? { dot: "bg-faint/40", label: s.status, cls: "text-faint" };
-                  const vNum = getVersionNum(s);
-                  const live = app.status === "active" && !!s.appVersionId && s.appVersionId === app.activeAppVersionId;
-                  const isSel = s.id === selectedSession?.id;
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => { onSelectSession(s.id); setPickerOpen(false); }}
-                      className={cn(
-                        "w-full text-left px-3 py-2 flex flex-col gap-0.5 border-0 cursor-pointer transition-colors",
-                        isSel
-                          ? "bg-accent/[0.08]"
-                          : theme === "light" ? "bg-transparent hover:bg-black/[0.04]" : "bg-transparent hover:bg-white/[0.04]"
-                      )}
-                    >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cfg.dot)} />
-                        {vNum ? (
-                          <span className="text-[10px] font-bold text-faint/60 shrink-0">v{vNum}</span>
-                        ) : (
-                          <span className={cn("text-[10px] font-bold uppercase tracking-wide shrink-0", cfg.cls)}>{cfg.label}</span>
+          {pickerOpen &&
+            createPortal(
+              <div
+                ref={pickerDropRef}
+                className={cn(
+                  "fixed z-[300] w-72 rounded-xl border shadow-2xl overflow-hidden",
+                  theme === "light"
+                    ? "bg-white border-black/[0.08] shadow-black/10"
+                    : "bg-[#1a1a1f] border-white/[0.08] shadow-black/60",
+                )}
+                style={{ top: pickerPos.top, left: pickerPos.left }}
+              >
+                <div className="max-h-80 overflow-y-auto py-1">
+                  {sessions.map((s) => {
+                    const cfg = SESSION_STATUS_CFG[s.status as keyof typeof SESSION_STATUS_CFG] ?? {
+                      dot: "bg-faint/40",
+                      label: s.status,
+                      cls: "text-faint",
+                    };
+                    const vNum = getVersionNum(s);
+                    const live =
+                      app.status === "active" &&
+                      !!s.appVersionId &&
+                      s.appVersionId === app.activeAppVersionId;
+                    const isSel = s.id === selectedSession?.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => {
+                          onSelectSession(s.id);
+                          setPickerOpen(false);
+                        }}
+                        className={cn(
+                          "w-full text-left px-3 py-2 flex flex-col gap-0.5 border-0 cursor-pointer transition-colors",
+                          isSel
+                            ? "bg-accent/[0.08]"
+                            : theme === "light"
+                              ? "bg-transparent hover:bg-black/[0.04]"
+                              : "bg-transparent hover:bg-white/[0.04]",
                         )}
-                        <span className="text-[11px] text-ink/80 truncate flex-1">{s.prompt}</span>
-                        {live && (
-                          <span className={cn(
-                            "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide leading-none shrink-0",
-                            theme === "light" ? "bg-emerald-600/[.08] text-emerald-700" : "bg-emerald-500/[.12] text-emerald-400"
-                          )}>
-                            <span className={cn("w-1 h-1 rounded-full animate-pulse inline-block", theme === "light" ? "bg-emerald-600" : "bg-emerald-500")} />
-                            Live
+                      >
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cfg.dot)} />
+                          {vNum ? (
+                            <span className="text-[10px] font-bold text-faint/60 shrink-0">
+                              v{vNum}
+                            </span>
+                          ) : (
+                            <span
+                              className={cn(
+                                "text-[10px] font-bold uppercase tracking-wide shrink-0",
+                                cfg.cls,
+                              )}
+                            >
+                              {cfg.label}
+                            </span>
+                          )}
+                          <span className="text-[11px] text-ink/80 truncate flex-1">
+                            {s.prompt}
                           </span>
+                          {live && (
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide leading-none shrink-0",
+                                theme === "light"
+                                  ? "bg-emerald-600/[.08] text-emerald-700"
+                                  : "bg-emerald-500/[.12] text-emerald-400",
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "w-1 h-1 rounded-full animate-pulse inline-block",
+                                  theme === "light" ? "bg-emerald-600" : "bg-emerald-500",
+                                )}
+                              />
+                              Live
+                            </span>
+                          )}
+                        </div>
+                        {s.status === "failed" && s.errorMessage && (
+                          <p className="text-[10px] text-danger/70 font-mono truncate pl-[18px]">
+                            {s.errorMessage}
+                          </p>
                         )}
-                      </div>
-                      {s.status === "failed" && s.errorMessage && (
-                        <p className="text-[10px] text-danger/70 font-mono truncate pl-[18px]">{s.errorMessage}</p>
-                      )}
-                      <p className="text-[9.5px] text-faint/40 pl-[18px]">{formatDate(s.createdAt)}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>,
-            document.body
-          )}
+                        <p className="text-[9.5px] text-faint/40 pl-[18px]">
+                          {formatDate(s.createdAt)}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>,
+              document.body,
+            )}
         </div>
 
         {/* FILES */}
@@ -753,7 +1106,9 @@ function CodeViewer({
           <>
             <div className={cn("mx-3 shrink-0 border-t", borderFaint)} />
             <div className="shrink-0 pt-3 pb-2">
-              <p className="px-3 pb-1.5 text-[9px] font-bold uppercase tracking-widest text-faint/40 select-none">Files</p>
+              <p className="px-3 pb-1.5 text-[9px] font-bold uppercase tracking-widest text-faint/40 select-none">
+                Files
+              </p>
               <div className="px-2 space-y-0.5">
                 {files.map((f) => (
                   <button
@@ -764,9 +1119,11 @@ function CodeViewer({
                       "w-full text-left px-2 py-1.5 rounded-lg text-[11px] font-mono transition-colors bg-transparent border-0 cursor-pointer",
                       activeFile === f.id
                         ? "text-accent bg-accent/[0.07]"
-                        : "text-faint hover:text-ink hover:bg-white/[0.04]"
+                        : "text-faint hover:text-ink hover:bg-white/[0.04]",
                     )}
-                  >{f.label}</button>
+                  >
+                    {f.label}
+                  </button>
                 ))}
               </div>
             </div>
@@ -779,10 +1136,14 @@ function CodeViewer({
       {/* ── Code area ─────────────────────────────────────────── */}
       <div className="flex-1 relative h-full overflow-hidden">
         {!selectedSession ? (
-          <div className="flex items-center justify-center h-full text-[12px] text-faint">No version selected</div>
+          <div className="flex items-center justify-center h-full text-[12px] text-faint">
+            No version selected
+          </div>
         ) : status === "running" ? (
           <div className="flex items-center justify-center h-full gap-2 text-[12px] text-accent">
-            <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+            <span className="material-symbols-outlined text-[14px] animate-spin">
+              progress_activity
+            </span>
             Generating…
           </div>
         ) : status === "failed" ? (
@@ -795,14 +1156,20 @@ function CodeViewer({
                 <p className="text-[13px] font-semibold text-ink/80">Generation failed</p>
               </div>
               {selectedSession.errorMessage && (
-                <pre className={cn(
-                  "text-[11px] font-mono leading-relaxed p-4 rounded-lg border overflow-x-auto whitespace-pre-wrap break-words",
-                  theme === "light"
-                    ? "bg-danger/[0.04] border-danger/15 text-danger/80"
-                    : "bg-danger/[0.06] border-danger/20 text-danger/70"
-                )}>{selectedSession.errorMessage}</pre>
+                <pre
+                  className={cn(
+                    "text-[11px] font-mono leading-relaxed p-4 rounded-lg border overflow-x-auto whitespace-pre-wrap break-words",
+                    theme === "light"
+                      ? "bg-danger/[0.04] border-danger/15 text-danger/80"
+                      : "bg-danger/[0.06] border-danger/20 text-danger/70",
+                  )}
+                >
+                  {selectedSession.errorMessage}
+                </pre>
               )}
-              <p className="text-[10px] text-faint/40 text-center">Internal error · customer-facing messages coming soon</p>
+              <p className="text-[10px] text-faint/40 text-center">
+                Internal error · customer-facing messages coming soon
+              </p>
             </div>
           </div>
         ) : files.length === 0 ? (
@@ -824,21 +1191,26 @@ function CodeViewer({
                   "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all border-0 cursor-pointer backdrop-blur-sm",
                   theme === "light"
                     ? "bg-white/80 text-faint hover:text-ink hover:bg-white shadow-sm"
-                    : "bg-black/50 text-faint hover:text-ink hover:bg-black/70"
+                    : "bg-black/50 text-faint hover:text-ink hover:bg-black/70",
                 )}
               >
-                <span className="material-symbols-outlined text-[14px]">{copied ? "check" : "content_copy"}</span>
+                <span className="material-symbols-outlined text-[14px]">
+                  {copied ? "check" : "content_copy"}
+                </span>
                 {copied ? "Copied" : "Copy"}
               </button>
               <button
                 type="button"
-                onClick={() => { setModalActiveFile(activeFile); setModalOpen(true); }}
+                onClick={() => {
+                  setModalActiveFile(activeFile);
+                  setModalOpen(true);
+                }}
                 title="Expand in modal"
                 className={cn(
                   "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-all border-0 cursor-pointer backdrop-blur-sm",
                   theme === "light"
                     ? "bg-white/80 text-faint hover:text-ink hover:bg-white shadow-sm"
-                    : "bg-black/50 text-faint hover:text-ink hover:bg-black/70"
+                    : "bg-black/50 text-faint hover:text-ink hover:bg-black/70",
                 )}
               >
                 <span className="material-symbols-outlined text-[14px]">open_in_full</span>
@@ -860,7 +1232,6 @@ function CodeViewer({
           theme={theme}
         />
       )}
-
     </div>
   );
 }
@@ -868,11 +1239,17 @@ function CodeViewer({
 // ─── Versions tab ─────────────────────────────────────────────────────────────
 
 function VersionsTab({
-  sessions, sessionsLoading, latestSession, app,
+  sessions,
+  sessionsLoading,
+  latestSession,
+  app,
 }: {
   sessions: SessionSummary[];
   sessionsLoading: boolean;
-  latestSession: { status: string; bundle?: import("@/types/dashboard").SessionBundle | null } | null;
+  latestSession: {
+    status: string;
+    bundle?: import("@/types/dashboard").SessionBundle | null;
+  } | null;
   app: App;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -884,7 +1261,8 @@ function VersionsTab({
 
   const selected = sessions.find((s) => s.id === selectedId) ?? sessions[0] ?? null;
   const isLatest = selected?.id === sessions[0]?.id;
-  const nonLatestJobId = (!isLatest && selected?.status === "completed") ? (selected.jobId ?? null) : null;
+  const nonLatestJobId =
+    !isLatest && selected?.status === "completed" ? (selected.jobId ?? null) : null;
   const { data: selectedBundleData } = useSessionBundle(nonLatestJobId);
   const bundleToShow = isLatest ? latestSession?.bundle : (selectedBundleData?.bundle ?? null);
 
@@ -905,39 +1283,39 @@ function VersionsTab({
 // ─── Validation step builder ──────────────────────────────────────────────────
 
 const WEBHOOK_TRIGGER_HINTS: Record<string, string> = {
-  "orders/create":              "Place a test order through your storefront.",
-  "orders/updated":             "Edit and save an existing order in admin.",
-  "orders/paid":                "Mark a pending order as paid in admin.",
-  "orders/fulfilled":           "Fulfill a pending order in admin.",
-  "orders/cancelled":           "Cancel an order in Shopify Admin.",
+  "orders/create": "Place a test order through your storefront.",
+  "orders/updated": "Edit and save an existing order in admin.",
+  "orders/paid": "Mark a pending order as paid in admin.",
+  "orders/fulfilled": "Fulfill a pending order in admin.",
+  "orders/cancelled": "Cancel an order in Shopify Admin.",
   "orders/partially_fulfilled": "Partially fulfill an order in admin.",
-  "products/create":            "Create a new product in Shopify Admin.",
-  "products/update":            "Edit and save a product in Shopify Admin.",
-  "products/delete":            "Delete a product in Shopify Admin.",
-  "customers/create":           "Create a new customer in Shopify Admin.",
-  "customers/update":           "Edit and save a customer's details in admin.",
-  "customers/delete":           "Delete a customer in Shopify Admin.",
-  "inventory_levels/update":    "Adjust stock for a product variant: Products → [product] → Edit.",
-  "inventory_levels/connect":   "Connect inventory for a product variant in admin.",
-  "collections/create":         "Create a new collection in Shopify Admin.",
-  "collections/update":         "Edit and save a collection in Shopify Admin.",
-  "fulfillments/create":        "Fulfill an order from the Orders section in admin.",
-  "refunds/create":             "Issue a refund on an existing order in admin.",
-  "draft_orders/create":        "Create a draft order in Shopify Admin.",
-  "checkouts/create":           "Start a checkout in your storefront.",
-  "carts/create":               "Add a product to cart in your storefront.",
-  "app/uninstalled":            "Uninstall the app from admin (careful — reinstall to restore).",
+  "products/create": "Create a new product in Shopify Admin.",
+  "products/update": "Edit and save a product in Shopify Admin.",
+  "products/delete": "Delete a product in Shopify Admin.",
+  "customers/create": "Create a new customer in Shopify Admin.",
+  "customers/update": "Edit and save a customer's details in admin.",
+  "customers/delete": "Delete a customer in Shopify Admin.",
+  "inventory_levels/update": "Adjust stock for a product variant: Products → [product] → Edit.",
+  "inventory_levels/connect": "Connect inventory for a product variant in admin.",
+  "collections/create": "Create a new collection in Shopify Admin.",
+  "collections/update": "Edit and save a collection in Shopify Admin.",
+  "fulfillments/create": "Fulfill an order from the Orders section in admin.",
+  "refunds/create": "Issue a refund on an existing order in admin.",
+  "draft_orders/create": "Create a draft order in Shopify Admin.",
+  "checkouts/create": "Start a checkout in your storefront.",
+  "carts/create": "Add a product to cart in your storefront.",
+  "app/uninstalled": "Uninstall the app from admin (careful — reinstall to restore).",
 };
 
 const TEMPLATE_LABEL: Record<string, string> = {
-  product:    "product",
+  product: "product",
   collection: "collection",
-  index:      "home",
-  cart:       "cart",
-  page:       "content",
-  blog:       "blog",
-  article:    "article",
-  search:     "search results",
+  index: "home",
+  cart: "cart",
+  page: "content",
+  blog: "blog",
+  article: "article",
+  search: "search results",
 };
 
 function buildValidationSteps({
@@ -957,20 +1335,27 @@ function buildValidationSteps({
 
   if (hasWidget) {
     const targets = (widgetTargetTemplates ?? []).filter(Boolean);
-    const pageLabel = targets.length > 0
-      ? targets.map((t) => TEMPLATE_LABEL[t] ?? t).join(" or ") + " page"
-      : "product page";
+    const pageLabel =
+      targets.length > 0
+        ? targets.map((t) => TEMPLATE_LABEL[t] ?? t).join(" or ") + " page"
+        : "product page";
     steps.push({ text: "Open your live storefront in a browser (not the Shopify Admin preview)." });
     steps.push({ text: `Navigate to the ${pageLabel} where the widget is placed.` });
-    steps.push({ text: "Confirm the widget is visible and interactive. Test its behavior end-to-end." });
+    steps.push({
+      text: "Confirm the widget is visible and interactive. Test its behavior end-to-end.",
+    });
     if (webhookTopics.length === 0 && !cronSchedule) {
-      steps.push({ text: "Open the Logs tab → Widget to see invocation logs and catch any errors." });
+      steps.push({
+        text: "Open the Logs tab → Widget to see invocation logs and catch any errors.",
+      });
     }
   }
 
   if (hasAdminUI) {
     steps.push({ text: "In Shopify Admin, go to Apps & sales channels and open this app." });
-    steps.push({ text: "Verify the panel loads correctly and all buttons, forms, and actions work." });
+    steps.push({
+      text: "Verify the panel loads correctly and all buttons, forms, and actions work.",
+    });
     if (webhookTopics.length === 0 && !cronSchedule) {
       steps.push({ text: "Open the Logs tab → Admin to review invocation logs." });
     }
@@ -978,19 +1363,29 @@ function buildValidationSteps({
 
   if (webhookTopics.length > 0) {
     const topic = webhookTopics[0];
-    const hint = WEBHOOK_TRIGGER_HINTS[topic] ?? "Perform the relevant action in Shopify admin or your storefront.";
+    const hint =
+      WEBHOOK_TRIGGER_HINTS[topic] ??
+      "Perform the relevant action in Shopify admin or your storefront.";
     steps.push({ text: `Trigger a ${topic} event — ${hint}` });
-    steps.push({ text: "Wait a few seconds, then open the Logs tab → Webhook and confirm the status is success." });
+    steps.push({
+      text: "Wait a few seconds, then open the Logs tab → Webhook and confirm the status is success.",
+    });
     steps.push({ text: "Check your store to verify the expected outcome actually occurred." });
     if (webhookTopics.length > 1) {
-      steps.push({ text: `Repeat for the other registered topics: ${webhookTopics.slice(1).join(", ")}.` });
+      steps.push({
+        text: `Repeat for the other registered topics: ${webhookTopics.slice(1).join(", ")}.`,
+      });
     }
   }
 
   if (cronSchedule) {
     const human = humanizeCron(cronSchedule);
-    steps.push({ text: `This app runs on a schedule${human ? ` (${human})` : `: ${cronSchedule}`}. Wait for the next run.` });
-    steps.push({ text: "After it fires, open the Logs tab → Webhook and confirm the status is success." });
+    steps.push({
+      text: `This app runs on a schedule${human ? ` (${human})` : `: ${cronSchedule}`}. Wait for the next run.`,
+    });
+    steps.push({
+      text: "After it fires, open the Logs tab → Webhook and confirm the status is success.",
+    });
     steps.push({ text: "Verify the expected outcome in your store or admin." });
   }
 
@@ -1018,13 +1413,18 @@ function HowItWorksCard({ text }: { text: string }) {
     ?.map((s) => s.trim())
     .filter(Boolean) ?? [text];
   const PREVIEW = 3;
-  const visible  = expanded ? sentences : sentences.slice(0, PREVIEW);
-  const hasMore  = sentences.length > PREVIEW;
+  const visible = expanded ? sentences : sentences.slice(0, PREVIEW);
+  const hasMore = sentences.length > PREVIEW;
 
   return (
     <section className="bg-white/[0.04] rounded-xl overflow-hidden">
       <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.03] flex items-center gap-2">
-        <span className="material-symbols-outlined text-accent text-[13px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>info</span>
+        <span
+          className="material-symbols-outlined text-accent text-[13px]"
+          style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+        >
+          info
+        </span>
         <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How it works</h3>
       </div>
       <div className="px-5 py-4">
@@ -1070,97 +1470,171 @@ function buildStatusPill(
   onDeactivate: () => void,
 ) {
   const sessionFailed = latestSession?.status === "failed" || latestSession?.status === "cancelled";
-  const isReady    = app.status === "ready" && !sessionFailed;
+  const isReady = app.status === "ready" && !sessionFailed;
   const isReadyFallback = app.status === "ready" && sessionFailed && hasFallback;
-  const isReadyBlocked  = app.status === "ready" && sessionFailed && !hasFallback;
-  const isActive   = app.status === "active";
+  const isReadyBlocked = app.status === "ready" && sessionFailed && !hasFallback;
+  const isActive = app.status === "active";
   const isInactive = app.status === "inactive";
 
-  if (isBuilding) return {
-    statusDot: "bg-accent animate-pulse", statusText: "Building…",
-    pillBorder: "border-accent/20", pillBg: "bg-accent/[0.06]",
-    action: null, note: null,
-  };
-  if (isReady) return {
-    statusDot: "bg-amber-400", statusText: "Ready to deploy",
-    pillBorder: "border-amber-400/25", pillBg: "bg-amber-400/[0.06]",
-    action: { icon: "rocket_launch", label: deploying ? "Deploying…" : "Deploy", onClick: onDeploy,
-      cls: "text-accent hover:bg-accent/[0.12]" },
-    note: null,
-  };
-  if (isReadyFallback) return {
-    statusDot: "bg-amber-400", statusText: "Generation failed",
-    pillBorder: "border-amber-400/25", pillBg: "bg-amber-400/[0.06]",
-    action: { icon: "rocket_launch", label: deploying ? "Deploying…" : "Deploy last version", onClick: onDeploy,
-      cls: "text-accent hover:bg-accent/[0.12]" },
-    note: "Last generation failed — deploying previous successful version",
-  };
-  if (isReadyBlocked) return {
-    statusDot: "bg-danger", statusText: "Generation failed",
-    pillBorder: "border-danger/20", pillBg: "bg-danger/[0.04]",
-    action: null,
-    note: "No successful version to deploy — generate a new version first",
-  };
-  if (isActive && sessionFailed) return {
-    statusDot: "bg-teal", statusText: "Active",
-    pillBorder: "border-teal/20", pillBg: "bg-teal/[0.05]",
-    action: { icon: "pause_circle", label: deploying ? "Deactivating…" : "Deactivate", onClick: onDeactivate,
-      cls: "text-danger hover:bg-danger/[0.10]" },
-    note: "Latest revision failed — running previous version",
-  };
-  if (isActive) return {
-    statusDot: "bg-teal", statusText: "Active",
-    pillBorder: "border-teal/20", pillBg: "bg-teal/[0.05]",
-    action: { icon: "pause_circle", label: deploying ? "Deactivating…" : "Deactivate", onClick: onDeactivate,
-      cls: "text-danger hover:bg-danger/[0.10]" },
-    note: null,
-  };
-  if (isInactive) return {
-    statusDot: "bg-faint/50", statusText: "Inactive",
-    pillBorder: "border-teal/20", pillBg: "bg-teal/[0.05]",
-    action: { icon: "play_circle", label: deploying ? "Activating…" : "Activate", onClick: onRedeploy,
-      cls: "text-green-500 hover:bg-green-500/[0.10]" },
-    note: null,
-  };
+  if (isBuilding)
+    return {
+      statusDot: "bg-accent animate-pulse",
+      statusText: "Building…",
+      pillBorder: "border-accent/20",
+      pillBg: "bg-accent/[0.06]",
+      action: null,
+      note: null,
+    };
+  if (isReady)
+    return {
+      statusDot: "bg-amber-400",
+      statusText: "Ready to deploy",
+      pillBorder: "border-amber-400/25",
+      pillBg: "bg-amber-400/[0.06]",
+      action: {
+        icon: "rocket_launch",
+        label: deploying ? "Deploying…" : "Deploy",
+        onClick: onDeploy,
+        cls: "text-accent hover:bg-accent/[0.12]",
+      },
+      note: null,
+    };
+  if (isReadyFallback)
+    return {
+      statusDot: "bg-amber-400",
+      statusText: "Generation failed",
+      pillBorder: "border-amber-400/25",
+      pillBg: "bg-amber-400/[0.06]",
+      action: {
+        icon: "rocket_launch",
+        label: deploying ? "Deploying…" : "Deploy last version",
+        onClick: onDeploy,
+        cls: "text-accent hover:bg-accent/[0.12]",
+      },
+      note: "Last generation failed — deploying previous successful version",
+    };
+  if (isReadyBlocked)
+    return {
+      statusDot: "bg-danger",
+      statusText: "Generation failed",
+      pillBorder: "border-danger/20",
+      pillBg: "bg-danger/[0.04]",
+      action: null,
+      note: "No successful version to deploy — generate a new version first",
+    };
+  if (isActive && sessionFailed)
+    return {
+      statusDot: "bg-teal",
+      statusText: "Active",
+      pillBorder: "border-teal/20",
+      pillBg: "bg-teal/[0.05]",
+      action: {
+        icon: "pause_circle",
+        label: deploying ? "Deactivating…" : "Deactivate",
+        onClick: onDeactivate,
+        cls: "text-danger hover:bg-danger/[0.10]",
+      },
+      note: "Latest revision failed — running previous version",
+    };
+  if (isActive)
+    return {
+      statusDot: "bg-teal",
+      statusText: "Active",
+      pillBorder: "border-teal/20",
+      pillBg: "bg-teal/[0.05]",
+      action: {
+        icon: "pause_circle",
+        label: deploying ? "Deactivating…" : "Deactivate",
+        onClick: onDeactivate,
+        cls: "text-danger hover:bg-danger/[0.10]",
+      },
+      note: null,
+    };
+  if (isInactive)
+    return {
+      statusDot: "bg-faint/50",
+      statusText: "Inactive",
+      pillBorder: "border-teal/20",
+      pillBg: "bg-teal/[0.05]",
+      action: {
+        icon: "play_circle",
+        label: deploying ? "Activating…" : "Activate",
+        onClick: onRedeploy,
+        cls: "text-green-500 hover:bg-green-500/[0.10]",
+      },
+      note: null,
+    };
   return {
-    statusDot: "bg-faint/40", statusText: app.status.charAt(0).toUpperCase() + app.status.slice(1),
-    pillBorder: "border-white/[0.08]", pillBg: "bg-white/[0.02]",
-    action: null, note: null,
+    statusDot: "bg-faint/40",
+    statusText: app.status.charAt(0).toUpperCase() + app.status.slice(1),
+    pillBorder: "border-white/[0.08]",
+    pillBg: "bg-white/[0.02]",
+    action: null,
+    note: null,
   };
 }
 
 function MiniStats({
-  activity, loading,
+  activity,
+  loading,
 }: {
   activity: Array<{ status: string; durationMs: number | null; ts: string }>;
   loading: boolean;
 }) {
   const lastRun = activity[0]?.ts ?? null;
-  const total   = activity.length;
-  const successRate = total > 0
-    ? Math.round((activity.filter((e) => e.status === "success").length / total) * 100)
-    : null;
+  const total = activity.length;
+  const successRate =
+    total > 0
+      ? Math.round((activity.filter((e) => e.status === "success").length / total) * 100)
+      : null;
   const durations = activity.filter((e) => e.durationMs !== null).map((e) => e.durationMs!);
-  const avgMs = durations.length > 0
-    ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
-    : null;
+  const avgMs =
+    durations.length > 0
+      ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+      : null;
 
   const stats = [
-    { icon: "history",       label: "Last run",     value: lastRun ? timeAgo(lastRun) : "—",
-      color: "text-ink" },
-    { icon: "bolt",          label: "Recent runs",  value: total > 0 ? String(total) : "—",
-      color: "text-ink" },
-    { icon: "avg_pace",      label: "Avg latency",  value: avgMs !== null ? formatDuration(avgMs) : "—",
-      color: "text-ink" },
-    { icon: "check_circle",  label: "Success rate", value: successRate !== null ? `${successRate}%` : "—",
-      color: successRate === null ? "text-ink" : successRate >= 90 ? "text-teal" : successRate >= 70 ? "text-amber-400" : "text-danger" },
+    {
+      icon: "history",
+      label: "Last run",
+      value: lastRun ? timeAgo(lastRun) : "—",
+      color: "text-ink",
+    },
+    {
+      icon: "bolt",
+      label: "Recent runs",
+      value: total > 0 ? String(total) : "—",
+      color: "text-ink",
+    },
+    {
+      icon: "avg_pace",
+      label: "Avg latency",
+      value: avgMs !== null ? formatDuration(avgMs) : "—",
+      color: "text-ink",
+    },
+    {
+      icon: "check_circle",
+      label: "Success rate",
+      value: successRate !== null ? `${successRate}%` : "—",
+      color:
+        successRate === null
+          ? "text-ink"
+          : successRate >= 90
+            ? "text-teal"
+            : successRate >= 70
+              ? "text-amber-400"
+              : "text-danger",
+    },
   ];
 
-  if (loading) return (
-    <div className="grid grid-cols-4 gap-2">
-      {[1,2,3,4].map((i) => <div key={i} className="h-16 bg-white/[0.03] rounded-xl animate-pulse-subtle" />)}
-    </div>
-  );
+  if (loading)
+    return (
+      <div className="grid grid-cols-4 gap-2">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="h-16 bg-white/[0.03] rounded-xl animate-pulse-subtle" />
+        ))}
+      </div>
+    );
 
   return (
     <div className="grid grid-cols-4 gap-2">
@@ -1170,7 +1644,9 @@ function MiniStats({
             <span className="material-symbols-outlined text-[12px]">{s.icon}</span>
             <span className="text-[9.5px] font-bold uppercase tracking-wider">{s.label}</span>
           </div>
-          <div className={cn("text-[15px] font-bold tracking-tight leading-none", s.color)}>{s.value}</div>
+          <div className={cn("text-[15px] font-bold tracking-tight leading-none", s.color)}>
+            {s.value}
+          </div>
         </div>
       ))}
     </div>
@@ -1180,13 +1656,27 @@ function MiniStats({
 // ─── Overview tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({
-  app, latestSession, isBuilding, recentLogs, recentWidgetLogs, recentAdminLogs, recentLogsLoading, shopDomain, onLogsTab,
-  injectingWidget, injectError, onInjectWidget, onDeleteInjectedTheme,
+  app,
+  latestSession,
+  isBuilding,
+  recentLogs,
+  recentWidgetLogs,
+  recentAdminLogs,
+  recentLogsLoading,
+  shopDomain,
+  onLogsTab,
+  injectingWidget,
+  injectError,
+  onInjectWidget,
+  onDeleteInjectedTheme,
 }: {
   app: App;
   latestSession: {
-    status: string; webhookTopics?: string[]; cronSchedule?: string | null;
-    prompt?: string | null; bundle?: SessionBundle | null;
+    status: string;
+    webhookTopics?: string[];
+    cronSchedule?: string | null;
+    prompt?: string | null;
+    bundle?: SessionBundle | null;
   } | null;
   isBuilding: boolean;
   recentLogs: WebhookInvocationLogEntry[];
@@ -1200,8 +1690,8 @@ function OverviewTab({
   onInjectWidget: () => void;
   onDeleteInjectedTheme: () => void;
 }) {
-  const webhookTopics  = latestSession?.webhookTopics ?? [];
-  const cronSchedule   = latestSession?.cronSchedule ?? null;
+  const webhookTopics = latestSession?.webhookTopics ?? [];
+  const cronSchedule = latestSession?.cronSchedule ?? null;
   const appExplanation = (() => {
     const exp = latestSession?.bundle?.explanation;
     if (!exp) return null;
@@ -1209,17 +1699,29 @@ function OverviewTab({
     return exp.merchantFacing ?? null;
   })();
 
-  const hasWidget  = !!(latestSession?.bundle?.widgetModule  ?? (app.appArchetype === "storefront_backend" || app.appArchetype === "storefront_backend_admin"));
-  const hasAdminUI = !!(latestSession?.bundle?.adminUiModule ?? (app.appArchetype === "backend_admin"      || app.appArchetype === "storefront_backend_admin"));
+  const hasWidget = !!(
+    latestSession?.bundle?.widgetModule ??
+    (app.appArchetype === "storefront_backend" || app.appArchetype === "storefront_backend_admin")
+  );
+  const hasAdminUI = !!(
+    latestSession?.bundle?.adminUiModule ??
+    (app.appArchetype === "backend_admin" || app.appArchetype === "storefront_backend_admin")
+  );
   const widgetTargetTemplates = latestSession?.bundle?.widgetTargetTemplates ?? null;
 
   const effectiveShop = app.shopDomain || shopDomain || null;
   const storeFrontUrl = effectiveShop ? `https://${effectiveShop}` : null;
-  const adminUrl      = effectiveShop ? `https://${effectiveShop}/admin` : null;
+  const adminUrl = effectiveShop ? `https://${effectiveShop}/admin` : null;
 
   const theme = useThemeStore((s) => s.theme);
   const navigate = useNavigate();
-  const validateSteps = buildValidationSteps({ webhookTopics, cronSchedule, hasWidget, hasAdminUI, widgetTargetTemplates });
+  const validateSteps = buildValidationSteps({
+    webhookTopics,
+    cronSchedule,
+    hasWidget,
+    hasAdminUI,
+    widgetTargetTemplates,
+  });
 
   // Merged activity — used by both MiniStats and the activity feed
   type AnyEntry =
@@ -1229,12 +1731,15 @@ function OverviewTab({
     ...recentLogs.map((d) => ({ kind: "webhook" as const, data: d, ts: d.queuedAt })),
     ...recentWidgetLogs.map((d) => ({ kind: "widget" as const, data: d, ts: d.invokedAt })),
     ...recentAdminLogs.map((d) => ({ kind: "admin" as const, data: d, ts: d.invokedAt })),
-  ].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, 15);
+  ]
+    .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
+    .slice(0, 15);
 
   const statsActivity = allActivity.map((e) => ({
-    status: e.kind === "webhook"
-      ? (e.data as WebhookInvocationLogEntry).status
-      : (e.data as InvocationLogEntry).status,
+    status:
+      e.kind === "webhook"
+        ? (e.data as WebhookInvocationLogEntry).status
+        : (e.data as InvocationLogEntry).status,
     durationMs: e.data.durationMs,
     ts: e.ts,
   }));
@@ -1245,20 +1750,30 @@ function OverviewTab({
       <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center p-7">
         <div className="w-full max-w-[360px]">
           {/* How to test / Revise CTA */}
-          {(latestSession === null || app.status === "draft") ? (
+          {latestSession === null || app.status === "draft" ? (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-5 space-y-3 text-center">
                 {isBuilding ? (
                   <>
                     <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
-                      <span className="material-symbols-outlined text-accent text-[20px] animate-pulse-subtle" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      <span
+                        className="material-symbols-outlined text-accent text-[20px] animate-pulse-subtle"
+                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                      >
+                        auto_awesome
+                      </span>
                     </div>
                     <div>
                       <p className="text-[13px] font-semibold text-ink">Generating your app…</p>
-                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Ton is building your app. Head to the chat to follow along.</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">
+                        Ton is building your app. Head to the chat to follow along.
+                      </p>
                     </div>
-                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-white/[0.06] text-muted text-[13px] font-semibold transition-all hover:bg-white/[0.09] cursor-pointer border-0">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-white/[0.06] text-muted text-[13px] font-semibold transition-all hover:bg-white/[0.09] cursor-pointer border-0"
+                    >
                       <span className="material-symbols-outlined text-[15px]">open_in_new</span>
                       Watch progress
                     </button>
@@ -1266,30 +1781,60 @@ function OverviewTab({
                 ) : latestSession?.status === "failed" ? (
                   <>
                     <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center mx-auto">
-                      <span className="material-symbols-outlined text-danger text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>error</span>
+                      <span
+                        className="material-symbols-outlined text-danger text-[20px]"
+                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                      >
+                        error
+                      </span>
                     </div>
                     <div>
                       <p className="text-[13px] font-semibold text-ink">Generation failed</p>
-                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Something went wrong. Adjust your prompt and try again.</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">
+                        Something went wrong. Adjust your prompt and try again.
+                      </p>
                     </div>
-                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
-                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0"
+                    >
+                      <span
+                        className="material-symbols-outlined text-[15px]"
+                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                      >
+                        auto_awesome
+                      </span>
                       Try again
                     </button>
                   </>
                 ) : (
                   <>
                     <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
-                      <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      <span
+                        className="material-symbols-outlined text-accent text-[20px]"
+                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                      >
+                        auto_awesome
+                      </span>
                     </div>
                     <div>
                       <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
-                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">
+                        Describe what you want this app to do and Ton will generate it.
+                      </p>
                     </div>
-                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
-                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0"
+                    >
+                      <span
+                        className="material-symbols-outlined text-[15px]"
+                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                      >
+                        auto_awesome
+                      </span>
                       Start building with Ton
                     </button>
                   </>
@@ -1304,12 +1849,9 @@ function OverviewTab({
 
   return (
     <div className="flex-1 overflow-y-auto flex flex-col">
-
       <div className="max-w-[960px] mx-auto p-7 grid grid-cols-[1fr_280px] gap-6 items-start w-full">
-
         {/* ── LEFT COLUMN ──────────────────────────────────────────────── */}
         <div className="space-y-5">
-
           {latestSession !== null && (
             <MiniStats activity={statsActivity} loading={recentLogsLoading} />
           )}
@@ -1321,7 +1863,9 @@ function OverviewTab({
           {(webhookTopics.length > 0 || cronSchedule || hasAdminUI) && (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
-                <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Triggers</h3>
+                <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">
+                  Triggers
+                </h3>
               </div>
               <div className="divide-y divide-white/[0.05]">
                 {hasAdminUI && (
@@ -1334,7 +1878,9 @@ function OverviewTab({
                     </span>
                     <div>
                       <p className="text-[12px] font-semibold text-ink">Admin-triggered</p>
-                      <p className="text-[11px] text-faint mt-0.5">Triggered manually from the Shopify Admin panel.</p>
+                      <p className="text-[11px] text-faint mt-0.5">
+                        Triggered manually from the Shopify Admin panel.
+                      </p>
                     </div>
                   </div>
                 )}
@@ -1343,7 +1889,10 @@ function OverviewTab({
                     <p className="text-[11px] font-semibold text-faint mb-2">Active webhooks</p>
                     <div className="flex flex-wrap gap-1.5">
                       {webhookTopics.map((t) => (
-                        <span key={t} className="text-[11px] font-mono px-2 py-0.5 bg-white/[0.05] rounded-md text-ink">
+                        <span
+                          key={t}
+                          className="text-[11px] font-mono px-2 py-0.5 bg-white/[0.05] rounded-md text-ink"
+                        >
                           {t}
                         </span>
                       ))}
@@ -1358,7 +1907,9 @@ function OverviewTab({
                         {cronSchedule}
                       </code>
                       {humanizeCron(cronSchedule) && (
-                        <span className="text-[11px] font-medium text-muted">{humanizeCron(cronSchedule)}</span>
+                        <span className="text-[11px] font-medium text-muted">
+                          {humanizeCron(cronSchedule)}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -1371,28 +1922,51 @@ function OverviewTab({
           {latestSession !== null && (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.04] flex items-center justify-between">
-                <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Recent Activity</h3>
-                <button type="button" onClick={onLogsTab}
-                  className="text-[10px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer">
+                <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">
+                  Recent Activity
+                </h3>
+                <button
+                  type="button"
+                  onClick={onLogsTab}
+                  className="text-[10px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer"
+                >
                   All logs →
                 </button>
               </div>
               {recentLogsLoading ? (
                 <div className="px-5 py-4 space-y-2">
-                  {[1,2,3].map((i) => <div key={i} className="h-8 bg-white/[0.03] rounded-lg animate-pulse-subtle" />)}
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-8 bg-white/[0.03] rounded-lg animate-pulse-subtle" />
+                  ))}
                 </div>
               ) : allActivity.length === 0 ? (
                 <div className="px-5 py-8 text-center">
-                  <span className="material-symbols-outlined text-faint/40 text-[28px] block mb-2">query_stats</span>
+                  <span className="material-symbols-outlined text-faint/40 text-[28px] block mb-2">
+                    query_stats
+                  </span>
                   <p className="text-[12px] text-faint">No executions yet</p>
-                  <p className="text-[11px] text-faint/60 mt-0.5">Logs appear once Shopify sends events.</p>
+                  <p className="text-[11px] text-faint/60 mt-0.5">
+                    Logs appear once Shopify sends events.
+                  </p>
                 </div>
               ) : (
                 <div className="max-h-[420px] overflow-y-auto">
                   {allActivity.map((entry, i, arr) =>
-                    entry.kind === "webhook"
-                      ? <LogRow key={entry.data.id} entry={entry.data} last={i === arr.length - 1} showSource />
-                      : <InvocationLogRow key={entry.data.id} entry={entry.data} source={entry.kind} last={i === arr.length - 1} />
+                    entry.kind === "webhook" ? (
+                      <LogRow
+                        key={entry.data.id}
+                        entry={entry.data}
+                        last={i === arr.length - 1}
+                        showSource
+                      />
+                    ) : (
+                      <InvocationLogRow
+                        key={entry.data.id}
+                        entry={entry.data}
+                        source={entry.kind}
+                        last={i === arr.length - 1}
+                      />
+                    ),
                   )}
                 </div>
               )}
@@ -1402,166 +1976,264 @@ function OverviewTab({
 
         {/* ── RIGHT COLUMN ─────────────────────────────────────────────── */}
         <div className="space-y-4">
-
           {/* Shopify — only for built apps with matching archetype */}
-          {latestSession !== null && ((hasAdminUI && adminUrl) || (hasWidget && storeFrontUrl)) && (() => {
-            const isInjected = hasWidget && app.themeInjectionStatus === "injected" && app.themeInjectionThemeId;
-            // Editor URL works reliably (no password wall) — use it as the primary "open" action
-            const editorUrl = isInjected && effectiveShop
-              ? `https://${effectiveShop}/admin/themes/${app.themeInjectionThemeId}/editor`
-              : null;
-            // Injected: use Shopify's preview_theme_id param — opens the storefront with the
-            // test theme active (works because the merchant is authenticated in Shopify admin).
-            // Not injected: just go to the live storefront directly.
-            const storefrontPreviewUrl = isInjected && effectiveShop
-              ? `https://${effectiveShop}/?preview_theme_id=${app.themeInjectionThemeId}`
-              : storeFrontUrl;
+          {latestSession !== null &&
+            ((hasAdminUI && adminUrl) || (hasWidget && storeFrontUrl)) &&
+            (() => {
+              const isInjected =
+                hasWidget && app.themeInjectionStatus === "injected" && app.themeInjectionThemeId;
+              // Editor URL works reliably (no password wall) — use it as the primary "open" action
+              const editorUrl =
+                isInjected && effectiveShop
+                  ? `https://${effectiveShop}/admin/themes/${app.themeInjectionThemeId}/editor`
+                  : null;
+              // Injected: use Shopify's preview_theme_id param — opens the storefront with the
+              // test theme active (works because the merchant is authenticated in Shopify admin).
+              // Not injected: just go to the live storefront directly.
+              const storefrontPreviewUrl =
+                isInjected && effectiveShop
+                  ? `https://${effectiveShop}/?preview_theme_id=${app.themeInjectionThemeId}`
+                  : storeFrontUrl;
 
-            return (
-              <section className="bg-white/[0.04] rounded-xl overflow-hidden">
-                {/* Section header */}
-                <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
-                  <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">Open in Shopify</h3>
-                </div>
+              return (
+                <section className="bg-white/[0.04] rounded-xl overflow-hidden">
+                  {/* Section header */}
+                  <div className="flex items-center gap-2 px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
+                    <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">
+                      Open in Shopify
+                    </h3>
+                  </div>
 
-                <div>
-
-                  {/* ── Admin ── */}
-                  {hasAdminUI && adminUrl && (
-                    <a href={adminUrl} target="_blank" rel="noopener noreferrer"
-                      className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
-                    >
-                      <span className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", theme === "light" ? "bg-orange-600/[0.08]" : "bg-orange-400/[0.12]")}>
-                        <span className={cn("material-symbols-outlined text-[15px]", theme === "light" ? "text-orange-700" : "text-orange-300")} style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>admin_panel_settings</span>
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[12px] font-medium text-ink leading-tight">Admin panel</div>
-                        <div className="text-[10px] text-faint mt-0.5">Open your app's admin UI</div>
-                      </div>
-                      <span className="material-symbols-outlined text-[13px] text-faint/40 group-hover:text-faint transition-colors">arrow_outward</span>
-                    </a>
-                  )}
-
-                  {/* ── Storefront ── */}
-                  {hasWidget && storefrontPreviewUrl && (
-                    <a href={storefrontPreviewUrl} target="_blank" rel="noopener noreferrer"
-                      className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
-                    >
-                      <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                        style={{ backgroundColor: theme === "light" ? "rgba(88,166,44,0.12)" : "rgba(150,191,72,0.15)" }}>
-                        <span className="material-symbols-outlined text-[15px]"
-                          style={{ color: theme === "light" ? "#3a7d17" : "#96bf48", fontVariationSettings: "'FILL' 1, 'wght' 200" }}>storefront</span>
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[12px] font-medium text-ink leading-tight">View storefront</div>
-                        <div className="text-[10px] text-faint mt-0.5">
-                          {isInjected ? "Preview your theme copy with the app block injected" : "Live storefront"}
-                        </div>
-                      </div>
-                      <span className="material-symbols-outlined text-[13px] text-faint/40 group-hover:text-faint transition-colors">arrow_outward</span>
-                    </a>
-                  )}
-
-                  {/* ── new-one-two App Block (widget apps only) ── */}
-                  {hasWidget && (
-                    <div className={cn(isInjected && "bg-accent/[0.03]")}>
-                      <div className={cn("mx-4 mt-3 mb-1 border-t", theme === "light" ? "border-black/[0.06]" : "border-white/[0.04]")} />
-                      {/* Block header row */}
-                      <div className="flex items-center gap-3 px-4 py-3">
-                        <span className={cn("w-8 h-8 rounded-lg flex items-center justify-center shrink-0", theme === "light" ? "bg-sky-600/[.08]" : "bg-sky-400/[.12]")}>
-                          <span className={cn("material-symbols-outlined text-[15px]", theme === "light" ? "text-sky-700" : "text-sky-300")}
-                            style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>widgets</span>
+                  <div>
+                    {/* ── Admin ── */}
+                    {hasAdminUI && adminUrl && (
+                      <a
+                        href={adminUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
+                      >
+                        <span
+                          className={cn(
+                            "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                            theme === "light" ? "bg-orange-600/[0.08]" : "bg-orange-400/[0.12]",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "material-symbols-outlined text-[15px]",
+                              theme === "light" ? "text-orange-700" : "text-orange-300",
+                            )}
+                            style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                          >
+                            admin_panel_settings
+                          </span>
                         </span>
                         <div className="flex-1 min-w-0">
-                          <span className="text-[12px] font-medium leading-tight text-ink">
-                            new-one-two App Block
-                          </span>
-                          <div className={cn("text-[10px] mt-0.5", isInjected ? "text-faint" : "text-faint")}>
-                            {isInjected
-                              ? "Injected on a private copy · live store unchanged"
-                              : "Installs the block on a private copy of your theme for testing"}
+                          <div className="text-[12px] font-medium text-ink leading-tight">
+                            Admin panel
+                          </div>
+                          <div className="text-[10px] text-faint mt-0.5">
+                            Open your app's admin UI
                           </div>
                         </div>
-                      </div>
+                        <span className="material-symbols-outlined text-[13px] text-faint/40 group-hover:text-faint transition-colors">
+                          arrow_outward
+                        </span>
+                      </a>
+                    )}
 
-                      {/* Injected actions */}
-                      {isInjected && (
-                        <div className="px-4 pb-4 space-y-2">
-                          {editorUrl && (
-                            <a href={editorUrl} target="_blank" rel="noopener noreferrer"
-                              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[11.5px] font-semibold text-accent bg-accent/[0.10] hover:bg-accent/[0.16] border border-accent/[0.20] no-underline transition-colors"
-                            >
-                              <span className="material-symbols-outlined text-[13px]">brush</span>
-                              Open theme editor
-                              <span className="material-symbols-outlined text-[10px] opacity-60">arrow_outward</span>
-                            </a>
-                          )}
-                          <button onClick={onDeleteInjectedTheme}
-                            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[11.5px] font-semibold text-danger bg-danger/[0.08] hover:bg-danger/[0.14] border border-danger/[0.20] transition-colors cursor-pointer"
+                    {/* ── Storefront ── */}
+                    {hasWidget && storefrontPreviewUrl && (
+                      <a
+                        href={storefrontPreviewUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 px-4 py-3 no-underline transition-colors hover:bg-white/[0.05] group"
+                      >
+                        <span
+                          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                          style={{
+                            backgroundColor:
+                              theme === "light" ? "rgba(88,166,44,0.12)" : "rgba(150,191,72,0.15)",
+                          }}
+                        >
+                          <span
+                            className="material-symbols-outlined text-[15px]"
+                            style={{
+                              color: theme === "light" ? "#3a7d17" : "#96bf48",
+                              fontVariationSettings: "'FILL' 1, 'wght' 200",
+                            }}
                           >
-                            <span className="material-symbols-outlined text-[13px]">delete</span>
-                            Remove test theme copy
-                          </button>
+                            storefront
+                          </span>
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[12px] font-medium text-ink leading-tight">
+                            View storefront
+                          </div>
+                          <div className="text-[10px] text-faint mt-0.5">
+                            {isInjected
+                              ? "Preview your theme copy with the app block injected"
+                              : "Live storefront"}
+                          </div>
                         </div>
-                      )}
+                        <span className="material-symbols-outlined text-[13px] text-faint/40 group-hover:text-faint transition-colors">
+                          arrow_outward
+                        </span>
+                      </a>
+                    )}
 
-                      {/* Not injected CTA */}
-                      {!isInjected && (
-                        <div className="px-4 pb-4 space-y-2 flex flex-col items-center">
-                          {injectingWidget ? (
-                            <div className="flex items-center gap-2 py-1 text-[12px] text-accent">
-                              <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
-                              Installing… this may take ~30 seconds
-                            </div>
-                          ) : app.status === "active" ? (
-                            <button onClick={onInjectWidget}
+                    {/* ── new-one-two App Block (widget apps only) ── */}
+                    {hasWidget && (
+                      <div className={cn(isInjected && "bg-accent/[0.03]")}>
+                        <div
+                          className={cn(
+                            "mx-4 mt-3 mb-1 border-t",
+                            theme === "light" ? "border-black/[0.06]" : "border-white/[0.04]",
+                          )}
+                        />
+                        {/* Block header row */}
+                        <div className="flex items-center gap-3 px-4 py-3">
+                          <span
+                            className={cn(
+                              "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                              theme === "light" ? "bg-sky-600/[.08]" : "bg-sky-400/[.12]",
+                            )}
+                          >
+                            <span
                               className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors border",
-                                theme === "light"
-                                  ? "text-sky-700 bg-sky-600/[.08] hover:bg-sky-600/[.14] border-sky-600/[.18]"
-                                  : "text-sky-300 bg-sky-400/[.12] hover:bg-sky-400/[.20] border-sky-400/[.2]"
+                                "material-symbols-outlined text-[15px]",
+                                theme === "light" ? "text-sky-700" : "text-sky-300",
+                              )}
+                              style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                            >
+                              widgets
+                            </span>
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <span className="text-[12px] font-medium leading-tight text-ink">
+                              new-one-two App Block
+                            </span>
+                            <div
+                              className={cn(
+                                "text-[10px] mt-0.5",
+                                isInjected ? "text-faint" : "text-faint",
                               )}
                             >
-                              <span className="material-symbols-outlined" style={{ fontSize: '20px', fontVariationSettings: "'FILL' 1, 'wght' 200" }}>install_desktop</span>
-                              Install on test theme
-                            </button>
-                          ) : (
-                            <div className="flex items-center gap-2 py-2 text-[11px] text-faint">
-                              <span className="material-symbols-outlined text-[13px]">lock</span>
-                              Activate the app first to install the block
+                              {isInjected
+                                ? "Injected on a private copy · live store unchanged"
+                                : "Installs the block on a private copy of your theme for testing"}
                             </div>
-                          )}
-                          {injectError && (
-                            <div className="w-full flex items-start gap-2 px-3 py-2 rounded-lg bg-danger/10 text-danger text-[11px]">
-                              <span className="material-symbols-outlined text-[13px] mt-0.5 shrink-0">error</span>
-                              <span>{injectError}</span>
-                            </div>
-                          )}
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  )}
 
-                </div>
-              </section>
-            );
-          })()}
+                        {/* Injected actions */}
+                        {isInjected && (
+                          <div className="px-4 pb-4 space-y-2">
+                            {editorUrl && (
+                              <a
+                                href={editorUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[11.5px] font-semibold text-accent bg-accent/[0.10] hover:bg-accent/[0.16] border border-accent/[0.20] no-underline transition-colors"
+                              >
+                                <span className="material-symbols-outlined text-[13px]">brush</span>
+                                Open theme editor
+                                <span className="material-symbols-outlined text-[10px] opacity-60">
+                                  arrow_outward
+                                </span>
+                              </a>
+                            )}
+                            <button
+                              onClick={onDeleteInjectedTheme}
+                              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[11.5px] font-semibold text-danger bg-danger/[0.08] hover:bg-danger/[0.14] border border-danger/[0.20] transition-colors cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-[13px]">delete</span>
+                              Remove test theme copy
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Not injected CTA */}
+                        {!isInjected && (
+                          <div className="px-4 pb-4 space-y-2 flex flex-col items-center">
+                            {injectingWidget ? (
+                              <div className="flex items-center gap-2 py-1 text-[12px] text-accent">
+                                <span className="material-symbols-outlined text-[14px] animate-spin">
+                                  progress_activity
+                                </span>
+                                Installing… this may take ~30 seconds
+                              </div>
+                            ) : app.status === "active" ? (
+                              <button
+                                onClick={onInjectWidget}
+                                className={cn(
+                                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors border",
+                                  theme === "light"
+                                    ? "text-sky-700 bg-sky-600/[.08] hover:bg-sky-600/[.14] border-sky-600/[.18]"
+                                    : "text-sky-300 bg-sky-400/[.12] hover:bg-sky-400/[.20] border-sky-400/[.2]",
+                                )}
+                              >
+                                <span
+                                  className="material-symbols-outlined"
+                                  style={{
+                                    fontSize: "20px",
+                                    fontVariationSettings: "'FILL' 1, 'wght' 200",
+                                  }}
+                                >
+                                  install_desktop
+                                </span>
+                                Install on test theme
+                              </button>
+                            ) : (
+                              <div className="flex items-center gap-2 py-2 text-[11px] text-faint">
+                                <span className="material-symbols-outlined text-[13px]">lock</span>
+                                Activate the app first to install the block
+                              </div>
+                            )}
+                            {injectError && (
+                              <div className="w-full flex items-start gap-2 px-3 py-2 rounded-lg bg-danger/10 text-danger text-[11px]">
+                                <span className="material-symbols-outlined text-[13px] mt-0.5 shrink-0">
+                                  error
+                                </span>
+                                <span>{injectError}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              );
+            })()}
 
           {/* How to test / Revise CTA — hidden during revision (isBuilding) like "How it works" */}
-          {(latestSession === null || isBuilding) ? (
+          {latestSession === null || isBuilding ? (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-5 space-y-3 text-center">
                 {isBuilding ? (
                   <>
                     <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
-                      <span className="material-symbols-outlined text-accent text-[20px] animate-pulse-subtle" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      <span
+                        className="material-symbols-outlined text-accent text-[20px] animate-pulse-subtle"
+                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                      >
+                        auto_awesome
+                      </span>
                     </div>
                     <div>
                       <p className="text-[13px] font-semibold text-ink">Generating your app…</p>
-                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Ton is building your app. Head to the chat to follow along.</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">
+                        Ton is building your app. Head to the chat to follow along.
+                      </p>
                     </div>
-                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-white/[0.06] text-muted text-[13px] font-semibold transition-all hover:bg-white/[0.09] cursor-pointer border-0">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-white/[0.06] text-muted text-[13px] font-semibold transition-all hover:bg-white/[0.09] cursor-pointer border-0"
+                    >
                       <span className="material-symbols-outlined text-[15px]">open_in_new</span>
                       Watch progress
                     </button>
@@ -1569,30 +2241,60 @@ function OverviewTab({
                 ) : latestSession?.status === "failed" ? (
                   <>
                     <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center mx-auto">
-                      <span className="material-symbols-outlined text-danger text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>error</span>
+                      <span
+                        className="material-symbols-outlined text-danger text-[20px]"
+                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                      >
+                        error
+                      </span>
                     </div>
                     <div>
                       <p className="text-[13px] font-semibold text-ink">Generation failed</p>
-                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Something went wrong. Adjust your prompt and try again.</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">
+                        Something went wrong. Adjust your prompt and try again.
+                      </p>
                     </div>
-                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
-                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0"
+                    >
+                      <span
+                        className="material-symbols-outlined text-[15px]"
+                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                      >
+                        auto_awesome
+                      </span>
                       Try again
                     </button>
                   </>
                 ) : (
                   <>
                     <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mx-auto">
-                      <span className="material-symbols-outlined text-accent text-[20px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                      <span
+                        className="material-symbols-outlined text-accent text-[20px]"
+                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                      >
+                        auto_awesome
+                      </span>
                     </div>
                     <div>
                       <p className="text-[13px] font-semibold text-ink">Ready to build?</p>
-                      <p className="text-[11px] text-faint mt-1 leading-relaxed">Describe what you want this app to do and Ton will generate it.</p>
+                      <p className="text-[11px] text-faint mt-1 leading-relaxed">
+                        Describe what you want this app to do and Ton will generate it.
+                      </p>
                     </div>
-                    <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0">
-                      <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-accent text-white text-[13px] font-semibold transition-all hover:opacity-90 cursor-pointer border-0"
+                    >
+                      <span
+                        className="material-symbols-outlined text-[15px]"
+                        style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                      >
+                        auto_awesome
+                      </span>
                       Start building with Ton
                     </button>
                   </>
@@ -1602,27 +2304,39 @@ function OverviewTab({
           ) : (
             <section className="bg-white/[0.04] rounded-xl overflow-hidden">
               <div className="px-4 py-3 border-b border-white/[0.04] bg-white/[0.04]">
-                <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">How to test</h3>
+                <h3 className="text-[10px] font-bold text-faint uppercase tracking-wider">
+                  How to test
+                </h3>
               </div>
               <div className="mx-4 mt-4 mb-3 px-3.5 py-3 bg-accent/5 border border-accent/[0.12] rounded-xl space-y-2.5 flex flex-col">
                 <p className="text-[11px] text-accent/90 leading-relaxed">
                   {validateSteps.find((s) => s.isRevise)?.text}
                 </p>
-                <button type="button" onClick={() => navigate(`/app/apps/${app.id}/revise`)}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-accent/15 text-accent text-[11px] font-semibold hover:bg-accent/25 transition-colors cursor-pointer border border-accent/25 self-center">
-                  <span className="material-symbols-outlined" style={{ fontSize: '20px', fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/app/apps/${app.id}/revise`)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-accent/15 text-accent text-[11px] font-semibold hover:bg-accent/25 transition-colors cursor-pointer border border-accent/25 self-center"
+                >
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: "20px", fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                  >
+                    auto_awesome
+                  </span>
                   Revise with Ton
                 </button>
               </div>
               <ol className="px-4 pb-4 pt-1 space-y-3">
-                {validateSteps.filter((s) => !s.isRevise).map((step, i) => (
-                  <li key={i} className="flex gap-2.5 text-[12px] text-muted leading-relaxed">
-                    <span className="w-5 h-5 rounded-full bg-accent/10 flex items-center justify-center text-accent text-[10px] font-bold shrink-0 mt-0.5">
-                      {i + 1}
-                    </span>
-                    <span>{step.text}</span>
-                  </li>
-                ))}
+                {validateSteps
+                  .filter((s) => !s.isRevise)
+                  .map((step, i) => (
+                    <li key={i} className="flex gap-2.5 text-[12px] text-muted leading-relaxed">
+                      <span className="w-5 h-5 rounded-full bg-accent/10 flex items-center justify-center text-accent text-[10px] font-bold shrink-0 mt-0.5">
+                        {i + 1}
+                      </span>
+                      <span>{step.text}</span>
+                    </li>
+                  ))}
               </ol>
             </section>
           )}
@@ -1632,11 +2346,13 @@ function OverviewTab({
   );
 }
 
-
 // ─── Settings panel ───────────────────────────────────────────────────────────
 
 function SettingsPanel({
-  app, tenantId, onAppChange, onDelete,
+  app,
+  tenantId,
+  onAppChange,
+  onDelete,
 }: {
   app: App;
   tenantId: string;
@@ -1651,29 +2367,45 @@ function SettingsPanel({
     });
   };
 
-  const [renaming, setRenaming]       = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
-  const startRename = () => { setRenameValue(app.name); setRenaming(true); };
+  const startRename = () => {
+    setRenameValue(app.name);
+    setRenaming(true);
+  };
   const commitRename = async () => {
     const trimmed = renameValue.trim();
-    if (!trimmed || trimmed === app.name) { setRenaming(false); return; }
+    if (!trimmed || trimmed === app.name) {
+      setRenaming(false);
+      return;
+    }
     setRenameSaving(true);
-    try { await api.apps.rename(tenantId, app.id, trimmed); onAppChange(); }
-    finally { setRenameSaving(false); setRenaming(false); }
+    try {
+      await api.apps.rename(tenantId, app.id, trimmed);
+      onAppChange();
+    } finally {
+      setRenameSaving(false);
+      setRenaming(false);
+    }
   };
 
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const handleDelete = async () => {
     setDeleting(true);
-    try { await api.apps.delete(tenantId, app.id); onDelete(); }
-    finally { setDeleting(false); setDeleteConfirm(false); }
+    try {
+      await api.apps.delete(tenantId, app.id);
+      onDelete();
+    } finally {
+      setDeleting(false);
+      setDeleteConfirm(false);
+    }
   };
 
   const [permDeleteInput, setPermDeleteInput] = useState("");
-  const [permDeleteOpen, setPermDeleteOpen]   = useState(false);
-  const [permDeleting, setPermDeleting]       = useState(false);
+  const [permDeleteOpen, setPermDeleteOpen] = useState(false);
+  const [permDeleting, setPermDeleting] = useState(false);
   const [permDeleteError, setPermDeleteError] = useState<string | null>(null);
   const handlePermanentDelete = async () => {
     if (permDeleteInput !== app.name) return;
@@ -1691,7 +2423,6 @@ function SettingsPanel({
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-6 space-y-8">
-
       <section>
         <h2 className="text-[11px] font-bold text-faint uppercase tracking-wider mb-4">Identity</h2>
         <div className="bg-white/[0.03] rounded-xl divide-y divide-white/[0.04]">
@@ -1723,18 +2454,35 @@ function SettingsPanel({
             </div>
             {renaming ? (
               <div className="flex items-center gap-2">
-                <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") void commitRename(); if (e.key === "Escape") setRenaming(false); }}
+                <input
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void commitRename();
+                    if (e.key === "Escape") setRenaming(false);
+                  }}
                   disabled={renameSaving}
                   className="text-[13px] text-ink bg-raised border border-accent/50 rounded-lg px-3 py-1.5 outline-none w-44"
                 />
-                <Button size="sm" variant="primary" onClick={() => void commitRename()} disabled={renameSaving}>{renameSaving ? "…" : "Save"}</Button>
-                <Button size="sm" variant="ghost" onClick={() => setRenaming(false)}>Cancel</Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => void commitRename()}
+                  disabled={renameSaving}
+                >
+                  {renameSaving ? "…" : "Save"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setRenaming(false)}>
+                  Cancel
+                </Button>
               </div>
             ) : (
               <div className="flex items-center gap-3">
                 <span className="text-[13px] text-ink">{app.name}</span>
-                <Button size="sm" variant="ghost" onClick={startRename}>Rename</Button>
+                <Button size="sm" variant="ghost" onClick={startRename}>
+                  Rename
+                </Button>
               </div>
             )}
           </div>
@@ -1743,25 +2491,41 @@ function SettingsPanel({
 
       {app.status !== "deleted" && (
         <section>
-          <h2 className="text-[11px] font-bold text-danger uppercase tracking-wider mb-4">Danger Zone</h2>
+          <h2 className="text-[11px] font-bold text-danger uppercase tracking-wider mb-4">
+            Danger Zone
+          </h2>
           <div className="bg-danger/5 rounded-xl divide-y divide-danger/10">
-
             {/* Soft delete */}
             <div className="px-5 py-4 flex items-center justify-between gap-4">
               <div>
                 <p className="text-[13px] font-medium text-ink">Archive this app</p>
-                <p className="text-[11px] text-faint mt-0.5">Stops all processing and hides the app. Reversible.</p>
+                <p className="text-[11px] text-faint mt-0.5">
+                  Stops all processing and hides the app. Reversible.
+                </p>
               </div>
               {deleteConfirm ? (
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-[11px] text-danger">Are you sure?</span>
-                  <Button size="sm" variant="ghost" className="text-danger hover:bg-danger/10 border border-danger/30" onClick={() => void handleDelete()} disabled={deleting}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-danger hover:bg-danger/10 border border-danger/30"
+                    onClick={() => void handleDelete()}
+                    disabled={deleting}
+                  >
                     {deleting ? "Archiving…" : "Yes, archive"}
                   </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setDeleteConfirm(false)}>Cancel</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setDeleteConfirm(false)}>
+                    Cancel
+                  </Button>
                 </div>
               ) : (
-                <Button size="sm" variant="ghost" className="text-danger hover:bg-danger/10 border border-danger/30 shrink-0" onClick={() => setDeleteConfirm(true)}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-danger hover:bg-danger/10 border border-danger/30 shrink-0"
+                  onClick={() => setDeleteConfirm(true)}
+                >
                   Archive
                 </Button>
               )}
@@ -1777,7 +2541,12 @@ function SettingsPanel({
                   </p>
                 </div>
                 {!permDeleteOpen && (
-                  <Button size="sm" variant="ghost" className="text-danger hover:bg-danger/10 border border-danger/30 shrink-0" onClick={() => setPermDeleteOpen(true)}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-danger hover:bg-danger/10 border border-danger/30 shrink-0"
+                    onClick={() => setPermDeleteOpen(true)}
+                  >
                     Delete forever
                   </Button>
                 )}
@@ -1785,39 +2554,53 @@ function SettingsPanel({
               {permDeleteOpen && (
                 <div className="mt-4 p-4 bg-danger/5 border border-danger/20 rounded-xl space-y-3">
                   <p className="text-[12px] text-danger leading-relaxed">
-                    This will destroy everything associated with <span className="font-semibold">{app.name}</span>. Type the app name to confirm.
+                    This will destroy everything associated with{" "}
+                    <span className="font-semibold">{app.name}</span>. Type the app name to confirm.
                   </p>
                   <input
                     autoFocus
                     value={permDeleteInput}
-                    onChange={(e) => { setPermDeleteInput(e.target.value); setPermDeleteError(null); }}
+                    onChange={(e) => {
+                      setPermDeleteInput(e.target.value);
+                      setPermDeleteError(null);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") void handlePermanentDelete();
-                      if (e.key === "Escape") { setPermDeleteOpen(false); setPermDeleteInput(""); setPermDeleteError(null); }
+                      if (e.key === "Escape") {
+                        setPermDeleteOpen(false);
+                        setPermDeleteInput("");
+                        setPermDeleteError(null);
+                      }
                     }}
                     placeholder={app.name}
                     className="w-full text-[13px] text-ink bg-raised border border-danger/40 rounded-lg px-3 py-2 outline-none focus:border-danger/70 transition-colors placeholder:text-faint/50"
                   />
-                  {permDeleteError && (
-                    <p className="text-[11px] text-danger">{permDeleteError}</p>
-                  )}
+                  {permDeleteError && <p className="text-[11px] text-danger">{permDeleteError}</p>}
                   <div className="flex gap-2">
                     <Button
-                      size="sm" variant="ghost"
+                      size="sm"
+                      variant="ghost"
                       className="text-danger hover:bg-danger/15 border border-danger/40 disabled:opacity-40"
                       onClick={() => void handlePermanentDelete()}
                       disabled={permDeleting || permDeleteInput !== app.name}
                     >
                       {permDeleting ? "Deleting…" : "Delete forever"}
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => { setPermDeleteOpen(false); setPermDeleteInput(""); setPermDeleteError(null); }}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setPermDeleteOpen(false);
+                        setPermDeleteInput("");
+                        setPermDeleteError(null);
+                      }}
+                    >
                       Cancel
                     </Button>
                   </div>
                 </div>
               )}
             </div>
-
           </div>
         </section>
       )}
@@ -1828,7 +2611,13 @@ function SettingsPanel({
 // ─── Inject Wizard ────────────────────────────────────────────────────────────
 
 function InjectWizard({
-  app, tenantId, widgetTargetTemplates, onClose, onStart, onDone, onError,
+  app,
+  tenantId,
+  widgetTargetTemplates,
+  onClose,
+  onStart,
+  onDone,
+  onError,
 }: {
   app: App;
   tenantId: string;
@@ -1842,33 +2631,37 @@ function InjectWizard({
   // Map template names to theme JSON keys
   const targetKeys = (widgetTargetTemplates ?? ["product"]).map((t) => `templates/${t}.json`);
 
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeThemeName, setActiveThemeName] = useState("");
   // candidateTemplates: the subset of theme templates that match the widget's target pages
   const [candidateTemplates, setCandidateTemplates] = useState<ThemeTemplate[]>([]);
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
-  const [insertAt, setInsertAt]       = useState<number>(0); // index in block_order
+  const [insertAt, setInsertAt] = useState<number>(0); // index in block_order
 
   useEffect(() => {
-    api.apps.getThemeTemplates(tenantId, app.id)
+    api.apps
+      .getThemeTemplates(tenantId, app.id)
       .then(({ activeTheme, templates: tpls }) => {
         setActiveThemeName(activeTheme.name);
         // Filter to only the templates the architect declared; fall back to all if none match
         const matches = tpls.filter((t) => targetKeys.includes(t.key));
-        const candidates = matches.length > 0 ? matches : (tpls[0] ? [tpls[0]] : []);
+        const candidates = matches.length > 0 ? matches : tpls[0] ? [tpls[0]] : [];
         setCandidateTemplates(candidates);
         const first = candidates[0] ?? null;
         setSelectedTemplateKey(first?.key ?? null);
         setSelectedSectionId(first?.sections[0]?.sectionId ?? null);
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load templates"))
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : "Failed to load templates"),
+      )
       .finally(() => setLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, app.id]);
 
-  const lockedTemplate = candidateTemplates.find((t) => t.key === selectedTemplateKey) ?? candidateTemplates[0] ?? null;
+  const lockedTemplate =
+    candidateTemplates.find((t) => t.key === selectedTemplateKey) ?? candidateTemplates[0] ?? null;
 
   const handleInject = async () => {
     if (!lockedTemplate || !selectedSectionId) return;
@@ -1894,9 +2687,14 @@ function InjectWizard({
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.04]">
           <div>
             <h2 className="text-[14px] font-bold text-ink">Inject app block</h2>
-            <p className="text-[11px] text-faint mt-0.5">Duplicates your active theme and adds the app block to a section</p>
+            <p className="text-[11px] text-faint mt-0.5">
+              Duplicates your active theme and adds the app block to a section
+            </p>
           </div>
-          <button onClick={onClose} className="text-faint hover:text-ink bg-transparent border-0 cursor-pointer p-1">
+          <button
+            onClick={onClose}
+            className="text-faint hover:text-ink bg-transparent border-0 cursor-pointer p-1"
+          >
             <span className="material-symbols-outlined text-[18px]">close</span>
           </button>
         </div>
@@ -1904,7 +2702,9 @@ function InjectWizard({
         <div className="px-6 py-5 space-y-4">
           {loading && (
             <div className="flex items-center gap-2 text-[12px] text-faint">
-              <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+              <span className="material-symbols-outlined text-[14px] animate-spin">
+                progress_activity
+              </span>
               Loading templates from {activeThemeName || "active theme"}…
             </div>
           )}
@@ -1920,15 +2720,23 @@ function InjectWizard({
               {/* Template notice / picker */}
               {candidateTemplates.length === 1 ? (
                 <div className="flex items-start gap-2.5 px-3.5 py-3 rounded-lg bg-accent/[0.07] border border-accent/[0.15]">
-                  <span className="material-symbols-outlined text-[14px] text-accent mt-0.5" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>info</span>
+                  <span
+                    className="material-symbols-outlined text-[14px] text-accent mt-0.5"
+                    style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                  >
+                    info
+                  </span>
                   <p className="text-[11.5px] text-accent/90 leading-relaxed">
-                    This widget runs on the <span className="font-semibold">{lockedTemplate.name}</span> page.
-                    Injecting it on another page would break it.
+                    This widget runs on the{" "}
+                    <span className="font-semibold">{lockedTemplate.name}</span> page. Injecting it
+                    on another page would break it.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  <label className="text-[11px] font-medium text-faint">Choose a page template</label>
+                  <label className="text-[11px] font-medium text-faint">
+                    Choose a page template
+                  </label>
                   <div className="space-y-1">
                     {candidateTemplates.map((t) => (
                       <button
@@ -1943,7 +2751,7 @@ function InjectWizard({
                           "w-full flex items-center justify-between px-3 py-2 rounded-lg text-[12px] border transition-colors text-left cursor-pointer bg-transparent",
                           selectedTemplateKey === t.key
                             ? "bg-accent/10 border-accent/25 text-accent"
-                            : "bg-white/[0.03] border-white/[0.06] text-muted hover:text-ink hover:bg-white/[0.05]"
+                            : "bg-white/[0.03] border-white/[0.06] text-muted hover:text-ink hover:bg-white/[0.05]",
                         )}
                       >
                         {t.name}
@@ -1972,7 +2780,7 @@ function InjectWizard({
                           "w-full flex items-center justify-between px-3 py-2 rounded-lg text-[12px] border transition-colors text-left",
                           selectedSectionId === s.sectionId
                             ? "bg-accent/10 border-accent/25 text-accent"
-                            : "bg-white/[0.03] border-white/[0.06] text-muted hover:text-ink hover:bg-white/[0.05]"
+                            : "bg-white/[0.03] border-white/[0.06] text-muted hover:text-ink hover:bg-white/[0.05]",
                         )}
                       >
                         <span>{s.sectionId}</span>
@@ -1984,7 +2792,9 @@ function InjectWizard({
 
               {/* Block order — slot-based position picker */}
               {(() => {
-                const section = lockedTemplate.sections.find((s) => s.sectionId === selectedSectionId);
+                const section = lockedTemplate.sections.find(
+                  (s) => s.sectionId === selectedSectionId,
+                );
                 const blocks = section?.blockOrder ?? [];
                 const blockNames = section?.blockNames ?? {};
                 // Clamp insertAt when section changes
@@ -1992,7 +2802,12 @@ function InjectWizard({
 
                 const widgetSlot = (
                   <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/[0.12] border border-accent/30 border-dashed">
-                    <span className="material-symbols-outlined text-[13px] text-accent" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>science</span>
+                    <span
+                      className="material-symbols-outlined text-[13px] text-accent"
+                      style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                    >
+                      science
+                    </span>
                     <span className="text-[11.5px] font-semibold text-accent">Your widget</span>
                   </div>
                 );
@@ -2006,20 +2821,32 @@ function InjectWizard({
                       "w-full flex items-center gap-2 py-1 transition-colors cursor-pointer border-0 bg-transparent group",
                     )}
                   >
-                    <span className={cn(
-                      "flex-1 h-px transition-colors",
-                      clampedInsert === idx ? "bg-accent/50" : "bg-white/[0.06] group-hover:bg-accent/25"
-                    )} />
-                    <span className={cn(
-                      "text-[9.5px] font-semibold shrink-0 transition-colors",
-                      clampedInsert === idx ? "text-accent" : "text-faint/40 group-hover:text-accent/60"
-                    )}>
+                    <span
+                      className={cn(
+                        "flex-1 h-px transition-colors",
+                        clampedInsert === idx
+                          ? "bg-accent/50"
+                          : "bg-white/[0.06] group-hover:bg-accent/25",
+                      )}
+                    />
+                    <span
+                      className={cn(
+                        "text-[9.5px] font-semibold shrink-0 transition-colors",
+                        clampedInsert === idx
+                          ? "text-accent"
+                          : "text-faint/40 group-hover:text-accent/60",
+                      )}
+                    >
                       {clampedInsert === idx ? "↓ insert here" : "insert here"}
                     </span>
-                    <span className={cn(
-                      "flex-1 h-px transition-colors",
-                      clampedInsert === idx ? "bg-accent/50" : "bg-white/[0.06] group-hover:bg-accent/25"
-                    )} />
+                    <span
+                      className={cn(
+                        "flex-1 h-px transition-colors",
+                        clampedInsert === idx
+                          ? "bg-accent/50"
+                          : "bg-white/[0.06] group-hover:bg-accent/25",
+                      )}
+                    />
                   </button>
                 );
 
@@ -2032,7 +2859,9 @@ function InjectWizard({
                       {blocks.length === 0 ? (
                         <>
                           {widgetSlot}
-                          <p className="text-[10px] text-faint/50 mt-1.5 text-center">No existing blocks — widget will be the only one</p>
+                          <p className="text-[10px] text-faint/50 mt-1.5 text-center">
+                            No existing blocks — widget will be the only one
+                          </p>
                         </>
                       ) : (
                         <>
@@ -2041,8 +2870,12 @@ function InjectWizard({
                             <div key={id}>
                               {clampedInsert === idx ? widgetSlot : null}
                               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03]">
-                                <span className="material-symbols-outlined text-[13px] text-faint/40">widgets</span>
-                                <span className="text-[11px] text-faint">{blockNames[id] ?? "Block"}</span>
+                                <span className="material-symbols-outlined text-[13px] text-faint/40">
+                                  widgets
+                                </span>
+                                <span className="text-[11px] text-faint">
+                                  {blockNames[id] ?? "Block"}
+                                </span>
                               </div>
                               {insertHandle(idx + 1)}
                             </div>
@@ -2088,50 +2921,61 @@ export function AppDetailPage() {
   const { appId } = useParams<{ appId: string }>();
   const { tenantId, shopDomain } = useSessionStore();
 
-  const appQuery                   = useApp(tenantId, appId ?? null);
-  const latestSessionQuery         = useLatestSession(appId ?? null);
+  const appQuery = useApp(tenantId, appId ?? null);
+  const latestSessionQuery = useLatestSession(appId ?? null);
   const latestCompletedSessionQuery = useLatestCompletedSession(appId ?? null);
-  const sessionsQuery              = useAppSessions(appId ?? null);
-  const { approve }       = useGeneration();
-  const queryClient       = useQueryClient();
+  const sessionsQuery = useAppSessions(appId ?? null);
+  const { approve } = useGeneration();
+  const queryClient = useQueryClient();
 
-  const [mainTab, setMainTab]         = useState<"overview" | "logs" | "versions" | "email" | "settings">("overview");
-  const [logFilter, setLogFilter]     = useState<"all" | "webhook" | "widget" | "admin">("all");
-  const [deploying, setDeploying]     = useState(false);
+  const [mainTab, setMainTab] = useState<"overview" | "logs" | "versions" | "email" | "settings">(
+    "overview",
+  );
+  const [logFilter, setLogFilter] = useState<"all" | "webhook" | "widget" | "admin">("all");
+  const [deploying, setDeploying] = useState(false);
 
   // Reset to Dashboard tab when switching between apps
-  useEffect(() => { setMainTab("overview"); }, [appId]);
+  useEffect(() => {
+    setMainTab("overview");
+  }, [appId]);
 
-  const logsEnabled       = mainTab === "logs" || mainTab === "overview";
+  const logsEnabled = mainTab === "logs" || mainTab === "overview";
   const widgetLogsEnabled = mainTab === "logs" || mainTab === "overview";
-  const adminLogsEnabled  = mainTab === "logs" || mainTab === "overview";
+  const adminLogsEnabled = mainTab === "logs" || mainTab === "overview";
 
-  const logsQuery       = useWebhookAppLogs(tenantId, appId ?? null, logsEnabled);
+  const logsQuery = useWebhookAppLogs(tenantId, appId ?? null, logsEnabled);
   const widgetLogsQuery = useWidgetLogs(tenantId, appId ?? null, widgetLogsEnabled);
-  const adminLogsQuery  = useAdminLogs(tenantId, appId ?? null, adminLogsEnabled);
+  const adminLogsQuery = useAdminLogs(tenantId, appId ?? null, adminLogsEnabled);
 
-  const app                    = appQuery.data ?? null;
-  const latestSession          = latestSessionQuery.data ?? null;
+  const app = appQuery.data ?? null;
+  const latestSession = latestSessionQuery.data ?? null;
   const latestCompletedSession = latestCompletedSessionQuery.data ?? null;
-  const sessions               = sessionsQuery.data ?? [];
+  const sessions = sessionsQuery.data ?? [];
   // True when the latest session failed but a prior completed session exists to fall back to.
   const sessionFailed = latestSession?.status === "failed" || latestSession?.status === "cancelled";
   // True when the latest session failed/cancelled but a prior completed session exists to fall back to.
-  const hasFallback   = sessionFailed && latestCompletedSession !== null;
+  const hasFallback = sessionFailed && latestCompletedSession !== null;
   // When the latest failed/cancelled, use the last completed session for display data (triggers, explanation).
   const displaySession = (sessionFailed ? latestCompletedSession : latestSession) ?? latestSession;
-  const activeGen     = useGenerationStore((s) => s.active);
-  const isGenerating  = (activeGen?.appId === appId && activeGen?.status === "running") || latestSession?.status === "running";
+  const activeGen = useGenerationStore((s) => s.active);
+  const isGenerating =
+    (activeGen?.appId === appId && activeGen?.status === "running") ||
+    latestSession?.status === "running";
 
   // Archetype-derived flags — used by Logs filter buttons + Shopify links
-  const hasWidget     = !!(displaySession?.bundle?.widgetModule  ?? (app?.appArchetype === "storefront_backend" || app?.appArchetype === "storefront_backend_admin"));
-  const hasAdminUI    = !!(displaySession?.bundle?.adminUiModule ?? (app?.appArchetype === "backend_admin"      || app?.appArchetype === "storefront_backend_admin"));
+  const hasWidget = !!(
+    displaySession?.bundle?.widgetModule ??
+    (app?.appArchetype === "storefront_backend" || app?.appArchetype === "storefront_backend_admin")
+  );
+  const hasAdminUI = !!(
+    displaySession?.bundle?.adminUiModule ??
+    (app?.appArchetype === "backend_admin" || app?.appArchetype === "storefront_backend_admin")
+  );
   const webhookTopics = displaySession?.webhookTopics ?? [];
-  const cronSchedule  = displaySession?.cronSchedule ?? null;
-  const hasWebhook    = webhookTopics.length > 0 || !!cronSchedule;
+  const cronSchedule = displaySession?.cronSchedule ?? null;
+  const hasWebhook = webhookTopics.length > 0 || !!cronSchedule;
 
-  const invalidateAppCache = () =>
-    queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
+  const invalidateAppCache = () => queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
 
   const handleDeployDraft = async () => {
     if (!latestSession?.jobId) return;
@@ -2157,9 +3001,15 @@ export function AppDetailPage() {
   const handleRedeploy = async () => {
     if (!tenantId || !appId) return;
     setDeploying(true);
-    try { await api.apps.setStatus(tenantId, appId, "active"); await appQuery.refetch(); void invalidateAppCache(); }
-    catch (err) { alert(err instanceof Error ? err.message : "Redeployment failed"); }
-    finally { setDeploying(false); }
+    try {
+      await api.apps.setStatus(tenantId, appId, "active");
+      await appQuery.refetch();
+      void invalidateAppCache();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Redeployment failed");
+    } finally {
+      setDeploying(false);
+    }
   };
 
   const [deactivateConfirm, setDeactivateConfirm] = useState(false);
@@ -2191,7 +3041,7 @@ export function AppDetailPage() {
   // ─── Draft delete ────────────────────────────────────────────────────────────
 
   const [draftDeleteConfirm, setDraftDeleteConfirm] = useState(false);
-  const [draftDeleting, setDraftDeleting]           = useState(false);
+  const [draftDeleting, setDraftDeleting] = useState(false);
 
   const handleDraftDelete = async () => {
     if (!tenantId || !appId) return;
@@ -2211,8 +3061,8 @@ export function AppDetailPage() {
   // ─── Theme injection ─────────────────────────────────────────────────────────
 
   const [injectWizardOpen, setInjectWizardOpen] = useState(false);
-  const [injectingWidget, setInjectingWidget]   = useState(false);
-  const [injectError, setInjectError]           = useState<string | null>(null);
+  const [injectingWidget, setInjectingWidget] = useState(false);
+  const [injectError, setInjectError] = useState<string | null>(null);
 
   const handleDeleteInjectedTheme = async () => {
     if (!tenantId || !appId) return;
@@ -2238,7 +3088,9 @@ export function AppDetailPage() {
               My Apps
             </button>
             <span className="text-faint/40 select-none">/</span>
-            <span className={`font-semibold truncate ${app?.name === "..." ? "text-faint italic" : "text-ink"}`}>
+            <span
+              className={`font-semibold truncate ${app?.name === "..." ? "text-faint italic" : "text-ink"}`}
+            >
               {app?.name === "..." ? "Untitled app" : (app?.name ?? "App")}
             </span>
           </div>
@@ -2255,7 +3107,9 @@ export function AppDetailPage() {
                 <div className="h-3 w-64 bg-white/[0.03] rounded-lg animate-pulse-subtle" />
               </div>
             </div>
-            {[1,2,3,4,5].map((i) => <div key={i} className="h-12 bg-white/[0.03] rounded-xl animate-pulse-subtle" />)}
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="h-12 bg-white/[0.03] rounded-xl animate-pulse-subtle" />
+            ))}
           </div>
         </main>
       ) : !app ? (
@@ -2268,16 +3122,24 @@ export function AppDetailPage() {
           <div className="flex flex-col items-center gap-5 max-w-[400px] text-center">
             {/* Icon */}
             <div className="w-16 h-16 rounded-2xl bg-accent/10 flex items-center justify-center">
-              <span className="material-symbols-outlined text-accent text-[32px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+              <span
+                className="material-symbols-outlined text-accent text-[32px]"
+                style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+              >
+                auto_awesome
+              </span>
             </div>
 
             {/* Text */}
             <div className="space-y-2">
               <h2 className="text-[18px] font-bold text-ink tracking-tight">
-                {app.name === "..." ? "Your app is ready to be born" : `${app.name} hasn't been built yet`}
+                {app.name === "..."
+                  ? "Your app is ready to be born"
+                  : `${app.name} hasn't been built yet`}
               </h2>
               <p className="text-[13px] text-muted leading-relaxed">
-                Head to the chat and describe what you want this app to do. Ton will plan, generate, and deploy it — all from a single prompt.
+                Head to the chat and describe what you want this app to do. Ton will plan, generate,
+                and deploy it — all from a single prompt.
               </p>
             </div>
 
@@ -2288,13 +3150,20 @@ export function AppDetailPage() {
               className="flex items-center gap-2 px-6 py-3 rounded-xl bg-accent text-white text-[13px] font-bold transition-all hover:opacity-90 cursor-pointer border-0"
               style={{ boxShadow: "0 0 20px rgba(167,139,250,0.25)" }}
             >
-              <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+              <span
+                className="material-symbols-outlined text-[16px]"
+                style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+              >
+                auto_awesome
+              </span>
               Continue building
             </button>
 
             {/* Hint */}
             <div className="flex flex-col gap-2 w-full pt-2">
-              <p className="text-[10px] text-faint uppercase tracking-widest font-semibold">Ideas to get started</p>
+              <p className="text-[10px] text-faint uppercase tracking-widest font-semibold">
+                Ideas to get started
+              </p>
               {[
                 "Send a follow-up email 3 days after purchase",
                 "Show a back-in-stock widget on product pages",
@@ -2303,7 +3172,9 @@ export function AppDetailPage() {
                 <button
                   key={hint}
                   type="button"
-                  onClick={() => navigate(`/app/apps/${app.id}/revise?prompt=${encodeURIComponent(hint)}`)}
+                  onClick={() =>
+                    navigate(`/app/apps/${app.id}/revise?prompt=${encodeURIComponent(hint)}`)
+                  }
                   className="text-left text-[12px] text-faint px-4 py-2.5 rounded-xl bg-white/[0.03] hover:text-ink hover:bg-accent/[0.06] transition-all cursor-pointer"
                 >
                   {hint}
@@ -2346,12 +3217,20 @@ export function AppDetailPage() {
         </main>
       ) : (
         <div className="flex-1 overflow-hidden flex flex-col">
-
           {/* App Header — name, dates, archetype pills, status pill */}
           <AppHeader
             app={app}
             isGenerating={isGenerating}
-            statusPill={buildStatusPill(app, latestSession, deploying, isGenerating, hasFallback, handleDeployDraft, handleRedeploy, handleDeactivate)}
+            statusPill={buildStatusPill(
+              app,
+              latestSession,
+              deploying,
+              isGenerating,
+              hasFallback,
+              handleDeployDraft,
+              handleRedeploy,
+              handleDeactivate,
+            )}
           />
 
           {/* Deactivation confirm — shown when app has an injected test theme */}
@@ -2359,7 +3238,8 @@ export function AppDetailPage() {
             <div className="px-7 py-3 bg-amber/[0.06] border-b border-amber/20 flex items-center gap-3">
               <span className="material-symbols-outlined text-amber text-[16px]">warning</span>
               <span className="text-[12px] text-muted flex-1">
-                This app has an injected test theme. Deactivating will also delete the test theme from your Shopify store.
+                This app has an injected test theme. Deactivating will also delete the test theme
+                from your Shopify store.
               </span>
               <button
                 type="button"
@@ -2383,11 +3263,9 @@ export function AppDetailPage() {
             <TabBar
               tabs={[
                 { id: "overview" as const, label: "Dashboard" },
-                { id: "logs"     as const, label: "Logs"     },
-                { id: "versions" as const, label: "Versions"  },
-                ...(app.usesEmail
-                  ? [{ id: "email" as const, label: "Email" }]
-                  : []),
+                { id: "logs" as const, label: "Logs" },
+                { id: "versions" as const, label: "Versions" },
+                ...(app.usesEmail ? [{ id: "email" as const, label: "Email" }] : []),
                 { id: "settings" as const, label: "Settings" },
               ]}
               active={mainTab}
@@ -2398,7 +3276,12 @@ export function AppDetailPage() {
                   onClick={() => navigate(`/app/apps/${app.id}/revise`)}
                   className="flex items-center gap-1 px-3 py-2 text-[12px] font-semibold text-accent border-b-2 border-accent bg-transparent border-x-0 border-t-0 cursor-pointer hover:text-accent/80 transition-colors"
                 >
-                  <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}>auto_awesome</span>
+                  <span
+                    className="material-symbols-outlined text-[13px]"
+                    style={{ fontVariationSettings: "'FILL' 1, 'wght' 200" }}
+                  >
+                    auto_awesome
+                  </span>
                   Revise
                 </button>
               }
@@ -2414,12 +3297,17 @@ export function AppDetailPage() {
               recentLogs={logsQuery.data ?? []}
               recentWidgetLogs={widgetLogsQuery.data ?? []}
               recentAdminLogs={adminLogsQuery.data ?? []}
-              recentLogsLoading={logsQuery.isLoading || widgetLogsQuery.isLoading || adminLogsQuery.isLoading}
+              recentLogsLoading={
+                logsQuery.isLoading || widgetLogsQuery.isLoading || adminLogsQuery.isLoading
+              }
               shopDomain={shopDomain}
               onLogsTab={() => setMainTab("logs")}
               injectingWidget={injectingWidget}
               injectError={injectError}
-              onInjectWidget={() => { setInjectError(null); setInjectWizardOpen(true); }}
+              onInjectWidget={() => {
+                setInjectError(null);
+                setInjectWizardOpen(true);
+              }}
               onDeleteInjectedTheme={handleDeleteInjectedTheme}
             />
           )}
@@ -2432,32 +3320,45 @@ export function AppDetailPage() {
                 <div className="flex items-center gap-1.5 flex-1 flex-wrap">
                   {(
                     [
-                      { id: "all",     label: "All",               show: true          },
-                      { id: "webhook", label: "Shopify Webhooks",  show: hasWebhook    },
-                      { id: "widget",  label: "Storefront Widget", show: hasWidget     },
-                      { id: "admin",   label: "Admin UI",          show: hasAdminUI    },
+                      { id: "all", label: "All", show: true },
+                      { id: "webhook", label: "Shopify Webhooks", show: hasWebhook },
+                      { id: "widget", label: "Storefront Widget", show: hasWidget },
+                      { id: "admin", label: "Admin UI", show: hasAdminUI },
                     ] as const
-                  ).filter((f) => f.show).map((f) => (
-                    <button key={f.id} type="button"
-                      onClick={() => setLogFilter(f.id)}
-                      className={cn(
-                        "px-3 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer",
-                        logFilter === f.id
-                          ? "bg-accent/15 text-accent border-accent/25"
-                          : "bg-white/[0.05] text-faint border-white/[0.08] hover:text-ink hover:bg-white/[0.08]"
-                      )}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
+                  )
+                    .filter((f) => f.show)
+                    .map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setLogFilter(f.id)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-lg text-[11px] font-semibold border transition-colors cursor-pointer",
+                          logFilter === f.id
+                            ? "bg-accent/15 text-accent border-accent/25"
+                            : "bg-white/[0.05] text-faint border-white/[0.08] hover:text-ink hover:bg-white/[0.08]",
+                        )}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
                 </div>
-                {(logsQuery.isFetching || widgetLogsQuery.isFetching || adminLogsQuery.isFetching) && (
+                {(logsQuery.isFetching ||
+                  widgetLogsQuery.isFetching ||
+                  adminLogsQuery.isFetching) && (
                   <span className="text-[10px] text-faint">Refreshing…</span>
                 )}
-                <button type="button"
-                  onClick={() => { void logsQuery.refetch(); void widgetLogsQuery.refetch(); void adminLogsQuery.refetch(); }}
+                <button
+                  type="button"
+                  onClick={() => {
+                    void logsQuery.refetch();
+                    void widgetLogsQuery.refetch();
+                    void adminLogsQuery.refetch();
+                  }}
                   className="text-[11px] text-faint hover:text-accent transition-colors bg-transparent border-0 cursor-pointer underline"
-                >Refresh</button>
+                >
+                  Refresh
+                </button>
               </div>
 
               {/* Unified log list */}
@@ -2466,31 +3367,65 @@ export function AppDetailPage() {
                   | { kind: "webhook"; data: WebhookInvocationLogEntry; ts: string }
                   | { kind: "widget" | "admin"; data: InvocationLogEntry; ts: string };
 
-                const webhookEntries = (logFilter === "all" || logFilter === "webhook") ? (logsQuery.data ?? []) : [];
-                const widgetEntries  = (logFilter === "all" || logFilter === "widget")  ? (widgetLogsQuery.data ?? []) : [];
-                const adminEntries   = (logFilter === "all" || logFilter === "admin")   ? (adminLogsQuery.data ?? []) : [];
+                const webhookEntries =
+                  logFilter === "all" || logFilter === "webhook" ? (logsQuery.data ?? []) : [];
+                const widgetEntries =
+                  logFilter === "all" || logFilter === "widget" ? (widgetLogsQuery.data ?? []) : [];
+                const adminEntries =
+                  logFilter === "all" || logFilter === "admin" ? (adminLogsQuery.data ?? []) : [];
 
                 const merged: AnyLogEntry[] = [
-                  ...webhookEntries.map((d) => ({ kind: "webhook" as const, data: d, ts: d.queuedAt })),
-                  ...widgetEntries.map((d)  => ({ kind: "widget"  as const, data: d, ts: d.invokedAt })),
-                  ...adminEntries.map((d)   => ({ kind: "admin"   as const, data: d, ts: d.invokedAt })),
+                  ...webhookEntries.map((d) => ({
+                    kind: "webhook" as const,
+                    data: d,
+                    ts: d.queuedAt,
+                  })),
+                  ...widgetEntries.map((d) => ({
+                    kind: "widget" as const,
+                    data: d,
+                    ts: d.invokedAt,
+                  })),
+                  ...adminEntries.map((d) => ({
+                    kind: "admin" as const,
+                    data: d,
+                    ts: d.invokedAt,
+                  })),
                 ].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
 
                 if (logsQuery.isError || widgetLogsQuery.isError || adminLogsQuery.isError) {
-                  return <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>;
+                  return (
+                    <p className="text-sm text-danger py-6 text-center">Failed to load logs.</p>
+                  );
                 }
                 if (logsQuery.isLoading || widgetLogsQuery.isLoading || adminLogsQuery.isLoading) {
                   return null;
                 }
                 if (merged.length === 0) {
-                  return <EmptyLogs label="No handler executions yet" sub="Logs appear here once your app's handlers are invoked." />;
+                  return (
+                    <EmptyLogs
+                      label="No handler executions yet"
+                      sub="Logs appear here once your app's handlers are invoked."
+                    />
+                  );
                 }
                 return (
                   <LogTable pathHeader="Event / Path">
                     {merged.map((entry, i, arr) =>
-                      entry.kind === "webhook"
-                        ? <LogRow key={entry.data.id} entry={entry.data} last={i === arr.length - 1} showSource />
-                        : <InvocationLogRow key={entry.data.id} entry={entry.data} source={entry.kind} last={i === arr.length - 1} />
+                      entry.kind === "webhook" ? (
+                        <LogRow
+                          key={entry.data.id}
+                          entry={entry.data}
+                          last={i === arr.length - 1}
+                          showSource
+                        />
+                      ) : (
+                        <InvocationLogRow
+                          key={entry.data.id}
+                          entry={entry.data}
+                          source={entry.kind}
+                          last={i === arr.length - 1}
+                        />
+                      ),
                     )}
                   </LogTable>
                 );
@@ -2515,7 +3450,8 @@ export function AppDetailPage() {
           {mainTab === "settings" && (
             <div className="flex-1 overflow-y-auto">
               <SettingsPanel
-                app={app} tenantId={tenantId!}
+                app={app}
+                tenantId={tenantId!}
                 onAppChange={() => void appQuery.refetch()}
                 onDelete={() => {
                   void queryClient.invalidateQueries({ queryKey: ["apps", tenantId] });
@@ -2524,7 +3460,6 @@ export function AppDetailPage() {
               />
             </div>
           )}
-
         </div>
       )}
 
@@ -2535,8 +3470,16 @@ export function AppDetailPage() {
           tenantId={tenantId}
           widgetTargetTemplates={displaySession?.bundle?.widgetTargetTemplates ?? null}
           onClose={() => setInjectWizardOpen(false)}
-          onStart={() => { setInjectWizardOpen(false); setInjectingWidget(true); setInjectError(null); }}
-          onDone={() => { setInjectingWidget(false); void appQuery.refetch(); void invalidateAppCache(); }}
+          onStart={() => {
+            setInjectWizardOpen(false);
+            setInjectingWidget(true);
+            setInjectError(null);
+          }}
+          onDone={() => {
+            setInjectingWidget(false);
+            void appQuery.refetch();
+            void invalidateAppCache();
+          }}
           onError={(msg) => setInjectError(msg)}
         />
       )}

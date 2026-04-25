@@ -29,10 +29,7 @@ import type { BillingPlan, BillingInterval, SubscriptionStatus } from "@platform
 import { logger } from "@platform-back/logger";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import { requireTenant } from "../plugins/auth.js";
-import {
-  createSubscription,
-  cancelSubscription,
-} from "../lib/shopify-billing.js";
+import { createSubscription, cancelSubscription } from "../lib/shopify-billing.js";
 
 const DASHBOARD_URL = process.env["DASHBOARD_URL"] ?? "http://localhost:3000";
 // Read per-request so tests can flip it between cases.
@@ -53,26 +50,23 @@ const SubscribeBodySchema = z.object({
 export async function billingRoutes(app: FastifyInstance): Promise<void> {
   // ─── GET /billing/plans ───────────────────────────────────────────────────
 
-  app.get<{ Querystring: { tenantId?: string } }>(
-    "/plans",
-    async (req, reply) => {
-      let currentPlan: BillingPlan = "free";
-      let currentInterval: BillingInterval = "monthly";
-      const { tenantId } = req.query;
-      if (tenantId) {
-        const tenant = await getTenantById(tenantId);
-        if (tenant) {
-          currentPlan = tenant.billingPlan;
-          currentInterval = tenant.billingInterval;
-        }
+  app.get<{ Querystring: { tenantId?: string } }>("/plans", async (req, reply) => {
+    let currentPlan: BillingPlan = "free";
+    let currentInterval: BillingInterval = "monthly";
+    const { tenantId } = req.query;
+    if (tenantId) {
+      const tenant = await getTenantById(tenantId);
+      if (tenant) {
+        currentPlan = tenant.billingPlan;
+        currentInterval = tenant.billingInterval;
       }
-      return reply.send({
-        plans: Object.values(PLANS).filter((p) => p.id !== "internal"),
-        currentPlan,
-        currentInterval,
-      });
-    },
-  );
+    }
+    return reply.send({
+      plans: Object.values(PLANS).filter((p) => p.id !== "internal"),
+      currentPlan,
+      currentInterval,
+    });
+  });
 
   // ─── GET /billing/usage/:tenantId ─────────────────────────────────────────
 
@@ -100,141 +94,141 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
 
   // ─── POST /billing/subscribe ──────────────────────────────────────────────
 
-  app.post(
-    "/subscribe",
-    async (req: FastifyRequest, reply: FastifyReply) => {
-      const parsed = SubscribeBodySchema.safeParse(req.body);
-      if (!parsed.success) {
-        return reply.code(400).send(
+  app.post("/subscribe", async (req: FastifyRequest, reply: FastifyReply) => {
+    const parsed = SubscribeBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send(
           errorResponse(ErrorCode.InvalidRequest, "Invalid subscribe body", parsed.error.flatten()),
         );
-      }
-      const { plan, tenantId: rawTenantId } = parsed.data;
-      const interval: BillingInterval = parsed.data.interval ?? "monthly";
+    }
+    const { plan, tenantId: rawTenantId } = parsed.data;
+    const interval: BillingInterval = parsed.data.interval ?? "monthly";
 
-      const tenantId = requireTenant(req, reply, rawTenantId);
-      if (!tenantId) return;
+    const tenantId = requireTenant(req, reply, rawTenantId);
+    if (!tenantId) return;
 
-      if (plan === "free" && interval === "annual") {
-        return reply.code(400).send(
-          errorResponse(ErrorCode.InvalidRequest, "Annual billing is not available for the free plan"),
+    if (plan === "free" && interval === "annual") {
+      return reply
+        .code(400)
+        .send(
+          errorResponse(
+            ErrorCode.InvalidRequest,
+            "Annual billing is not available for the free plan",
+          ),
         );
-      }
+    }
 
-      const tenant = await getTenantById(tenantId);
-      if (!tenant) {
-        return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
-      }
+    const tenant = await getTenantById(tenantId);
+    if (!tenant) {
+      return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
+    }
 
-      if (plan === "free") {
-        if (tenant.shopifySubscriptionId) {
-          await cancelSubscription(tenant);
-        }
-        await updateTenantBilling(tenantId, {
-          billingPlan: "free",
-          billingInterval: "monthly",
-          subscriptionStatus: "none",
-          shopifySubscriptionId: null,
-          trialEndsAt: null,
-        });
-        await logBillingEvent({
-          tenantId,
-          eventType: "downgrade_to_free",
-          fromPlan: tenant.billingPlan,
-          toPlan: "free",
-        });
-        return reply.send({ confirmationUrl: null, plan: "free" });
+    if (plan === "free") {
+      if (tenant.shopifySubscriptionId) {
+        await cancelSubscription(tenant);
       }
-
-      if (!isShopifyBillingEnabled()) {
-        const planDef = PLANS[plan];
-        const trialEndsAt =
-          planDef && planDef.limits.trialDays > 0
-            ? new Date(Date.now() + planDef.limits.trialDays * 86400_000)
-            : null;
-        await updateTenantBilling(tenantId, {
-          billingPlan: plan,
-          billingInterval: interval,
-          subscriptionStatus: "active",
-          trialEndsAt,
-        });
-        await logBillingEvent({
-          tenantId,
-          eventType: "dev_plan_override",
-          fromPlan: tenant.billingPlan,
-          toPlan: plan,
-          metadata: { interval, note: "SHOPIFY_BILLING_MODE=disabled" },
-        });
-        logger.info({ tenantId, plan, interval }, "Dev mode: plan applied directly");
-        return reply.send({ confirmationUrl: null, plan });
-      }
-
-      const { confirmationUrl, subscriptionId } = await createSubscription(
-        tenant,
-        plan,
-        interval,
-      );
       await updateTenantBilling(tenantId, {
-        subscriptionStatus: "pending",
-        shopifySubscriptionId: subscriptionId,
+        billingPlan: "free",
+        billingInterval: "monthly",
+        subscriptionStatus: "none",
+        shopifySubscriptionId: null,
+        trialEndsAt: null,
       });
       await logBillingEvent({
         tenantId,
-        eventType: "subscription_created",
+        eventType: "downgrade_to_free",
         fromPlan: tenant.billingPlan,
-        toPlan: plan,
-        shopifySubscriptionId: subscriptionId,
-        metadata: { interval },
+        toPlan: "free",
       });
-      logger.info({ tenantId, plan, interval, subscriptionId }, "Subscription created, awaiting confirmation");
-      return reply.send({ confirmationUrl });
-    },
-  );
+      return reply.send({ confirmationUrl: null, plan: "free" });
+    }
 
-  // ─── GET /billing/callback ───────────────────────────────────────────────
-
-  app.get<{
-    Querystring: { tenant_id?: string; plan?: string; interval?: string };
-  }>(
-    "/callback",
-    async (req, reply) => {
-      const { tenant_id: tenantId, plan, interval: rawInterval } = req.query;
-      const interval: BillingInterval = rawInterval === "annual" ? "annual" : "monthly";
-
-      if (!tenantId || !plan || !(plan in PLANS)) {
-        return reply.redirect(`${DASHBOARD_URL}/settings?billing=error`);
-      }
-      const tenant = await getTenantById(tenantId);
-      if (!tenant) {
-        return reply.redirect(`${DASHBOARD_URL}/settings?billing=error`);
-      }
-      const billingPlan = plan as BillingPlan;
-      const planDef = PLANS[billingPlan];
+    if (!isShopifyBillingEnabled()) {
+      const planDef = PLANS[plan];
       const trialEndsAt =
-        planDef.limits.trialDays > 0
+        planDef && planDef.limits.trialDays > 0
           ? new Date(Date.now() + planDef.limits.trialDays * 86400_000)
           : null;
-
       await updateTenantBilling(tenantId, {
-        billingPlan,
+        billingPlan: plan,
         billingInterval: interval,
         subscriptionStatus: "active",
         trialEndsAt,
       });
       await logBillingEvent({
         tenantId,
-        eventType: "subscription_activated",
+        eventType: "dev_plan_override",
         fromPlan: tenant.billingPlan,
-        toPlan: billingPlan,
-        shopifySubscriptionId: tenant.shopifySubscriptionId,
-        metadata: { interval },
+        toPlan: plan,
+        metadata: { interval, note: "SHOPIFY_BILLING_MODE=disabled" },
       });
-      logger.info({ tenantId, plan: billingPlan, interval }, "Subscription activated");
-      return reply.redirect(
-        `${DASHBOARD_URL}/merchants/${tenantId}?billing=success&plan=${plan}&interval=${interval}`,
-      );
-    },
-  );
+      logger.info({ tenantId, plan, interval }, "Dev mode: plan applied directly");
+      return reply.send({ confirmationUrl: null, plan });
+    }
+
+    const { confirmationUrl, subscriptionId } = await createSubscription(tenant, plan, interval);
+    await updateTenantBilling(tenantId, {
+      subscriptionStatus: "pending",
+      shopifySubscriptionId: subscriptionId,
+    });
+    await logBillingEvent({
+      tenantId,
+      eventType: "subscription_created",
+      fromPlan: tenant.billingPlan,
+      toPlan: plan,
+      shopifySubscriptionId: subscriptionId,
+      metadata: { interval },
+    });
+    logger.info(
+      { tenantId, plan, interval, subscriptionId },
+      "Subscription created, awaiting confirmation",
+    );
+    return reply.send({ confirmationUrl });
+  });
+
+  // ─── GET /billing/callback ───────────────────────────────────────────────
+
+  app.get<{
+    Querystring: { tenant_id?: string; plan?: string; interval?: string };
+  }>("/callback", async (req, reply) => {
+    const { tenant_id: tenantId, plan, interval: rawInterval } = req.query;
+    const interval: BillingInterval = rawInterval === "annual" ? "annual" : "monthly";
+
+    if (!tenantId || !plan || !(plan in PLANS)) {
+      return reply.redirect(`${DASHBOARD_URL}/settings?billing=error`);
+    }
+    const tenant = await getTenantById(tenantId);
+    if (!tenant) {
+      return reply.redirect(`${DASHBOARD_URL}/settings?billing=error`);
+    }
+    const billingPlan = plan as BillingPlan;
+    const planDef = PLANS[billingPlan];
+    const trialEndsAt =
+      planDef.limits.trialDays > 0
+        ? new Date(Date.now() + planDef.limits.trialDays * 86400_000)
+        : null;
+
+    await updateTenantBilling(tenantId, {
+      billingPlan,
+      billingInterval: interval,
+      subscriptionStatus: "active",
+      trialEndsAt,
+    });
+    await logBillingEvent({
+      tenantId,
+      eventType: "subscription_activated",
+      fromPlan: tenant.billingPlan,
+      toPlan: billingPlan,
+      shopifySubscriptionId: tenant.shopifySubscriptionId,
+      metadata: { interval },
+    });
+    logger.info({ tenantId, plan: billingPlan, interval }, "Subscription activated");
+    return reply.redirect(
+      `${DASHBOARD_URL}/merchants/${tenantId}?billing=success&plan=${plan}&interval=${interval}`,
+    );
+  });
 
   // ─── POST /billing/cancel/:tenantId ──────────────────────────────────────
 
@@ -274,105 +268,98 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
   // (payment failures, cancellations, trial expiry). Without this, a frozen
   // tenant keeps full plan access indefinitely.
 
-  app.post(
-    "/webhook",
-    async (req: FastifyRequest, reply: FastifyReply) => {
-      const hmacHeader = req.headers["x-shopify-hmac-sha256"] as string | undefined;
-      const shopifySecret = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
+  app.post("/webhook", async (req: FastifyRequest, reply: FastifyReply) => {
+    const hmacHeader = req.headers["x-shopify-hmac-sha256"] as string | undefined;
+    const shopifySecret = process.env["SHOPIFY_CLIENT_SECRET"] ?? "";
 
-      if (!hmacHeader || !shopifySecret) {
-        return reply.code(401).send(errorResponse(ErrorCode.HmacInvalid, "Missing HMAC or secret"));
-      }
+    if (!hmacHeader || !shopifySecret) {
+      return reply.code(401).send(errorResponse(ErrorCode.HmacInvalid, "Missing HMAC or secret"));
+    }
 
-      const rawBody = (req as unknown as { rawBody?: Buffer }).rawBody
-        ?? Buffer.from(JSON.stringify(req.body));
-      const computed = createHmac("sha256", shopifySecret)
-        .update(rawBody)
-        .digest("base64");
+    const rawBody =
+      (req as unknown as { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body));
+    const computed = createHmac("sha256", shopifySecret).update(rawBody).digest("base64");
 
-      try {
-        if (
-          !timingSafeEqual(
-            Buffer.from(computed, "utf8"),
-            Buffer.from(hmacHeader, "utf8"),
-          )
-        ) {
-          return reply.code(401).send(errorResponse(ErrorCode.HmacInvalid, "Invalid HMAC"));
-        }
-      } catch {
+    try {
+      if (!timingSafeEqual(Buffer.from(computed, "utf8"), Buffer.from(hmacHeader, "utf8"))) {
         return reply.code(401).send(errorResponse(ErrorCode.HmacInvalid, "Invalid HMAC"));
       }
+    } catch {
+      return reply.code(401).send(errorResponse(ErrorCode.HmacInvalid, "Invalid HMAC"));
+    }
 
-      const payload = req.body as Record<string, unknown>;
-      const sub = payload.app_subscription as Record<string, unknown> | undefined;
-      const subscriptionGid = sub?.admin_graphql_api_id as string | undefined;
-      const shopifyStatus = sub?.status as string | undefined;
-      const shopDomain = req.headers["x-shopify-shop-domain"] as string | undefined;
+    const payload = req.body as Record<string, unknown>;
+    const sub = payload.app_subscription as Record<string, unknown> | undefined;
+    const subscriptionGid = sub?.admin_graphql_api_id as string | undefined;
+    const shopifyStatus = sub?.status as string | undefined;
+    const shopDomain = req.headers["x-shopify-shop-domain"] as string | undefined;
 
-      if (!subscriptionGid || !shopifyStatus) {
-        logger.warn({ payload }, "billing/webhook: missing subscription data");
-        return reply.code(200).send({ ok: true });
-      }
+    if (!subscriptionGid || !shopifyStatus) {
+      logger.warn({ payload }, "billing/webhook: missing subscription data");
+      return reply.code(200).send({ ok: true });
+    }
 
-      // Resolve tenant by subscription GID, falling back to shop domain.
-      let rows = await sql<Array<{ id: string; billingPlan: BillingPlan }>>`
+    // Resolve tenant by subscription GID, falling back to shop domain.
+    let rows = await sql<Array<{ id: string; billingPlan: BillingPlan }>>`
         SELECT id, billing_plan AS "billingPlan" FROM tenants
         WHERE shopify_subscription_id = ${subscriptionGid}
         LIMIT 1
       `;
-      if (rows.length === 0 && shopDomain) {
-        rows = await sql<Array<{ id: string; billingPlan: BillingPlan }>>`
+    if (rows.length === 0 && shopDomain) {
+      rows = await sql<Array<{ id: string; billingPlan: BillingPlan }>>`
           SELECT id, billing_plan AS "billingPlan" FROM tenants
           WHERE shop_domain = ${shopDomain}
           LIMIT 1
         `;
-      }
-      if (rows.length === 0) {
-        logger.warn({ subscriptionGid, shopDomain }, "billing/webhook: tenant not found");
-        return reply.code(200).send({ ok: true });
-      }
-      const tenant = rows[0]!;
-
-      const statusMap: Record<string, SubscriptionStatus> = {
-        ACTIVE: "active",
-        FROZEN: "frozen",
-        CANCELLED: "cancelled",
-        DECLINED: "cancelled",
-        EXPIRED: "cancelled",
-        PENDING: "pending",
-      };
-      const newStatus = statusMap[shopifyStatus.toUpperCase()] ?? "active";
-
-      if (newStatus === "frozen" || newStatus === "cancelled") {
-        await updateTenantBilling(tenant.id, {
-          billingPlan: "free",
-          billingInterval: "monthly",
-          subscriptionStatus: newStatus,
-          trialEndsAt: null,
-        });
-        await logBillingEvent({
-          tenantId: tenant.id,
-          eventType: `shopify_${newStatus}`,
-          fromPlan: tenant.billingPlan,
-          toPlan: "free",
-          shopifySubscriptionId: subscriptionGid,
-          metadata: { shopifyStatus, shopDomain },
-        });
-        logger.info({ tenantId: tenant.id, shopifyStatus }, "billing/webhook: downgraded to free");
-      } else {
-        await updateTenantBilling(tenant.id, { subscriptionStatus: newStatus });
-        await logBillingEvent({
-          tenantId: tenant.id,
-          eventType: `shopify_status_${newStatus}`,
-          shopifySubscriptionId: subscriptionGid,
-          metadata: { shopifyStatus, shopDomain },
-        });
-        logger.info({ tenantId: tenant.id, shopifyStatus, newStatus }, "billing/webhook: status updated");
-      }
-
+    }
+    if (rows.length === 0) {
+      logger.warn({ subscriptionGid, shopDomain }, "billing/webhook: tenant not found");
       return reply.code(200).send({ ok: true });
-    },
-  );
+    }
+    const tenant = rows[0]!;
+
+    const statusMap: Record<string, SubscriptionStatus> = {
+      ACTIVE: "active",
+      FROZEN: "frozen",
+      CANCELLED: "cancelled",
+      DECLINED: "cancelled",
+      EXPIRED: "cancelled",
+      PENDING: "pending",
+    };
+    const newStatus = statusMap[shopifyStatus.toUpperCase()] ?? "active";
+
+    if (newStatus === "frozen" || newStatus === "cancelled") {
+      await updateTenantBilling(tenant.id, {
+        billingPlan: "free",
+        billingInterval: "monthly",
+        subscriptionStatus: newStatus,
+        trialEndsAt: null,
+      });
+      await logBillingEvent({
+        tenantId: tenant.id,
+        eventType: `shopify_${newStatus}`,
+        fromPlan: tenant.billingPlan,
+        toPlan: "free",
+        shopifySubscriptionId: subscriptionGid,
+        metadata: { shopifyStatus, shopDomain },
+      });
+      logger.info({ tenantId: tenant.id, shopifyStatus }, "billing/webhook: downgraded to free");
+    } else {
+      await updateTenantBilling(tenant.id, { subscriptionStatus: newStatus });
+      await logBillingEvent({
+        tenantId: tenant.id,
+        eventType: `shopify_status_${newStatus}`,
+        shopifySubscriptionId: subscriptionGid,
+        metadata: { shopifyStatus, shopDomain },
+      });
+      logger.info(
+        { tenantId: tenant.id, shopifyStatus, newStatus },
+        "billing/webhook: status updated",
+      );
+    }
+
+    return reply.code(200).send({ ok: true });
+  });
 
   // ─── GET /billing/dashboard/:tenantId ────────────────────────────────────
 
@@ -386,14 +373,15 @@ export async function billingRoutes(app: FastifyInstance): Promise<void> {
         return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
       }
 
-      const [usage, usageHistory, billingEvents, revisionAnalytics, activeApps] =
-        await Promise.all([
+      const [usage, usageHistory, billingEvents, revisionAnalytics, activeApps] = await Promise.all(
+        [
           getOrCreateUsageRecord(tenantId),
           getUsageHistory(tenantId, 6),
           getBillingEvents(tenantId, 50),
           getRevisionAnalytics(tenantId),
           getActiveAppCount(tenantId),
-        ]);
+        ],
+      );
 
       const limits = getPlanLimits(tenant.billingPlan);
       return reply.send({

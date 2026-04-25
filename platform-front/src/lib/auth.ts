@@ -19,10 +19,9 @@ export function captureTokenFromUrl(): void {
     sessionStorage.setItem(TOKEN_KEY, token);
     // Remove token from URL to avoid leaking it in logs / copy-paste
     params.delete("token");
-    const cleaned =
-      params.toString()
-        ? `${window.location.pathname}?${params.toString()}`
-        : window.location.pathname;
+    const cleaned = params.toString()
+      ? `${window.location.pathname}?${params.toString()}`
+      : window.location.pathname;
     window.history.replaceState({}, "", cleaned);
   }
 }

@@ -10,10 +10,7 @@ import { registerWebhooks } from "./webhook-registrar.js";
 import { upsertDeployedFunction } from "./db-writer.js";
 import { deactivateRemovedWebhookSubscriptions } from "@platform-back/db";
 import { runMigrations } from "./migration-runner.js";
-import {
-  grantPlatformBackInvokerOnHandler,
-  provisionHandlerSa,
-} from "./sa-provisioner.js";
+import { grantPlatformBackInvokerOnHandler, provisionHandlerSa } from "./sa-provisioner.js";
 
 const IS_LOCAL = process.env["NODE_ENV"] === "development";
 
@@ -175,11 +172,7 @@ function pushEvent(ctx: JobContext): void {
   ctx.emitter.emit("event", structuredClone(ctx.state));
 }
 
-async function runStep<T>(
-  ctx: JobContext,
-  step: DeployStep,
-  fn: () => Promise<T>,
-): Promise<T> {
+async function runStep<T>(ctx: JobContext, step: DeployStep, fn: () => Promise<T>): Promise<T> {
   const stepState = ctx.state.steps.find((s) => s.step === step)!;
   stepState.status = "running";
   stepState.startedAt = new Date().toISOString();
@@ -199,10 +192,7 @@ async function runStep<T>(
   }
 }
 
-async function runDeploy(
-  ctx: JobContext,
-  input: StartDeployInput,
-): Promise<void> {
+async function runDeploy(ctx: JobContext, input: StartDeployInput): Promise<void> {
   let buildDir: string | undefined;
 
   try {
@@ -277,9 +267,7 @@ async function runDeploy(
     // 6. Grant platform-back's SA invoker on the new service.
     //    Local mode: no IAM — skip.
     await runStep(ctx, "grant_invoker", () =>
-      IS_LOCAL
-        ? Promise.resolve()
-        : grantPlatformBackInvokerOnHandler(input.appId),
+      IS_LOCAL ? Promise.resolve() : grantPlatformBackInvokerOnHandler(input.appId),
     );
 
     // 7. DB writes — record the active deployment.
@@ -354,10 +342,7 @@ async function runDeploy(
     ctx.state.status = "failed";
     ctx.state.error = err instanceof Error ? err.message : String(err);
     pushEvent(ctx);
-    logger.error(
-      { err, jobId: ctx.jobId, appId: input.appId },
-      "Deploy failed",
-    );
+    logger.error({ err, jobId: ctx.jobId, appId: input.appId }, "Deploy failed");
   } finally {
     if (buildDir) {
       await rm(buildDir, { recursive: true, force: true }).catch((err) => {
@@ -384,9 +369,7 @@ function buildHandlerEnv(input: StartDeployInput): Record<string, string> {
   // runner stays off. CRON_NOTIFY_CHANNEL is the Postgres LISTEN channel
   // the runner subscribes to — keyed on the app id so pg_cron's per-tick
   // NOTIFY only wakes the right handler.
-  const hasCronRoute = input.generatedFiles.some(
-    (f) => f.path === "src/routes/cron.ts",
-  );
+  const hasCronRoute = input.generatedFiles.some((f) => f.path === "src/routes/cron.ts");
 
   return {
     NODE_ENV: process.env["NODE_ENV"] ?? "production",

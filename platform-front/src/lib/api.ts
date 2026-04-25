@@ -64,21 +64,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   tenants: {
-    get: (tenantId: string) =>
-      request<Tenant>(`/tenants/${tenantId}`),
+    get: (tenantId: string) => request<Tenant>(`/tenants/${tenantId}`),
     create: (body: { slug: string; name: string; plan?: string }) =>
       request<Tenant>("/tenants", { method: "POST", body: JSON.stringify(body) }),
-    stats: (tenantId: string) =>
-      request<TenantStats>(`/tenants/${tenantId}/stats`),
+    stats: (tenantId: string) => request<TenantStats>(`/tenants/${tenantId}/stats`),
     logs: (tenantId: string, limit = 20) =>
       request<WebhookInvocationLogEntry[]>(`/tenants/${tenantId}/logs?limit=${limit}`),
   },
 
   apps: {
-    list: (tenantId: string) =>
-      request<App[]>(`/tenants/${tenantId}/apps`),
-    get: (tenantId: string, appId: string) =>
-      request<App>(`/tenants/${tenantId}/apps/${appId}`),
+    list: (tenantId: string) => request<App[]>(`/tenants/${tenantId}/apps`),
+    get: (tenantId: string, appId: string) => request<App>(`/tenants/${tenantId}/apps/${appId}`),
     create: (tenantId: string, body: { slug: string; name: string }) =>
       request<App>(`/tenants/${tenantId}/apps`, {
         method: "POST",
@@ -104,7 +100,9 @@ export const api = {
         method: "DELETE",
       }),
     widgetLogs: (tenantId: string, appId: string, limit = 50) =>
-      request<InvocationLogEntry[]>(`/tenants/${tenantId}/apps/${appId}/widget-logs?limit=${limit}`),
+      request<InvocationLogEntry[]>(
+        `/tenants/${tenantId}/apps/${appId}/widget-logs?limit=${limit}`,
+      ),
     adminLogs: (tenantId: string, appId: string, limit = 50) =>
       request<InvocationLogEntry[]>(`/tenants/${tenantId}/apps/${appId}/admin-logs?limit=${limit}`),
     getThemeTemplates: (tenantId: string, appId: string) =>
@@ -121,8 +119,7 @@ export const api = {
   },
 
   billing: {
-    usage: (tenantId: string) =>
-      request<BillingUsageResponse>(`/billing/usage/${tenantId}`),
+    usage: (tenantId: string) => request<BillingUsageResponse>(`/billing/usage/${tenantId}`),
     subscribe: (tenantId: string, plan: string, interval: "monthly" | "annual" = "monthly") =>
       request<{ confirmationUrl: string | null }>("/billing/subscribe", {
         method: "POST",
@@ -138,14 +135,12 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    result: (jobId: string) =>
-      request<GenerationResult>(`/generation/${jobId}/result`),
+    result: (jobId: string) => request<GenerationResult>(`/generation/${jobId}/result`),
     latestSession: (appId: string) =>
       request<LatestSessionResult>(`/generation/app/${appId}/latest`),
     latestCompletedSession: (appId: string) =>
       request<LatestSessionResult>(`/generation/app/${appId}/latest-completed`),
-    sessions: (appId: string) =>
-      request<SessionSummary[]>(`/generation/app/${appId}/sessions`),
+    sessions: (appId: string) => request<SessionSummary[]>(`/generation/app/${appId}/sessions`),
     approve: (jobId: string) =>
       request<{ deployed: boolean }>(`/generation/${jobId}/approve`, {
         method: "POST",
@@ -202,8 +197,7 @@ export const api = {
 
   email: {
     // Per-app email configuration
-    getConfig: (appId: string) =>
-      request<EmailConfigResponse>(`/email/apps/${appId}/config`),
+    getConfig: (appId: string) => request<EmailConfigResponse>(`/email/apps/${appId}/config`),
     updateConfig: (appId: string, body: EmailConfigUpdateBody) =>
       request<{ config: AppEmailConfig }>(`/email/apps/${appId}/config`, {
         method: "PUT",
@@ -215,10 +209,9 @@ export const api = {
         {
           method: "POST",
           body: JSON.stringify({ recipient }),
-        }
+        },
       ),
-    getStats: (appId: string) =>
-      request<EmailStatsSummary>(`/email/apps/${appId}/stats`),
+    getStats: (appId: string) => request<EmailStatsSummary>(`/email/apps/${appId}/stats`),
     // Tenant brand
     getBrand: (tenantId: string) =>
       request<{ brand: TenantBrand | null }>(`/email/tenants/${tenantId}/brand`),

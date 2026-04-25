@@ -20,8 +20,7 @@ vi.mock("@platform-back/db", () => ({
 
 vi.mock("@platform-back/files", () => ({
   SKIP_GCS: false,
-  buildObjectKey: (t: string, a: string, f: string) =>
-    `tenants/${t}/apps/${a}/${f}`,
+  buildObjectKey: (t: string, a: string, f: string) => `tenants/${t}/apps/${a}/${f}`,
   storeFile: vi.fn(),
   signReadUrl: vi.fn(),
   createResumableUploadUrl: vi.fn(),
@@ -81,7 +80,10 @@ const mockCreateUploadUrl = vi.mocked(createResumableUploadUrl);
 const mockGetSize = vi.mocked(getObjectSize);
 
 const SA_EMAIL = "h-acme-1@test.iam.gserviceaccount.com";
-const IDENTITY = { tenantId: "11111111-1111-1111-1111-111111111111", appId: "22222222-2222-2222-2222-222222222222" };
+const IDENTITY = {
+  tenantId: "11111111-1111-1111-1111-111111111111",
+  appId: "22222222-2222-2222-2222-222222222222",
+};
 const FILE_ID = "33333333-3333-3333-3333-333333333333";
 
 async function buildApp() {
@@ -325,9 +327,7 @@ describe("POST /services/files/create-upload-url", () => {
     const body = res.json();
     expect(body.fileId).toBe(FILE_ID);
     expect(body.uploadUrl).toMatch(/^https:\/\//);
-    expect(body.requiredHeaders["x-goog-content-length-range"]).toBe(
-      `0,${expected}`,
-    );
+    expect(body.requiredHeaders["x-goog-content-length-range"]).toBe(`0,${expected}`);
     expect(mockInsertPending).toHaveBeenCalledTimes(1);
     expect(mockDeleteRow).not.toHaveBeenCalled();
     await app.close();

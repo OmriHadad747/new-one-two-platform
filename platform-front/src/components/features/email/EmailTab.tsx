@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { useEmailConfig, useUpdateEmailConfig, useSendTestEmail, useEmailStats } from "@/hooks/useEmail";
+import {
+  useEmailConfig,
+  useUpdateEmailConfig,
+  useSendTestEmail,
+  useEmailStats,
+} from "@/hooks/useEmail";
 import type { EmailType } from "@/types/dashboard";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
@@ -97,7 +102,8 @@ export function EmailTab({ appId }: Props) {
   if (configQuery.isError || !configQuery.data?.config) {
     return (
       <div className="p-7 text-danger text-sm">
-        Failed to load email config. The app may not have been deployed yet, or it doesn't send emails.
+        Failed to load email config. The app may not have been deployed yet, or it doesn't send
+        emails.
       </div>
     );
   }
@@ -111,7 +117,8 @@ export function EmailTab({ appId }: Props) {
       {/* Unconfirmed banner */}
       {!configured && (
         <div className="mb-5 px-4 py-3 bg-amber-400/5 rounded-xl text-[13px] text-amber-400">
-          <strong>Email content needs review.</strong> Ton pre-filled this template from your app description. Review and save it before deploying — deploy is blocked until you confirm.
+          <strong>Email content needs review.</strong> Ton pre-filled this template from your app
+          description. Review and save it before deploying — deploy is blocked until you confirm.
         </div>
       )}
 
@@ -120,9 +127,7 @@ export function EmailTab({ appId }: Props) {
         <div
           className={cn(
             "mb-4 px-3 py-2 rounded-lg text-[12px]",
-            toast.kind === "ok"
-              ? "bg-teal/10 text-teal"
-              : "bg-danger/10 text-danger"
+            toast.kind === "ok" ? "bg-teal/10 text-teal" : "bg-danger/10 text-danger",
           )}
         >
           {toast.msg}
@@ -135,26 +140,39 @@ export function EmailTab({ appId }: Props) {
           <TypeButton
             label="Transactional"
             active={emailType === "transactional"}
-            onClick={() => { setEmailType("transactional"); markDirty(); }}
+            onClick={() => {
+              setEmailType("transactional");
+              markDirty();
+            }}
           />
           <TypeButton
             label="Marketing"
             active={emailType === "marketing"}
-            onClick={() => { setEmailType("marketing"); markDirty(); }}
+            onClick={() => {
+              setEmailType("marketing");
+              markDirty();
+            }}
           />
         </div>
         <p className="text-[11px] text-faint mt-2 leading-relaxed">
-          <strong>Transactional</strong> — Triggered by a customer action (order, subscription, cart). No consent required.
+          <strong>Transactional</strong> — Triggered by a customer action (order, subscription,
+          cart). No consent required.
           <br />
-          <strong>Marketing</strong> — Unsolicited outreach (newsletter, promo). Requires opt-in under CAN-SPAM / GDPR.
+          <strong>Marketing</strong> — Unsolicited outreach (newsletter, promo). Requires opt-in
+          under CAN-SPAM / GDPR.
           <br />
-          <span className="text-faint">Informational in MVP — does not change delivery behavior yet.</span>
+          <span className="text-faint">
+            Informational in MVP — does not change delivery behavior yet.
+          </span>
         </p>
       </Section>
 
       {/* Variables palette */}
       {variables.length > 0 && (
-        <Section title="Available variables" subtitle="Click a token to copy. Paste it into any field below.">
+        <Section
+          title="Available variables"
+          subtitle="Click a token to copy. Paste it into any field below."
+        >
           <div className="flex flex-wrap gap-1.5">
             {variables.map((v) => (
               <button
@@ -175,7 +193,10 @@ export function EmailTab({ appId }: Props) {
         <input
           type="text"
           value={subject}
-          onChange={(e) => { setSubject(e.target.value); markDirty(); }}
+          onChange={(e) => {
+            setSubject(e.target.value);
+            markDirty();
+          }}
           placeholder="Your cart is waiting — come back for {{cartTotal}}"
           className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
         />
@@ -185,7 +206,10 @@ export function EmailTab({ appId }: Props) {
         <input
           type="text"
           value={heading}
-          onChange={(e) => { setHeading(e.target.value); markDirty(); }}
+          onChange={(e) => {
+            setHeading(e.target.value);
+            markDirty();
+          }}
           placeholder="Hi {{customerName}}"
           className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
         />
@@ -194,26 +218,40 @@ export function EmailTab({ appId }: Props) {
       <Section title="Body" subtitle="Blank lines become paragraphs.">
         <textarea
           value={body}
-          onChange={(e) => { setBody(e.target.value); markDirty(); }}
+          onChange={(e) => {
+            setBody(e.target.value);
+            markDirty();
+          }}
           rows={8}
-          placeholder={"You left some items in your cart.\n\nCome back and complete your order before they're gone."}
+          placeholder={
+            "You left some items in your cart.\n\nCome back and complete your order before they're gone."
+          }
           className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none font-mono leading-relaxed"
         />
       </Section>
 
-      <Section title="Call-to-action button" subtitle="Optional. Both fields must be filled for the button to render.">
+      <Section
+        title="Call-to-action button"
+        subtitle="Optional. Both fields must be filled for the button to render."
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <input
             type="text"
             value={ctaLabel}
-            onChange={(e) => { setCtaLabel(e.target.value); markDirty(); }}
+            onChange={(e) => {
+              setCtaLabel(e.target.value);
+              markDirty();
+            }}
             placeholder="Return to checkout"
             className="px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none"
           />
           <input
             type="text"
             value={ctaUrl}
-            onChange={(e) => { setCtaUrl(e.target.value); markDirty(); }}
+            onChange={(e) => {
+              setCtaUrl(e.target.value);
+              markDirty();
+            }}
             placeholder="{{recoveryUrl}}"
             className="px-3 py-2 bg-white/[0.03] border border-white/[0.08] rounded-lg text-[13px] text-ink placeholder:text-faint focus:border-accent outline-none font-mono"
           />
@@ -250,7 +288,9 @@ export function EmailTab({ appId }: Props) {
 // ─── Small helpers ───────────────────────────────────────────────────────────
 
 function Section({
-  title, subtitle, children,
+  title,
+  subtitle,
+  children,
 }: {
   title: string;
   subtitle?: string;
@@ -267,7 +307,15 @@ function Section({
   );
 }
 
-function TypeButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function TypeButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
@@ -276,7 +324,7 @@ function TypeButton({ label, active, onClick }: { label: string; active: boolean
         "px-3 py-1.5 text-[12px] font-medium rounded-lg transition-colors cursor-pointer",
         active
           ? "text-accent bg-accent/10"
-          : "bg-white/[0.04] text-faint hover:text-ink hover:bg-white/[0.08]"
+          : "bg-white/[0.04] text-faint hover:text-ink hover:bg-white/[0.08]",
       )}
     >
       {label}
@@ -284,14 +332,24 @@ function TypeButton({ label, active, onClick }: { label: string; active: boolean
   );
 }
 
-function StatCell({ label, value, positive, negative }: { label: string; value: number; positive?: boolean; negative?: boolean }) {
+function StatCell({
+  label,
+  value,
+  positive,
+  negative,
+}: {
+  label: string;
+  value: number;
+  positive?: boolean;
+  negative?: boolean;
+}) {
   return (
     <div className="px-3 py-2 rounded-xl bg-white/[0.03]">
       <div className="text-[10px] uppercase tracking-wide text-faint">{label}</div>
       <div
         className={cn(
           "text-[18px] font-semibold tabular-nums",
-          positive ? "text-teal" : negative ? "text-danger" : "text-ink"
+          positive ? "text-teal" : negative ? "text-danger" : "text-ink",
         )}
       >
         {value.toLocaleString()}

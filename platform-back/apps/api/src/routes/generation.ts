@@ -42,10 +42,7 @@ import { registerProgressListener } from "../pubsub/progress-subscriber.js";
 import { ErrorCode, errorResponse } from "../lib/error-response.js";
 import { requireTenant } from "../plugins/auth.js";
 import { getGenerationBundle } from "../lib/bundle-storage.js";
-import {
-  canStartGeneration,
-  isCategoryAllowed,
-} from "../lib/plan-enforcement.js";
+import { canStartGeneration, isCategoryAllowed } from "../lib/plan-enforcement.js";
 
 // ─── Request schemas ──────────────────────────────────────────────────────────
 
@@ -98,9 +95,7 @@ const ChatBodySchema = z.object({
  * (errorMessage, prompt, webhookTopics, cronSchedule, chatMessages,
  * appVersionId) on the same payload.
  */
-async function serializeGeneration(
-  row: GenerationRow,
-): Promise<Record<string, unknown>> {
+async function serializeGeneration(row: GenerationRow): Promise<Record<string, unknown>> {
   const bundle = row.bundleGcsPath
     ? await getGenerationBundle(row.bundleGcsPath).catch(() => null)
     : null;
@@ -141,47 +136,21 @@ function serializeSessionSummary(row: GenerationRow): Record<string, unknown> {
 
 // ─── Route registration ────────────────────────────────────────────────────────
 
-export async function generationLifecycleRoutes(
-  app: FastifyInstance,
-): Promise<void> {
+export async function generationLifecycleRoutes(app: FastifyInstance): Promise<void> {
   app.post("/generation", startGenerationHandler);
   app.post("/generation/analyze", analyzeHandler);
-  app.get<{ Params: { jobId: string } }>(
-    "/generation/:jobId/progress",
-    progressHandler,
-  );
-  app.get<{ Params: { jobId: string } }>(
-    "/generation/:jobId/result",
-    resultHandler,
-  );
-  app.post<{ Params: { jobId: string } }>(
-    "/generation/:jobId/approve",
-    approveHandler,
-  );
-  app.post<{ Params: { jobId: string } }>(
-    "/generation/:jobId/revise",
-    reviseHandler,
-  );
-  app.post<{ Params: { jobId: string } }>(
-    "/generation/:jobId/cancel",
-    cancelHandler,
-  );
-  app.patch<{ Params: { jobId: string } }>(
-    "/generation/:jobId/chat",
-    saveChatHandler,
-  );
-  app.get<{ Params: { appId: string } }>(
-    "/generation/app/:appId/latest",
-    latestHandler,
-  );
+  app.get<{ Params: { jobId: string } }>("/generation/:jobId/progress", progressHandler);
+  app.get<{ Params: { jobId: string } }>("/generation/:jobId/result", resultHandler);
+  app.post<{ Params: { jobId: string } }>("/generation/:jobId/approve", approveHandler);
+  app.post<{ Params: { jobId: string } }>("/generation/:jobId/revise", reviseHandler);
+  app.post<{ Params: { jobId: string } }>("/generation/:jobId/cancel", cancelHandler);
+  app.patch<{ Params: { jobId: string } }>("/generation/:jobId/chat", saveChatHandler);
+  app.get<{ Params: { appId: string } }>("/generation/app/:appId/latest", latestHandler);
   app.get<{ Params: { appId: string } }>(
     "/generation/app/:appId/latest-completed",
     latestCompletedHandler,
   );
-  app.get<{ Params: { appId: string } }>(
-    "/generation/app/:appId/sessions",
-    sessionsHandler,
-  );
+  app.get<{ Params: { appId: string } }>("/generation/app/:appId/sessions", sessionsHandler);
 }
 
 // ─── Handlers ──────────────────────────────────────────────────────────────────
@@ -195,11 +164,7 @@ async function startGenerationHandler(
     return reply
       .code(400)
       .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Invalid request body",
-          parsed.error.flatten(),
-        ),
+        errorResponse(ErrorCode.InvalidRequest, "Invalid request body", parsed.error.flatten()),
       );
   }
   const { appId, tenantId, prompt, preComputedIntent } = parsed.data;
@@ -208,9 +173,7 @@ async function startGenerationHandler(
 
   const appRecord = await getAppByIdUnsafe(appId);
   if (!appRecord || appRecord.tenantId !== tenantId) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
 
   // Plan gates — generations-per-month and category allow-list. Merchant
@@ -218,33 +181,27 @@ async function startGenerationHandler(
   // dashboard (NewAppPage.tsx).
   const tenant = await getTenantById(tenantId);
   if (!tenant) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Tenant not found"));
   }
 
   const genGate = await canStartGeneration(tenant);
   if (!genGate.allowed) {
-    return reply
-      .code(402)
-      .send(
-        errorResponse(ErrorCode.PlanLimited, genGate.reason ?? "Plan limit reached", {
-          upgradeHint: genGate.upgradeHint,
-        }),
-      );
+    return reply.code(402).send(
+      errorResponse(ErrorCode.PlanLimited, genGate.reason ?? "Plan limit reached", {
+        upgradeHint: genGate.upgradeHint,
+      }),
+    );
   }
   const archetype = preComputedIntent?.appCategory;
   if (archetype) {
     const catGate = isCategoryAllowed(tenant.billingPlan, archetype);
     if (!catGate.allowed) {
-      return reply
-        .code(402)
-        .send(
-          errorResponse(ErrorCode.PlanLimited, catGate.reason ?? "Category not allowed", {
-            upgradeHint: catGate.upgradeHint,
-            archetype,
-          }),
-        );
+      return reply.code(402).send(
+        errorResponse(ErrorCode.PlanLimited, catGate.reason ?? "Category not allowed", {
+          upgradeHint: catGate.upgradeHint,
+          archetype,
+        }),
+      );
     }
   }
 
@@ -276,20 +233,14 @@ async function analyzeHandler(
     return reply
       .code(400)
       .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Invalid request body",
-          parsed.error.flatten(),
-        ),
+        errorResponse(ErrorCode.InvalidRequest, "Invalid request body", parsed.error.flatten()),
       );
   }
 
   const generatorUrl = process.env["GENERATOR_URL"];
   if (!generatorUrl) {
     logger.error("GENERATOR_URL not configured — /generation/analyze disabled");
-    return reply
-      .code(503)
-      .send(errorResponse(ErrorCode.Internal, "Analyzer unavailable"));
+    return reply.code(503).send(errorResponse(ErrorCode.Internal, "Analyzer unavailable"));
   }
 
   const target = `${generatorUrl.replace(/\/+$/, "")}/analyze`;
@@ -304,9 +255,7 @@ async function analyzeHandler(
     return reply.send(text);
   } catch (err) {
     logger.error({ err, target }, "Analyze proxy failed");
-    return reply
-      .code(502)
-      .send(errorResponse(ErrorCode.BadGateway, "Analyzer unreachable"));
+    return reply.code(502).send(errorResponse(ErrorCode.BadGateway, "Analyzer unreachable"));
   }
 }
 
@@ -344,10 +293,7 @@ async function progressHandler(
     }
   };
 
-  const emitTerminal = async (
-    status: "success" | "failed",
-    rawEvent: Record<string, unknown>,
-  ) => {
+  const emitTerminal = async (status: "success" | "failed", rawEvent: Record<string, unknown>) => {
     // Read meta + error details from the generations row so the
     // synthesized CompletedEvent carries the cost numbers the dashboard
     // displays. One PK lookup, fire-and-forget on error.
@@ -405,9 +351,7 @@ async function resultHandler(
   const { jobId } = req.params;
   const row = await getGenerationByJobId(jobId);
   if (!row) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Generation not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Generation not found"));
   }
   if (!requireTenant(req, reply, row.tenantId)) return;
   return reply.send(await serializeGeneration(row));
@@ -424,12 +368,15 @@ async function approveHandler(
   }
   if (!requireTenant(req, reply, row.tenantId)) return;
   if (row.status !== "success" || !row.bundleGcsPath) {
-    return reply.code(409).send(errorResponse(ErrorCode.Conflict, "Generation not complete or bundle missing"));
+    return reply
+      .code(409)
+      .send(errorResponse(ErrorCode.Conflict, "Generation not complete or bundle missing"));
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const bundle = (await getGenerationBundle(row.bundleGcsPath)) as any;
-  const handlerFiles: Array<{ path: string; contents: string }> = bundle?.handlerModule?.files ?? [];
+  const handlerFiles: Array<{ path: string; contents: string }> =
+    bundle?.handlerModule?.files ?? [];
   const migrationFile = bundle?.dbMigration ?? null;
   if (!handlerFiles.length || !migrationFile) {
     return reply.code(500).send(errorResponse(ErrorCode.Internal, "Bundle malformed"));
@@ -439,7 +386,8 @@ async function approveHandler(
     getAppByIdUnsafe(row.appId),
     getAppSlugs(row.appId),
   ]);
-  if (!appRecord || !slugs) return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
+  if (!appRecord || !slugs)
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
 
   const webhookTopics: string[] = Array.isArray(bundle?.handlerModule?.webhookTopics)
     ? (bundle.handlerModule.webhookTopics as unknown[]).filter(
@@ -479,7 +427,9 @@ async function reviseHandler(
 
   const parsed = ReviseBodySchema.safeParse(req.body);
   if (!parsed.success) {
-    return reply.code(400).send(errorResponse(ErrorCode.InvalidRequest, "Invalid body", parsed.error.flatten()));
+    return reply
+      .code(400)
+      .send(errorResponse(ErrorCode.InvalidRequest, "Invalid body", parsed.error.flatten()));
   }
 
   const priorRow = await getGenerationByJobId(jobId);
@@ -502,7 +452,7 @@ async function reviseHandler(
     appId: priorRow.appId,
     prompt: parsed.data.feedback,
     priorBundle: priorRow.bundleGcsPath
-      ? (await getGenerationBundle(priorRow.bundleGcsPath) as Record<string, unknown>)
+      ? ((await getGenerationBundle(priorRow.bundleGcsPath)) as Record<string, unknown>)
       : null,
   });
 
@@ -517,9 +467,7 @@ async function cancelHandler(
   const { jobId } = req.params;
   const row = await getGenerationByJobId(jobId);
   if (!row) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Generation not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Generation not found"));
   }
   if (!requireTenant(req, reply, row.tenantId)) return;
 
@@ -538,20 +486,12 @@ async function saveChatHandler(
   if (!parsed.success) {
     return reply
       .code(400)
-      .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Invalid body",
-          parsed.error.flatten(),
-        ),
-      );
+      .send(errorResponse(ErrorCode.InvalidRequest, "Invalid body", parsed.error.flatten()));
   }
 
   const row = await getGenerationByJobId(jobId);
   if (!row) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Generation not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Generation not found"));
   }
   if (!requireTenant(req, reply, row.tenantId)) return;
 

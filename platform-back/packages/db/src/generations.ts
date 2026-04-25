@@ -35,17 +35,13 @@ export interface UpsertGenerationInput {
  * otherwise be nuked by a late redelivery). Conflict path also bumps
  * updated_at via the table's trigger.
  */
-export async function upsertGeneration(
-  input: UpsertGenerationInput,
-): Promise<void> {
+export async function upsertGeneration(input: UpsertGenerationInput): Promise<void> {
   // postgres.js auto-serializes JS objects to JSONB when the column type
   // is JSONB; no explicit sql.json() wrapper needed. Pre-stringify when
   // passing `unknown` values so the postgres.js parameter inference picks
   // the JSONB path regardless of the runtime shape.
   const metaJson =
-    input.meta === undefined || input.meta === null
-      ? null
-      : JSON.stringify(input.meta);
+    input.meta === undefined || input.meta === null ? null : JSON.stringify(input.meta);
   const webhookTopicsJson = JSON.stringify(input.webhookTopics ?? []);
 
   await sql`
@@ -119,9 +115,7 @@ const GENERATION_COLUMNS = sql`
  * Look up a single generation by jobId. Used by the dashboard deploy
  * button to fetch the persisted bundle before POST /apps/:appId/deploy.
  */
-export async function getGenerationByJobId(
-  jobId: string,
-): Promise<GenerationRow | null> {
+export async function getGenerationByJobId(jobId: string): Promise<GenerationRow | null> {
   const rows = await sql<Array<GenerationRow>>`
     SELECT ${GENERATION_COLUMNS}
     FROM generations
@@ -215,9 +209,7 @@ export async function cancelPendingGeneration(jobId: string): Promise<boolean> {
 }
 
 /** Latest generation for an app (any status). */
-export async function getLatestGenerationForApp(
-  appId: string,
-): Promise<GenerationRow | null> {
+export async function getLatestGenerationForApp(appId: string): Promise<GenerationRow | null> {
   const rows = await sql<Array<GenerationRow>>`
     SELECT ${GENERATION_COLUMNS}
     FROM generations
@@ -243,10 +235,7 @@ export async function getLatestCompletedGenerationForApp(
 }
 
 /** List recent generations for an app (newest-first, limit 20). */
-export async function listGenerationsForApp(
-  appId: string,
-  limit = 20,
-): Promise<GenerationRow[]> {
+export async function listGenerationsForApp(appId: string, limit = 20): Promise<GenerationRow[]> {
   return sql<Array<GenerationRow>>`
     SELECT ${GENERATION_COLUMNS}
     FROM generations

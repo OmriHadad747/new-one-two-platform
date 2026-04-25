@@ -1,4 +1,9 @@
-import type { BillingPlan, BillingInterval, SubscriptionStatus, RevisionClassification } from "@platform-back/types";
+import type {
+  BillingPlan,
+  BillingInterval,
+  SubscriptionStatus,
+  RevisionClassification,
+} from "@platform-back/types";
 import { sql } from "./connection.js";
 
 export interface BillingEvent {
@@ -63,10 +68,7 @@ export async function logBillingEvent(params: {
   `;
 }
 
-export async function getBillingEvents(
-  tenantId: string,
-  limit = 50,
-): Promise<BillingEvent[]> {
+export async function getBillingEvents(tenantId: string, limit = 50): Promise<BillingEvent[]> {
   return sql<BillingEvent[]>`
     SELECT
       id,
@@ -105,9 +107,7 @@ export async function storeRevisionClassification(params: {
   `;
 }
 
-export async function getRevisionAnalytics(
-  tenantId: string,
-): Promise<RevisionAnalytics> {
+export async function getRevisionAnalytics(tenantId: string): Promise<RevisionAnalytics> {
   const rows = await sql<Array<{ classification: string; count: string }>>`
     SELECT classification, COUNT(*)::TEXT AS count
     FROM revision_classifications

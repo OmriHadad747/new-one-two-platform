@@ -67,10 +67,7 @@ export async function deployRoutes(app: FastifyInstance): Promise<void> {
     },
     deployHandler,
   );
-  app.get<{ Params: { jobId: string } }>(
-    "/deploy/jobs/:jobId",
-    deployStreamHandler,
-  );
+  app.get<{ Params: { jobId: string } }>("/deploy/jobs/:jobId", deployStreamHandler);
 }
 
 // ─── POST /apps/:appId/deploy ────────────────────────────────────────────────
@@ -81,14 +78,9 @@ async function deployHandler(
 ): Promise<FastifyReply | void> {
   const { appId } = req.params;
 
-  const [appRecord, slugs] = await Promise.all([
-    getAppByIdUnsafe(appId),
-    getAppSlugs(appId),
-  ]);
+  const [appRecord, slugs] = await Promise.all([getAppByIdUnsafe(appId), getAppSlugs(appId)]);
   if (!appRecord || !slugs) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "App not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "App not found"));
   }
   if (!requireTenant(req, reply, appRecord.tenantId)) return;
 
@@ -96,13 +88,7 @@ async function deployHandler(
   if (!parsed.success) {
     return reply
       .code(400)
-      .send(
-        errorResponse(
-          ErrorCode.InvalidRequest,
-          "Invalid deploy body",
-          parsed.error.flatten(),
-        ),
-      );
+      .send(errorResponse(ErrorCode.InvalidRequest, "Invalid deploy body", parsed.error.flatten()));
   }
 
   // Per-app Postgres schema. Tenant-app isolation is schema-level: one
@@ -121,9 +107,7 @@ async function deployHandler(
       tenantSlug: slugs.tenantSlug,
       tenantSchema,
       generatedFiles: parsed.data.generatedFiles,
-      ...(parsed.data.handlerEnv === undefined
-        ? {}
-        : { handlerEnv: parsed.data.handlerEnv }),
+      ...(parsed.data.handlerEnv === undefined ? {} : { handlerEnv: parsed.data.handlerEnv }),
       cronSchedule: parsed.data.cronSchedule ?? null,
       webhookTopics: parsed.data.webhookTopics ?? [],
     });
@@ -131,11 +115,7 @@ async function deployHandler(
     return reply.code(202).send({ jobId });
   } catch (err) {
     req.log.error({ err, appId }, "Failed to register deploy job");
-    return reply
-      .code(500)
-      .send(
-        errorResponse(ErrorCode.Internal, "Failed to start deploy"),
-      );
+    return reply.code(500).send(errorResponse(ErrorCode.Internal, "Failed to start deploy"));
   }
 }
 
@@ -148,9 +128,7 @@ async function deployStreamHandler(
   const { jobId } = req.params;
   const initial = getDeployJob(jobId);
   if (!initial) {
-    return reply
-      .code(404)
-      .send(errorResponse(ErrorCode.NotFound, "Deploy job not found"));
+    return reply.code(404).send(errorResponse(ErrorCode.NotFound, "Deploy job not found"));
   }
   if (!requireTenant(req, reply, initial.tenantId)) return;
 

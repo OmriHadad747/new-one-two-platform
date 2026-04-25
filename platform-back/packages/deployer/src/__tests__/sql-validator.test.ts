@@ -17,29 +17,21 @@ describe("validateMigrationSql — passes valid DDL", () => {
   });
 
   it("accepts CREATE INDEX", () => {
-    expect(() =>
-      validateMigrationSql("CREATE INDEX idx_foo ON foo (bar);"),
-    ).not.toThrow();
+    expect(() => validateMigrationSql("CREATE INDEX idx_foo ON foo (bar);")).not.toThrow();
   });
 
   it("accepts CREATE UNIQUE INDEX", () => {
-    expect(() =>
-      validateMigrationSql("CREATE UNIQUE INDEX idx_foo ON foo (bar);"),
-    ).not.toThrow();
+    expect(() => validateMigrationSql("CREATE UNIQUE INDEX idx_foo ON foo (bar);")).not.toThrow();
   });
 
   it("accepts ALTER TABLE ADD COLUMN IF NOT EXISTS", () => {
     expect(() =>
-      validateMigrationSql(
-        "ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes TEXT;",
-      ),
+      validateMigrationSql("ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes TEXT;"),
     ).not.toThrow();
   });
 
   it("accepts COMMENT ON", () => {
-    expect(() =>
-      validateMigrationSql("COMMENT ON TABLE orders IS 'order records';"),
-    ).not.toThrow();
+    expect(() => validateMigrationSql("COMMENT ON TABLE orders IS 'order records';")).not.toThrow();
   });
 });
 
@@ -70,21 +62,15 @@ describe("validateMigrationSql — rejects destructive statements", () => {
 
 describe("validateMigrationSql — rejects privilege/transaction escapes", () => {
   it("rejects CONCURRENTLY", () => {
-    expect(() =>
-      validateMigrationSql("CREATE INDEX CONCURRENTLY idx ON foo (bar);"),
-    ).toThrow();
+    expect(() => validateMigrationSql("CREATE INDEX CONCURRENTLY idx ON foo (bar);")).toThrow();
   });
 
   it("rejects GRANT", () => {
-    expect(() =>
-      validateMigrationSql("GRANT SELECT ON orders TO readonly;"),
-    ).toThrow();
+    expect(() => validateMigrationSql("GRANT SELECT ON orders TO readonly;")).toThrow();
   });
 
   it("rejects REVOKE", () => {
-    expect(() =>
-      validateMigrationSql("REVOKE SELECT ON orders FROM readonly;"),
-    ).toThrow();
+    expect(() => validateMigrationSql("REVOKE SELECT ON orders FROM readonly;")).toThrow();
   });
 
   it("rejects SET ROLE", () => {
@@ -92,41 +78,29 @@ describe("validateMigrationSql — rejects privilege/transaction escapes", () =>
   });
 
   it("rejects SET SESSION AUTHORIZATION", () => {
-    expect(() =>
-      validateMigrationSql("SET SESSION AUTHORIZATION alice;"),
-    ).toThrow();
+    expect(() => validateMigrationSql("SET SESSION AUTHORIZATION alice;")).toThrow();
   });
 
   it("rejects ALTER POLICY", () => {
-    expect(() =>
-      validateMigrationSql("ALTER POLICY my_policy ON foo USING (true);"),
-    ).toThrow();
+    expect(() => validateMigrationSql("ALTER POLICY my_policy ON foo USING (true);")).toThrow();
   });
 
   it("rejects ALTER ROLE", () => {
-    expect(() =>
-      validateMigrationSql("ALTER ROLE bob SET search_path TO public;"),
-    ).toThrow();
+    expect(() => validateMigrationSql("ALTER ROLE bob SET search_path TO public;")).toThrow();
   });
 });
 
 describe("validateMigrationSql — rejects code-execution escapes", () => {
   it("rejects DO $$ … $$", () => {
-    expect(() =>
-      validateMigrationSql("DO $$ BEGIN NULL; END $$;"),
-    ).toThrow();
+    expect(() => validateMigrationSql("DO $$ BEGIN NULL; END $$;")).toThrow();
   });
 
   it("rejects COPY … FROM PROGRAM", () => {
-    expect(() =>
-      validateMigrationSql("COPY foo FROM PROGRAM 'echo hello';"),
-    ).toThrow();
+    expect(() => validateMigrationSql("COPY foo FROM PROGRAM 'echo hello';")).toThrow();
   });
 
   it("rejects CREATE EXTENSION", () => {
-    expect(() =>
-      validateMigrationSql("CREATE EXTENSION IF NOT EXISTS pg_trgm;"),
-    ).toThrow();
+    expect(() => validateMigrationSql("CREATE EXTENSION IF NOT EXISTS pg_trgm;")).toThrow();
   });
 
   it("rejects CREATE FUNCTION", () => {
@@ -137,28 +111,28 @@ describe("validateMigrationSql — rejects code-execution escapes", () => {
 
   it("rejects CREATE OR REPLACE FUNCTION", () => {
     expect(() =>
-      validateMigrationSql("CREATE OR REPLACE FUNCTION my_fn() RETURNS void AS $$ $$ LANGUAGE sql;"),
+      validateMigrationSql(
+        "CREATE OR REPLACE FUNCTION my_fn() RETURNS void AS $$ $$ LANGUAGE sql;",
+      ),
     ).toThrow();
   });
 
   it("rejects CREATE TRIGGER", () => {
     expect(() =>
-      validateMigrationSql("CREATE TRIGGER trig AFTER INSERT ON foo FOR EACH ROW EXECUTE FUNCTION fn();"),
+      validateMigrationSql(
+        "CREATE TRIGGER trig AFTER INSERT ON foo FOR EACH ROW EXECUTE FUNCTION fn();",
+      ),
     ).toThrow();
   });
 });
 
 describe("validateMigrationSql — rejects legacy RLS patterns", () => {
   it("rejects ENABLE ROW LEVEL SECURITY", () => {
-    expect(() =>
-      validateMigrationSql("ALTER TABLE foo ENABLE ROW LEVEL SECURITY;"),
-    ).toThrow();
+    expect(() => validateMigrationSql("ALTER TABLE foo ENABLE ROW LEVEL SECURITY;")).toThrow();
   });
 
   it("rejects CREATE POLICY", () => {
-    expect(() =>
-      validateMigrationSql("CREATE POLICY my_policy ON foo USING (true);"),
-    ).toThrow();
+    expect(() => validateMigrationSql("CREATE POLICY my_policy ON foo USING (true);")).toThrow();
   });
 });
 
@@ -170,9 +144,7 @@ describe("validateMigrationSql — rejects cron scheduling", () => {
   });
 
   it("rejects cron.unschedule", () => {
-    expect(() =>
-      validateMigrationSql("SELECT cron.unschedule('job');"),
-    ).toThrow();
+    expect(() => validateMigrationSql("SELECT cron.unschedule('job');")).toThrow();
   });
 });
 
@@ -213,9 +185,7 @@ describe("makeIdempotent", () => {
   });
 
   it("wraps CREATE POLICY in DO $migration$ block", () => {
-    const out = makeIdempotent(
-      "CREATE POLICY my_policy ON foo USING (true);",
-    );
+    const out = makeIdempotent("CREATE POLICY my_policy ON foo USING (true);");
     expect(out).toContain("DO $migration$");
     expect(out).toContain("EXCEPTION WHEN duplicate_object THEN NULL");
     expect(out).toContain("END $migration$");
