@@ -2,6 +2,36 @@ import { shopifyApi, LATEST_API_VERSION, Session } from "@shopify/shopify-api";
 import "@shopify/shopify-api/adapters/node";
 import { callPlatformService } from "./platform-call.js";
 
+/**
+ * Thrown when the HTTP-level retry wrapper around a Shopify call (REST,
+ * GraphQL, or storefront fetch) exhausts its attempt budget on
+ * rate-limit / transient-5xx / network errors. Handlers should catch
+ * this specifically when they want to surface a degraded outcome
+ * (e.g. nack a queue job for later retry) instead of letting it land
+ * in the generic 500 path.
+ *
+ * Cost-based GraphQL throttles (THROTTLED extension) come from the same
+ * wrapper hierarchy — `requestWithThrottleRetry` raises this error when
+ * its own budget exhausts, so callers don't have to differentiate.
+ */
+export class ShopifyRateLimitError extends Error {
+  readonly attempts: number;
+  readonly status: number | undefined;
+  readonly totalWaitMs: number;
+  readonly label: string;
+  constructor(
+    message: string,
+    opts: { label: string; attempts: number; status?: number; totalWaitMs: number },
+  ) {
+    super(message);
+    this.name = "ShopifyRateLimitError";
+    this.label = opts.label;
+    this.attempts = opts.attempts;
+    this.status = opts.status;
+    this.totalWaitMs = opts.totalWaitMs;
+  }
+}
+
 // Per-request Shopify client helper.
 //
 // Generator call sites look like:
@@ -121,14 +151,20 @@ export async function shopifyClientFor(platform?: ShopifyClientContext): Promise
   }
 
   // Hoisted so graphqlPaginate and bulkQuery can call it without wrestling
-  // with method-this binding inside async generators. Handles both 401 refresh
-  // and cost-based-throttle backoff internally — callers see only `data`
-  // (or a thrown error after retries are exhausted).
+  // with method-this binding inside async generators. Three retry layers
+  // stack here, each owning a distinct failure class:
+  //   withRetry          — HTTP 429 + transient 5xx + network (TD-003)
+  //   with401Retry       — one-shot token refresh on 401
+  //   requestWithThrottleRetry — GraphQL cost-based THROTTLED extension
+  // Callers see `data` on success or a thrown error after every layer
+  // has exhausted its budget.
   async function graphqlImpl(query: string, variables?: Record<string, unknown>): Promise<unknown> {
-    return with401Retry(async (session) => {
-      const client = new api.clients.Graphql({ session });
-      return requestWithThrottleRetry(client, query, variables);
-    });
+    return withRetry("graphql", () =>
+      with401Retry(async (session) => {
+        const client = new api.clients.Graphql({ session });
+        return requestWithThrottleRetry(client, query, variables);
+      }),
+    );
   }
 
   return {
@@ -256,7 +292,10 @@ export async function shopifyClientFor(platform?: ShopifyClientContext): Promise
       // 3. Download JSONL and yield one object per line. JSON.parse is
       // wrapped per line so a single corrupted line surfaces with line
       // number + excerpt instead of an opaque SyntaxError mid-stream.
-      const resp = await fetch(downloadUrl);
+      // The fetch itself is retried for HTTP 429 / 5xx / network — the
+      // bulk-op URL is a Google Cloud Storage signed link with a finite
+      // TTL, so we don't loop forever.
+      const resp = await fetchWithRetry("bulkQuery.download", downloadUrl);
       if (!resp.ok || !resp.body) {
         throw new Error(
           `shopifyClientFor.bulkQuery: JSONL download failed (status=${resp.status})`,
@@ -313,7 +352,7 @@ export async function shopifyClientFor(platform?: ShopifyClientContext): Promise
         );
       }
       const url = `https://${shopDomain}/api/${LATEST_API_VERSION}/graphql.json`;
-      const resp = await fetch(url, {
+      const resp = await fetchWithRetry("storefront", url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -346,6 +385,243 @@ const BULK_POLL_INTERVAL_MS = 3_000;
 // RUNNING op doesn't pin the container forever. Override per-call via
 // `bulkQuery(query, { maxPollMs })` for deliberately long exports.
 const BULK_DEFAULT_MAX_POLL_MS = 15 * 60_000;
+
+// ─── HTTP-level retry: 429 / 5xx / network ──────────────────────────────────
+//
+// Sits ABOVE with401Retry and ABOVE the GraphQL cost-throttle wrapper. Every
+// upstream Shopify call (graphql, storefront fetch, bulk JSONL download) goes
+// through this — generated handler code MUST NOT roll its own setTimeout
+// retry loop around shopify.* calls.
+//
+// Policy (uniform, not configurable):
+//   - 4 attempts total (1 initial + 3 retries).
+//   - Retry on: HTTP 429; HTTP 502/503/504; network errors (ECONNRESET,
+//     ETIMEDOUT, ENOTFOUND, EAI_AGAIN, ECONNREFUSED, EPIPE, ENETUNREACH).
+//   - 429 delay: Retry-After header (seconds OR HTTP-date, RFC 7231) when
+//     present and parseable. Otherwise full-jitter exponential.
+//   - 5xx / network delay: full-jitter exponential — random_between(0, cap)
+//     where cap follows 500ms · 1s · 2s · 4s.
+//   - Total sleep budget: 10 s across all retries. Past the cap, throw.
+//   - Anything else (4xx other than 429, MAX_COST_EXCEEDED, THROTTLED that
+//     escaped the inner cost-throttle wrapper) bubbles unmodified — those
+//     are caller bugs or "rate-limited beyond what an additional retry can
+//     fix" terminals.
+//
+// On give-up the wrapper raises ShopifyRateLimitError — handlers can catch
+// that specifically without distinguishing 429 from a transient 503.
+
+const RETRY_MAX_ATTEMPTS = 4;
+const RETRY_TOTAL_BUDGET_MS = 10_000;
+const RETRY_BASE_DELAY_MS = 500;
+const RETRY_BACKOFF_CAP_MS = 4_000;
+const RETRY_RETRYABLE_HTTP_STATUSES = new Set<number>([429, 502, 503, 504]);
+const RETRY_NETWORK_ERROR_CODES = new Set<string>([
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "EPIPE",
+  "ENETUNREACH",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+interface TransientInfo {
+  status?: number;
+  networkError: boolean;
+  retryAfterMs?: number;
+}
+
+function parseRetryAfter(header: string | null | undefined): number | null {
+  if (!header) return null;
+  const trimmed = header.trim();
+  if (!trimmed) return null;
+  // Integer / decimal seconds (the common form Shopify emits).
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1000);
+  }
+  // HTTP-date — clamp negative deltas to 0 so a clock-skewed past timestamp
+  // doesn't make us spin without sleeping.
+  const ts = Date.parse(trimmed);
+  if (Number.isFinite(ts)) {
+    const delta = ts - Date.now();
+    return delta > 0 ? delta : 0;
+  }
+  return null;
+}
+
+function readHeader(headers: unknown, name: string): string | null {
+  if (!headers) return null;
+  const lower = name.toLowerCase();
+  if (typeof (headers as { get?: unknown }).get === "function") {
+    const val = (headers as { get: (k: string) => string | null }).get(name);
+    return typeof val === "string" ? val : null;
+  }
+  if (typeof headers === "object") {
+    const obj = headers as Record<string, unknown>;
+    for (const key of Object.keys(obj)) {
+      if (key.toLowerCase() === lower) {
+        const v = obj[key];
+        return typeof v === "string" ? v : null;
+      }
+    }
+  }
+  return null;
+}
+
+function isCostThrottledError(err: unknown): boolean {
+  // GraphQL THROTTLED extension — the cost-throttle wrapper owns this. If
+  // it bubbles up here, the inner wrapper already exhausted its budget and
+  // an additional retry at this layer adds latency without fixing
+  // anything; better to surface immediately.
+  if (!err || typeof err !== "object") return false;
+  const anyErr = err as {
+    response?: { errors?: unknown };
+    body?: { errors?: unknown };
+    errors?: unknown;
+  };
+  const responseLike = anyErr.response ?? anyErr.body ?? anyErr;
+  const errors = (responseLike as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) return false;
+  return errors.some((e) => {
+    if (!e || typeof e !== "object") return false;
+    return (e as { extensions?: { code?: string } }).extensions?.code === "THROTTLED";
+  });
+}
+
+function classifyTransient(err: unknown): TransientInfo | null {
+  if (err instanceof ShopifyRateLimitError) return null; // already terminal
+  if (!err || typeof err !== "object") return null;
+  if (isCostThrottledError(err)) return null;
+  if (extractMaxCostExceeded(err)) return null;
+
+  const anyErr = err as {
+    response?: { code?: number; statusCode?: number; status?: number; headers?: unknown };
+    code?: unknown;
+    status?: number;
+    statusCode?: number;
+    cause?: unknown;
+  };
+  const responseObj = anyErr.response;
+  const status =
+    responseObj?.code ??
+    responseObj?.statusCode ??
+    responseObj?.status ??
+    (typeof anyErr.status === "number" ? anyErr.status : undefined) ??
+    (typeof anyErr.statusCode === "number" ? anyErr.statusCode : undefined);
+
+  if (typeof status === "number" && RETRY_RETRYABLE_HTTP_STATUSES.has(status)) {
+    let retryAfterMs: number | undefined;
+    if (status === 429) {
+      const parsed = parseRetryAfter(readHeader(responseObj?.headers, "retry-after"));
+      if (parsed != null) retryAfterMs = parsed;
+    }
+    const out: TransientInfo = { status, networkError: false };
+    if (retryAfterMs !== undefined) out.retryAfterMs = retryAfterMs;
+    return out;
+  }
+
+  // Network error codes can live on the error itself (legacy) or in `.cause`
+  // (Node 20 fetch wraps the underlying socket error there).
+  const directCode = typeof anyErr.code === "string" ? anyErr.code : null;
+  if (directCode && RETRY_NETWORK_ERROR_CODES.has(directCode)) {
+    return { networkError: true };
+  }
+  const cause = anyErr.cause;
+  if (cause && typeof cause === "object") {
+    const causeCode = (cause as { code?: unknown }).code;
+    if (typeof causeCode === "string" && RETRY_NETWORK_ERROR_CODES.has(causeCode)) {
+      return { networkError: true };
+    }
+  }
+
+  return null;
+}
+
+function computeBackoffDelay(attempt: number): number {
+  // Full jitter — random_between(0, cap_for_attempt).
+  // Cap doubles each attempt, clamped at RETRY_BACKOFF_CAP_MS.
+  const cap = Math.min(
+    RETRY_BACKOFF_CAP_MS,
+    RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1),
+  );
+  return Math.floor(Math.random() * (cap + 1));
+}
+
+async function withRetry<T>(label: string, op: () => Promise<T>): Promise<T> {
+  let totalWaitMs = 0;
+  let lastStatus: number | undefined;
+  for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await op();
+    } catch (err) {
+      const transient = classifyTransient(err);
+      if (!transient) throw err;
+      lastStatus = transient.status;
+
+      const isFinalAttempt = attempt === RETRY_MAX_ATTEMPTS;
+      const delay = transient.retryAfterMs ?? computeBackoffDelay(attempt);
+      const overBudget = totalWaitMs + delay > RETRY_TOTAL_BUDGET_MS;
+
+      console.warn(
+        {
+          event: "shopify_retry",
+          label,
+          attempt,
+          delayMs: delay,
+          status: transient.status,
+          networkError: transient.networkError,
+          retryAfter: transient.retryAfterMs,
+          totalWaitMs,
+          giveUp: isFinalAttempt || overBudget,
+        },
+        "Shopify call hit a transient failure",
+      );
+
+      if (isFinalAttempt || overBudget) break;
+
+      await sleepMs(delay);
+      totalWaitMs += delay;
+    }
+  }
+  const opts: { label: string; attempts: number; status?: number; totalWaitMs: number } = {
+    label,
+    attempts: RETRY_MAX_ATTEMPTS,
+    totalWaitMs,
+  };
+  if (lastStatus !== undefined) opts.status = lastStatus;
+  throw new ShopifyRateLimitError(
+    `shopifyClientFor.${label}: gave up after ${RETRY_MAX_ATTEMPTS} attempts ` +
+      `(totalWaitMs=${totalWaitMs}, lastStatus=${lastStatus ?? "n/a"})`,
+    opts,
+  );
+}
+
+async function fetchWithRetry(
+  label: string,
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  return withRetry(label, async () => {
+    const resp = await fetch(url, init);
+    if (RETRY_RETRYABLE_HTTP_STATUSES.has(resp.status)) {
+      // Surface as a thrown error shaped like an SDK HttpResponseError so
+      // classifyTransient can pull headers + status off the same shape.
+      const err = new Error(`${label}: HTTP ${resp.status}`) as Error & {
+        response?: { code: number; headers: Record<string, string> };
+      };
+      const headerObj: Record<string, string> = {};
+      resp.headers.forEach((v, k) => {
+        headerObj[k.toLowerCase()] = v;
+      });
+      err.response = { code: resp.status, headers: headerObj };
+      throw err;
+    }
+    return resp;
+  });
+}
 
 // ─── Throttle-aware retry ────────────────────────────────────────────────────
 //
@@ -448,7 +724,24 @@ async function requestWithThrottleRetry(
         "Shopify GraphQL throttled",
       );
 
-      if (exhausted) throw err;
+      if (exhausted) {
+        // Surface as ShopifyRateLimitError so callers see a single typed
+        // terminal regardless of whether the cost-throttle wrapper or the
+        // outer HTTP-level wrapper exhausted first. The original SDK error
+        // is preserved as `cause` for diagnostics.
+        const rateErr = new ShopifyRateLimitError(
+          "shopifyClientFor.graphql: cost-based THROTTLED retries exhausted " +
+            `(attempt=${attempt}, totalWaitedMs=${totalWaitedMs}, ` +
+            `lastWaitMs=${wait})`,
+          {
+            label: "graphql.throttle",
+            attempts: attempt,
+            totalWaitMs: totalWaitedMs,
+          },
+        );
+        (rateErr as Error & { cause?: unknown }).cause = err;
+        throw rateErr;
+      }
 
       await sleepMs(wait);
       totalWaitedMs += wait;
@@ -511,9 +804,9 @@ function extractThrottleInfo(err: unknown): { cost?: ShopifyCost } | null {
     if (isThrottled) return cost ? { cost } : {};
   }
 
-  // HTTP 429 fallback — rare for GraphQL but handle it defensively.
-  const code = anyErr.response?.code ?? anyErr.response?.statusCode ?? anyErr.code;
-  if (code === 429) return cost ? { cost } : {};
+  // HTTP 429 is handled by the outer withRetry wrapper (TD-003) — it knows
+  // how to honor Retry-After and counts attempts against the per-call
+  // budget. Don't double-handle it here.
 
   return null;
 }

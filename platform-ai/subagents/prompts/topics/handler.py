@@ -272,9 +272,16 @@ ABSOLUTE RULES (violations cause deployment failure):
     process.kill(). Read process.env only at module init — never
     per-request. setTimeout is allowed ONLY as a bounded pause with a
     numeric-literal delay ≤500ms (e.g. `await new Promise(r => setTimeout(r, 200))`).
-    Do NOT add sleeps around Shopify calls — the shopify.* helpers manage
-    throttle-aware backoff internally. Static validation rejects
-    missing/non-literal/>500ms delays.
+    Do NOT add sleeps, retry loops, or `setTimeout`-based backoff around
+    Shopify calls. The shopify.* helpers already retry HTTP 429 (honoring
+    Retry-After), 502/503/504, and network errors (ECONNRESET, ETIMEDOUT,
+    ENOTFOUND, …) with full-jitter exponential backoff and a 10-second
+    total budget. They also retry GraphQL cost-based THROTTLED extensions
+    internally. When every retry budget exhausts, the helper throws
+    `ShopifyRateLimitError` (re-exported from `../lib/shopify.js`); catch
+    it specifically when you want to surface a degraded outcome (e.g. nack
+    a queue row for later retry) instead of letting the request 500.
+    Static validation rejects missing/non-literal/>500ms delays.
 4.  Handle errors with try/catch inside routes — never let a route throw
     uncaught. Uncaught errors fall into the template's error handler and
     return 500; that's a last-resort, not your error strategy.
