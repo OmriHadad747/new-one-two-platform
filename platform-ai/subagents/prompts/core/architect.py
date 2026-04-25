@@ -262,6 +262,7 @@ def build_output_shape(archetype: str) -> str:
         '        "columns": [\n'
         '          { "name": "id",               "type": "UUID",        "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()" },\n'
         '          { "name": "<string_column>",  "type": "TEXT",        "constraints": "NOT NULL" },\n'
+        '          { "name": "status",           "type": "TEXT",        "constraints": "NOT NULL DEFAULT \'pending\'", "enum": ["pending", "sent", "failed"] },\n'
         '          { "name": "<numeric_column>", "type": "BIGINT",      "constraints": "NULL" },\n'
         '          { "name": "created_at",       "type": "TIMESTAMPTZ", "constraints": "NOT NULL DEFAULT now()" }\n'
         "        ],\n"

@@ -196,6 +196,7 @@ class HandlerGenerator(Generator):
             has_state_machine=bool(sm and isinstance(sm, dict)),
             cron_schedule=cron_schedule,
             declared_capabilities=declared_caps,
+            db_contracts=impl.get("dbContracts") or [],
         )
         errors += _validate_email_metadata(
             ctx.handler_email_metadata, declared_caps, artifact
@@ -435,7 +436,11 @@ def _format_cron_contract(plan: Dict[str, Any]) -> str:
 def _format_db_contracts(plan: Dict[str, Any]) -> str:
     """
     Show the DB schema so the handler uses exact table and column names
-    in SQL.
+    in SQL. Surfaces two extras downstream of the architect contract:
+      - column-level `enum` lists, so the handler writes ONLY listed values.
+      - table-level `singleton: true`, so the handler upserts via
+        `ON CONFLICT (singleton) DO UPDATE` and reads via
+        `WHERE singleton = true` instead of inventing fake conflict targets.
     """
     contracts = (plan.get("appContracts") or {}).get("dbContracts") or []
     if not contracts:
@@ -447,8 +452,31 @@ def _format_db_contracts(plan: Dict[str, Any]) -> str:
     ]
     for contract in contracts:
         table = contract.get("table", "?")
-        columns = [c["name"] for c in (contract.get("columns") or [])]
-        lines.append(f"  {table}: {', '.join(columns)}")
+        columns = contract.get("columns") or []
+        col_names = [c["name"] for c in columns]
+        is_singleton = bool(contract.get("singleton"))
+        if is_singleton:
+            lines.append(f"  {table}  (singleton config table — exactly one row):")
+            lines.append(f"    columns: singleton (BOOLEAN PK), {', '.join(col_names)}")
+            lines.append(
+                "    READ:   await sql`SELECT ... FROM "
+                f"{table} WHERE singleton = true`"
+            )
+            lines.append(
+                "    WRITE:  await sql`INSERT INTO "
+                f"{table} (singleton, ...) VALUES (true, ...) "
+                "ON CONFLICT (singleton) DO UPDATE SET ...`"
+            )
+        else:
+            lines.append(f"  {table}: {', '.join(col_names)}")
+        for col in columns:
+            enum_values = col.get("enum")
+            if isinstance(enum_values, list) and enum_values:
+                literal_list = ", ".join(f"'{v}'" for v in enum_values)
+                lines.append(
+                    f"    {col['name']} enum — write ONLY these literal "
+                    f"values: [{literal_list}]"
+                )
     lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
     return "\n".join(lines)
 

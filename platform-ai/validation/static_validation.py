@@ -333,6 +333,7 @@ def validate_architect_plan(
         table = contract.get("table", "?")
         columns = contract.get("columns") or []
         col_names = {c.get("name", "").lower() for c in columns}
+        is_singleton = bool(contract.get("singleton"))
         # Schema isolation replaces RLS (each tenant has its own Postgres
         # schema; the deployer pins search_path at runtime). A tenant_id
         # column is drift from the new model — reject it early, before it
@@ -345,6 +346,27 @@ def validate_architect_plan(
                 "column; bare names resolve into the tenant's schema via "
                 "search_path at deploy time."
             )
+        # Singleton config tables: the migration generator emits a
+        # `singleton BOOLEAN PRIMARY KEY` column for the architect; declaring
+        # an `id` column or a uniqueConstraint here means the architect did
+        # not pick the singleton shape correctly (the upsert pattern would
+        # still target the wrong key). Reject early — see Finding 4 in
+        # docs/FINDINGS_DEFERRED_4_5_6.md.
+        if is_singleton:
+            if "id" in col_names:
+                errors.append(
+                    f"dbContracts table '{table}' has singleton: true but also "
+                    "declares an 'id' column — singleton tables MUST NOT have "
+                    "an id column. The migration generator emits "
+                    "'singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton = true)' "
+                    "as the natural primary key."
+                )
+            if contract.get("uniqueConstraint"):
+                errors.append(
+                    f"dbContracts table '{table}' has singleton: true but also "
+                    "declares uniqueConstraint — the singleton flag pins the "
+                    "table to one row by construction; uniqueConstraint must be null."
+                )
         for col in columns:
             name = (col.get("name") or "").lower()
             type_str = col.get("type") or ""
@@ -373,6 +395,41 @@ def validate_architect_plan(
                     f"enterprise cart or SUM() aggregate above that ceiling crashes the handler with "
                     f"'integer out of range'."
                 )
+            # Column-level `enum` validation. When declared, it must be a
+            # non-empty list of unique non-empty strings, and any DEFAULT
+            # literal in `constraints` must be in the enum (or else the row
+            # will be rejected by the CHECK constraint at insert time).
+            enum_values = col.get("enum")
+            if enum_values is not None:
+                if not isinstance(enum_values, list) or not enum_values:
+                    errors.append(
+                        f"dbContracts table '{table}' column '{name}' has "
+                        "'enum' set but it is not a non-empty list — drop the "
+                        "field or list every allowed string value"
+                    )
+                else:
+                    bad = [v for v in enum_values if not isinstance(v, str) or not v]
+                    if bad:
+                        errors.append(
+                            f"dbContracts table '{table}' column '{name}' enum "
+                            f"contains non-string or empty entries: {bad!r}"
+                        )
+                    if len(set(enum_values)) != len(enum_values):
+                        errors.append(
+                            f"dbContracts table '{table}' column '{name}' enum "
+                            f"contains duplicate values: {enum_values!r}"
+                        )
+                    constraints_str = (col.get("constraints") or "")
+                    default_match = re.search(
+                        r"\bDEFAULT\s+'([^']+)'", constraints_str, re.IGNORECASE
+                    )
+                    if default_match and default_match.group(1) not in enum_values:
+                        errors.append(
+                            f"dbContracts table '{table}' column '{name}' has "
+                            f"DEFAULT '{default_match.group(1)}' which is not in "
+                            f"enum {enum_values!r} — the CHECK constraint would "
+                            "reject every default-valued INSERT"
+                        )
 
     # 15. storefront apps must declare widgetTargetTemplates
     _VALID_TEMPLATES = {
@@ -924,6 +981,7 @@ def validate_handler_artifact(
     has_state_machine: bool = False,
     cron_schedule: Optional[str] = None,
     declared_capabilities: Optional[List[str]] = None,
+    db_contracts: Optional[List[Dict[str, Any]]] = None,
 ) -> List[str]:
     """
     Validate the generated handler file bundle.
@@ -1085,6 +1143,20 @@ def validate_handler_artifact(
                 "incoming event and writing the new state"
             )
 
+    # 10. Concurrency idiom: FOR UPDATE SKIP LOCKED is meaningless outside a
+    #     `sql.begin(...)` block — postgres-js auto-commits each `sql\`...\``
+    #     call, releasing the lock before the loop body runs. See Finding 5
+    #     in docs/FINDINGS_DEFERRED_4_5_6.md.
+    for path, code in files_by_path.items():
+        errors.extend(_check_skip_locked_in_transaction(path, code))
+
+    # 11. Status enum cross-check: every literal value the handler writes to
+    #     a dbContracts column with a declared `enum` must be in that enum.
+    #     Without this, the migration emits a CHECK constraint the handler
+    #     INSERT silently fails against. See Finding 6 in
+    #     docs/FINDINGS_DEFERRED_4_5_6.md.
+    errors.extend(_check_enum_writes(files_by_path, db_contracts or []))
+
     return errors
 
 
@@ -1108,6 +1180,229 @@ def _build_import_allowlist(declared_caps: set) -> frozenset:
         if entry:
             allowed.update(entry["packages"])
     return frozenset(allowed)
+
+
+_SKIP_LOCKED_RE = re.compile(r"FOR\s+UPDATE\s+SKIP\s+LOCKED", re.IGNORECASE)
+
+
+def _check_skip_locked_in_transaction(path: str, code: str) -> List[str]:
+    """
+    Reject `FOR UPDATE SKIP LOCKED` that is not inside a `sql.begin(...)`
+    block. postgres-js auto-commits each tagged-template invocation, so a
+    lock taken by a bare ``sql`SELECT … FOR UPDATE SKIP LOCKED` `` is
+    released the moment the SELECT commits — before the handler can act on
+    the row. Two overlapping cron ticks then both claim the same row and
+    double-execute.
+
+    Heuristic: for each match of FOR UPDATE SKIP LOCKED, walk backwards in
+    the file looking for the nearest unmatched-open `sql.begin(`; if we hit
+    the file start (or another closing brace before any open `sql.begin(`),
+    it's outside a transaction. Coarse but adequate — `sql.begin(` is the
+    only legitimate gate here, and the false-positive cost is just a noisier
+    retry message.
+    """
+    errors: List[str] = []
+    for match in _SKIP_LOCKED_RE.finditer(code):
+        if not _is_inside_sql_begin(code, match.start()):
+            line = code.count("\n", 0, match.start()) + 1
+            errors.append(
+                f"[{path}:{line}] `FOR UPDATE SKIP LOCKED` appears outside a "
+                "`sql.begin(async (tx) => {...})` block. Each `sql\\`...\\`` "
+                "call auto-commits, so the lock is released before the loop "
+                "body runs — overlapping cron/webhook ticks will double-claim "
+                "the same row. Either wrap the claim-process-update span in "
+                "`sql.begin(...)`, or replace SKIP LOCKED with the canonical "
+                "atomic claim idiom: `UPDATE ... WHERE <state>=<prev> "
+                "RETURNING <id>` and bail when the result is empty."
+            )
+    return errors
+
+
+def _is_inside_sql_begin(code: str, position: int) -> bool:
+    """
+    Return True when `position` falls inside a balanced `sql.begin(` call.
+
+    Walks the code from start to position, counting paren depth only after
+    the most recent `sql.begin(` token. If depth is still positive at
+    position, we're inside the call.
+    """
+    last_begin = -1
+    depth = 0
+    i = 0
+    while i < position:
+        if code.startswith("sql.begin(", i):
+            last_begin = i + len("sql.begin(") - 1  # position of the '('
+            depth = 1
+            i = last_begin + 1
+            continue
+        if last_begin >= 0:
+            ch = code[i]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    last_begin = -1
+        i += 1
+    return last_begin >= 0 and depth > 0
+
+
+_INSERT_INTO_HEAD_RE = re.compile(
+    r"INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(",
+    re.IGNORECASE | re.DOTALL,
+)
+_SET_ASSIGNMENT_RE = re.compile(
+    r"\bSET\s+(.+?)(?=\s+(?:WHERE|RETURNING|ON\s+CONFLICT)\b|\s*[`;])",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _check_enum_writes(
+    files_by_path: Dict[str, str],
+    db_contracts: List[Dict[str, Any]],
+) -> List[str]:
+    """
+    Cross-check: literal values the handler writes to enum columns must be
+    in the column's declared enum list. Catches divergence before the DB's
+    CHECK constraint rejects the INSERT at runtime.
+
+    Only flags TEXT-literal writes ('value') — variable interpolations
+    (${value}) are out of scope for static analysis.
+    """
+    enum_map: Dict[str, Dict[str, List[str]]] = {}
+    for contract in db_contracts:
+        table = (contract.get("table") or "").lower()
+        if not table:
+            continue
+        for col in contract.get("columns") or []:
+            enum_values = col.get("enum")
+            if isinstance(enum_values, list) and enum_values:
+                enum_map.setdefault(table, {})[(col.get("name") or "").lower()] = list(
+                    enum_values
+                )
+    if not enum_map:
+        return []
+
+    errors: List[str] = []
+    seen: set = set()
+    for path, code in files_by_path.items():
+        # INSERT INTO ... VALUES ('literal', ...): match column index → value index.
+        for match in _INSERT_INTO_HEAD_RE.finditer(code):
+            table = match.group(1).lower()
+            col_block = match.group(2)
+            val_block = _scan_balanced_paren(code, match.end())
+            if val_block is None:
+                continue
+            cols = [c.strip().strip("`\"").lower() for c in col_block.split(",")]
+            vals = _split_top_level(val_block)
+            table_enums = enum_map.get(table) or {}
+            for idx, col_name in enumerate(cols):
+                if col_name not in table_enums or idx >= len(vals):
+                    continue
+                literal = _string_literal_value(vals[idx])
+                if literal is None:
+                    continue
+                if literal not in table_enums[col_name]:
+                    key = (path, table, col_name, literal)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    errors.append(
+                        f"[{path}] writes literal '{literal}' into "
+                        f"{table}.{col_name} but the architect declared "
+                        f"enum {table_enums[col_name]!r}. The migration "
+                        f"emits CHECK ({col_name} IN (...)) — this INSERT "
+                        "would be rejected at runtime."
+                    )
+        # UPDATE ... SET <col> = '<literal>': scan SET clauses for known
+        # enum columns. Cheap and catches the common case.
+        for assignment in _SET_ASSIGNMENT_RE.findall(code):
+            for col_name, literal in re.findall(
+                r"\b(\w+)\s*=\s*'([^']*)'", assignment
+            ):
+                col_lower = col_name.lower()
+                for table, table_enums in enum_map.items():
+                    if col_lower in table_enums and literal not in table_enums[col_lower]:
+                        key = (path, table, col_lower, literal)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        errors.append(
+                            f"[{path}] writes literal '{literal}' into "
+                            f"column '{col_lower}' but the architect declared "
+                            f"enum {table_enums[col_lower]!r}. The migration "
+                            f"emits CHECK ({col_lower} IN (...)) — this UPDATE "
+                            "would be rejected at runtime."
+                        )
+    return errors
+
+
+def _split_top_level(s: str) -> List[str]:
+    """Split a comma list, respecting paren depth and string boundaries."""
+    out: List[str] = []
+    buf: List[str] = []
+    depth = 0
+    in_str = False
+    str_ch = ""
+    for ch in s:
+        if in_str:
+            buf.append(ch)
+            if ch == str_ch:
+                in_str = False
+            continue
+        if ch in ("'", '"', "`"):
+            in_str = True
+            str_ch = ch
+            buf.append(ch)
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def _string_literal_value(expr: str) -> Optional[str]:
+    """Return the inner content of a single-quoted SQL literal, or None."""
+    expr = expr.strip()
+    m = re.fullmatch(r"'([^']*)'", expr)
+    return m.group(1) if m else None
+
+
+def _scan_balanced_paren(code: str, start: int) -> Optional[str]:
+    """
+    Given `code` positioned just AFTER an opening '(', return the substring
+    up to (but not including) the matching close-paren, respecting nesting
+    and SQL string literals. Returns None if no balanced close exists.
+    """
+    depth = 1
+    i = start
+    in_str = False
+    str_ch = ""
+    while i < len(code):
+        ch = code[i]
+        if in_str:
+            if ch == str_ch:
+                in_str = False
+        elif ch in ("'", '"'):
+            in_str = True
+            str_ch = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return code[start:i]
+        i += 1
+    return None
 
 
 def _validate_ts_file(
@@ -1709,6 +2004,7 @@ FORBIDDEN_ADMIN_UI_PATTERNS = [
 def validate_admin_ui_artifact(
     admin_ui_js: str,
     admin_api_catalog: List[Dict[str, str]],
+    db_contracts: Optional[List[Dict[str, Any]]] = None,
 ) -> List[str]:
     """Validate the generated Admin UI ES module (storefront_backend_admin only)."""
     errors: List[str] = []
@@ -1768,6 +2064,67 @@ def validate_admin_ui_artifact(
             "via bridge.call(path, data)."
         )
 
+    # Status enum cross-check: any literal status string the UI references
+    # (filter buttons, badge classes, conditional rendering) must be in the
+    # union of every column-level enum the architect declared. Catches the
+    # "always-empty filter bucket" failure mode described in Finding 6 of
+    # docs/FINDINGS_DEFERRED_4_5_6.md.
+    errors.extend(_check_admin_ui_enum_filters(admin_ui_js, db_contracts or []))
+
+    return errors
+
+
+def _check_admin_ui_enum_filters(
+    admin_ui_js: str, db_contracts: List[Dict[str, Any]]
+) -> List[str]:
+    """
+    Heuristic: look for status filter literals (`status === 'xxx'`,
+    `data-status="xxx"`, `status: 'xxx'`) and reject any value that does
+    not appear in some column-level enum.
+
+    Cross-column union (rather than per-column): the UI may render the
+    same set of buttons across multiple tables, and we don't have a
+    reliable way to bind a literal to a specific dbContract column from
+    the JS source. The union check still catches inventions like
+    'converted' / 'skipped' that no column enums.
+    """
+    enum_union: set = set()
+    enum_columns: set = set()
+    for contract in db_contracts:
+        for col in contract.get("columns") or []:
+            enum_values = col.get("enum")
+            if isinstance(enum_values, list) and enum_values:
+                enum_union.update(enum_values)
+                enum_columns.add((col.get("name") or "").lower())
+    if not enum_union or not enum_columns:
+        return []
+
+    errors: List[str] = []
+    seen: set = set()
+    # Match status comparisons + data attributes + object keys for any
+    # column whose name appears in an enum.
+    for col_name in enum_columns:
+        patterns = [
+            rf"\b{re.escape(col_name)}\s*(?:===|==)\s*['\"]([^'\"]+)['\"]",
+            rf"['\"]{re.escape(col_name)}['\"]\s*:\s*['\"]([^'\"]+)['\"]",
+            rf"data-{re.escape(col_name)}\s*=\s*['\"]([^'\"]+)['\"]",
+        ]
+        for pattern in patterns:
+            for literal in re.findall(pattern, admin_ui_js, re.IGNORECASE):
+                if literal in enum_union or literal == "":
+                    continue
+                if literal.lower() in {"all", "any"}:
+                    continue
+                if literal in seen:
+                    continue
+                seen.add(literal)
+                errors.append(
+                    f"admin UI references {col_name}='{literal}' but the "
+                    f"architect-declared enum union is {sorted(enum_union)!r}. "
+                    "A filter or branch on this value will always be empty — "
+                    "the handler never writes it. Either drop the reference "
+                    "or extend the dbContracts column enum to include it."
+                )
     return errors
 
 

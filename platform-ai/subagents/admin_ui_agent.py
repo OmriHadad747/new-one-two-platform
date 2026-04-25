@@ -42,6 +42,7 @@ class AdminUiGenerator(Generator):
         ux_expectations_block = _format_ux_expectations(ctx.plan)
         quality_brief_block = _format_quality_brief(ctx.intent)
         state_machine_block = _format_state_machine(ctx.plan)
+        column_enums_block = _format_column_enums(ctx.plan)
         prior_block = _format_prior_admin_ui(ctx.prior_admin_ui_code)
 
         return (
@@ -51,6 +52,7 @@ class AdminUiGenerator(Generator):
             f"{quality_brief_block}"
             f"{ux_expectations_block}"
             f"{state_machine_block}"
+            f"{column_enums_block}"
             f"Admin API catalog — the ONLY paths the panel may call via bridge.call().\n"
             f"Use EXACTLY the requestShape shown when building the bridge.call() body.\n"
             f"Expect EXACTLY the responseShape shown when reading the result.\n"
@@ -78,7 +80,8 @@ class AdminUiGenerator(Generator):
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         admin_catalog = _extract_admin_catalog(ctx.plan)
-        return validate_admin_ui_artifact(artifact, admin_catalog)
+        db_contracts = (ctx.plan.get("appContracts") or {}).get("dbContracts") or []
+        return validate_admin_ui_artifact(artifact, admin_catalog, db_contracts)
 
 
 # ── Post-parse sanitisation ──────────────────────────────────────────────────
@@ -155,6 +158,41 @@ def _format_state_machine(plan: Dict[str, Any]) -> str:
         "invent additional states (e.g. a 'skipped' filter when the handler "
         "never sets 'skipped'); those render dead options the merchant "
         "cannot act on.\n\n"
+    )
+
+
+def _format_column_enums(plan: Dict[str, Any]) -> str:
+    """
+    Surface every column-level `enum` declared in dbContracts so the admin
+    UI knows the canonical vocabulary for each enum field. Without this, the
+    UI invents filter buttons and badge variants that the handler never
+    emits, leaving them dead in the merchant-facing dashboard.
+
+    Complements _format_state_machine: stateMachine covers Shopify-mirrored
+    state columns, while column-level enums cover handler-owned status
+    columns (queue rows, internal pipelines, etc.).
+    """
+    contracts = (plan.get("appContracts") or {}).get("dbContracts") or []
+    lines: List[str] = []
+    for contract in contracts:
+        table = contract.get("table", "?")
+        for col in contract.get("columns") or []:
+            enum_values = col.get("enum")
+            if not isinstance(enum_values, list) or not enum_values:
+                continue
+            values_csv = ", ".join(f'"{v}"' for v in enum_values)
+            lines.append(f'  {table}.{col["name"]}: [{values_csv}]')
+    if not lines:
+        return ""
+    return (
+        "Column enum vocabulary — the handler stores ONLY these literal "
+        "values in each column:\n"
+        + "\n".join(lines)
+        + "\nWhen rendering filter dropdowns, status badges, or any UI that "
+        "branches on one of these column values, use ONLY values from the "
+        "matching list. Do NOT invent additional values (e.g. a 'converted' "
+        "filter when the column enum is ['pending','sent','failed']) — those "
+        "render dead options the merchant cannot act on.\n\n"
     )
 
 

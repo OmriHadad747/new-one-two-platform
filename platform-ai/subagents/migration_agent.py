@@ -125,12 +125,31 @@ def _format_db_contracts(plan: Dict[str, Any]) -> str:
         columns = contract.get("columns") or []
         unique = contract.get("uniqueConstraint")
         indexes = contract.get("indexes") or []
+        is_singleton = bool(contract.get("singleton"))
 
         parts.append(f"\nTable: {table}")
-        for col in columns:
+        if is_singleton:
+            # Singleton config tables: one row, ever. The `singleton` boolean
+            # PK pins the row by construction so handler upserts can target
+            # ON CONFLICT (singleton) instead of inventing a fake conflict
+            # target. The architect contract guarantees no `id` column was
+            # declared for singletons.
             parts.append(
-                f"  {col['name']}  {col['type']}  {col.get('constraints', '')}"
+                "  singleton  BOOLEAN  PRIMARY KEY DEFAULT true CHECK (singleton = true)"
             )
+        for col in columns:
+            constraints = col.get("constraints", "") or ""
+            enum_values = col.get("enum")
+            if isinstance(enum_values, list) and enum_values:
+                literal_list = ", ".join(f"'{v}'" for v in enum_values)
+                check_clause = f"CHECK ({col['name']} IN ({literal_list}))"
+                if check_clause not in constraints:
+                    constraints = (
+                        f"{constraints} {check_clause}".strip()
+                        if constraints
+                        else check_clause
+                    )
+            parts.append(f"  {col['name']}  {col['type']}  {constraints}")
         if unique:
             # Architect emits { "columns": ["col_a", "col_b"] }; tolerate a bare
             # list too in case an older plan shape sneaks through.

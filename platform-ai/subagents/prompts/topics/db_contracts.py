@@ -56,5 +56,41 @@ dbContracts: Authoritative typed table definitions. The migration generator prod
     Example: a notification_log row with subscription_id must include
     "NOT NULL REFERENCES back_in_stock_subscriptions(id) ON DELETE CASCADE" in constraints.
     Do NOT leave parent-record ID columns as bare UUID NOT NULL with no FK — orphaned rows
-    become unqueryable once the parent is deleted.\
+    become unqueryable once the parent is deleted.
+  - Discrete-value columns (status, kind, channel, type — anything the handler
+    or UI compares against a fixed set of literal strings) MUST declare an
+    `enum` field on the column: a non-empty list of every allowed string value.
+    The migration generator emits CHECK (<col> IN (...)) automatically; the
+    handler is shown the list and may write only those values; the admin UI
+    is shown the list and may filter only on those values. Without `enum`,
+    each agent guesses and the guesses don't agree (handler writes
+    'pending'/'sent'/'failed', UI invents 'converted'/'skipped' filters that
+    are dead). Column shape:
+      { "name": "status", "type": "TEXT", "constraints": "NOT NULL DEFAULT 'pending'",
+        "enum": ["pending", "sent", "failed"] }
+    The DEFAULT literal MUST be in the enum list.
+
+  TABLE-LEVEL FLAGS:
+  - singleton: true   — set when this table holds exactly one configuration
+    row (e.g. abandonment settings, notification thresholds, app-wide toggles).
+    A singleton table has NO `id UUID` column and NO uniqueConstraint; the
+    migration generator emits a `singleton BOOLEAN PRIMARY KEY DEFAULT true
+    CHECK (singleton = true)` column instead, which makes the row unique by
+    construction. Handler reads use `WHERE singleton = true` and writes use
+    `INSERT … ON CONFLICT (singleton) DO UPDATE` — both spelled out for the
+    handler from the rendered contract. Use this ONLY when the admin UI
+    actively manages the row (you also declared adminApiCatalog read+write
+    routes); otherwise per the rule above, drop the table entirely.
+
+    Singleton table shape (use this exact pattern — do NOT add an id column):
+      {
+        "table": "<settings_table_name>",
+        "singleton": true,
+        "columns": [
+          { "name": "<setting_field>", "type": "<TYPE>", "constraints": "NOT NULL DEFAULT <value>" },
+          { "name": "updated_at", "type": "TIMESTAMPTZ", "constraints": "NOT NULL DEFAULT now()" }
+        ],
+        "uniqueConstraint": null,
+        "indexes": []
+      }\
 """
