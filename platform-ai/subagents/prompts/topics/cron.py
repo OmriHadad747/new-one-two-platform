@@ -29,19 +29,23 @@ from subagents.prompts.topics.template_tables import HANDLER as _TEMPLATE_TABLES
 
 # ── Architect view ─────────────────────────────────────────────────────────────
 
-ARCHITECT = """\
-cronSchedule: null unless periodic polling is required. Use standard 5-field cron expression.
+# architect_agent.py splits ARCHITECT on this marker: everything before goes
+# under shopifyPlan (field rules), everything after goes under CONTRACTS.
+ARCHITECT_SPLIT = "##MASTER-SPLINTER##"
 
-cronContract: Required when cronSchedule is non-null. Declares what data each batch
-  iteration must have before processing.
-  - handlerMustProduce: what the cron handler resolves per batch item before acting.
-    MUST NOT describe per-item Shopify reads inside the loop. Every piece of
-    Shopify data the loop needs must come from the single bulk pre-fetch declared
-    in cronBatching; the loop body may only consult that pre-fetched data, the
-    DB, and local logic. If a "re-verify before acting" step sounds needed,
-    include the required field (e.g. completedAt / status) in the bulk pre-fetch
-    instead of re-querying per item.\
-"""
+ARCHITECT = (
+    "cronSchedule: null unless periodic polling is required. Use standard 5-field cron expression."
+    + ARCHITECT_SPLIT
+    + "\ncronContract: Required when cronSchedule is non-null. Declares what data each batch"
+    "\n  iteration must have before processing."
+    "\n  - handlerMustProduce: what the cron handler resolves per batch item before acting."
+    "\n    MUST NOT describe per-item Shopify reads inside the loop. Every piece of"
+    "\n    Shopify data the loop needs must come from the single bulk pre-fetch declared"
+    "\n    in cronBatching; the loop body may only consult that pre-fetched data, the"
+    "\n    DB, and local logic. If a \"re-verify before acting\" step sounds needed,"
+    "\n    include the required field (e.g. completedAt / status) in the bulk pre-fetch"
+    "\n    instead of re-querying per item."
+)
 
 # ── Handler view ───────────────────────────────────────────────────────────────
 
@@ -162,4 +166,6 @@ LOGGING — include the job name in every log line from inside a job:
 
 The runner wraps your job invocation with a surrounding log context
 (row id, attempt number, duration) — you don't need to log those.
-""".replace("%TEMPLATE_TABLES_HANDLER%", _TEMPLATE_TABLES_HANDLER)
+""".replace(
+    "%TEMPLATE_TABLES_HANDLER%", _TEMPLATE_TABLES_HANDLER
+)

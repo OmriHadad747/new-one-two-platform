@@ -34,9 +34,14 @@ from subagents.prompts.topics.admin_ui import (
     ARCHITECT as ADMIN_API_CATALOG,
     ARCHITECT_CAPABILITIES as ADMIN_CAPABILITIES_RULES,
 )
-from subagents.prompts.topics.cron import ARCHITECT as CRON_RULES
+from subagents.prompts.topics.cron import (
+    ARCHITECT as CRON_RULES,
+    ARCHITECT_SPLIT as _CRON_SPLIT,
+)
 from subagents.prompts.topics.db_contracts import ARCHITECT as DB_CONTRACTS
-from subagents.prompts.topics.handler import ARCHITECT_CAPABILITIES as HANDLER_CAPABILITIES_RULES
+from subagents.prompts.topics.handler import (
+    ARCHITECT_CAPABILITIES as HANDLER_CAPABILITIES_RULES,
+)
 from subagents.prompts.topics.shopify_loop import (
     ARCHITECT as CRON_BATCHING,
     ARCHITECT_SHAPE as CRON_BATCHING_SHAPE,
@@ -45,7 +50,10 @@ from subagents.prompts.topics.state_machine import (
     ARCHITECT as STATE_MACHINE,
     ARCHITECT_SHAPE as STATE_MACHINE_SHAPE,
 )
-from subagents.prompts.topics.webhook import ARCHITECT as WEBHOOK_RULES
+from subagents.prompts.topics.webhook import (
+    ARCHITECT as WEBHOOK_RULES,
+    ARCHITECT_SPLIT as _WEBHOOK_SPLIT,
+)
 from subagents.prompts.topics.widget import (
     ARCHITECT_CAPABILITIES as WIDGET_CAPABILITIES_RULES,
     ARCHITECT_CATALOG as WIDGET_API_CATALOG,
@@ -86,8 +94,8 @@ def _build_system_prompt(archetype: str) -> tuple[str, str]:
     # field rules sit under SECTION 1 (shopifyPlan) and the *Contract rules
     # sit under the CONTRACTS block. Each topic's ARCHITECT string is
     # "<fieldRule>\n\n<contractRule>" — one split() yields both halves.
-    webhook_topics_rule, webhook_contract_rule = WEBHOOK_RULES.split("\n\n", 1)
-    cron_schedule_rule, cron_contract_rule = CRON_RULES.split("\n\n", 1)
+    webhook_topics_rule, webhook_contract_rule = WEBHOOK_RULES.split(_WEBHOOK_SPLIT, 1)
+    cron_schedule_rule, cron_contract_rule = CRON_RULES.split(_CRON_SPLIT, 1)
 
     shared_sections = [
         INTRO,

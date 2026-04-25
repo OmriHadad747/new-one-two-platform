@@ -344,6 +344,10 @@ def _render_topic_list() -> str:
     return "\n".join(lines)
 
 
+# architect_agent.py splits ARCHITECT on this marker: everything before goes
+# under shopifyPlan (field rules), everything after goes under CONTRACTS.
+ARCHITECT_SPLIT = "##MASTER-SPLINTER##"
+
 ARCHITECT = (
     "webhookTopics: Subscribe only to topics whose payload fields are actively consumed.\n"
     "  Do NOT subscribe \"just in case\" — unused subscriptions waste quota.\n"
@@ -352,9 +356,9 @@ ARCHITECT = (
     f"  Pick from this list ONLY (Shopify Admin API {WEBHOOK_API_VERSION}; topics outside\n"
     "  this set fail validation — `{a,b,c}` is shorthand for `prefix/a`, `prefix/b`,\n"
     "  `prefix/c`):\n"
-    f"{_render_topic_list()}\n"
-    "\n"
-    "webhookContract: Required when webhookTopics is non-empty. Declares what the handler\n"
+    f"{_render_topic_list()}"
+    + ARCHITECT_SPLIT
+    + "\nwebhookContract: Required when webhookTopics is non-empty. Declares what the handler\n"
     "  must have ready before writing to the DB.\n"
     "  - payloadFields: specific top-level fields from the Shopify webhook payload\n"
     "    (arriving as the `payload` argument to the topic handler in\n"
