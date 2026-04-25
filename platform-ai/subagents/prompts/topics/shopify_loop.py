@@ -79,15 +79,9 @@ inventory, fulfillments, metafields, etc.).
      }
 
   ✅ VERY LARGE data sets (100k+ rows) or cost-prohibitive list reads:
-     Use shopify.bulkQuery — kicks off a bulk operation, polls to
-     completion, streams JSONL result as an async iterator.
-
-     for await (const item of shopify.bulkQuery(
-       `{ orders { edges { node { id name createdAt } } } }`
-     )) {
-       const row = item as { id: string; name: string; createdAt: string };
-       /* process — bulk query yields one object per JSONL line */
-     }
+     Use shopify.bulkQuery instead — same async-iterator shape, but it kicks off
+     a Shopify bulk operation and streams JSONL. See the shopify_graphql
+     capability docs for the call form.
 
   ❌ for (const row of rows) { await shopify.graphql(...) }   // N sequential calls
   ❌ Hand-rolled `do { cursor } while(cursor)` over shopify.graphql — use graphqlPaginate.

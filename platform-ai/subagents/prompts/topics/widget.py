@@ -33,11 +33,8 @@ widgetApiCatalog: null for backend apps.
   RULES:
   - Each entry contains ONLY these four fields: path, method, requestShape, responseShape.
     Do NOT add description or any other field.
-  - path must start with "/"
-  - NO path parameters (:id, :slug, etc.) — paths are matched by exact string equality.
-    Put identifiers in requestShape instead.
-    ✅ { "path": "/record/delete", "requestShape": { "id": "string" } }
-    ❌ { "path": "/record/:id",    "requestShape": { "action": "string" } }
+  - path must start with "/" and contain NO path parameters (:id, :slug, etc.) —
+    paths match by exact string equality. Put identifiers in requestShape.
   - method: "POST" = mutation or DB write, "GET" = read-only
   - requestShape: fields the widget sends — only data the widget can access (form inputs,
     URL params, customerId/variantId/productId from host.context). NEVER include server-side
@@ -97,23 +94,11 @@ File skeleton:
     // ... route body
   });
 
-CRITICAL: Every path listed in the architect's widgetApiCatalog MUST
-have a matching widgetRouter route with the exact method and path. Do
-not invent paths not in the catalog — the widget JS generator sees the
-same catalog and only calls paths the architect declared.
-
-  If the catalog declares `POST /<path>` with
-  requestShape { <field_1>, <field_2> } and
-  responseShape { <res_field_1>, <res_field_2> }, emit:
-
-    widgetRouter.post("/<path>", async (req, res) => {
-      const { <field_1>, <field_2> } = req.body;
-      // ... validate, insert, etc.
-      res.json({ <res_field_1>: ..., <res_field_2>: ... });
-    });
-
-  Use the EXACT field names from requestShape — no renaming. Return
-  EXACTLY the responseShape — no extra fields, no rewraps.
+CRITICAL — same catalog-match rule as ADMIN ROUTER: every widgetApiCatalog
+path MUST have a matching widgetRouter route with exact method + path; use
+the EXACT field names from requestShape, return EXACTLY the responseShape
+(no renaming, no extra fields). Do not invent paths outside the catalog —
+the widget JS generator only calls catalog-declared paths.
 
 Shopper-sourced fields: the widget can only send what
 window.Shopify.context provides (variantId, productId, customerId) plus

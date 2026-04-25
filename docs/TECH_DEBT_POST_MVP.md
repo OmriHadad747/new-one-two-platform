@@ -279,3 +279,45 @@ The webhook-gateway already uses Redis-backed rate limiting (ioredis is a direct
 ---
 
 **Suggested order:** 8c first (one dep, no schema change), then 8a (schema + orchestrator), then 8b (most complex — touches SSE architecture).
+
+---
+
+## TD-009 — TypeScript codegen via `@shopify/api-codegen-preset`
+
+**Current state**
+The handler calls Shopify Admin GraphQL via `shopify.graphql / graphqlPaginate / bulkQuery` (and `shopify.storefront`) with raw query strings. The offline GraphQL validator (`platform-ai/validation/graphql_validation.py`) checks every extracted query against the committed catalog (`platform-ai/catalogs/shopify_admin/<version>/schema.graphql`) and rejects unknown fields, wrong arg types, missing required args, etc. — that catches the bigger class of bug (request shape).
+
+What it does NOT catch: handler-side **result-shape** assumptions. If the model casts the response and reads `.custmer` instead of `.customer`, or treats a nullable field as non-null, the offline validator is silent — only tsc would catch it, and tsc only sees the cast type, not the GraphQL response shape.
+
+**The codegen approach**
+`@shopify/api-codegen-preset` parses `` `#graphql ``-tagged template literals in handler source and emits typed result + variable types per query into `src/types/admin.generated.d.ts`. The handler then writes:
+
+```ts
+const data = await shopify.graphql<AbandonedCheckoutsQuery, AbandonedCheckoutsQueryVariables>(query, vars);
+```
+
+and tsc enforces every field access against the real schema. Combined with the offline validator (which gates the request shape), the two layers cover request + response.
+
+**What to do**
+1. Add `@shopify/api-codegen-preset` + `@graphql-codegen/cli` as dev deps in `platform-back/templates/handler/package.json`.
+2. Add `.graphqlrc.ts` at the template root pointing `schema` at the **local committed** `platform-ai/catalogs/shopify_admin/<version>/schema.graphql` (not the network — determinism + offline build).
+3. Add a `pnpm graphql-codegen` step to the handler build pipeline (deployer build phase). Run it before `tsc --noEmit` so the generated types exist when tsc runs.
+4. Update the handler prompt at `platform-ai/subagents/prompts/capabilities/shopify_graphql.py` to require `#graphql` tagging on every query and the `<QueryName>Query, <QueryName>QueryVariables` generic on the call site.
+5. Mirror for storefront once the storefront catalog is in regular use (`@shopify/storefront-api-client` codegen preset).
+
+**Cost**
+- ~2-5s extra per build (codegen step on every handler bundle).
+- One new dev dep + a config file in the handler template.
+- Prompt teaching for the `#graphql` tag + named-query convention.
+
+**When to ship**
+Defer until we observe real handler-side mistypes in production — the offline validator already catches the bigger class. Codegen pays off only once the smaller class (response-shape drift) becomes a measurable failure mode. Track in revision-failure telemetry; promote to MVP-blocker once we see the pattern more than ~3× in production.
+
+**Affected files** (when done)
+- `platform-back/templates/handler/package.json` — add dev deps.
+- `platform-back/templates/handler/.graphqlrc.ts` — new file pointing at the committed catalog.
+- `platform-back/templates/handler/Dockerfile` — `pnpm graphql-codegen` before `tsc --noEmit`.
+- `platform-ai/subagents/prompts/capabilities/shopify_graphql.py` — `#graphql` tag rule + typed-call discipline.
+- `platform-ai/validation/typecheck_validation.py` — ensure the codegen step runs in the tempdir before tsc (or skip codegen and document that tsc-only mode loses result-shape coverage in CI).
+
+**Complexity:** Medium. Codegen plumbing is well-documented but the test-environment story (running codegen inside the typecheck gate's tempdir) needs care — the preset reads from a local schema file, so just symlinking the committed `schema.graphql` into the staging tree should work.

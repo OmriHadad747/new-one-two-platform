@@ -16,11 +16,8 @@ adminApiCatalog: REQUIRED (non-null, non-empty) for storefront_backend_admin and
   - Each entry contains ONLY these four fields: path, method, requestShape, responseShape.
     Do NOT add description, summary, operationId, tags, or any other field — they are
     ignored by codegen and cause schema drift.
-  - path must start with "/"
-  - NO path parameters (:id, :slug, etc.) — paths are matched by exact string equality.
-    Put identifiers in requestShape instead.
-    ✅ { "path": "/record/detail", "requestShape": { "id": "string" } }
-    ❌ { "path": "/record/:id",    "requestShape": {} }
+  - path must start with "/" and contain NO path parameters (:id, :slug, etc.) —
+    paths match by exact string equality. Put identifiers in requestShape.
   - method: "GET" = read-only, "POST" = action or mutation
   - requestShape: fields the admin UI sends. Use {} for GET-style paths with no body.
   - responseShape: the exact JSON the handler returns on success.
@@ -94,12 +91,9 @@ the contract; implement all of it.
   the URL the UI calls is `/admin/<path>`. You write only the suffix
   `/<path>`.
 
-Body & response contract:
-  - Read the request body from `req.body` — JSON already parsed.
-  - Return EXACTLY the responseShape declared in adminApiCatalog. Never
-    rename fields. Never add fields the catalog doesn't list.
-  - Use `res.json({...})` for success; `res.status(400|404|...).json({error: "..."})`
-    for client errors.
+Response contract:
+  - Return EXACTLY the responseShape from adminApiCatalog — no renaming, no extra fields.
+  - `res.json({...})` for success; `res.status(400|404|...).json({error: "..."})` for client errors.
 
 CALLING THE EMAIL SERVICE — use platform.email.send():
 

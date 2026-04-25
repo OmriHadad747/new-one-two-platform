@@ -53,7 +53,7 @@ from subagents.architect_agent import run_architect_agent
 from subagents.revision_agent import run_revision_agent
 from subagents.validator_agent import run_validator_agent
 from subagents.registry import GENERATORS
-from subagents.static_validation import (
+from validation.static_validation import (
     validate_architect_plan,
     validate_widget_handler_contract,
     validate_admin_handler_contract,
@@ -1286,6 +1286,19 @@ def validate_artifacts(
             if errs:
                 error_map.setdefault(gen_name, []).extend(errs)
 
+    # GraphQL schema gate — extract every shopify.{graphql,graphqlPaginate,
+    # bulkQuery,storefront}(`...`) query string and validate it against the
+    # committed Shopify GraphQL catalog. Catches typo'd field names, wrong
+    # arg types, missing required args, and deprecated field usage that the
+    # regex layer can't see. Runs only when the regex/contract checks pass —
+    # broken bundles produce noisy parse errors with no extra signal.
+    if "handler" not in error_map:
+        from validation.graphql_validation import validate_handler_graphql
+
+        graphql_errors = validate_handler_graphql(artifacts.get("handler", ""))
+        if graphql_errors:
+            error_map["handler"] = graphql_errors
+
     # tsc --noEmit gate. Run only when the cheap regex/contract checks
     # already pass for the handler — if the bundle has obvious bugs, tsc's
     # downstream errors won't add signal and just burn time. When the gate
@@ -1293,7 +1306,7 @@ def validate_artifacts(
     # point, so there are no prior entries to merge) so the retry loop
     # regenerates the handler with tsc messages as feedback.
     if "handler" not in error_map:
-        from subagents.typecheck_validation import validate_handler_typecheck
+        from validation.typecheck_validation import validate_handler_typecheck
 
         tsc_errors = validate_handler_typecheck(artifacts.get("handler", ""))
         if tsc_errors:

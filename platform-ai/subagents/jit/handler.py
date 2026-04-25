@@ -33,6 +33,7 @@ from subagents.prompts.topics.widget import (
     HANDLER as HARNESS_SECTION_WIDGET,
     HANDLER_STOREFRONT as HARNESS_SECTION_WIDGET_STOREFRONT,
 )
+from validation.catalog import slice_summary
 
 
 def build_handler_jit_sections(
@@ -60,6 +61,31 @@ def build_handler_jit_sections(
     for cap_name, docs in HANDLER_CAPABILITY_DOCS.items():
         if cap_name in declared and docs:
             sections.append(docs)
+
+    # Approved Shopify GraphQL operations — slice the catalog summary down
+    # to just the operations the architect approved in
+    # appContracts.shopifyGraphqlOperations. Each surface's approved list
+    # is conditionally injected: admin only when shopify_graphql is in
+    # handlerCapabilities, storefront only when shopify_storefront is.
+    # Empty/missing approved lists are no-ops (the static capability doc
+    # already tells the handler what to do in that case).
+    ops = (impl.get("shopifyGraphqlOperations") or {}) if isinstance(impl, dict) else {}
+    if "shopify_graphql" in declared:
+        admin_ops = ops.get("admin") or []
+        sliced = slice_summary("admin", admin_ops) if admin_ops else ""
+        if sliced:
+            sections.append(
+                "── Shopify Admin GraphQL — approved operations ─────────────\n\n"
+                + sliced
+            )
+    if "shopify_storefront" in declared:
+        storefront_ops = ops.get("storefront") or []
+        sliced = slice_summary("storefront", storefront_ops) if storefront_ops else ""
+        if sliced:
+            sections.append(
+                "── Shopify Storefront GraphQL — approved operations ────────\n\n"
+                + sliced
+            )
 
     # Trigger-gated topic sections.
     if shopify.get("webhookTopics"):

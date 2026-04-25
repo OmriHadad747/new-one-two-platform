@@ -49,7 +49,7 @@ from subagents.base import (
     _THINKING_BUDGET_HIGH,
     needs_extended_thinking,
 )
-from subagents.static_validation import validate_handler_artifact
+from validation.static_validation import validate_handler_artifact
 from subagents.jit.handler import build_handler_jit_sections
 from subagents.prompts.topics.handler import HANDLER as HARNESS_BASE
 

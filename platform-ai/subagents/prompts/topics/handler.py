@@ -21,18 +21,21 @@ subagents/prompts/handler/_jit.py::build_handler_jit_sections.
 # ── Architect view ─────────────────────────────────────────────────────────────
 
 ARCHITECT_CAPABILITIES = """\
-handlerCapabilities: Closed-vocabulary list of platform services and npm
-  packages the HANDLER will use at runtime. The handler generator JIT-injects
-  only the docs for declared capabilities — undeclared = the handler does
-  not see that API's docs.
+DECLARATION DISCIPLINE — applies to every list below (handlerCapabilities,
+widgetCapabilities, adminCapabilities, shopifyGraphqlOperations):
+  Declare EXACTLY what is used. Over-declaration wastes prompt budget;
+  under-declaration ships an artifact missing the API/operation it needs.
+  All names are drawn from the closed vocabularies shown in the AVAILABLE /
+  SHOPIFY GRAPHQL sections above; unknown names fail validation.
 
-  Allowed values: the "Handler platform services" and "Handler npm packages"
-  entries in the AVAILABLE list above. Unknown strings fail validation.
+handlerCapabilities: Closed-vocabulary list of platform services and npm
+  packages the HANDLER uses. The handler generator JIT-injects only the
+  docs for declared capabilities.
+
+  Allowed values: "Handler platform services" + "Handler npm packages"
+  from the AVAILABLE list above.
 
   RULES:
-  - Declare ONLY what the handler will actually call or import. Over-
-    declaration wastes prompt budget; under-declaration ships a handler
-    missing docs for the API it needs.
   - Declare "shopify_graphql" for any handler that calls the Shopify Admin
     API. REST is not available — the platform ships GraphQL-only.
   - Declare "files" ONLY when the app genuinely produces a durable
@@ -40,19 +43,29 @@ handlerCapabilities: Closed-vocabulary list of platform services and npm
     receipts, exports they can't get from Shopify natively, reports.
     Do NOT declare "files" when the data could instead live in an email
     body, render in an admin UI table, or be returned as JSON from a
-    request. Files are a last-resort materialisation, not a convenient
-    way to hand bytes between functions. See the files capability docs
-    for the full "when NOT to use" list.
+    request. See the files capability docs for the full "when NOT to use" list.
     When declared, the handler picks explicitly between
     platform.files.upload (≤25 MiB) and platform.files.uploadLarge
-    (≤500 MiB) — there is no auto-routing.
+    (≤500 MiB) — no auto-routing.
   - npm:* entries gate whether the handler may import the package — all
-    packages are pre-installed in the handler template's package.json,
-    so the architect's declaration is the ONLY gate deciding which
-    imports are legal in the generated TypeScript.
+    packages are pre-installed in the template, so the declaration is
+    the ONLY gate deciding which imports are legal.
   - Keep [] only when the handler needs nothing beyond the always-on
     surface (`sql`, `platform.*`, req.platform, outbound fetch(),
-    console logging) — rare.\
+    console logging) — rare.
+
+shopifyGraphqlOperations: When handlerCapabilities includes "shopify_graphql"
+  and/or "shopify_storefront", declare the EXACT operations the handler will
+  call. Two arrays — `admin` (when "shopify_graphql" is declared) and
+  `storefront` (when "shopify_storefront" is declared); use [] for the
+  surface that is not declared. When neither is declared, set both to [].
+
+  RULES:
+  - Names come from the operation indexes in the SHOPIFY GRAPHQL section
+    above (Query / Mutation root field names — bare, not aliased).
+  - Pagination + bulk: list the connection's root field once
+    (e.g. "orders"); shopify.graphqlPaginate / shopify.bulkQuery walk it
+    from there.\
 """
 
 # ── Handler view (always-on runtime contract) ──────────────────────────────────
@@ -248,8 +261,7 @@ Rules:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ABSOLUTE RULES (violations cause deployment failure):
 
-1.  TypeScript only. Use `import` (ESM-style — the template's tsconfig
-    compiles to ESM for Node 20). `require()` is forbidden.
+1.  TypeScript only — ESM `import` (no `require()`).
 2.  Imports only from: (a) node builtins, (b) packages the architect
     authorized for this app via handlerCapabilities (all such packages
     ship pre-installed in the template's package.json — no per-handler
@@ -305,26 +317,14 @@ Do NOT log email bodies or full Shopify payloads — they're large and
 often sensitive. Log IDs and summary fields only.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTBOUND HTTP — Node built-in fetch() for third-party APIs:
+OUTBOUND HTTP — Node 20 built-in fetch() for non-Shopify, non-platform-back third parties:
 
-Node 20 ships fetch globally — no import, no wrapper. Use it directly
-for non-Shopify, non-platform-back HTTPS calls.
-
-  const resp = await fetch("https://api.<third_party>.com/<path>", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${process.env["<API_KEY_ENV>"]}`,
-    },
-    body: JSON.stringify({ <request_body> }),
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!resp.ok) throw new Error(`third_party_failed: ${resp.status}`);
+  const resp = await fetch(url, { signal: AbortSignal.timeout(5_000), ... });
+  if (!resp.ok) throw new Error(`<context>: ${resp.status}`);
   const data = await resp.json();
 
 Rules:
-  - Always check `resp.ok` and throw / early-return on non-2xx.
-  - Always pass a timeout via `AbortSignal.timeout(<ms>)`.
-  - NEVER use fetch() to call Shopify — use the shopify client.
-  - NEVER use fetch() to call platform-back — use platform.*
+  - ALWAYS pass `AbortSignal.timeout(<ms>)` (5000ms is a reasonable default).
+  - ALWAYS check resp.ok and throw / early-return on non-2xx.
+  - NEVER use fetch() for Shopify (use shopify.*) or platform-back (use platform.*).
 """

@@ -34,6 +34,7 @@ from subagents.prompts.capabilities import (
 )
 from subagents.prompts.topics.template_tables import TEMPLATE_OWNED_FILES, TEMPLATE_OWNED_TABLES
 from subagents.prompts.topics.webhook import WEBHOOK_TOPICS as _VALID_WEBHOOK_TOPICS
+from validation.catalog import validate_op_names as _validate_catalog_ops
 
 # ── Webhook topic registry ────────────────────────────────────────────────────
 # SSoT lives in topics.webhook.WEBHOOK_TOPICS. Both the architect prompt and
@@ -503,6 +504,64 @@ def validate_architect_plan(
             "emailSpec must be null when 'email' is not in "
             "handlerCapabilities — do not declare an email spec for a "
             "handler that does not call ctx.services.email.send"
+        )
+
+    # 21. shopifyGraphqlOperations — every name must exist in the relevant
+    # surface's catalog. The architect picks from the operation index injected
+    # into its system prompt; anything outside that index is hallucination
+    # and would fail offline GraphQL validation downstream. Catching it here
+    # avoids burning a handler-codegen attempt on a contract the handler
+    # can't satisfy.
+    ops = impl.get("shopifyGraphqlOperations") or {}
+    declared_caps = handler_caps if isinstance(handler_caps, list) else []
+    if isinstance(ops, dict):
+        admin_ops = ops.get("admin") or []
+        if not isinstance(admin_ops, list) or any(not isinstance(n, str) for n in admin_ops):
+            errors.append(
+                "shopifyGraphqlOperations.admin must be an array of strings "
+                "(operation names from the Shopify Admin GraphQL catalog)"
+            )
+        else:
+            invalid = _validate_catalog_ops("admin", admin_ops)
+            for name in invalid:
+                errors.append(
+                    f"shopifyGraphqlOperations.admin: operation {name!r} is not in the "
+                    f"Shopify Admin GraphQL catalog — pick a name from the operation "
+                    f"index in the SHOPIFY GRAPHQL section"
+                )
+            if admin_ops and "shopify_graphql" not in declared_caps:
+                errors.append(
+                    "shopifyGraphqlOperations.admin is non-empty but 'shopify_graphql' "
+                    "is not in handlerCapabilities — declare the capability or empty "
+                    "the admin operations list"
+                )
+
+        storefront_ops = ops.get("storefront") or []
+        if not isinstance(storefront_ops, list) or any(
+            not isinstance(n, str) for n in storefront_ops
+        ):
+            errors.append(
+                "shopifyGraphqlOperations.storefront must be an array of strings "
+                "(operation names from the Shopify Storefront GraphQL catalog)"
+            )
+        else:
+            invalid = _validate_catalog_ops("storefront", storefront_ops)
+            for name in invalid:
+                errors.append(
+                    f"shopifyGraphqlOperations.storefront: operation {name!r} is not in "
+                    f"the Shopify Storefront GraphQL catalog — pick a name from the "
+                    f"operation index in the SHOPIFY GRAPHQL section"
+                )
+            if storefront_ops and "shopify_storefront" not in declared_caps:
+                errors.append(
+                    "shopifyGraphqlOperations.storefront is non-empty but "
+                    "'shopify_storefront' is not in handlerCapabilities — declare the "
+                    "capability or empty the storefront operations list"
+                )
+    elif ops:
+        errors.append(
+            "shopifyGraphqlOperations must be an object with 'admin' and "
+            "'storefront' string-array fields"
         )
 
     return errors

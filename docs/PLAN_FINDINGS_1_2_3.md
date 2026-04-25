@@ -141,28 +141,46 @@ some endpoints have no clean GraphQL equivalent. Tracked as a TD below.
 
 Post-MVP but **in this plan** (user promoted it). Ship after Findings 1-3 close.
 
-**Artifacts** (committed to `platform-ai/catalogs/shopify_graphql/{version}/`):
+Both Shopify GraphQL surfaces are in scope: **Admin** (used by `shopify.graphql`,
+`shopify.graphqlPaginate`, `shopify.bulkQuery`) and **Storefront** (used by
+`shopify.storefront`). Each gets its own catalog directory + schema; the
+validator routes queries to the correct schema based on which helper they
+were passed to. They are independent APIs with disjoint type systems —
+treating them as one would produce false-positive findings on either side.
+
+**Artifacts** (per-surface, committed to
+`platform-ai/catalogs/shopify_admin/{version}/` and
+`platform-ai/catalogs/shopify_storefront/{version}/`):
 - `schema.graphql` — full SDL, source of truth.
 - `schema.introspection.json` — raw introspection result (for tooling that expects JSON).
-- `summary.md` — compressed operation + type index (~10-15k tokens) for architect-prompt injection when schema-aware architect lands.
+- `summary.md` — compressed operation + type index (~10-15k tokens) for handler-prompt injection (admin summary into `shopify_graphql` capability doc; storefront summary into `shopify_storefront` capability doc).
 
-**Build script** (`platform-ai/scripts/refresh_shopify_graphql_catalog.py {version}`):
-- POSTs the standard introspection query to `https://shopify.dev/admin-graphql-direct-proxy/{version}`.
-- Writes all three artifacts.
-- Manual invocation for now (per user). Cadence revisited when we bump `LATEST_API_VERSION` in the handler template.
+**Build script** (`platform-ai/scripts/refresh_shopify_graphql_catalog.py {surface} {version}`):
+- `surface` ∈ `{admin, storefront}`.
+- Admin: POSTs introspection to `https://shopify.dev/admin-graphql-direct-proxy/{version}`.
+- Storefront: POSTs introspection to a public Storefront-API GraphQL endpoint
+  (real shop's `/api/{version}/graphql.json` with a Storefront access token —
+  the dev tenant token from the local store works; the dev store env vars in
+  `db_local.py` are reused).
+- Writes all three artifacts under the surface-specific directory.
+- Manual invocation for now (per user). Cadence revisited when we bump `LATEST_API_VERSION` in the handler template — both surfaces refresh together.
 
-**Offline validator** (`platform-ai/subagents/.../graphql_validator.py`):
-- Uses `graphql-core` (Python). Loads `schema.graphql` via `build_schema`.
-- For each GraphQL query string extracted from handler source, runs `parse()` + `validate(schema, ast)`.
+**Offline validator** (`platform-ai/subagents/graphql_validation.py`):
+- Uses `graphql-core` (Python). Loads each surface's `schema.graphql` via `build_schema`, caches by surface.
+- Extracts queries from handler source by helper:
+  - `shopify.graphql(...)`, `shopify.graphqlPaginate(...)`, `shopify.bulkQuery(...)` → admin schema.
+  - `shopify.storefront(...)` → storefront schema.
+- For each extracted query: `parse()` + `validate(schema, ast)`.
 - Catches: unknown field, unknown argument, wrong argument type, required argument missing, deprecated field usage, invalid variable types, fragment-spread mismatches.
-- Deterministic, offline, no network. Plugs into the existing static-validation pipeline alongside Q1/Q7.
+- Deterministic, offline, no network. Runs at the same layer as the per-artifact regex checks in `validate_artifacts()` — findings go into `error_map["handler"]` so the existing retry loop regenerates the handler with GraphQL errors as feedback. Graceful skip if the relevant surface's `schema.graphql` is missing (warn + return []).
 
-**Handler prompt integration (when the validator lands):**
-- Inject `summary.md` into the handler prompt under a `── Shopify GraphQL — available operations ──` section.
-- Handler picks field names from the summary, writes queries against real ops. Validator catches any drift.
+**Handler prompt integration (ships with the validator):**
+- Inject admin `summary.md` into the `shopify_graphql` capability doc under `── Shopify Admin GraphQL — available operations ──`.
+- Inject storefront `summary.md` into the `shopify_storefront` capability doc under `── Shopify Storefront GraphQL — available operations ──`.
+- Handler picks field names from the summary, writes queries against real ops on the correct surface. Validator catches any drift.
 
 **Architect prompt integration (follow-up, not in this TD):**
-- Inject the same `summary.md` into the architect when an intent classifier flags "Shopify app." Architect emits a `shopifyGraphqlOperations` list picked from real operations. SDL-slicing for handler prompt added later if token cost becomes an issue.
+- Inject the relevant `summary.md` (admin and/or storefront, based on archetype) into the architect when an intent classifier flags "Shopify app." Architect emits a `shopifyGraphqlOperations` list picked from real operations. SDL-slicing for handler prompt added later if token cost becomes an issue.
 
 ### TD note — TypeScript codegen via `@shopify/api-codegen-preset`
 

@@ -3,7 +3,12 @@ shopify_graphql capability — Shopify Admin GraphQL API via src/lib/shopify.ts.
 
 Per-agent views:
   ARCHITECT — short line for the AVAILABLE capabilities list.
-  HANDLER   — full implementation docs injected when declared.
+  HANDLER   — static implementation docs (call forms, mutation discipline,
+              examples). The list of approved operations is NOT baked in
+              here — it's appended at JIT time by jit/handler.py based on
+              the architect's `appContracts.shopifyGraphqlOperations.admin`.
+              That keeps the static docs short and ensures the handler
+              only sees the ops the architect chose.
   REVISION  — one-line discipline rule for the revision compact surface.
 """
 
@@ -139,7 +144,14 @@ shopify.bulkQuery(query: string) → AsyncGenerator<any>
 
   DO NOT call bulkQuery from inside a per-item loop — it's the replacement
   for the loop, not an operation inside it. Start one bulk query, iterate
-  the results.\
+  the results.
+
+The list of operations you may call against Shopify Admin GraphQL is
+appended to this prompt as `── Shopify Admin GraphQL — approved operations ──`.
+Use ONLY operations from that approved list — anything else will be rejected
+by the offline GraphQL validator. If you need an operation that isn't on
+the list, surface that in the bundle output as a comment and stop — do not
+silently swap to a different op that wasn't approved.\
 """
 
 REVISION = (

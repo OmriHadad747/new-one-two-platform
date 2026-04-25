@@ -6,9 +6,15 @@ Exposed via two distinct entry points, one per surface:
   widget  → host.storefront(path) — client-side, via the App Block host shim
 
 Per-agent views:
-  HANDLER_ARCHITECT / HANDLER_DOCS — server-side server read (declared in handlerCapabilities)
+  HANDLER_ARCHITECT / HANDLER_DOCS — server-side server read (declared in handlerCapabilities).
+                                     HANDLER_DOCS holds the static call form + example.
+                                     The list of approved operations is appended at JIT
+                                     time by jit/handler.py based on the architect's
+                                     `appContracts.shopifyGraphqlOperations.storefront`.
   WIDGET_ARCHITECT  / WIDGET_DOCS  — client-side read from the shopper's browser
-                                     (declared in widgetCapabilities)
+                                     (declared in widgetCapabilities). The widget surface
+                                     uses host.storefront(path) — REST-style paths, NOT
+                                     GraphQL — the catalog does not apply here.
 """
 
 # ── Handler view (server-side) ─────────────────────────────────────────────────
@@ -47,7 +53,13 @@ shopify.storefront(query: string, variables?: object) → Promise<any>
         }
       }`,
       { handle: <product_handle> },
-    );\
+    );
+
+The list of operations you may call against Shopify Storefront GraphQL is
+appended to this prompt as `── Shopify Storefront GraphQL — approved operations ──`.
+Use ONLY operations from that approved list. If the section is missing,
+the architect did not approve any storefront operations — DO NOT call
+shopify.storefront in this run.\
 """
 
 # ── Widget view (client-side) ──────────────────────────────────────────────────

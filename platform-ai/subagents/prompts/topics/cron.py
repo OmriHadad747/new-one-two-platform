@@ -88,78 +88,22 @@ Rules:
 %TEMPLATE_TABLES_HANDLER%
 
 RETRY SEMANTICS — write your job IDEMPOTENT:
-  The template's cron runner auto-retries on exception:
-    attempt 1 → fails → wait 30s → attempt 2 → fails → wait 5min →
-    attempt 3 → fails → status='failed' (no further retry).
-  Your job function MAY therefore be invoked multiple times for the
-  same scheduled tick. Guard all side effects:
+  Auto-retried 3× on exception with backoff (30s / 5min / 30min) before
+  status='failed'. Guard every side effect — your job MAY be invoked
+  multiple times for the same scheduled tick:
     ✅ INSERT ... ON CONFLICT (<unique_key>) DO NOTHING
-    ✅ Claim-then-act via UPDATE ... RETURNING (see STATE TRANSITION PATTERNS)
+    ✅ Claim-then-act via UPDATE ... RETURNING (see WEBHOOK BODY PATTERNS for
+       the canonical claim idiom; STATE TRANSITION PATTERNS for transition variant)
     ❌ Unguarded INSERT that duplicates on retry.
     ❌ External side effect (email send, Shopify mutation) without a
        DB-level "already done" check.
 
 TYPICAL SHAPES:
-
-  // Pure-DB aggregation (no Shopify, no email):
-  jobs.main = async (_payload) => {
-    const summary = await sql`
-      SELECT count(*)::int AS total
-      FROM <table_1>
-      WHERE <created_at_col> >= NOW() - INTERVAL '1 day'
-    `;
-    console.log({ jobName: "main", totalToday: summary[0].total }, "cron main");
-  };
-
-  // Batch iteration over Shopify data — use the BATCHED SHOPIFY section
-  // rules: prefetch in chunks, zero Shopify calls in the loop, String()
-  // normalize Map keys.
-
-  // Dispatching email via platform service:
-  jobs.main = async (_payload) => {
-    const recipients = await sql`
-      SELECT <recipient_id_col>, <email_col> FROM <table_1>
-      WHERE <sent_at_col> IS NULL
-      LIMIT 200
-    `;
-    for (const r of recipients) {
-      // Claim-then-send guards against retry double-send:
-      const [claimed] = await sql`
-        UPDATE <table_1>
-        SET <sent_at_col> = NOW()
-        WHERE <recipient_id_col> = ${r.<recipient_id_col>}
-          AND <sent_at_col> IS NULL
-        RETURNING <recipient_id_col>
-      `;
-      if (!claimed) continue;
-
-      let result;
-      try {
-        result = await platform.email.send({
-          to: r.<email_col>,
-          data: { /* template vars */ },
-        });
-      } catch (err) {
-        if (err instanceof QuotaExceeded) {
-          // Monthly quota hit — revert the claim and stop this tick.
-          await sql`
-            UPDATE <table_1> SET <sent_at_col> = NULL
-            WHERE <recipient_id_col> = ${r.<recipient_id_col>}
-          `;
-          return;
-        }
-        throw err;
-      }
-      if (!result.delivered) {
-        // Soft failure — revert the claim so a retry tick can try again.
-        await sql`
-          UPDATE <table_1> SET <sent_at_col> = NULL
-          WHERE <recipient_id_col> = ${r.<recipient_id_col>}
-        `;
-        return;   // stop this tick; backoff kicks in
-      }
-    }
-  };
+  - Pure-DB aggregation: a single `await sql\`SELECT ...\`` body, no external calls.
+  - Email loop: see HANDLER's PLATFORM SDK section for the canonical claim-
+    then-send pattern (UPDATE ... RETURNING + QuotaExceeded handling).
+  - Batch iteration over Shopify data: see BATCHED SHOPIFY RATE LIMIT SAFETY —
+    bulk-fetch before the loop, zero Shopify calls inside.
 
 LOGGING — include the job name in every log line from inside a job:
   console.log({ jobName: "main", <context_field>: <value> }, "<short_message>");

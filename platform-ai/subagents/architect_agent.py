@@ -59,6 +59,7 @@ from subagents.prompts.topics.widget import (
     ARCHITECT_CATALOG as WIDGET_API_CATALOG,
     ARCHITECT_TEMPLATES as WIDGET_TARGET_TEMPLATES,
 )
+from validation.catalog import load_summary
 
 
 _SHOPIFY_PLAN_HEADER = """\
@@ -77,6 +78,39 @@ _NON_NULL_SHAPES_HEADER = """\
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 NON-NULL SHAPES — use exactly when these fields are set:\
 """
+
+
+_SHOPIFY_CATALOG_INTRO = """\
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SHOPIFY GRAPHQL — available operations
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Two committed schemas the handler is allowed to call:
+  Admin GraphQL — shopify.graphql / graphqlPaginate / bulkQuery (writes too)
+  Storefront GraphQL — shopify.storefront (server-side public-data reads only)
+
+When the app's data needs map onto operations below, name them in
+appContracts.shopifyGraphqlOperations so the handler is given a tight
+whitelist instead of the full schema. ONLY operation names from the
+indexes below are valid; anything else fails plan validation.\
+"""
+
+
+def _build_shopify_catalog_section() -> str:
+    """
+    Concatenate the admin + storefront full operation indexes for the
+    architect prompt. Both are loaded from the committed catalogs; missing
+    catalogs degrade gracefully via load_summary's placeholder.
+    """
+    admin = load_summary("admin")
+    storefront = load_summary("storefront")
+    return (
+        _SHOPIFY_CATALOG_INTRO
+        + "\n\n"
+        + admin
+        + "\n\n"
+        + storefront
+    )
 
 
 def _build_system_prompt(archetype: str) -> tuple[str, str]:
@@ -107,6 +141,7 @@ def _build_system_prompt(archetype: str) -> tuple[str, str]:
         STATE_MACHINE,
         PLATFORM_GAPS,
         HANDLER_CAPABILITIES_RULES,
+        _build_shopify_catalog_section(),
         EMAIL_SPEC,
         CRON_BATCHING,
         EDGE_CASES,

@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 from subagents.prompts.topics.template_tables import TEMPLATE_OWNED_TABLES
-from subagents.static_validation import FORBIDDEN_HANDLER_PATTERNS
+from validation.static_validation import FORBIDDEN_HANDLER_PATTERNS
 
 
 def _template_table_rule() -> tuple[str, str]:

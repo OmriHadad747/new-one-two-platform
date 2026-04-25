@@ -250,6 +250,10 @@ def build_output_shape(archetype: str) -> str:
         '    "stateMachine": null,\n'
         '    "platformGaps": [],\n'
         '    "handlerCapabilities": ["shopify_graphql", "email"],\n'
+        '    "shopifyGraphqlOperations": {\n'
+        '      "admin": ["<adminQueryOrMutation_1>", "<adminQueryOrMutation_2>"],\n'
+        '      "storefront": []\n'
+        "    },\n"
         '    "emailSpec": { "type": "transactional", "purpose": "<one-line description of when and why this email fires>" },\n'
         '    "cronBatching": null,\n'
         '    "dbContracts": [\n'

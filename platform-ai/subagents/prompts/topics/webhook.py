@@ -413,41 +413,31 @@ RULES:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 WEBHOOK BODY PATTERNS — atomic side effects, scoping, prefetch
 
-Rule: INSERT operations driven by webhook payload must survive replay.
-The webhook_id idempotency gate dedupes at the envelope level, but inner
-business INSERTs should still be defensive in case of partial-failure
-retry patterns:
-  ✅ await sql`INSERT INTO <table_1> (<field_1>, <field_2>) VALUES (${v1}, ${v2}) ON CONFLICT (<unique_key>) DO NOTHING`
-  ❌ Plain INSERT that duplicates on partial-failure retry.
+Rule 1: INSERT operations from webhook payload must survive replay (the
+envelope-level idempotency gate is not enough on partial-failure retries):
+  ✅ await sql`INSERT INTO <t> (<f1>, <f2>) VALUES (${v1}, ${v2}) ON CONFLICT (<unique_key>) DO NOTHING`
 
-Rule: When performing a side effect (email, tag update, external call)
-based on DB state, atomically claim the work with RETURNING — THEN act on
-the returned rows. NEVER emit the side effect first and mark-as-done
-after; a crash between those steps double-executes.
+Rule 2 — ATOMIC CLAIM (canonical idiom, referenced by cron and state machine):
+When a side effect (email, tag update, external call) is gated by DB
+state, claim the work with `UPDATE ... RETURNING` FIRST, then act on the
+returned rows. NEVER emit the side effect first and mark-done after — a
+crash between those steps double-executes.
   ✅ const claimed = await sql`
        UPDATE <table_1> SET <sent_at_col> = NOW()
        WHERE <entity_id_col> = ANY(${ids}) AND <sent_at_col> IS NULL
        RETURNING <entity_id_col>, <field_1>, <field_2>
      `;
      if (claimed.length === 0) return;   // already processed
-     for (const row of claimed) {
-       /* emit side effect using row data */
-     }
-  ❌ fetch rows → emit side effects → mark done     (double-exec window)
-  ❌ UPDATE without RETURNING + length check        (allows double-exec)
+     for (const row of claimed) { /* emit side effect using row data */ }
+  ❌ fetch rows → emit side effects → mark done       (double-exec window)
+  ❌ UPDATE without RETURNING + length check          (allows double-exec)
 
-Rule: Every SELECT in the webhook path MUST be scoped to the specific
-entity from the payload. NEVER query every pending row globally. The
-tenant boundary is enforced by search_path (the DB only sees this
-tenant's schema); but inside the schema you still need to scope to the
-right entity.
-  ✅ WHERE <entity_id_col> = ${payload.id}
-  ❌ WHERE <sent_at_col> IS NULL    // unscoped — processes every row in the tenant's table
+Rule 3: Scope every SELECT to the specific entity from the payload —
+search_path enforces the tenant boundary, but inside the schema you must
+still scope to the right entity (`WHERE <entity_id_col> = ${payload.id}`).
+NEVER `WHERE <sent_at_col> IS NULL` unscoped — that processes every row.
 
-Rule: When the webhook must enrich multiple items with Shopify data
-(e.g. fetching product details for a notification email after a state
-transition), apply the same bulk-prefetch discipline as cron jobs:
-bulk-fetch all Shopify data before the loop, zero Shopify calls inside it.
-See the BATCHED SHOPIFY RATE LIMIT SAFETY section for the full pattern
-and String() key-normalization rules.
+Rule 4: When enriching multiple items with Shopify data, see BATCHED
+SHOPIFY RATE LIMIT SAFETY — bulk-fetch before the loop, zero Shopify
+calls inside.
 """.replace("%TEMPLATE_TABLES_HANDLER%", _TEMPLATE_TABLES_HANDLER)

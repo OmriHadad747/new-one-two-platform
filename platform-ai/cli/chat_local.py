@@ -58,7 +58,7 @@ from subagents.base import CodegenContext
 from subagents.explanation_agent import run_explanation_agent
 from subagents.product_agent import run_product_agent_analyze
 from subagents.revision_agent import run_revision_agent
-from subagents.static_validation import validate_architect_plan
+from validation.static_validation import validate_architect_plan
 from subagents.validator_agent import run_validator_agent
 from crews.feature_generator.crew import (
     run_codegen_parallel,
