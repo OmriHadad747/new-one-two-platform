@@ -8,8 +8,11 @@ Public surface:
   ARCHITECT           — prompt fragment: webhookTopics format rule + the valid
                         topic list (so the architect picks from a known set, not
                         from training-data memory) + webhookContract shape.
-  HANDLER             — implementation rules: webhook-handlers.ts shape, atomic
-                        side-effect claiming, scoping, prefetch discipline.
+  HANDLER             — implementation rules specific to webhook-handlers.ts
+                        (file shape, topic-key match, throw-to-fail semantics).
+                        Universal handler rules (claim-then-act, scoping,
+                        replay-safe INSERT, bulk-fetch) live in
+                        topics.handler.HANDLER under HANDLER INVARIANTS.
                         Template-owned table rules are imported from
                         topics.template_tables.
 
@@ -409,35 +412,4 @@ RULES:
     Never swallow errors that should surface as retries.
 
 %TEMPLATE_TABLES_HANDLER%
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WEBHOOK BODY PATTERNS — atomic side effects, scoping, prefetch
-
-Rule 1: INSERT operations from webhook payload must survive replay (the
-envelope-level idempotency gate is not enough on partial-failure retries):
-  ✅ await sql`INSERT INTO <t> (<f1>, <f2>) VALUES (${v1}, ${v2}) ON CONFLICT (<unique_key>) DO NOTHING`
-
-Rule 2 — ATOMIC CLAIM (canonical idiom, referenced by cron and state machine):
-When a side effect (email, tag update, external call) is gated by DB
-state, claim the work with `UPDATE ... RETURNING` FIRST, then act on the
-returned rows. NEVER emit the side effect first and mark-done after — a
-crash between those steps double-executes.
-  ✅ const claimed = await sql`
-       UPDATE <table_1> SET <sent_at_col> = NOW()
-       WHERE <entity_id_col> = ANY(${ids}) AND <sent_at_col> IS NULL
-       RETURNING <entity_id_col>, <field_1>, <field_2>
-     `;
-     if (claimed.length === 0) return;   // already processed
-     for (const row of claimed) { /* emit side effect using row data */ }
-  ❌ fetch rows → emit side effects → mark done       (double-exec window)
-  ❌ UPDATE without RETURNING + length check          (allows double-exec)
-
-Rule 3: Scope every SELECT to the specific entity from the payload —
-search_path enforces the tenant boundary, but inside the schema you must
-still scope to the right entity (`WHERE <entity_id_col> = ${payload.id}`).
-NEVER `WHERE <sent_at_col> IS NULL` unscoped — that processes every row.
-
-Rule 4: When enriching multiple items with Shopify data, see BATCHED
-SHOPIFY RATE LIMIT SAFETY — bulk-fetch before the loop, zero Shopify
-calls inside.
 """.replace("%TEMPLATE_TABLES_HANDLER%", _TEMPLATE_TABLES_HANDLER)

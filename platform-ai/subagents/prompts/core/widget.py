@@ -85,4 +85,27 @@ RULES:
     FORBIDDEN: import statements of any kind (import React, import { useState }, etc.)
     FORBIDDEN: export default function — the only allowed export is export function mount
     FORBIDDEN: JSX syntax — use document.createElement() / innerHTML for all DOM construction
-    FORBIDDEN: React.createElement(), useState(), useEffect(), useRef(), or any React API"""
+    FORBIDDEN: React.createElement(), useState(), useEffect(), useRef(), or any React API
+
+CUSTOMER IDENTITY — pair with the handler's WIDGET CUSTOMER IDENTITY contract:
+  Read `host.context.customerId` (string|null). When the feature persists per-
+  shopper data, send identity on every host.call():
+    - Logged-in: include `customerId` in the request body when it is non-null.
+    - Guest: when `customerId` is null AND the feature requires persistent
+      per-shopper state, mint a `guestToken` once and reuse it.
+        const KEY = "<app_slug>.guestToken";
+        let guestToken = localStorage.getItem(KEY);
+        if (!guestToken) {
+          guestToken = (crypto.randomUUID && crypto.randomUUID()) ||
+                       String(Date.now()) + Math.random().toString(36).slice(2);
+          localStorage.setItem(KEY, guestToken);
+        }
+      Include `guestToken` in the body on every call.
+    - Migration: when BOTH a stored `guestToken` and a non-null `customerId`
+      are available, send both — the handler merges the guest row onto the
+      customer record on its side. After a successful response, clear the
+      stored guestToken (`localStorage.removeItem(KEY)`) so future calls
+      send only `customerId`.
+  Never refuse to render for guests unless the feature genuinely requires
+  authentication. Never store the customerId in localStorage — it is supplied
+  fresh by host.context on every mount."""

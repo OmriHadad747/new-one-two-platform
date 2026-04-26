@@ -9,7 +9,8 @@ _build_prompt assembles the dynamic parts (artifacts, plan JSON, expected
 question keys, response-shape dict) around these.
 
   Q1_TABLE_NAMES / Q2_COLUMN_NAMES / Q3_WIDGET_FIELDS / Q4_ADMIN_FIELDS /
-  Q5_CRON_BULK_FETCH / Q7_SCHEMA_COMPLETENESS — fixed prose per Q.
+  Q5_CRON_BULK_FETCH / Q7_SCHEMA_COMPLETENESS /
+  Q8_HANDLER_INVARIANTS — fixed prose per Q.
 
   Q6_STATE_MACHINE_TEMPLATE — has {entity} / {tracked_field} placeholders;
   _build_prompt formats it from the plan's stateMachine contract.
@@ -110,6 +111,34 @@ Q7_SCHEMA_COMPLETENESS = (
     "inside an INSERT or a CREATE TABLE is drift and should be flagged.\n"
     "Set aligned=false only if you can name the specific table and missing/mismatched\n"
     "column."
+)
+
+
+Q8_HANDLER_INVARIANTS = (
+    "Q8 — HANDLER INVARIANTS (q8_handler_invariants)\n"
+    "Walk every handler file in the bundle (src/routes/*.ts and src/lib/*.ts) and\n"
+    "check the universal invariants. Set aligned=false ONLY when you can name the\n"
+    "specific file and symbol/route/loop where one is violated. Skip any invariant\n"
+    "that does not apply to this app's surfaces.\n"
+    "  Inv 1 — Idempotency: every externally-visible side effect (email send,\n"
+    "    Shopify mutation, third-party fetch) is gated by an atomic claim\n"
+    "    (UPDATE … RETURNING) before the side effect, not after. SELECT-then-act-\n"
+    "    then-mark-done is a violation.\n"
+    "  Inv 3 — Replay-safe INSERT: every INSERT in a request-driven path uses\n"
+    "    ON CONFLICT … DO NOTHING / DO UPDATE on a column the dbContract declares\n"
+    "    as a uniqueConstraint. Bare INSERTs in retry-able paths are violations.\n"
+    "  Inv 5 — userErrors are failures: every shopify.graphql mutation reads\n"
+    "    `userErrors` from the result and throws / fails when non-empty. A mutation\n"
+    "    awaited without checking userErrors is a violation.\n"
+    "  Inv 6 — Money is integer cents in BIGINT: monetary values flowing into the\n"
+    "    DB are parsed via Math.round(parseFloat(...) * 100) and stored in BIGINT\n"
+    "    columns. Float columns or INTEGER columns for money are violations; so is\n"
+    "    arithmetic on parseFloat without rounding.\n"
+    "  Inv 7 — Null-defense on payloads: webhook/widget payload reads use ?. and\n"
+    "    ?? on nullable fields (customer.id, line_items[].variant_id, etc.). A\n"
+    "    bare `payload.customer.id` that throws on guest checkouts is a violation.\n"
+    "Cite file + symbol/loop and the invariant number in the issue text. Confidence\n"
+    "MUST be 'high' — only flag clear violations, not stylistic concerns."
 )
 
 

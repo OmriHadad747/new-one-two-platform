@@ -5,7 +5,7 @@ Runs targeted questions against the generated artifacts to catch issues that
 static analysis cannot detect reliably.
 
 System prompt lives in subagents/prompts/validator/ (VALIDATOR_BASE).
-Per-run Q1–Q7 strings and the response-shape JSON are built dynamically below
+Per-run Q1–Q8 strings and the response-shape JSON are built dynamically below
 (_build_prompt) because they depend on which surfaces this app has.
 
 Questions and their unique value over static checks:
@@ -16,6 +16,7 @@ Questions and their unique value over static checks:
   Q5  cron batching   when declared: no per-item Shopify calls inside loop — cannot be reliably static-checked
   Q6  state machine   when declared: handler reads prior DB state before comparing — verifies logic, not just presence
   Q7  schema completeness — handler INSERT omits NOT NULL/no-DEFAULT columns → Postgres runtime error
+  Q8  handler invariants — universal rules from topics.handler:HANDLER INVARIANTS (atomic claim, replay-safe INSERT, userErrors as failures, money as BIGINT cents, null-defense on payloads). Static checks can't reason about these end-to-end.
 
 Q3 fires when widgetApiCatalog is non-empty; Q4 fires when adminApiCatalog is non-empty.
 Widget and admin routes live inside the handler bundle (src/routes/widget.ts and
@@ -24,6 +25,7 @@ Q3/Q4 differ from static cross-artifact checks: static uses regex on catalog sha
 this catches semantic mismatches (aliased field names, spread operators, indirect reads).
 Q5/Q6 are only asked when the plan declares cronBatching/stateMachine.
 Q7 always runs: catches the inverse of Q2 — not "wrong column name" but "missing required column".
+Q8 always runs: enforces the always-on HANDLER INVARIANTS section the prompt teaches.
 
 Part B — open review:
   The validator also flags deploy-blocking bugs it sees in the artifacts that
@@ -59,12 +61,15 @@ from subagents.prompts.core.validator import (
     Q3_WIDGET_FIELDS,
     Q4_ADMIN_FIELDS,
     Q7_SCHEMA_COMPLETENESS,
+    Q8_HANDLER_INVARIANTS,
     QUALITY_BRIEF_HEADER,
     RESPONSE_FORMAT_HEADER,
     VALIDATOR_BASE,
 )
 from subagents.prompts.topics.shopify_loop import VALIDATOR as Q5_CRON_BULK_FETCH
-from subagents.prompts.topics.state_machine import VALIDATOR as Q6_STATE_MACHINE_TEMPLATE
+from subagents.prompts.topics.state_machine import (
+    VALIDATOR as Q6_STATE_MACHINE_TEMPLATE,
+)
 
 log = logging.getLogger(__name__)
 
@@ -181,6 +186,9 @@ def _build_prompt(
     if db_contracts:
         questions.append(Q7_SCHEMA_COMPLETENESS)
         expected_keys.append("q7_schema_completeness")
+
+    questions.append(Q8_HANDLER_INVARIANTS)
+    expected_keys.append("q8_handler_invariants")
 
     # Build the expected JSON shape hint (Part A closed questions + Part B open findings).
     shape: Dict[str, object] = {

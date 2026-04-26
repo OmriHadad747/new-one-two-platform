@@ -334,4 +334,120 @@ Rules:
   - ALWAYS pass `AbortSignal.timeout(<ms>)` (5000ms is a reasonable default).
   - ALWAYS check resp.ok and throw / early-return on non-2xx.
   - NEVER use fetch() for Shopify (use shopify.*) or platform-back (use platform.*).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HANDLER INVARIANTS — apply to EVERY handler path (webhook, cron, widget POST,
+admin POST, state machine). These are universal; the trigger-specific topic
+sections below extend them with trigger-only specifics.
+
+── Invariant 1 — Idempotency via atomic claim ─────────────────────────────────
+Any externally-visible side effect (email send, Shopify mutation, third-party
+API call, queue publish) lives behind an atomic claim. Claim with
+`UPDATE … RETURNING` first, then act on the returned rows. Never act first and
+mark done after — a crash between those steps double-executes.
+  ✅ const claimed = await sql<Row[]>`
+       UPDATE <table_1> SET <sent_at_col> = NOW()
+       WHERE <id_col> = ANY(${ids}) AND <sent_at_col> IS NULL
+       RETURNING <id_col>, <field_1>, <field_2>
+     `;
+     for (const row of claimed) { /* emit side effect using row data */ }
+  ❌ SELECT pending rows → emit side effect → UPDATE done   (double-exec window)
+  ❌ UPDATE without RETURNING + length check                (allows double-exec)
+
+── Invariant 2 — Scoping ──────────────────────────────────────────────────────
+Every SQL operation in a request-driven path filters to the specific entity
+from the request payload. search_path enforces tenant isolation, but inside the
+schema you must still scope to the right entity.
+  ✅ WHERE <entity_id_col> = ${payload.id}
+  ❌ WHERE <sent_at_col> IS NULL    // unscoped — touches every row in the schema
+
+── Invariant 3 — Replay-safe INSERTs ──────────────────────────────────────────
+Every INSERT in a request-driven path must defend against duplicate delivery.
+Webhooks retry. Cron retries. Widget submissions retry on network blips. Use
+`ON CONFLICT DO NOTHING` for the simple case, `ON CONFLICT … DO UPDATE` for
+upserts. Pair with a uniqueConstraint declared on the dedup key in dbContracts.
+  ✅ await sql`
+       INSERT INTO <table_1> (<col_1>, <col_2>) VALUES (${v1}, ${v2})
+       ON CONFLICT (<unique_key>) DO NOTHING
+     `;
+  ❌ await sql`INSERT INTO <table_1> (<col_1>, <col_2>) VALUES (${v1}, ${v2})`;
+     // retry → duplicate row → duplicate downstream effects
+
+── Invariant 4 — State observation before mutation ────────────────────────────
+For "if X changed, do Y" logic, read the prior state from the DB before
+deciding. Never compare new payload state to itself; always compare to the last
+value persisted. null means "never observed" — never treat null→value as a
+transition.
+  ✅ const [prev] = await sql<{<state_col>: <T>}[]>`
+       SELECT <state_col> FROM <state_table> WHERE <entity_id_col> = ${id}
+     `;
+     if (prev?.<state_col> === <FROM> && current === <TO>) { /* act */ }
+  ❌ if (payload.<field> > 0) { /* fires on every event, not just transitions */ }
+
+── Invariant 5 — Mutation `userErrors` are failures ───────────────────────────
+Shopify mutations return `userErrors[]` as data, not as thrown exceptions.
+After every mutation, check `userErrors` and treat non-empty as failure. A
+successful `await` is necessary but not sufficient.
+  ✅ const result = await shopify.graphql(
+       `mutation { tagsAdd(id: $id, tags: $t) { userErrors { field message } } }`,
+       { id, t },
+     ) as { tagsAdd: { userErrors: Array<{ message: string }> } };
+     if (result.tagsAdd.userErrors.length > 0) {
+       throw new Error(`tagsAdd failed: ${result.tagsAdd.userErrors.map(e => e.message).join('; ')}`);
+     }
+  ❌ await shopify.graphql(`mutation { tagsAdd(...) { userErrors { ... } } }`);
+     // no throw means "succeeded" to the handler, but Shopify may have rejected it
+
+── Invariant 6 — Money is integer cents in BIGINT ─────────────────────────────
+Money stored or computed in handlers is integer cents in BIGINT columns —
+never float, never INTEGER (overflows at $21.47M). Shopify returns prices as
+decimal strings; parse to integer cents before doing math.
+  ✅ const cents = Math.round(parseFloat(payload.total_price) * 100);
+     await sql`INSERT INTO <table_1> (<id_col>, <amount_cents_col>) VALUES (${id}, ${cents})`;
+  ❌ const total = parseFloat(payload.total_price);
+     // float drift: 0.1 + 0.2 = 0.30000000000000004 — customer charged the wrong amount
+  ❌ amount_cents column typed as INTEGER — overflows past $21.47M
+
+── Invariant 7 — Null-defense on payloads ─────────────────────────────────────
+Webhook and widget request payloads are partially typed; fields can be missing
+or null (guest checkouts, deleted parents, partial fulfillments). Always guard
+with `?.` and `??`. Treat absent identity as a valid branch, not an error,
+unless the feature genuinely cannot proceed.
+  ✅ const customerId = payload?.customer?.id ?? null;
+     if (!customerId) return;   // guest checkout — skip
+  ❌ const customerId = payload.customer.id;
+     // throws on guest checkouts, deleted customers, or any missing-field event
+
+── Invariant 8 — Scale awareness ──────────────────────────────────────────────
+Match the strategy to N. Cloud Run has hard timeouts; Shopify webhooks have
+~5s budgets. No naive long loops.
+  Reads:   ≤1000 items via `shopify.graphqlPaginate`; >1000 items via
+           `shopify.bulkQuery` (async bulk operation, JSONL stream).
+  Writes:  ≤50 items synchronously; >50 items chunked via `enqueueJob` so
+           each cron tick handles a small batch.
+  ✅ Reading 100k orders for a report:
+     for await (const order of shopify.bulkQuery(`{ orders { edges { node { ... } } } }`)) {
+       /* process one order */
+     }
+  ✅ Creating 500 discount codes from an admin button:
+     for (let i = 0; i < 500; i += 25) {
+       await enqueueJob("createDiscountChunk", { startIndex: i, count: 25 });
+     }
+     return res.json({ ok: true, scheduled: 500 });
+  ❌ for (let i = 0; i < 500; i++) { await shopify.graphql(`mutation { discountCodeCreate(...) }`); }
+     // times out long before 500
+
+── Invariant 9 — Bulk-fetch reads before per-item loops ───────────────────────
+When iterating over N entities and you need Shopify data per-entity, fetch all
+of it in a single bulk call (graphqlPaginate / bulkQuery) before the loop
+begins. Per-item Shopify calls inside loops fail under the cost-based rate
+limiter. The full pattern (paginate vs bulk, GID-key normalization, batch-vs-
+per-item writes) is in BATCHED SHOPIFY RATE LIMIT SAFETY when shopify_graphql
+is declared.
+  ✅ const dataMap = new Map<string, Item>();
+     for await (const nodes of shopify.graphqlPaginate(query, vars, "<connection>")) {
+       for (const n of nodes) dataMap.set(String(n.id), n);
+     }
+     for (const row of rows) { const item = dataMap.get(String(row.<id_col>)); /* ... */ }
+  ❌ for (const row of rows) { await shopify.graphql(`{ <resource>(id: ...) { ... } }`); }
 """

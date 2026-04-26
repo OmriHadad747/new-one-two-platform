@@ -39,6 +39,14 @@ widgetApiCatalog: null for backend apps.
   - requestShape: fields the widget sends — only data the widget can access (form inputs,
     URL params, customerId/variantId/productId from host.context). NEVER include server-side
     data the handler must fetch; the handler resolves those independently.
+    When the route persists per-shopper state (subscriptions, saved preferences, cart
+    annotations), requestShape MUST include BOTH:
+      - "customerId": "string|null" — from host.context, null for guests.
+      - "guestToken": "string|null" — client-minted UUID stored in localStorage,
+        replayed on every call so guests have a stable identity across requests.
+    The handler treats them as advisory identity (see WIDGET CUSTOMER IDENTITY in
+    the handler prompt). Omit both ONLY for stateless reads (price lookups,
+    public catalog queries) where no shopper-scoped persistence is involved.
   - responseShape: the exact JSON the handler returns on success. Both the widget and
     handler generators implement directly from these field names — mismatches cause runtime failures.\
 """
@@ -115,6 +123,47 @@ Response safety: widget responses are returned directly to the
 storefront browser. Keep them small and JSON-safe. Never return raw DB
 rows that include sensitive columns, stack traces, or internal IDs the
 widget doesn't need.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WIDGET CUSTOMER IDENTITY — logged-in / guest / migration
+
+Widget routes are typically unauthenticated — Shopify storefront pages can call
+them from any browser, including guests. The handler must identify the
+customer (when one exists) without trusting the widget's claim alone.
+
+The widget reads `window.Shopify.context.customer?.id` on the storefront and
+includes it in the request body or as a query parameter. The handler treats it
+as advisory:
+
+  - Logged-in flow: when `customerId` is present in the request, persist data
+    keyed by `customer_id`. Do not trust the value for cross-tenant access —
+    the platform's verify-platform middleware confirms the request belongs to
+    this tenant; customer-level authorization within the tenant is the
+    handler's responsibility.
+
+  - Guest flow: when `customerId` is absent, persist data keyed by an
+    anonymous identifier — typically `email` (when collected by the widget)
+    or a client-generated `guest_token` stored in `localStorage` and replayed
+    on every request. Do not refuse the request just because it's a guest
+    unless the feature genuinely requires authentication.
+
+  - Migration: if a guest later logs in, the next request will carry both the
+    `guest_token` (from `localStorage`) and the `customerId` (from
+    `window.Shopify.context`). The handler should merge — copy the guest's
+    data onto the customer's record and drop the guest row.
+
+  ✅ const customerId = (req.body?.customerId ?? null) as string | null;
+     const guestToken = (req.body?.guestToken ?? null) as string | null;
+     if (!customerId && !guestToken) return res.status(400).json({ error: "missing identity" });
+     if (customerId && guestToken) {
+       await sql.begin(async (tx) => {
+         await tx`UPDATE <table_1> SET customer_id = ${customerId}
+                  WHERE guest_token = ${guestToken} AND customer_id IS NULL`;
+         await tx`DELETE FROM <table_1> WHERE guest_token = ${guestToken} AND customer_id IS NULL`;
+       });
+     }
+  ❌ const customerId = req.body.customerId;   // throws on guest, refuses guests entirely
+  ❌ trusting `customerId` for cross-tenant scope (verify-platform already pins tenant)
 """
 
 HANDLER_STOREFRONT = """

@@ -56,14 +56,15 @@ HANDLER = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STATE TRANSITION PATTERNS — this handler detects state changes across events:
 
-Rule: null means "never observed" — it is NOT a real state value. Never
-fire the transition action when prevState is null:
+Rule: null in the state column means "never observed" — it is NOT a real state
+value. Never fire the transition action when prevState is null:
   ✅ const isTransition = prevState !== null && prevState === <FROM> && current === <TO>;
   ❌ const isTransition = prevState === <FROM> && current === <TO>;   // fires on null→<TO> too
 
-Rule: Cron jobs and webhook routes can both observe the same transition.
-Atomically claim the transition with RETURNING and bail on a zero-row
-result — the other path may have already processed it:
+Rule: When applying Invariant 1 (atomic claim) to a state machine, include the
+prior state in the WHERE clause: cron and webhook paths can both observe the
+same transition, and the prior-state predicate ensures only the first claimer
+proceeds. A zero-row result means another path beat you to it — bail.
   ✅ const claimed = await sql`
        UPDATE <table_1>
        SET <state_col> = ${newState}, updated_at = NOW()
@@ -71,7 +72,6 @@ result — the other path may have already processed it:
        RETURNING <entity_id_col>
      `;
      if (claimed.length === 0) continue;   // other path handled this — skip
-  ❌ UPDATE without RETURNING + length check — cron and webhook paths double-fire.
 
 Rule: State transitions must log prev + new values so operators can
 reconstruct timelines from stdout:

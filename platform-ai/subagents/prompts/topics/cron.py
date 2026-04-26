@@ -87,23 +87,10 @@ Rules:
 
 %TEMPLATE_TABLES_HANDLER%
 
-RETRY SEMANTICS — write your job IDEMPOTENT:
-  Auto-retried 3× on exception with backoff (30s / 5min / 30min) before
-  status='failed'. Guard every side effect — your job MAY be invoked
-  multiple times for the same scheduled tick:
-    ✅ INSERT ... ON CONFLICT (<unique_key>) DO NOTHING
-    ✅ Claim-then-act via UPDATE ... RETURNING (see WEBHOOK BODY PATTERNS for
-       the canonical claim idiom; STATE TRANSITION PATTERNS for transition variant)
-    ❌ Unguarded INSERT that duplicates on retry.
-    ❌ External side effect (email send, Shopify mutation) without a
-       DB-level "already done" check.
-
-TYPICAL SHAPES:
-  - Pure-DB aggregation: a single `await sql\`SELECT ...\`` body, no external calls.
-  - Email loop: see HANDLER's PLATFORM SDK section for the canonical claim-
-    then-send pattern (UPDATE ... RETURNING + QuotaExceeded handling).
-  - Batch iteration over Shopify data: see BATCHED SHOPIFY RATE LIMIT SAFETY —
-    bulk-fetch before the loop, zero Shopify calls inside.
+RETRY SEMANTICS — your job MUST be idempotent. The runner auto-retries 3× on
+exception with backoff (30s / 5min / 30min) before flipping the row to
+status='failed'. Apply Invariants 1 & 3 from HANDLER INVARIANTS (atomic claim,
+ON CONFLICT DO NOTHING) to every side effect inside the job body.
 
 LOGGING — include the job name in every log line from inside a job:
   console.log({ jobName: "main", <context_field>: <value> }, "<short_message>");
