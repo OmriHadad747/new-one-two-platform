@@ -200,8 +200,11 @@ def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
       schema ground truth), fix the handler.
     - artifact in {"widget_js", "admin_ui"}: frontend misalignment — handler
       and migration are the contract; fix the frontend, keep them locked.
-    - artifact == "plan": informational only — revision can't re-run the
-      architect from inside this loop. Treated as no-op for locking.
+
+    Plan-level findings never reach this function — `_phase_validator`
+    filters them before invoking revision (revision can't re-run the
+    architect, so plan issues short-circuit the loop with a warning log
+    rather than wasting a revision pass on the wrong artifact).
 
     Invariant: this function is only called after handler and migration have already
     passed static validation in the codegen loop. If that invariant ever breaks, the
@@ -682,8 +685,13 @@ def _phase_validator(
       artifact == "handler"        → lock migration, fix handler.
       artifact in {widget_js,
                    admin_ui}       → lock both backends, fix the frontend.
-      artifact == "plan"           → informational; revision can't re-run the
-                                      architect, falls through to the default.
+      artifact == "plan"           → can't be fixed in this loop (revision
+                                      doesn't re-run the architect). Logged
+                                      as WARN and dropped before revision;
+                                      if every finding is plan-level the
+                                      run short-circuits and returns the
+                                      original artifacts so the operator
+                                      can re-run the architect.
 
     After each revision attempt the output is statically validated. If both attempts
     produce structurally invalid code the job is failed (not silently swapped back).
@@ -726,6 +734,35 @@ def _phase_validator(
     if not issues:
         _emit(request, "validator", "completed", "Semantic check passed")
         return artifacts
+
+    # Plan-level findings can't be fixed inside the codegen loop — the
+    # revision agent edits handler / migration / widget / admin, never the
+    # architect output. Surface them loudly as warnings (so they show up in
+    # job logs) and drop them from the actionable set passed to revision.
+    # If every finding was plan-level, skip revision entirely: there is
+    # nothing the loop can act on, and forcing revision to run against
+    # arbitrary frontend code (the prior `_revision_locked_artifacts`
+    # default) would just churn unrelated artifacts.
+    plan_issues = [i for i in issues if i.get("artifact") == "plan"]
+    actionable_issues = [i for i in issues if i.get("artifact") != "plan"]
+    for plan_issue in plan_issues:
+        log.warning(
+            "job=%s plan-level finding (not auto-fixable, re-run architect): "
+            "%s — %s",
+            request.jobId,
+            plan_issue.get("question", "?"),
+            plan_issue.get("issue", ""),
+        )
+    if not actionable_issues:
+        _emit(
+            request,
+            "validator",
+            "completed",
+            f"{len(plan_issues)} plan-level issue(s) — revision skipped "
+            "(re-run architect to fix)",
+        )
+        return artifacts
+    issues = actionable_issues
 
     issue_summary = "; ".join(f"{i['question']}: {i['issue']}" for i in issues)
     log.info(
