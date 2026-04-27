@@ -31,32 +31,55 @@ def validate_architect_plan(
       2.  cronSchedule, if present, is a valid 5-field cron expression.
       3.  Non-empty webhookTopics must be accompanied by a webhookContract.
       4.  Non-null cronSchedule must be accompanied by a cronContract.
-      5.  storefront apps must declare widgetApiCatalog (non-null; [] is valid for pure storefront-read widgets).
-      6.  All widgetApiCatalog paths start with '/'.
-      7.  All widgetApiCatalog entries declare requestShape.
-      8.  All widgetApiCatalog entries declare responseShape.
-      9.  Admin archetypes must have a non-empty adminApiCatalog; non-admin archetypes must not.
-      9b. No path parameters (:id, :run_id) in widgetApiCatalog or adminApiCatalog paths.
-      10. All adminApiCatalog paths start with '/'.
-      11. All adminApiCatalog entries declare requestShape.
-      12. All adminApiCatalog entries declare responseShape.
-      13. stateMachine.unknownSentinel must be the string "null" when stateMachine is set.
-      13b.stateMachine must have entity, trackedField, and transitions when non-null.
-      13c.stateMachine transitions must not use numeric range labels (positive/negative/zero/high/low etc.).
-      14. dbContracts entries must NOT include a tenant_id column (schema
-          isolation replaces RLS). Money-holding columns (names ending
-          _cents/_amount/_price/_total/…) must use BIGINT, not INTEGER —
-          INTEGER overflows at ~$21.47M.
-      15. storefront apps must declare widgetTargetTemplates (at least one valid template).
-      16. cronBatching, when non-null, must include required=true.
-      17. handlerCapabilities, when present, must be an array of strings drawn
-          from the handler vocabulary in subagents/prompts/capabilities/handler.py.
-      18. widgetCapabilities must be null for non-storefront archetypes and an
+      5.  storefront apps must declare widgetApiCatalog (non-null; [] is valid
+          for pure storefront-read widgets).
+      6.  Admin archetypes must have a non-empty adminApiCatalog; non-admin
+          archetypes must not.
+      7.  No path parameters (:id, :run_id) in widgetApiCatalog or
+          adminApiCatalog paths.
+      8.  stateMachine.unknownSentinel must be the string "null" when
+          stateMachine is set.
+      9.  dbContracts column rules:
+            a. NO tenant_id column (schema isolation replaces RLS).
+            b. Shopify entity ID columns (variant_id, product_id, order_id,
+               customer_id, …) use BIGINT or TEXT, never UUID.
+            c. Money columns (names ending _cents/_amount/_price/_total/…)
+               use BIGINT — never INTEGER (overflow), never FLOAT/DOUBLE/REAL
+               (drift), never TEXT/NUMERIC/DECIMAL (no SUM/range filter).
+            d. Money columns must have a sibling `currency` column on the
+               same table (else SUMs silently mix denominations).
+            e. Platform-owned email-template column names (email_subject,
+               email_body, email_body_template, email_cta_label, email_cta_url,
+               email_from_name) are forbidden on app-owned tables.
+            f. Singleton tables MUST NOT declare an `id` column or a
+               uniqueConstraint.
+            g. Column-level `enum`, when set, is a non-empty list of unique
+               non-empty strings; any DEFAULT literal in `constraints` must
+               be in the enum list.
+      10. When stateMachine.unknownSentinel == "null", the tracked-state
+          column in dbContracts MUST be NULLABLE.
+      11. storefront apps must declare widgetTargetTemplates (at least one
+          valid template).
+      12. cronBatching, when non-null, must include required=true.
+      13. handlerCapabilities is REQUIRED (non-null) and drawn from the
+          handler vocabulary in subagents/prompts/capabilities/handler.py.
+      14. widgetCapabilities is null for non-storefront archetypes and an
           array from the widget vocabulary for storefront archetypes.
-      19. adminCapabilities must be null for non-admin archetypes and an array
+      15. adminCapabilities is null for non-admin archetypes and an array
           from the admin vocabulary for admin archetypes (registry empty today).
-      20. emailSpec must be a non-null object { type, purpose } when "email"
+      16. emailSpec must be a non-null object { type, purpose } when "email"
           is in handlerCapabilities, and null otherwise.
+      17. shopifyGraphqlOperations names must be in the closed Admin/Storefront
+          GraphQL operation indexes; non-empty admin/storefront ops require the
+          matching shopify_graphql / shopify_storefront capability declared.
+
+    Paranoid presence/format checks (path-starts-with-`/`, requestShape /
+    responseShape presence, stateMachine field presence, valid-PG-type set,
+    complexity enum, feasibility enum, edgeCases length, range-label
+    transitions, etc.) are intentionally NOT enforced — see ARCH_RULES.md.
+    The frontier model emits these correctly ~always given the prompt
+    instructions; if it ever drifts, the bug_finder LLM validator and
+    downstream codegen / tsc / migration generator surface the impact.
     """
     errors: List[str] = []
     shopify = architect_output.get("shopifyPlan") or {}
@@ -108,31 +131,7 @@ def validate_architect_plan(
         )
     widget_catalog = widget_catalog or []
 
-    # 6. Every widgetApiCatalog path must start with '/'
-    for entry in widget_catalog:
-        path = entry.get("path", "")
-        if path and not path.startswith("/"):
-            errors.append(f"widgetApiCatalog path {path!r} must start with '/'")
-
-    # 7. Every widgetApiCatalog entry must declare requestShape
-    for entry in widget_catalog:
-        path = entry.get("path", "")
-        if path and "requestShape" not in entry:
-            errors.append(
-                f"widgetApiCatalog path {path!r} is missing requestShape — "
-                "declare the exact fields the widget sends in the host.call() body"
-            )
-
-    # 8. Every widgetApiCatalog entry must declare responseShape
-    for entry in widget_catalog:
-        path = entry.get("path", "")
-        if path and "responseShape" not in entry:
-            errors.append(
-                f"widgetApiCatalog path {path!r} is missing responseShape — "
-                "declare the exact JSON fields the handler returns on success"
-            )
-
-    # 9. Admin archetypes must declare a non-empty adminApiCatalog;
+    # 6. Admin archetypes must declare a non-empty adminApiCatalog;
     #    non-admin archetypes must NOT (no admin UI generator will run for them).
     admin_catalog = impl.get("adminApiCatalog") or []
     if app_archetype in ("storefront_backend_admin", "backend_admin"):
@@ -150,8 +149,8 @@ def validate_architect_plan(
             "or remove adminApiCatalog."
         )
 
-    # 9b. No path parameters in widgetApiCatalog or adminApiCatalog paths.
-    #     The harness routes on exact string equality — :param segments never match.
+    # 7. No path parameters in widgetApiCatalog or adminApiCatalog paths.
+    #    The harness routes on exact string equality — :param segments never match.
     _PATH_PARAM = re.compile(r"/:[\w]+")
     for catalog_name, catalog in [
         ("widgetApiCatalog", widget_catalog),
@@ -167,31 +166,7 @@ def validate_architect_plan(
                     f"e.g. '{_PATH_PARAM.sub('', path)}/action' with requestShape: {{\"id\": \"string\"}}"
                 )
 
-    # 10. Every adminApiCatalog path must start with '/'
-    for entry in admin_catalog:
-        path = entry.get("path", "")
-        if path and not path.startswith("/"):
-            errors.append(f"adminApiCatalog path {path!r} must start with '/'")
-
-    # 11. Every adminApiCatalog entry must declare requestShape
-    for entry in admin_catalog:
-        path = entry.get("path", "")
-        if path and "requestShape" not in entry:
-            errors.append(
-                f"adminApiCatalog path {path!r} is missing requestShape — "
-                "declare the exact fields the admin UI sends (use {{}} for paths with no body)"
-            )
-
-    # 12. Every adminApiCatalog entry must declare responseShape
-    for entry in admin_catalog:
-        path = entry.get("path", "")
-        if path and "responseShape" not in entry:
-            errors.append(
-                f"adminApiCatalog path {path!r} is missing responseShape — "
-                "declare the exact JSON fields the handler returns on success"
-            )
-
-    # 13. stateMachine.unknownSentinel must be the string "null" when stateMachine is set
+    # 8. stateMachine.unknownSentinel must be the string "null" when stateMachine is set
     sm = impl.get("stateMachine")
     if sm and isinstance(sm, dict):
         sentinel = sm.get("unknownSentinel")
@@ -202,68 +177,12 @@ def validate_architect_plan(
                 f"Reason: 0 is a valid real state value; null means never observed."
             )
 
-    # 13b. stateMachine must have entity, trackedField, and transitions when non-null
-    if sm and isinstance(sm, dict):
-        for required_field in ("entity", "trackedField", "transitions"):
-            if not sm.get(required_field):
-                errors.append(
-                    f"stateMachine is missing required field '{required_field}' — "
-                    "stateMachine must declare: entity (the Shopify resource being tracked), "
-                    "trackedField (the specific field compared across events), and "
-                    "transitions (array of {from, to, action} objects). "
-                    "Do not use stateMachine for application workflow states — "
-                    "those are plain DB columns updated directly by the handler."
-                )
-
-    # 13c. stateMachine transitions must use exact stored enum values, not descriptive range labels
-    _RANGE_LABEL_WORDS = re.compile(
-        r"\b(positive|negative|zero|nonzero|non_zero|high|low|above|below|"
-        r"greater|less|threshold|exceeded|or_negative|or_positive|and_above|and_below)\b",
-        re.IGNORECASE,
-    )
-    if sm and isinstance(sm, dict):
-        for t in sm.get("transitions") or []:
-            for field in ("from", "to"):
-                val = str(t.get(field, ""))
-                if _RANGE_LABEL_WORDS.search(val):
-                    errors.append(
-                        f"stateMachine transition {field}={val!r} looks like a numeric range label, "
-                        "not a stored enum value. stateMachine must not be used for numeric "
-                        "threshold comparisons — set stateMachine: null and document the numeric "
-                        "logic in webhookContract.handlerMustProduce instead."
-                    )
-
-    # 14. Each dbContracts entry must include a tenant_id column + typed column checks.
-    #     Catching bogus types here (e.g. "STRING" instead of "TEXT") saves a Sonnet
-    #     round-trip when the migration agent tries to generate DDL.
-    _VALID_PG_TYPES = {
-        "UUID",
-        "BIGINT",
-        "BIGSERIAL",
-        "INTEGER",
-        "INT",
-        "SMALLINT",
-        "SERIAL",
-        "TEXT",
-        "VARCHAR",
-        "CHAR",
-        "CITEXT",
-        "BOOLEAN",
-        "BOOL",
-        "TIMESTAMPTZ",
-        "TIMESTAMP",
-        "DATE",
-        "TIME",
-        "INTERVAL",
-        "JSONB",
-        "JSON",
-        "NUMERIC",
-        "DECIMAL",
-        "REAL",
-        "DOUBLE",
-        "DOUBLE PRECISION",
-        "BYTEA",
-    }
+    # 9. dbContracts column rules: tenant_id forbidden, Shopify ID cols not
+    #     UUID, money cols BIGINT only (with currency sibling), email-template
+    #     cols rejected, singleton shape, column-level enum + DEFAULT
+    #     membership. (Valid-PG-type set check dropped as paranoid — frontier
+    #     models emit canonical PG types ~always; downstream migration
+    #     generator surfaces bogus types when they slip through.)
     _SHOPIFY_ID_COLS = {
         "variant_id",
         "product_id",
@@ -274,6 +193,18 @@ def validate_architect_plan(
         "fulfillment_id",
         "draft_order_id",
         "discount_id",
+    }
+    # Email-template fields are merchant-edited via Ton's Email tab (platform-
+    # owned `app_email_configs` table). If the architect re-declares them on
+    # an app-owned table, the handler writes one place while the merchant
+    # edits another — silent data divergence with no easy detection.
+    _EMAIL_TEMPLATE_COLS = {
+        "email_subject",
+        "email_body",
+        "email_body_template",
+        "email_cta_label",
+        "email_cta_url",
+        "email_from_name",
     }
     # Money-holding column name suffixes. INTEGER overflows at ~$21.47M in cents —
     # a single enterprise cart or any aggregate SUM() across a busy tenant can hit
@@ -338,29 +269,47 @@ def validate_architect_plan(
             name = (col.get("name") or "").lower()
             type_str = col.get("type") or ""
             if not type_str:
-                errors.append(
-                    f"dbContracts table '{table}' column '{name}' is missing a type — "
-                    "every column must declare a PostgreSQL type"
-                )
                 continue
             base = _base_type(type_str)
-            if base not in _VALID_PG_TYPES:
-                errors.append(
-                    f"dbContracts table '{table}' column '{name}' has invalid PostgreSQL type "
-                    f"{type_str!r} — valid types: {sorted(_VALID_PG_TYPES)}"
-                )
             if name in _SHOPIFY_ID_COLS and base == "UUID":
                 errors.append(
                     f"dbContracts table '{table}' column '{name}' is a Shopify entity ID — "
                     f"use BIGINT (or TEXT), NEVER UUID. Internal primary "
                     f"keys use UUID."
                 )
-            if base == "INTEGER" and any(name.endswith(s) for s in _MONEY_COL_SUFFIXES):
+            # Money columns: BIGINT only. INTEGER overflows at ~$21.47M;
+            # FLOAT/DOUBLE/REAL drift (0.1 + 0.2 ≠ 0.3 → customer charged the
+            # wrong amount); TEXT/NUMERIC/DECIMAL can't be SUMmed or range-
+            # filtered cheanly. The handler is taught to parse Shopify's
+            # decimal strings into integer cents before INSERT.
+            is_money_col = any(name.endswith(s) for s in _MONEY_COL_SUFFIXES)
+            if is_money_col and base not in ("BIGINT", "BIGSERIAL"):
                 errors.append(
-                    f"dbContracts table '{table}' column '{name}' holds monetary values but uses INTEGER — "
-                    f"use BIGINT. INTEGER overflows at ~$21.47M (2,147,483,647 cents); a single "
-                    f"enterprise cart or SUM() aggregate above that ceiling crashes the handler with "
-                    f"'integer out of range'."
+                    f"dbContracts table '{table}' column '{name}' holds monetary values but uses {base} — "
+                    f"use BIGINT (integer minor units). FLOAT/DOUBLE/REAL drift (0.1+0.2 ≠ 0.3 → "
+                    f"customer charged the wrong amount); INTEGER overflows at ~$21.47M; "
+                    f"TEXT/NUMERIC/DECIMAL can't be SUMmed or range-filtered cleanly."
+                )
+            # Money columns must be paired with a sibling `currency` column on
+            # the same table — otherwise SUM() aggregates silently mix USD/EUR
+            # and reports/billing logic produce wrong numbers with no error.
+            if is_money_col and "currency" not in col_names:
+                errors.append(
+                    f"dbContracts table '{table}' column '{name}' is a money column but the "
+                    f"table has no `currency` sibling column — aggregations will silently mix "
+                    f"denominations (USD/EUR/etc.). Add `currency TEXT NOT NULL` so SUM/GROUP BY "
+                    f"can be denomination-safe."
+                )
+            # Email-template fields are platform-owned (merchant edits them
+            # in Ton's Email tab → app_email_configs). Re-declaring them on
+            # an app-owned table creates two writers and silent divergence.
+            if name in _EMAIL_TEMPLATE_COLS:
+                errors.append(
+                    f"dbContracts table '{table}' column '{name}' is a platform-owned email-template "
+                    f"field. Merchants edit these via Ton's Email tab (app_email_configs); declaring "
+                    f"them on an app-owned table means handler writes never reflect what the merchant "
+                    f"sees. Drop the column; if you need feature behavior driven by email content, "
+                    f"render handler logic from the platform-owned template instead."
                 )
             # Column-level `enum` validation. When declared, it must be a
             # non-empty list of unique non-empty strings, and any DEFAULT
@@ -398,7 +347,34 @@ def validate_architect_plan(
                             "reject every default-valued INSERT"
                         )
 
-    # 15. storefront apps must declare widgetTargetTemplates
+    # 10. Cross-section: when stateMachine.unknownSentinel == "null", the
+    #     tracked-state column in dbContracts MUST be NULLABLE. The whole
+    #     "first event = unknown" semantic depends on the column accepting
+    #     NULL; a NOT NULL constraint either crashes the INSERT or forces a
+    #     non-null sentinel value that contradicts the state-machine.
+    if (
+        sm
+        and isinstance(sm, dict)
+        and sm.get("unknownSentinel") == "null"
+        and sm.get("trackedField")
+    ):
+        tracked = str(sm["trackedField"]).lower()
+        for contract in impl.get("dbContracts") or []:
+            for col in contract.get("columns") or []:
+                if (col.get("name") or "").lower() != tracked:
+                    continue
+                constraints = (col.get("constraints") or "").upper()
+                # NOT NULL is the failure case; bare "NOT NULL" or "NOT NULL DEFAULT …".
+                if re.search(r"\bNOT\s+NULL\b", constraints):
+                    errors.append(
+                        f"dbContracts table '{contract.get('table', '?')}' column "
+                        f"'{tracked}' is the stateMachine.trackedField with "
+                        f'unknownSentinel="null", but its constraints declare NOT NULL '
+                        f"({constraints!r}). The 'first event' semantic stores NULL until "
+                        f"the first observation — drop NOT NULL (or change unknownSentinel)."
+                    )
+
+    # 11. storefront apps must declare widgetTargetTemplates
     _VALID_TEMPLATES = {
         "product",
         "collection",
@@ -425,7 +401,7 @@ def validate_architect_plan(
                     f"valid values are: {sorted(_VALID_TEMPLATES)}"
                 )
 
-    # 16. cronBatching, when non-null, must include required=true
+    # 12. cronBatching, when non-null, must include required=true
     batching = impl.get("cronBatching")
     if batching is not None and isinstance(batching, dict):
         if batching.get("required") is not True:
@@ -435,7 +411,7 @@ def validate_architect_plan(
                 "knows to inject the bulk-fetch pattern"
             )
 
-    # 17. handlerCapabilities — closed-vocabulary array, REQUIRED (non-null).
+    # 13. handlerCapabilities — closed-vocabulary array, REQUIRED (non-null).
     #     The handler JIT consumes this to decide which API docs to inject
     #     into the handler prompt; a missing value means the handler would
     #     ship without docs for the APIs it actually needs.
@@ -454,7 +430,7 @@ def validate_architect_plan(
             errors=errors,
         )
 
-    # 18. widgetCapabilities — present only for storefront archetypes.
+    # 14. widgetCapabilities — present only for storefront archetypes.
     #     null for backend / backend_admin, array (from widget vocabulary) for
     #     storefront_backend / storefront_backend_admin.
     widget_caps = impl.get("widgetCapabilities")
@@ -473,7 +449,7 @@ def validate_architect_plan(
             "capabilities to declare (use null, not [])"
         )
 
-    # 19. adminCapabilities — present only for admin archetypes.
+    # 15. adminCapabilities — present only for admin archetypes.
     #     null for backend / storefront_backend, array (from admin vocabulary)
     #     for backend_admin / storefront_backend_admin. Admin vocabulary is
     #     empty today so the array is effectively always [] for admin archetypes.
@@ -493,7 +469,7 @@ def validate_architect_plan(
             "capabilities to declare (use null, not [])"
         )
 
-    # 20. emailSpec — coupled to handlerCapabilities.
+    # 16. emailSpec — coupled to handlerCapabilities.
     #     Non-null object { type, purpose } when "email" is declared; null
     #     otherwise. Consumed downstream by the Email tab seed + the handler
     #     prompt's starter-content guidance.
@@ -530,7 +506,7 @@ def validate_architect_plan(
             "handler that does not call ctx.services.email.send"
         )
 
-    # 21. shopifyGraphqlOperations — every name must exist in the relevant
+    # 17. shopifyGraphqlOperations — every name must exist in the relevant
     # surface's catalog. The architect picks from the operation index injected
     # into its system prompt; anything outside that index is hallucination
     # and would fail offline GraphQL validation downstream. Catching it here

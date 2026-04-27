@@ -8,6 +8,7 @@ Public entry points:
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, List, Optional
 
@@ -18,7 +19,6 @@ from subagents.prompts.topics.template_tables import (
 )
 from subagents.prompts.topics.webhook import WEBHOOK_TOPICS as _VALID_WEBHOOK_TOPICS
 from utils.static_validations.js_parse import (
-    js_is_syntactically_complete as _js_is_syntactically_complete,
     pkg_base as _pkg_base,
     scan_balanced_paren as _scan_balanced_paren,
     split_top_level as _split_top_level,
@@ -26,9 +26,6 @@ from utils.static_validations.js_parse import (
 )
 from utils.static_validations.shared_checks import (
     find_setTimeout_violations as _find_setTimeout_violations,
-)
-from utils.static_validations.sql_parse import (
-    is_inside_sql_begin as _is_inside_sql_begin,
 )
 
 
@@ -44,25 +41,9 @@ FORBIDDEN_HANDLER_PATTERNS = [
     (r"\bsetImmediate\s*\(", "setImmediate is not allowed"),
     (r"\bprocess\.exit\b", "process.exit is not allowed"),
     (r"\bprocess\.kill\b", "process.kill is not allowed"),
-    # Legacy CommonJS surface — generator output is ESM TypeScript.
-    (
-        r"\brequire\s*\(",
-        "require() is not allowed — use ESM `import` syntax (this is "
-        "TypeScript, tsc compiles to ESM for Node 20)",
-    ),
-    (
-        r"\bmodule\.exports\b",
-        "module.exports is not allowed — use ESM `export` / `export const` " "syntax",
-    ),
-    # Legacy ctx.* surface — prompt has been retargeted to req.platform + sql
-    # + platform.*. Any ctx.* reference is carry-over from the
-    # pre-Phase-2 prompt set and the model is regressing.
-    (
-        r"\bctx\.(?:db|tenantId|shopify|payload|trigger|widgetPath|widgetBody|adminPath|adminBody|logger|shop|services|http|storefront)\b",
-        "ctx.* references are no longer available — use req.platform, `sql` "
-        "from ../lib/db.js, `platform` from "
-        "../lib/platform.js, or the shopify client from ../lib/shopify.js",
-    ),
+    # require() / module.exports / ctx.* — covered by tsc in ESM-only project
+    # (template-owned tsconfig.json pins module: ESM). Reclassified as
+    # paranoid — see HANDLER_RULES.md rows 10 and 17.
     # Local-disk writes — always forbidden on Cloud Run (ephemeral FS).
     # Rewritten to point at the new /services/files/upload path.
     (
@@ -153,6 +134,7 @@ _TEMPLATE_PACKAGES = frozenset(
     }
 )
 
+
 def validate_handler_artifact(
     artifact: str,
     api_plan_topics: List[str],
@@ -176,33 +158,46 @@ def validate_handler_artifact(
     ------
     1. Bundle markers parse cleanly (no unclosed / nested ===FILE:===).
     2. No file path writes to a template-reserved path (server.ts,
-       middleware, lib/{db,platform-call,shopify,cron-runner}.ts, etc.).
-    3. Required files present based on the architect plan:
-         - src/routes/webhook-handlers.ts when webhookTopics non-empty
-         - src/routes/admin.ts            when adminApiCatalog non-empty
-         - src/routes/widget.ts           when widgetApiCatalog non-empty
-         - src/routes/cron.ts             when cronSchedule is set
-       And NOT present when the plan says no (widgetApiCatalog == []
-       means storefront-direct; widget.ts must not be emitted).
-    4. Per-file TS rules (every file):
-         - Syntax completeness (balanced braces/strings).
-         - Forbidden patterns (require, module.exports, ctx.*, eval,
-           setInterval, setImmediate, process.exit/kill, disk-writes,
-           direct platform-call.js imports).
-         - setTimeout bounded-pause check (≤500ms literal, same as legacy).
+       middleware, lib/{db,platform-call,shopify,cron-runner}.ts, etc.);
+       no absolute paths; no `..` traversal; emit only under
+       src/routes/*.ts and src/lib/*.ts.
+    3. Per-file TS rules (every file):
+         - Forbidden patterns (eval, setInterval, setImmediate,
+           process.exit/kill, disk-writes [sharp.toFile,
+           fs.createWriteStream pipes, xlsx.writeFile], direct
+           platform-call.js imports, template-table DML).
+         - setTimeout bounded-pause check (≤500ms literal).
          - Imports limited to: Node builtins, template-shipped packages,
            architect-approved npm capabilities, or relative ../lib/* paths.
-    5. webhook-handlers.ts: exports `webhookHandlers` map; every planned
-       topic has a matching key; no res.* calls; no idempotency gate
-       (template router owns both).
-    6. admin.ts: exports `adminRouter`; every adminApiCatalog path has a
-       matching `adminRouter.<method>("<path>", ...)` registration.
-    7. widget.ts: exports `widgetRouter`; every widgetApiCatalog path
-       registered.
-    8. cron.ts: exports `jobs`; has at least one entry.
-    9. State-machine flag: any file contains a `sql\`SELECT` before any
-       INSERT/UPDATE of the state column (soft-verified; validator_agent
-       in step 10 does the full semantic check).
+         - https:// URLs allowed only as the literal URL argument to fetch().
+         - No `tenant_id` reference inside any `sql\`...\`` tagged template.
+         - No hand-rolled fetch() to Shopify (.myshopify.com / /admin/api/).
+         - shopify.bulkQuery() argument is a query, not a mutation.
+    4. webhook-handlers.ts: every planned topic has a matching key;
+       no res.* calls. (Missing exports + handler signatures are caught
+       by tsc.)
+    5. admin.ts: every adminApiCatalog path has a matching
+       `adminRouter.<method>("<path>", ...)` registration.
+    6. widget.ts: every widgetApiCatalog path registered.
+    7. cron.ts: jobs map has at least one entry.
+    8. Status enum cross-check: every literal value the handler writes
+       to a dbContracts column with a declared `enum` must be in that
+       enum (otherwise the migration's CHECK constraint rejects the
+       INSERT/UPDATE at runtime).
+    9. Email metadata sidecar (artifact-level): the ```email-metadata```
+       fenced JSON block is emitted iff the handler calls
+       platform.email.send/sendBatch; exactly one block when present;
+       every {{placeholder}} in starterContent has a matching entry in
+       `variables` and vice versa.
+
+    Checks intentionally NOT enforced (see HANDLER_RULES.md):
+      - File-presence triggers per architect plan (paranoid; tsc catches
+        missing files via the template's named imports).
+      - Syntactic completeness / truncation (not a prompt rule; tsc).
+      - require()/module.exports/ctx.* (not in current prompt; tsc).
+      - SKIP LOCKED inside sql.begin (not a handler-prompt rule).
+      - State-machine SELECT presence (tautological soft check).
+      - ctaLabel/ctaUrl pairing (non-catastrophic; merchants notice).
     """
     errors: List[str] = []
 
@@ -250,37 +245,13 @@ def validate_handler_artifact(
                 f"emit only src/routes/*.ts and src/lib/*.ts"
             )
 
-    # 3. Required files gate.
-    widget_declared = widget_catalog is not None
+    # 3. Per-trigger gate flags.
+    #    (File-presence checks dropped as paranoid — `handler_typecheck` (tsc)
+    #    catches missing files via the template's named imports of
+    #    webhookHandlers / adminRouter / widgetRouter / jobs. Inverse "must
+    #    not emit when …" cases are dead-code drift, not catastrophic. See
+    #    HANDLER_RULES.md rows 6, 7, 8.)
     widget_used = bool(widget_catalog)
-    admin_used = bool(admin_catalog)
-
-    if api_plan_topics and "src/routes/webhook-handlers.ts" not in files_by_path:
-        errors.append(
-            "webhookTopics is non-empty but src/routes/webhook-handlers.ts is missing — "
-            "emit the webhookHandlers map file"
-        )
-    if admin_used and "src/routes/admin.ts" not in files_by_path:
-        errors.append(
-            "adminApiCatalog is non-empty but src/routes/admin.ts is missing — "
-            "emit the adminRouter file"
-        )
-    if widget_used and "src/routes/widget.ts" not in files_by_path:
-        errors.append(
-            "widgetApiCatalog is non-empty but src/routes/widget.ts is missing — "
-            "emit the widgetRouter file"
-        )
-    if cron_schedule and "src/routes/cron.ts" not in files_by_path:
-        errors.append(
-            "cronSchedule is set but src/routes/cron.ts is missing — "
-            "emit the jobs map file"
-        )
-    # Storefront-direct widget apps explicitly must NOT emit widget.ts.
-    if widget_declared and not widget_used and "src/routes/widget.ts" in files_by_path:
-        errors.append(
-            "widgetApiCatalog is [] (storefront-direct) but src/routes/widget.ts "
-            "was emitted — do not emit that file; the template's placeholder is fine"
-        )
 
     # 4. Per-file TS rules.
     declared_caps = set(declared_capabilities or [])
@@ -311,25 +282,16 @@ def validate_handler_artifact(
     if "src/routes/cron.ts" in files_by_path:
         errors.extend(_validate_cron_router(files_by_path["src/routes/cron.ts"]))
 
-    # 9. State-machine soft check — every file combined.
-    if has_state_machine:
-        any_select = any(
-            re.search(r"\bsql\s*(?:<[^>]*>)?\s*`\s*SELECT", c, re.IGNORECASE)
-            for c in files_by_path.values()
-        )
-        if not any_select:
-            errors.append(
-                "stateMachine is declared but no sql`SELECT` read appears in any "
-                "handler file — load the last-observed value before comparing to the "
-                "incoming event and writing the new state"
-            )
+    # State-machine soft "any SELECT exists" check dropped as tautological /
+    # paranoid (HANDLER_RULES.md row 61). The full Inv 4 enforcement (read
+    # prior state before deciding) is owned by the LLM `agent_rules` /
+    # `bug_finder` validators.
 
-    # 10. Concurrency idiom: FOR UPDATE SKIP LOCKED is meaningless outside a
-    #     `sql.begin(...)` block — postgres-js auto-commits each `sql\`...\``
-    #     call, releasing the lock before the loop body runs. See Finding 5
-    #     in docs/FINDINGS_DEFERRED_4_5_6.md.
-    for path, code in files_by_path.items():
-        errors.extend(_check_skip_locked_in_transaction(path, code))
+    # SKIP-LOCKED-inside-sql.begin check dropped — not a handler-prompt rule
+    # (cron.py:19 mentions FOR UPDATE SKIP LOCKED only as platform-internal
+    # mechanism, never as a handler discipline). The atomic-claim idiom the
+    # prompt does teach (UPDATE … RETURNING) is owned by `agent_rules` /
+    # `bug_finder`. See HANDLER_RULES.md.
 
     # 11. Status enum cross-check: every literal value the handler writes to
     #     a dbContracts column with a declared `enum` must be in that enum.
@@ -338,9 +300,18 @@ def validate_handler_artifact(
     #     docs/FINDINGS_DEFERRED_4_5_6.md.
     errors.extend(_check_enum_writes(files_by_path, db_contracts or []))
 
+    # 12. Email metadata sidecar: the ```email-metadata``` fenced JSON block
+    #     that follows the bundle is required iff the handler calls
+    #     platform.email.send/sendBatch. Validates presence/absence, single
+    #     occurrence, JSON shape, ctaLabel+ctaUrl pairing against URL-flavored
+    #     variables, and {{placeholder}} ↔ variables consistency.
+    errors.extend(_check_email_sidecar(artifact, files_by_path))
+
     return errors
 
+
 # ── Per-file helpers ──────────────────────────────────────────────────────────
+
 
 def _build_import_allowlist(declared_caps: set) -> frozenset:
     """
@@ -360,39 +331,6 @@ def _build_import_allowlist(declared_caps: set) -> frozenset:
             allowed.update(entry["packages"])
     return frozenset(allowed)
 
-_SKIP_LOCKED_RE = re.compile(r"FOR\s+UPDATE\s+SKIP\s+LOCKED", re.IGNORECASE)
-
-def _check_skip_locked_in_transaction(path: str, code: str) -> List[str]:
-    """
-    Reject `FOR UPDATE SKIP LOCKED` that is not inside a `sql.begin(...)`
-    block. postgres-js auto-commits each tagged-template invocation, so a
-    lock taken by a bare ``sql`SELECT … FOR UPDATE SKIP LOCKED` `` is
-    released the moment the SELECT commits — before the handler can act on
-    the row. Two overlapping cron ticks then both claim the same row and
-    double-execute.
-
-    Heuristic: for each match of FOR UPDATE SKIP LOCKED, walk backwards in
-    the file looking for the nearest unmatched-open `sql.begin(`; if we hit
-    the file start (or another closing brace before any open `sql.begin(`),
-    it's outside a transaction. Coarse but adequate — `sql.begin(` is the
-    only legitimate gate here, and the false-positive cost is just a noisier
-    retry message.
-    """
-    errors: List[str] = []
-    for match in _SKIP_LOCKED_RE.finditer(code):
-        if not _is_inside_sql_begin(code, match.start()):
-            line = code.count("\n", 0, match.start()) + 1
-            errors.append(
-                f"[{path}:{line}] `FOR UPDATE SKIP LOCKED` appears outside a "
-                "`sql.begin(async (tx) => {...})` block. Each `sql\\`...\\`` "
-                "call auto-commits, so the lock is released before the loop "
-                "body runs — overlapping cron/webhook ticks will double-claim "
-                "the same row. Either wrap the claim-process-update span in "
-                "`sql.begin(...)`, or replace SKIP LOCKED with the canonical "
-                "atomic claim idiom: `UPDATE ... WHERE <state>=<prev> "
-                "RETURNING <id>` and bail when the result is empty."
-            )
-    return errors
 
 _INSERT_INTO_HEAD_RE = re.compile(
     r"INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(",
@@ -402,6 +340,7 @@ _SET_ASSIGNMENT_RE = re.compile(
     r"\bSET\s+(.+?)(?=\s+(?:WHERE|RETURNING|ON\s+CONFLICT)\b|\s*[`;])",
     re.IGNORECASE | re.DOTALL,
 )
+
 
 def _check_enum_writes(
     files_by_path: Dict[str, str],
@@ -439,7 +378,7 @@ def _check_enum_writes(
             val_block = _scan_balanced_paren(code, match.end())
             if val_block is None:
                 continue
-            cols = [c.strip().strip("`\"").lower() for c in col_block.split(",")]
+            cols = [c.strip().strip('`"').lower() for c in col_block.split(",")]
             vals = _split_top_level(val_block)
             table_enums = enum_map.get(table) or {}
             for idx, col_name in enumerate(cols):
@@ -463,12 +402,13 @@ def _check_enum_writes(
         # UPDATE ... SET <col> = '<literal>': scan SET clauses for known
         # enum columns. Cheap and catches the common case.
         for assignment in _SET_ASSIGNMENT_RE.findall(code):
-            for col_name, literal in re.findall(
-                r"\b(\w+)\s*=\s*'([^']*)'", assignment
-            ):
+            for col_name, literal in re.findall(r"\b(\w+)\s*=\s*'([^']*)'", assignment):
                 col_lower = col_name.lower()
                 for table, table_enums in enum_map.items():
-                    if col_lower in table_enums and literal not in table_enums[col_lower]:
+                    if (
+                        col_lower in table_enums
+                        and literal not in table_enums[col_lower]
+                    ):
                         key = (path, table, col_lower, literal)
                         if key in seen:
                             continue
@@ -482,19 +422,16 @@ def _check_enum_writes(
                         )
     return errors
 
+
 def _validate_ts_file(
     path: str, code: str, allowed_import_specifiers: frozenset
 ) -> List[str]:
     """Generic per-TypeScript-file checks applied to every emitted file."""
     errors: List[str] = []
 
-    # Syntax completeness — catches truncated output.
-    if not _js_is_syntactically_complete(code):
-        errors.append(
-            f"[{path}] code is syntactically incomplete (truncated?) — "
-            "unbalanced braces, unclosed string, or unmatched brackets"
-        )
-        return errors  # further checks meaningless on broken code
+    # (Syntactic-completeness check dropped — not a prompt rule. tsc catches
+    # truncation as a syntax error with a clearer message. See
+    # HANDLER_RULES.md.)
 
     # Forbidden structural patterns.
     for pattern, message in FORBIDDEN_HANDLER_PATTERNS:
@@ -526,16 +463,260 @@ def _validate_ts_file(
                 f"{sorted(allowed_import_specifiers)}"
             )
 
+    # https:// URLs allowed only as the literal URL argument to fetch().
+    errors.extend(_check_https_outside_fetch(path, code))
+    # No `tenant_id` reference inside any `sql\`...\`` tagged template block.
+    errors.extend(_check_no_tenant_id_in_sql(path, code))
+    # No hand-rolled fetch() to Shopify (must go through shopify.* helpers).
+    errors.extend(_check_no_fetch_to_shopify(path, code))
+    # shopify.bulkQuery() argument is a query, not a mutation.
+    errors.extend(_check_bulkquery_not_mutation(path, code))
+
     return errors
+
+
+# ── New per-file static checks (rows 15, 47, 70, 73 in HANDLER_RULES.md) ──────
+
+
+_HTTPS_LITERAL_RE = re.compile(r"https?://[^\s\"'`]+")
+_FETCH_URL_ARG_RE = re.compile(
+    r"""\bfetch\s*\(\s*(['"`])((?:\\.|(?!\1).)*?)\1""",
+    re.DOTALL,
+)
+
+
+def _check_https_outside_fetch(path: str, code: str) -> List[str]:
+    """
+    https:// URLs are allowed ONLY as the literal URL argument to fetch().
+    The prompt explicitly bans them in comments, email templateIds, and
+    other string slots — they're a common signal that the handler is
+    hand-rolling Shopify or platform-back calls instead of using
+    shopify.* / platform.*.
+
+    Implementation: build an allow-list of character ranges covering each
+    `fetch(<quote>...<quote>)` first-argument string body; any https://
+    occurrence outside those ranges is flagged. Catches comments, JSDoc,
+    error messages, templateIds, and any other string slot that holds an
+    https:// literal.
+    """
+    allowed_ranges = [(m.start(2), m.end(2)) for m in _FETCH_URL_ARG_RE.finditer(code)]
+
+    errors: List[str] = []
+    seen: set = set()
+    for match in _HTTPS_LITERAL_RE.finditer(code):
+        pos = match.start()
+        if any(start <= pos < end for start, end in allowed_ranges):
+            continue
+        line = code.count("\n", 0, pos) + 1
+        url = match.group(0)
+        key = (path, line, url)
+        if key in seen:
+            continue
+        seen.add(key)
+        errors.append(
+            f"[{path}:{line}] https:// URL '{url}' appears outside a fetch() "
+            "call. https:// literals are only allowed as the URL argument "
+            "to fetch() for non-Shopify, non-platform third-party APIs. "
+            "Use platform.* for platform-back calls and shopify.* helpers "
+            "for Shopify; never embed https:// in comments, templateIds, "
+            "or other strings."
+        )
+    return errors
+
+
+_SQL_BLOCK_RE = re.compile(r"sql\s*(?:<[^>]*>)?\s*`([^`]*)`", re.DOTALL)
+
+
+def _check_no_tenant_id_in_sql(path: str, code: str) -> List[str]:
+    """
+    Tenant scoping is search_path-driven; tables in the per-tenant schema
+    do NOT carry a `tenant_id` column. A handler that references it either
+    invents a non-existent column (empty SELECT / silent INSERT failure)
+    or is hand-rolling tenant filtering that the platform's middleware
+    already handles.
+    """
+    errors: List[str] = []
+    seen: set = set()
+    for match in _SQL_BLOCK_RE.finditer(code):
+        block = match.group(1)
+        m = re.search(r"\btenant_id\b", block)
+        if not m:
+            continue
+        line = code.count("\n", 0, match.start() + m.start()) + 1
+        if (path, line) in seen:
+            continue
+        seen.add((path, line))
+        errors.append(
+            f"[{path}:{line}] `sql\\`...\\`` block references `tenant_id` — "
+            "the per-tenant schema does not include that column. Tenant "
+            "scoping is search_path-driven; remove tenant_id from the query."
+        )
+    return errors
+
+
+_FETCH_TO_SHOPIFY_RE = re.compile(
+    r"""\bfetch\s*\(\s*['"`][^'"`]*(?:\.myshopify\.com|/admin/api/)""",
+    re.IGNORECASE,
+)
+
+
+def _check_no_fetch_to_shopify(path: str, code: str) -> List[str]:
+    """
+    Hand-rolled fetch() to Shopify bypasses shopify.* helpers, which means
+    no cost-based throttle handling, no GID validation, no userErrors-as-
+    failure discipline, and a hand-rolled access token. Use
+    shopify.graphql / shopify.graphqlPaginate / shopify.bulkQuery instead.
+    """
+    errors: List[str] = []
+    seen: set = set()
+    for match in _FETCH_TO_SHOPIFY_RE.finditer(code):
+        line = code.count("\n", 0, match.start()) + 1
+        if (path, line) in seen:
+            continue
+        seen.add((path, line))
+        errors.append(
+            f"[{path}:{line}] hand-rolled fetch() to Shopify is not allowed "
+            "— use shopify.graphql / shopify.graphqlPaginate / "
+            "shopify.bulkQuery from ../lib/shopify.js so the cost-based "
+            "throttle, GID format, and userErrors discipline are enforced."
+        )
+    return errors
+
+
+_BULK_QUERY_ARG_RE = re.compile(r"\bbulkQuery\s*\(\s*(['\"`])([\s\S]*?)\1")
+
+
+def _check_bulkquery_not_mutation(path: str, code: str) -> List[str]:
+    """
+    shopify.bulkQuery wraps its argument in `bulkOperationRunQuery(query:)`
+    — the argument must be a plain GraphQL query, never a mutation. Passing
+    a mutation fails at runtime when Shopify's bulk-operation engine
+    rejects the wrapped document.
+    """
+    errors: List[str] = []
+    for match in _BULK_QUERY_ARG_RE.finditer(code):
+        body = match.group(2).lstrip()
+        first_word_match = re.match(r"(\w+)", body)
+        if first_word_match and first_word_match.group(1).lower() == "mutation":
+            line = code.count("\n", 0, match.start()) + 1
+            errors.append(
+                f"[{path}:{line}] shopify.bulkQuery() argument starts with "
+                "`mutation` — bulkQuery only accepts GraphQL queries (the "
+                "helper wraps your string in bulkOperationRunQuery "
+                "internally). Use shopify.graphql() for the mutation, or a "
+                "batch mutation if one exists for this op."
+            )
+    return errors
+
+
+# ── Email metadata sidecar (artifact-level; row 33 + 35 + 36) ─────────────────
+
+
+_EMAIL_SIDECAR_RE = re.compile(
+    r"```email-metadata\s*\n(.*?)\n```",
+    re.DOTALL,
+)
+_PLATFORM_EMAIL_USE_RE = re.compile(r"\bplatform\.email\.(?:send|sendBatch)\s*\(")
+_TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
+_SIDECAR_STRING_KEYS = ("subject", "heading", "body", "ctaLabel", "ctaUrl")
+
+
+def _check_email_sidecar(artifact: str, files_by_path: Dict[str, str]) -> List[str]:
+    """
+    Artifact-level checks for the ```email-metadata``` sidecar:
+      - Sidecar present iff handler calls platform.email.send/sendBatch.
+      - Exactly one block when present.
+      - JSON parses; `variables` is a list, `starterContent` is an object.
+      - ctaLabel + ctaUrl paired iff any URL-flavored variable in
+        `variables` (a `url` or `*Url` name).
+      - `variables` ↔ `starterContent` `{{x}}` references consistent —
+        every placeholder declared, every declared variable referenced.
+    """
+    errors: List[str] = []
+    uses_email = any(
+        _PLATFORM_EMAIL_USE_RE.search(code) for code in files_by_path.values()
+    )
+    blocks = _EMAIL_SIDECAR_RE.findall(artifact)
+
+    if uses_email and not blocks:
+        errors.append(
+            "handler calls platform.email.send/sendBatch but no "
+            "```email-metadata``` sidecar block was emitted — append "
+            "exactly one fenced JSON block with `variables` and "
+            "`starterContent` after the file bundle."
+        )
+        return errors
+    if not uses_email and blocks:
+        errors.append(
+            "```email-metadata``` sidecar block was emitted but the handler "
+            "does not call platform.email.send/sendBatch — remove the "
+            "sidecar."
+        )
+        return errors
+    if len(blocks) > 1:
+        errors.append(
+            "emit exactly ONE ```email-metadata``` sidecar block; found "
+            f"{len(blocks)}. Merge variable lists and starterContent into "
+            "a single block."
+        )
+        return errors
+    if not blocks:
+        return errors
+
+    try:
+        data = json.loads(blocks[0])
+    except json.JSONDecodeError as err:
+        errors.append(f"```email-metadata``` sidecar block is not valid JSON: {err}")
+        return errors
+
+    variables = data.get("variables") or []
+    starter = data.get("starterContent") or {}
+    if not isinstance(variables, list):
+        errors.append(
+            "```email-metadata``` sidecar `variables` must be an array of "
+            "camelCase strings."
+        )
+        return errors
+    if not isinstance(starter, dict):
+        errors.append(
+            "```email-metadata``` sidecar `starterContent` must be an object."
+        )
+        return errors
+
+    # CTA-pairing check (ctaLabel + ctaUrl together iff URL-flavored variable)
+    # dropped as non-catastrophic — broken CTA renders as missing button or
+    # dangling label; merchant edits this in the Email tab anyway. See
+    # HANDLER_RULES.md row 35.
+
+    # variables ↔ {{placeholder}} consistency.
+    referenced: set = set()
+    for key in _SIDECAR_STRING_KEYS:
+        val = starter.get(key)
+        if isinstance(val, str):
+            for m in _TEMPLATE_PLACEHOLDER_RE.finditer(val):
+                referenced.add(m.group(1))
+    declared = {v for v in variables if isinstance(v, str)}
+
+    orphan_refs = sorted(referenced - declared)
+    if orphan_refs:
+        errors.append(
+            "```email-metadata``` sidecar references {{...}} placeholder(s) "
+            f"{orphan_refs} that are not in the `variables` array — every "
+            "placeholder must be declared."
+        )
+    unused_decls = sorted(declared - referenced)
+    if unused_decls:
+        errors.append(
+            f"```email-metadata``` sidecar declares variable(s) "
+            f"{unused_decls} that are not referenced anywhere in "
+            "`starterContent` — every declared variable must be used."
+        )
+
+    return errors
+
 
 def _validate_webhook_handlers(code: str, plan_topics: List[str]) -> List[str]:
     errors: List[str] = []
-
-    if not re.search(r"\bexport\s+const\s+webhookHandlers\b", code):
-        errors.append(
-            "[src/routes/webhook-handlers.ts] must export `webhookHandlers` — "
-            "the template's webhook.ts imports by that exact name"
-        )
 
     # Handlers must never write responses — the template router owns that.
     if re.search(r"\bres\s*\.\s*(json|status|send)\b", code):
@@ -543,14 +724,6 @@ def _validate_webhook_handlers(code: str, plan_topics: List[str]) -> List[str]:
             "[src/routes/webhook-handlers.ts] handlers must not call "
             "res.json/res.status/res.send — the template router owns all "
             "response writes; throw to signal failure"
-        )
-
-    # Handlers must not include the idempotency gate — the template owns it.
-    if re.search(r"INSERT\s+INTO\s+processed_webhooks", code, re.IGNORECASE):
-        errors.append(
-            "[src/routes/webhook-handlers.ts] must not include the idempotency "
-            "gate — the template's webhook.ts handles processed_webhooks; "
-            "remove it from the handlers file"
         )
 
     # Plan topics must match the map keys.
@@ -599,11 +772,9 @@ def _validate_webhook_handlers(code: str, plan_topics: List[str]) -> List[str]:
 
     return errors
 
+
 def _validate_admin_router(code: str, admin_catalog: List[Dict[str, Any]]) -> List[str]:
     errors: List[str] = []
-
-    if not re.search(r"\bexport\s+const\s+adminRouter\b", code):
-        errors.append("[src/routes/admin.ts] must export a named const `adminRouter`")
 
     for entry in admin_catalog:
         method = (entry.get("method") or "POST").lower()
@@ -622,13 +793,11 @@ def _validate_admin_router(code: str, admin_catalog: List[Dict[str, Any]]) -> Li
 
     return errors
 
+
 def _validate_widget_router(
     code: str, widget_catalog: List[Dict[str, Any]]
 ) -> List[str]:
     errors: List[str] = []
-
-    if not re.search(r"\bexport\s+const\s+widgetRouter\b", code):
-        errors.append("[src/routes/widget.ts] must export a named const `widgetRouter`")
 
     for entry in widget_catalog:
         method = (entry.get("method") or "POST").lower()
@@ -646,18 +815,12 @@ def _validate_widget_router(
 
     return errors
 
+
 def _validate_cron_router(code: str) -> List[str]:
     errors: List[str] = []
 
-    if not re.search(r"\bexport\s+const\s+jobs\b", code):
-        errors.append(
-            "[src/routes/cron.ts] must export a named const `jobs` "
-            "(Record<string, JobFn>) — the template's cron runner imports "
-            "by that exact name"
-        )
-        return errors
-
-    # Require at least one job in the map.
+    # Require at least one job in the map. Missing-export is caught by tsc
+    # (template's cron-runner imports `jobs` by name).
     has_any_job = bool(
         re.search(r"""\bjobs\b[^=]*=\s*\{[^}]*\w+\s*:""", code, re.DOTALL)
     )

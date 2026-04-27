@@ -149,44 +149,6 @@ def _make_handler_bundle(cron_body: str) -> str:
     )
 
 
-def test_handler_validator_flags_skip_locked_outside_sql_begin() -> None:
-    body = (
-        "    const rows = await sql`SELECT id FROM jobs_queue WHERE status = 'pending' "
-        "FOR UPDATE SKIP LOCKED`;\n"
-        "    for (const row of rows) {\n"
-        "      await sql`UPDATE jobs_queue SET status = 'sent' WHERE id = ${row.id}`;\n"
-        "    }"
-    )
-    errors = validate_handler_artifact(
-        _make_handler_bundle(body),
-        api_plan_topics=[],
-        cron_schedule="*/5 * * * *",
-        db_contracts=[],
-    )
-    assert any(
-        "FOR UPDATE SKIP LOCKED" in e and "sql.begin" in e for e in errors
-    ), errors
-
-
-def test_handler_validator_accepts_skip_locked_inside_sql_begin() -> None:
-    body = (
-        "    await sql.begin(async (tx) => {\n"
-        "      const rows = await tx`SELECT id FROM jobs_queue WHERE status = 'pending' "
-        "FOR UPDATE SKIP LOCKED LIMIT 1`;\n"
-        "      for (const row of rows) {\n"
-        "        await tx`UPDATE jobs_queue SET status = 'sent' WHERE id = ${row.id}`;\n"
-        "      }\n"
-        "    });"
-    )
-    errors = validate_handler_artifact(
-        _make_handler_bundle(body),
-        api_plan_topics=[],
-        cron_schedule="*/5 * * * *",
-        db_contracts=[],
-    )
-    assert not any("FOR UPDATE SKIP LOCKED" in e for e in errors), errors
-
-
 # ── Finding 6 — enum cross-check ──────────────────────────────────────────────
 
 
