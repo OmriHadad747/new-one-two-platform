@@ -167,19 +167,54 @@ def _normalize_findings(
     return out
 
 
+def _dedup_issues(
+    issues: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Remove duplicate findings emitted by different validators that point at
+    the same `(artifact, normalized issue text)`. Validators run in parallel
+    and the prompts ask the model not to overlap, but the rule is best-effort
+    — this is the cheap structural backstop that prevents the same problem
+    from being reported twice to the revision agent and from inflating the
+    log line below.
+
+    The first occurrence wins; later duplicates are dropped silently. The
+    issue text is normalized to a lowercase, whitespace-collapsed key so
+    minor wording differences ("missing currency col" vs "missing currency
+    column") still collapse when the artifact + issue prefix match closely
+    enough — but punctuation and casing are otherwise preserved on output.
+    """
+    seen: set = set()
+    out: List[Dict[str, Any]] = []
+    for issue in issues:
+        artifact = issue.get("artifact") or ""
+        text = " ".join((issue.get("issue") or "").lower().split())
+        key = (artifact, text)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(issue)
+    return out
+
+
 def run_llm_validators(
     artifacts: Dict[str, str],
     ctx: CodegenContext,
     is_storefront: bool,
     is_admin_ui: bool,
-) -> Tuple[List[Dict[str, Any]], int, int]:
+) -> Tuple[List[Dict[str, Any]], int, int, Dict[str, ValidatorRunResult]]:
     """
     Fan out the three LLM validators in parallel and return merged findings.
 
-    Drop-in replacement for the legacy run_validator_agent. Returns
-    (issues, input_tokens, output_tokens) where `issues` is a list of dicts
-    in the shape the crew's revision-locking logic expects (see
-    Finding.to_issue_dict).
+    Drop-in superset of the legacy run_validator_agent: the first three
+    return slots — issues, input_tokens, output_tokens — match the legacy
+    contract. The fourth slot is the per-validator ValidatorRunResult map
+    (latency, error, raw findings) so the call site can write per-validator
+    metrics into agent_trace without re-doing the timing.
+
+    Issues from different validators that point at the same
+    (artifact, normalized issue text) are de-duplicated — the prompts ask
+    the model to stay in lane but parallel runs can't see each other.
 
     quality_brief_coverage is skipped when ctx.intent.qualityBrief is empty.
     """
@@ -205,6 +240,9 @@ def run_llm_validators(
 
     results: Dict[str, ValidatorRunResult] = {}
 
+    # `_safe_run` is total-catch on Exception, so future.result() can only
+    # raise BaseException (KeyboardInterrupt, SystemExit) — we deliberately
+    # let those propagate so the parent pipeline sees the cancellation.
     with ThreadPoolExecutor(max_workers=len(runners)) as pool:
         futures = {
             pool.submit(
@@ -214,27 +252,26 @@ def run_llm_validators(
         }
         for future in as_completed(futures):
             name = futures[future]
-            try:
-                results[name] = future.result()
-            except Exception as exc:
-                log.warning(
-                    "validator=%s crashed (%s) — fail-open for this slot",
-                    name,
-                    exc,
-                )
-                results[name] = ValidatorRunResult(
-                    validator=name, error=str(exc)
-                )
+            results[name] = future.result()
 
     merged_issues: List[Dict[str, Any]] = []
     in_total = 0
     out_total = 0
+    # Iterate in declared order so merged_issues is deterministic regardless
+    # of which future finished first.
     for name in [n for n, _ in runners]:
         result = results.get(name)
         if not result:
             continue
         in_total += result.input_tokens
         out_total += result.output_tokens
+        if result.error:
+            log.warning(
+                "validator=%s failed open (latency=%dms): %s",
+                name,
+                result.latency_ms,
+                result.error,
+            )
         for finding in result.findings:
             merged_issues.append(finding.to_issue_dict())
             log.info(
@@ -244,7 +281,8 @@ def run_llm_validators(
                 finding.issue,
             )
 
-    return merged_issues, in_total, out_total
+    merged_issues = _dedup_issues(merged_issues)
+    return merged_issues, in_total, out_total, results
 
 
 def _safe_run(
@@ -260,7 +298,8 @@ def _safe_run(
 
     Each individual validator already fails open on parse / API errors;
     this is the outermost net so a crash in one validator never blocks the
-    other two.
+    other two. By design this is the only catch site — the harness above
+    relies on `future.result()` never raising for normal `Exception`s.
     """
     t0 = _now_ms()
     try:

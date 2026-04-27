@@ -525,6 +525,11 @@ def _check_https_outside_fetch(path: str, code: str) -> List[str]:
 
 
 _SQL_BLOCK_RE = re.compile(r"sql\s*(?:<[^>]*>)?\s*`([^`]*)`", re.DOTALL)
+# Strip postgres string literals ('…' with '' as escape) and line comments
+# (-- to EOL) before searching for tenant_id, so the literal text inside a
+# string ('tenant_id is forbidden') doesn't trigger a false positive.
+_SQL_STRING_LITERAL_RE = re.compile(r"'(?:''|[^'])*'")
+_SQL_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
 
 
 def _check_no_tenant_id_in_sql(path: str, code: str) -> List[str]:
@@ -534,15 +539,26 @@ def _check_no_tenant_id_in_sql(path: str, code: str) -> List[str]:
     invents a non-existent column (empty SELECT / silent INSERT failure)
     or is hand-rolling tenant filtering that the platform's middleware
     already handles.
+
+    String literals and line comments inside the SQL block are stripped
+    before the search so that user-facing strings or commentary mentioning
+    `tenant_id` don't false-positive.
     """
     errors: List[str] = []
     seen: set = set()
     for match in _SQL_BLOCK_RE.finditer(code):
         block = match.group(1)
-        m = re.search(r"\btenant_id\b", block)
+        # Replace literals/comments with same-length whitespace to preserve
+        # offsets so the reported line number still maps back to `code`.
+        scrubbed = _SQL_STRING_LITERAL_RE.sub(lambda m: " " * len(m.group(0)), block)
+        scrubbed = _SQL_LINE_COMMENT_RE.sub(lambda m: " " * len(m.group(0)), scrubbed)
+        m = re.search(r"\btenant_id\b", scrubbed)
         if not m:
             continue
-        line = code.count("\n", 0, match.start() + m.start()) + 1
+        # Use match.start(1) — the start of the block contents — so the
+        # reported line corresponds to the tenant_id token, not to the
+        # opening `sql` prefix.
+        line = code.count("\n", 0, match.start(1) + m.start()) + 1
         if (path, line) in seen:
             continue
         seen.add((path, line))
@@ -781,7 +797,10 @@ def _validate_admin_router(code: str, admin_catalog: List[Dict[str, Any]]) -> Li
         path = entry.get("path", "")
         if not path:
             continue
-        # adminRouter.<method>("<path>", ...) OR  adminRouter[<method>]("<path>", ...)
+        # adminRouter.<method>("<path>", ...). The handler prompt teaches the
+        # dot form only; bracket-form (adminRouter[method](...)) is not
+        # generated and intentionally not matched here — adding it would risk
+        # false positives on unrelated bracket access elsewhere.
         pattern = rf"""adminRouter\s*\.\s*{re.escape(method)}\s*\(\s*['"]{re.escape(path)}['"]"""
         if not re.search(pattern, code):
             errors.append(

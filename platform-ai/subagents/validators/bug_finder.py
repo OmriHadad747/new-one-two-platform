@@ -11,7 +11,9 @@ review" but with a tighter scope: per-prompt-rule violations are claimed by
 `agent_rules`; bug_finder hunts the long-tail semantic + cross-artifact bugs
 the rule-validator can't see.
 
-Cap findings at 8. HIGH-confidence (or genuinely-suspicious-MEDIUM) only.
+Cap findings at 8. HIGH-confidence only — MEDIUM is dropped by the
+shared `_normalize_finding` step in base.py, and the prompt asks the
+model not to emit MEDIUM in the first place.
 """
 
 from __future__ import annotations

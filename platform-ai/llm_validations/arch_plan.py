@@ -280,10 +280,11 @@ def validate_architect_plan(
             # Money columns: BIGINT only. INTEGER overflows at ~$21.47M;
             # FLOAT/DOUBLE/REAL drift (0.1 + 0.2 ≠ 0.3 → customer charged the
             # wrong amount); TEXT/NUMERIC/DECIMAL can't be SUMmed or range-
-            # filtered cheanly. The handler is taught to parse Shopify's
+            # filtered cleanly; BIGSERIAL is an auto-incrementing sequence,
+            # not a value type. The handler is taught to parse Shopify's
             # decimal strings into integer cents before INSERT.
             is_money_col = any(name.endswith(s) for s in _MONEY_COL_SUFFIXES)
-            if is_money_col and base not in ("BIGINT", "BIGSERIAL"):
+            if is_money_col and base != "BIGINT":
                 errors.append(
                     f"dbContracts table '{table}' column '{name}' holds monetary values but uses {base} — "
                     f"use BIGINT (integer minor units). FLOAT/DOUBLE/REAL drift (0.1+0.2 ≠ 0.3 → "

@@ -64,17 +64,20 @@ log = logging.getLogger(__name__)
 _MAX_RETRIES = 3  # total codegen attempts (1 initial + 2 retries)
 _MAX_ARCH_ATTEMPTS = 2  # architect: 1 initial + 1 retry
 
-# Artifact names on LLM-validator findings that indicate a backend problem.
-# Widget/admin-only findings leave the handler locked (frontend-only revision).
-# Plan-level findings are informational today: revision can't re-run the architect,
-# so they are logged but do not unlock backend code.
-_BACKEND_OPEN_ARTIFACTS: FrozenSet[str] = frozenset({"handler", "migration"})
-
 # Findings whose `artifact == "migration"` mean the migration itself is broken
 # (missing tables/columns) — unlock both so the revision agent fixes both
 # together. (The legacy validator used Q-key categories for this; the new
 # Finding shape carries a single `artifact` field that already encodes intent.)
 _MIGRATION_BROKEN_ARTIFACTS: FrozenSet[str] = frozenset({"migration"})
+
+# Artifact names that indicate a handler-side problem on a correct migration —
+# lock migration, fix the handler. `migration` is NOT in this set because a
+# migration finding is handled first by `_MIGRATION_BROKEN_ARTIFACTS` (which
+# unlocks both); including it here would be dead. Widget/admin-only findings
+# fall through to the default (lock both backends, fix the frontend). Plan-
+# level findings are informational today: revision can't re-run the architect,
+# so they fall through too.
+_BACKEND_OPEN_ARTIFACTS: FrozenSet[str] = frozenset({"handler"})
 
 # Pipeline-level deadline. A healthy run finishes well inside 5 minutes; we give
 # a generous 15-minute ceiling so that legitimate long runs (3 codegen attempts
@@ -694,7 +697,7 @@ def _phase_validator(
 
     _emit(request, "validator", "running", "Checking semantic alignment…")
     t0 = _now_ms()
-    issues, val_in, val_out = run_llm_validators(
+    issues, val_in, val_out, per_validator = run_llm_validators(
         artifacts, base_ctx, is_storefront, is_admin_ui
     )
     agent_trace.append(
@@ -705,6 +708,20 @@ def _phase_validator(
             outputTokens=val_out,
         )
     )
+    # Per-validator visibility: log latency / tokens / error per slot so a
+    # silent fail-open (e.g. provider outage on one validator) shows up in
+    # job logs even when the other slots succeeded with no findings.
+    for name, result in per_validator.items():
+        log.info(
+            "job=%s validator=%s latency=%dms in_tok=%d out_tok=%d findings=%d%s",
+            request.jobId,
+            name,
+            result.latency_ms,
+            result.input_tokens,
+            result.output_tokens,
+            len(result.findings),
+            f" error={result.error}" if result.error else "",
+        )
 
     if not issues:
         _emit(request, "validator", "completed", "Semantic check passed")

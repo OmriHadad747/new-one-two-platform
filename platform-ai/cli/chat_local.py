@@ -1051,10 +1051,19 @@ def _phase_validator(
     _spinner("Validator")
     t0 = time.monotonic()
     with input_log("validator", run_dir):
-        issues, val_in, val_out = run_llm_validators(
+        issues, val_in, val_out, per_validator = run_llm_validators(
             artifacts, base_ctx, is_storefront, is_admin_ui
         )
     ms = int((time.monotonic() - t0) * 1000)
+    # Surface per-validator latency / errors so a silent fail-open is visible
+    # in the local CLI run, not just the production logs.
+    for name, result in per_validator.items():
+        suffix = f" error={result.error}" if result.error else ""
+        _info(
+            f"  ↳ {name}: {result.latency_ms}ms "
+            f"in={result.input_tokens} out={result.output_tokens} "
+            f"findings={len(result.findings)}{suffix}"
+        )
 
     if not issues:
         _agent_line(
