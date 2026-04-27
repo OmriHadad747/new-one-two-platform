@@ -13,11 +13,6 @@ Views — imported by downstream prompt surfaces:
   HANDLER             — the "don't touch" rule + enqueueJob teaching,
                         injected into cron and webhook topic HANDLER
                         sections.
-  VALIDATOR           — known tables + column sets + rule-violation
-                        signal, prepended to validator Part A so Q1/Q7
-                        don't produce false positives and still catch
-                        real column bugs (e.g. a non-existent `run_at`
-                        on cron_queue).
   TEMPLATE_OWNED_TABLES — frozenset of table names. Imported by
                         static_validation to build a regex that flags
                         direct DML against these tables in handler code.
@@ -122,37 +117,3 @@ AD-HOC JOB TRIGGERS — use enqueueJob, NOT a direct INSERT:
   while a prior identical row is still pending or processing; once that
   row finishes, fresh enqueues with the same key are allowed again.\
 """
-
-
-# ── Validator view ─────────────────────────────────────────────────────────────
-
-
-def _fmt(table: str) -> str:
-    return f"  {table}: {', '.join(_TEMPLATE_TABLE_COLUMNS[table])}"
-
-
-VALIDATOR = (
-    "TEMPLATE-OWNED TABLES — required override for Q1/Q2/Q7:\n"
-    "`cron_queue` and `processed_webhooks` ship with every handler via the\n"
-    "template's bootstrap migration. They are NOT present in the per-app\n"
-    "migration SQL shown to you, but they exist at runtime with fixed schemas:\n"
-    f"{_fmt('cron_queue')}.\n"
-    f"{_fmt('processed_webhooks')}.\n"
-    "\n"
-    "When answering Part A checks, apply these rules:\n"
-    "  - Q1 (table names): TREAT both tables as valid table names. Do NOT\n"
-    "    flag handler references to them as missing-table errors just because\n"
-    "    they are absent from the per-app migration SQL.\n"
-    "  - Q2 (column names): TREAT the fixed column sets above as the\n"
-    "    authoritative schema for these two tables. A handler reference to a\n"
-    "    column outside these sets IS a real column-name mismatch — flag it\n"
-    "    under q2 with the specific table + column (example: `run_at` does\n"
-    "    NOT exist on `cron_queue`).\n"
-    "  - Q7 (schema completeness): same rule as Q2 for INSERT column lists.\n"
-    "    Use the fixed sets above as the required-column reference.\n"
-    "\n"
-    "Separately: handler code should not touch these tables directly (the\n"
-    "`enqueueJob` helper covers ad-hoc job dispatch; idempotency is template-\n"
-    "owned). If the handler nonetheless reads or writes them at all, raise\n"
-    "that as an open_finding — independent of q1/q2/q7."
-)

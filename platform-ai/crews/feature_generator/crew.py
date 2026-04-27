@@ -53,7 +53,7 @@ from subagents.explanation_agent import run_explanation_agent
 from subagents.base import CodegenContext, Generator
 from subagents.architect_agent import run_architect_agent
 from subagents.revision_agent import run_revision_agent
-from subagents.validator_agent import run_validator_agent
+from subagents.validators import run_llm_validators
 from subagents.registry import GENERATORS
 from llm_validations.arch_plan import validate_architect_plan
 from llm_validations.cross_admin_handler import validate_admin_handler_contract
@@ -64,28 +64,17 @@ log = logging.getLogger(__name__)
 _MAX_RETRIES = 3  # total codegen attempts (1 initial + 2 retries)
 _MAX_ARCH_ATTEMPTS = 2  # architect: 1 initial + 1 retry
 
-# Validator question keys that indicate a backend (handler) problem.
-# When any of these fire, the revision agent must be allowed to edit the handler.
-# Q3/Q4-only failures are frontend misalignments — the handler stays locked.
-_BACKEND_VALIDATOR_QUESTIONS: FrozenSet[str] = frozenset(
-    {
-        "q1_table_names",
-        "q2_column_names",
-        "q5_cron_bulk_fetch",
-        "q6_state_machine",
-        "q7_schema_completeness",
-    }
-)
-
-# These questions indicate the migration itself is broken (missing tables/columns),
-# so both migration and handler must be unlocked to let the revision fix both together.
-_MIGRATION_BROKEN_QUESTIONS: FrozenSet[str] = frozenset(
-    {"q1_table_names", "q7_schema_completeness"}
-)
-
-# Artifact names on Part B open findings that indicate a backend problem.
+# Artifact names on LLM-validator findings that indicate a backend problem.
 # Widget/admin-only findings leave the handler locked (frontend-only revision).
+# Plan-level findings are informational today: revision can't re-run the architect,
+# so they are logged but do not unlock backend code.
 _BACKEND_OPEN_ARTIFACTS: FrozenSet[str] = frozenset({"handler", "migration"})
+
+# Findings whose `artifact == "migration"` mean the migration itself is broken
+# (missing tables/columns) — unlock both so the revision agent fixes both
+# together. (The legacy validator used Q-key categories for this; the new
+# Finding shape carries a single `artifact` field that already encodes intent.)
+_MIGRATION_BROKEN_ARTIFACTS: FrozenSet[str] = frozenset({"migration"})
 
 # Pipeline-level deadline. A healthy run finishes well inside 5 minutes; we give
 # a generous 15-minute ceiling so that legitimate long runs (3 codegen attempts
@@ -196,35 +185,33 @@ def _save_revision_failure(
 def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
     """
     Determine which artifacts the revision agent must treat as read-only based on
-    which validator findings fired.
+    which LLM-validator findings fired. The findings come from the unified
+    Finding shape produced by subagents.validators (every finding carries an
+    `artifact` field).
 
-    Part A (Q-checks):
-    - Q3/Q4 only (widget/admin_ui ↔ handler field mismatch): fix the frontend.
-      Handler and migration are locked — they are the ground truth contract.
-    - Q1/Q7 (missing table/schema): migration itself is broken — unlock both so the
-      revision can add the missing table AND fix the handler in one pass.
-    - Q2/Q5/Q6 (column mismatch or handler logic error): migration is the schema ground
-      truth; unlock only the handler.
-
-    Part B (open findings):
-    - artifact in {handler, migration}: backend problem — unlock the handler.
-    - artifact in {widget_js, admin_ui}: frontend problem — keep handler locked.
+    Locking policy (single field, no Q-key categories):
+    - artifact == "migration": migration itself is broken (missing table /
+      missing column) — unlock both so the revision can add the missing
+      schema AND adjust the handler in one pass.
+    - artifact == "handler": backend problem — lock migration (it's the
+      schema ground truth), fix the handler.
+    - artifact in {"widget_js", "admin_ui"}: frontend misalignment — handler
+      and migration are the contract; fix the frontend, keep them locked.
+    - artifact == "plan": informational only — revision can't re-run the
+      architect from inside this loop. Treated as no-op for locking.
 
     Invariant: this function is only called after handler and migration have already
     passed static validation in the codegen loop. If that invariant ever breaks, the
     lock could paper over a real backend bug — revisit if backend static validation
     is weakened or bypassed.
     """
-    issue_keys = {i["question"] for i in issues}
-    open_artifacts = {i.get("artifact") for i in issues if i.get("artifact")}
+    artifacts = {i.get("artifact") for i in issues if i.get("artifact")}
 
-    if issue_keys & _MIGRATION_BROKEN_QUESTIONS:
+    if artifacts & _MIGRATION_BROKEN_ARTIFACTS:
         # Migration itself is incomplete — unlock both so the revision fixes both.
         return frozenset()
 
-    if (issue_keys & _BACKEND_VALIDATOR_QUESTIONS) or (
-        open_artifacts & _BACKEND_OPEN_ARTIFACTS
-    ):
+    if artifacts & _BACKEND_OPEN_ARTIFACTS:
         # Handler misaligns with a correct migration — lock migration, fix handler.
         return frozenset({"migration"})
 
@@ -680,15 +667,20 @@ def _phase_validator(
     agent_trace: List[AgentTraceEntry],
 ) -> Dict[str, str]:
     """
-    Optional Agent 4b: LLM semantic alignment check (LLM_VALIDATION_ENABLED=true).
+    Optional Agent 4b: LLM semantic validators (LLM_VALIDATION_ENABLED=true).
 
-    Runs targeted questions against the generated artifacts. Only HIGH-confidence
-    issues trigger a revision pass.
+    Runs the three parallel validators in subagents/validators (agent_rules,
+    bug_finder, quality_brief_coverage) against the generated artifacts.
+    Only HIGH-confidence findings trigger a revision pass.
 
-    Locking strategy (see _revision_locked_artifacts):
-    - Q3/Q4 (frontend ↔ handler field mismatch): lock handler + migration, fix frontend.
-    - Q1/Q2/Q5/Q6/Q7 (handler ↔ DB or handler logic): lock migration only, fix handler.
-    Migration is always locked — it is the schema ground truth.
+    Locking strategy (see _revision_locked_artifacts) — driven solely by each
+    finding's `artifact` field:
+      artifact == "migration"      → unlock both (migration itself is broken).
+      artifact == "handler"        → lock migration, fix handler.
+      artifact in {widget_js,
+                   admin_ui}       → lock both backends, fix the frontend.
+      artifact == "plan"           → informational; revision can't re-run the
+                                      architect, falls through to the default.
 
     After each revision attempt the output is statically validated. If both attempts
     produce structurally invalid code the job is failed (not silently swapped back).
@@ -702,7 +694,7 @@ def _phase_validator(
 
     _emit(request, "validator", "running", "Checking semantic alignment…")
     t0 = _now_ms()
-    issues, val_in, val_out = run_validator_agent(
+    issues, val_in, val_out = run_llm_validators(
         artifacts, base_ctx, is_storefront, is_admin_ui
     )
     agent_trace.append(
@@ -720,7 +712,7 @@ def _phase_validator(
 
     issue_summary = "; ".join(f"{i['question']}: {i['issue']}" for i in issues)
     log.info(
-        "job=%s validator_agent: %d high-confidence issue(s): %s",
+        "job=%s llm_validators: %d high-confidence issue(s): %s",
         request.jobId,
         len(issues),
         issue_summary,

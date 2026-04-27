@@ -1,6 +1,18 @@
 """
-Tests for _revision_locked_artifacts — the function that decides which
-artifacts the revision agent may edit based on which validator questions fired.
+Tests for _revision_locked_artifacts — decides which artifacts the revision
+agent may edit based on which LLM-validator findings fired.
+
+The new validator layer (subagents/validators) emits a uniform Finding shape
+where every entry carries an `artifact` field. The locking policy reads only
+that field — no Q-key categories.
+
+Locking rules:
+    artifact == "migration"   →  migration itself is broken; unlock both.
+    artifact == "handler"     →  backend problem; lock migration, fix handler.
+    artifact ∈ {widget_js,
+                admin_ui}     →  frontend misalignment; keep backend locked.
+    artifact == "plan"        →  informational; revision can't re-run architect.
+    no findings               →  conservative default; lock both.
 
 The function lives in crew.py alongside GCP/contract imports that require
 external services. We stub those modules before importing so these tests run
@@ -10,7 +22,7 @@ in any environment (CI, local, no credentials needed).
 from __future__ import annotations
 
 import sys
-from typing import Dict, List
+from typing import Dict
 from unittest.mock import MagicMock
 
 # Stub cloud/contract deps before importing crew so the test needs no GCP creds
@@ -24,114 +36,112 @@ for _mod in [
 from crews.feature_generator.crew import _revision_locked_artifacts  # noqa: E402
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+def _f(artifact: str, validator: str = "agent_rules") -> Dict:
+    """Build a Finding-shaped issue dict (mirrors Finding.to_issue_dict)."""
+    return {
+        "question": f"{validator}[{artifact}]",
+        "issue": "test",
+        "confidence": "high",
+        "artifact": artifact,
+        "validator": validator,
+    }
 
 
-def _q(question: str) -> Dict:
-    """Build a Part A issue dict."""
-    return {"question": question}
+# ── Migration broken → unlock both ────────────────────────────────────────────
 
 
-def _open(artifact: str) -> Dict:
-    """Build a Part B open-finding dict."""
-    return {"question": "open_finding", "artifact": artifact}
-
-
-# ── Migration-broken questions (q1, q7) → unlock both ────────────────────────
-
-
-def test_q1_unlocks_both() -> None:
-    # q1 = missing table: migration is broken, both need to be regenerated
-    result = _revision_locked_artifacts([_q("q1_table_names")])
+def test_migration_finding_unlocks_both() -> None:
+    # Migration itself is incomplete (missing table/column) — both must be
+    # editable so revision can fix the schema AND the handler in one pass.
+    result = _revision_locked_artifacts([_f("migration")])
     assert result == frozenset(), f"expected both unlocked, got {result}"
 
 
-def test_q7_unlocks_both() -> None:
-    # q7 = schema completeness failure: migration is the source of truth gap
-    result = _revision_locked_artifacts([_q("q7_schema_completeness")])
-    assert result == frozenset(), f"expected both unlocked, got {result}"
-
-
-def test_q1_and_q7_together_unlock_both() -> None:
-    result = _revision_locked_artifacts([_q("q1_table_names"), _q("q7_schema_completeness")])
+def test_migration_finding_with_widget_finding_still_unlocks_both() -> None:
+    # Migration-broken takes precedence over any co-occurring frontend finding.
+    result = _revision_locked_artifacts(
+        [_f("migration"), _f("widget_js")]
+    )
     assert result == frozenset()
 
 
-def test_q1_with_frontend_question_still_unlocks_both() -> None:
-    # Migration-broken takes precedence over any co-occurring frontend issues
-    result = _revision_locked_artifacts([_q("q1_table_names"), _q("q3_widget_fields")])
+def test_multiple_migration_findings_unlock_both() -> None:
+    result = _revision_locked_artifacts(
+        [_f("migration", "agent_rules"), _f("migration", "bug_finder")]
+    )
     assert result == frozenset()
 
 
-# ── Backend questions (q2, q5, q6) → lock migration only ─────────────────────
+# ── Handler finding → lock migration only ─────────────────────────────────────
 
 
-def test_q2_locks_migration_only() -> None:
-    # q2 = column mismatch: migration is correct, handler uses wrong column
-    result = _revision_locked_artifacts([_q("q2_column_names")])
+def test_handler_finding_locks_migration_only() -> None:
+    # Handler misuses a correct migration — lock migration, fix handler.
+    result = _revision_locked_artifacts([_f("handler")])
     assert result == frozenset({"migration"})
 
 
-def test_q5_locks_migration_only() -> None:
-    result = _revision_locked_artifacts([_q("q5_cron_bulk_fetch")])
+def test_handler_finding_from_bug_finder_locks_migration_only() -> None:
+    result = _revision_locked_artifacts([_f("handler", "bug_finder")])
     assert result == frozenset({"migration"})
 
 
-def test_q6_locks_migration_only() -> None:
-    result = _revision_locked_artifacts([_q("q6_state_machine")])
+def test_multiple_handler_findings_lock_migration_only() -> None:
+    result = _revision_locked_artifacts(
+        [_f("handler"), _f("handler", "bug_finder")]
+    )
     assert result == frozenset({"migration"})
 
 
-def test_multiple_backend_questions_lock_migration_only() -> None:
-    result = _revision_locked_artifacts([_q("q2_column_names"), _q("q5_cron_bulk_fetch")])
-    assert result == frozenset({"migration"})
+# ── Frontend findings → lock both backend artifacts ──────────────────────────
 
 
-# ── Frontend-only questions (q3, q4) → lock both ─────────────────────────────
-
-
-def test_q3_locks_both() -> None:
-    # q3 = widget/handler field mismatch: handler is ground truth, fix frontend
-    result = _revision_locked_artifacts([_q("q3_widget_fields")])
+def test_widget_finding_locks_both_backends() -> None:
+    result = _revision_locked_artifacts([_f("widget_js")])
     assert result == frozenset({"handler", "migration"})
 
 
-def test_q4_locks_both() -> None:
-    result = _revision_locked_artifacts([_q("q4_admin_fields")])
+def test_admin_finding_locks_both_backends() -> None:
+    result = _revision_locked_artifacts([_f("admin_ui")])
     assert result == frozenset({"handler", "migration"})
+
+
+def test_widget_and_admin_findings_lock_both_backends() -> None:
+    result = _revision_locked_artifacts([_f("widget_js"), _f("admin_ui")])
+    assert result == frozenset({"handler", "migration"})
+
+
+# ── Mixed cases ───────────────────────────────────────────────────────────────
+
+
+def test_handler_finding_with_widget_finding_locks_migration_only() -> None:
+    # Backend finding upgrades the lock — even with a co-occurring frontend
+    # issue, revision must be allowed to edit the handler.
+    result = _revision_locked_artifacts([_f("handler"), _f("widget_js")])
+    assert result == frozenset({"migration"})
+
+
+def test_plan_finding_alone_locks_both_default() -> None:
+    # Plan-level findings are informational — revision can't re-run the
+    # architect from inside this loop. Falls through to the default.
+    result = _revision_locked_artifacts([_f("plan")])
+    assert result == frozenset({"handler", "migration"})
+
+
+def test_plan_finding_with_handler_finding_locks_migration_only() -> None:
+    # Co-occurring handler finding still drives the lock decision.
+    result = _revision_locked_artifacts([_f("plan"), _f("handler")])
+    assert result == frozenset({"migration"})
 
 
 def test_empty_issues_locks_both() -> None:
-    # No validator findings → treat as frontend-only (conservative default)
+    # No findings → conservative default (frontend-only revision shape).
     result = _revision_locked_artifacts([])
     assert result == frozenset({"handler", "migration"})
 
 
-# ── Part B open findings ───────────────────────────────────────────────────────
-
-
-def test_open_finding_on_handler_locks_migration_only() -> None:
-    result = _revision_locked_artifacts([_open("handler")])
-    assert result == frozenset({"migration"})
-
-
-def test_open_finding_on_migration_locks_migration_only() -> None:
-    # migration open finding = backend problem → unlock handler, keep migration locked
-    result = _revision_locked_artifacts([_open("migration")])
-    assert result == frozenset({"migration"})
-
-
-def test_open_finding_on_widget_locks_both() -> None:
-    result = _revision_locked_artifacts([_open("widget_js")])
+def test_finding_without_artifact_field_treated_as_no_op() -> None:
+    # Defensive: a malformed entry without an artifact field is ignored,
+    # falling through to the empty-issues default.
+    result = _revision_locked_artifacts([{"question": "agent_rules[]", "issue": "x"}])
     assert result == frozenset({"handler", "migration"})
-
-
-def test_open_finding_on_admin_ui_locks_both() -> None:
-    result = _revision_locked_artifacts([_open("admin_ui")])
-    assert result == frozenset({"handler", "migration"})
-
-
-def test_mixed_backend_open_finding_and_frontend_question_locks_migration_only() -> None:
-    # Backend open finding overrides a co-occurring frontend-only Q-check
-    result = _revision_locked_artifacts([_q("q3_widget_fields"), _open("handler")])
-    assert result == frozenset({"migration"})

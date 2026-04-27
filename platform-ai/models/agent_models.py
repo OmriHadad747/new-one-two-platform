@@ -4,16 +4,16 @@ Per-agent model configuration.
 Every agent resolves its model via get_agent_model(agent_name).
 Override any agent by setting the corresponding environment variable:
 
-  AGENT_VALIDATOR_MODEL=claude-sonnet-4-6
   AGENT_HANDLER_MODEL=claude-sonnet-4-6
   AGENT_ARCHITECT_MODEL=claude-sonnet-4-6
+  AGENT_BUG_FINDER_MODEL=claude-sonnet-4-6
   ...
 
 Defaults reflect the cost/quality tradeoff for each role:
-  - Classification / text tasks  → Haiku  (cheap, fast)
-  - Code generation / planning   → Sonnet (highest quality)
-  - Semantic validation          → Sonnet (Part B open review needs real reasoning
-                                   across artifacts; paired with extended thinking)
+  - Classification / text tasks       → Haiku  (cheap, fast)
+  - Code generation / planning        → Sonnet (highest quality)
+  - Prompt-rule compliance validation → Haiku  (rules are explicit; no reasoning)
+  - Cross-artifact bug-hunting        → Sonnet + extended thinking (multi-step)
 """
 
 from __future__ import annotations
@@ -32,11 +32,19 @@ _DEFAULTS: dict[str, str] = {
     # Classification / text agents — Haiku is sufficient (fast, cheap)
     "product": "claude-haiku-4-5-20251001",
     "explanation": "claude-haiku-4-5-20251001",
-    # Hybrid validator — Part A identifier matching + Part B deploy-blocking
-    # bug review. Part B needs multi-step reasoning across handler/migration/
-    # widget/admin, so it runs on Sonnet with extended thinking enabled in
-    # validator_agent.py. Haiku was sufficient for Part A alone.
-    "validator": "claude-sonnet-4-6",
+    # LLM validator layer (Phase 2 of LLM_VALIDATORS_PLAN.md):
+    #   agent_rules            — prompt-rule compliance across plan + handler.
+    #                             Haiku is sufficient: each rule the prompt
+    #                             carries directly; no multi-step reasoning.
+    #   bug_finder             — open-ended cross-artifact runtime-bug hunt.
+    #                             Sonnet + extended thinking (8192) — needs
+    #                             multi-step reasoning across artifacts.
+    #   quality_brief_coverage — explicit user-requirement coverage check.
+    #                             Haiku — straightforward sentence-by-sentence
+    #                             match against artifacts.
+    "agent_rules": "claude-haiku-4-5-20251001",
+    "bug_finder": "claude-sonnet-4-6",
+    "quality_brief_coverage": "claude-haiku-4-5-20251001",
 }
 
 

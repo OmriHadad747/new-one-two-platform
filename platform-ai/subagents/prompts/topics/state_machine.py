@@ -6,7 +6,6 @@ Three views — one per consumer, imported directly:
   ARCHITECT       — architect prompt: when to declare stateMachine and required fields.
   ARCHITECT_SHAPE — architect NON-NULL SHAPES snippet.
   HANDLER         — handler prompt: null-as-never-observed + atomic RETURNING claim.
-  VALIDATOR       — validator Q6 template: what to check (has {entity}/{tracked_field} placeholders).
 """
 
 # ── Architect view ─────────────────────────────────────────────────────────────
@@ -80,24 +79,3 @@ reconstruct timelines from stdout:
     "state transition",
   );
 """
-
-# ── Validator view ─────────────────────────────────────────────────────────────
-# Contains {entity} and {tracked_field} placeholders — caller must .format() them.
-
-VALIDATOR = (
-    "Q6 — STATE MACHINE LOGIC (q6_state_machine)\n"
-    "The plan declares a stateMachine tracking '{tracked_field}' on '{entity}'.\n"
-    "Somewhere in the handler bundle (typically in webhook-handlers.ts and/or cron.ts), the\n"
-    "logic must:\n"
-    "  a) Load the last-observed value from the DB snapshot table via a `sql`SELECT`\n"
-    "     before comparing.\n"
-    "  b) Compare the incoming value against the prior value to detect a transition\n"
-    "     (null → value is not a real transition).\n"
-    "  c) Only act (send email, call /services/*, update records) when a genuine\n"
-    "     transition matches a declared transition pattern — prefer the atomic\n"
-    "     claim idiom `UPDATE … WHERE <state_col> = <prev> RETURNING <id>` with a\n"
-    "     zero-row-result early return so cron and webhook paths don't double-fire.\n"
-    "  d) Persist the new value after acting.\n"
-    "Set aligned=false if any of these steps is missing or out of order. Name the\n"
-    "specific file and route/job where the drift lives."
-)

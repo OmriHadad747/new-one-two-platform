@@ -1,11 +1,10 @@
 """
 Single source of truth for the Shopify bulk-prefetch rule.
 
-Three views — one per consumer, imported directly:
+Two views — one per consumer, imported directly:
 
   ARCHITECT  — architect prompt: when to set cronBatching.required and what it means.
   HANDLER    — handler prompt: full implementation guide with code patterns.
-  VALIDATOR  — validator Q5 prose: what to check and how to flag violations.
 
 The rule is universal: no Shopify calls inside a per-item loop, ever. cronBatching
 is the architect's way of declaring "this app has a loop that needs the full pattern".
@@ -128,22 +127,3 @@ ONLY when the architect plan has declared this as a platformGaps entry.
   hit Shopify's cost-based rate limiter are retried transparently; you
   just issue the call.
 """
-
-# ── Validator view ─────────────────────────────────────────────────────────────
-
-VALIDATOR = (
-    "Q5 — BATCHED SHOPIFY FETCH PATTERN (q5_cron_bulk_fetch)\n"
-    "The plan declares cronBatching.required=true. When a handler path iterates over\n"
-    "a non-trivial set of items and enriches each with Shopify data, it MUST bulk-\n"
-    "fetch before the loop.\n"
-    "Check every file in the handler bundle — the long-loop may live in\n"
-    "src/routes/cron.ts (jobs.main body), src/routes/webhook-handlers.ts (a large enrichment\n"
-    "path), or a helper in src/lib/*.ts:\n"
-    "  a) Is all required Shopify data fetched in one or a few batched calls via\n"
-    "     `shopify.graphqlPaginate(...)` / `shopify.bulkQuery(...)` BEFORE the main\n"
-    "     iteration loop begins?\n"
-    "  b) Does the loop body avoid making any `shopify.graphql(...)` /\n"
-    "     `shopify.graphqlPaginate(...)` / `shopify.bulkQuery(...)` calls per-item?\n"
-    "Set aligned=false if the handler makes per-item Shopify calls inside the loop\n"
-    "instead of bulk-fetching first. Name the specific file, loop, and API call pattern."
-)

@@ -61,7 +61,7 @@ from subagents.explanation_agent import run_explanation_agent
 from subagents.product_agent import run_product_agent_analyze
 from subagents.revision_agent import run_revision_agent
 from llm_validations.arch_plan import validate_architect_plan
-from subagents.validator_agent import run_validator_agent
+from subagents.validators import run_llm_validators
 from crews.feature_generator.crew import (
     run_codegen_parallel,
     validate_artifacts,
@@ -1051,7 +1051,7 @@ def _phase_validator(
     _spinner("Validator")
     t0 = time.monotonic()
     with input_log("validator", run_dir):
-        issues, val_in, val_out = run_validator_agent(
+        issues, val_in, val_out = run_llm_validators(
             artifacts, base_ctx, is_storefront, is_admin_ui
         )
     ms = int((time.monotonic() - t0) * 1000)
