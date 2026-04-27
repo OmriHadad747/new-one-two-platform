@@ -35,7 +35,7 @@ Source: every handler-facing prompt block — `platform-ai/subagents/prompts/top
 | 12 | No `eval()`, `Function()`, `setInterval()`, `setImmediate()`, `process.exit()`, `process.kill()` | yes | static | ✅ |
 | 13 | `setTimeout` permitted only as bounded pause with literal numeric delay ≤500ms | yes | static | ✅ |
 | 14 | `process.env` read only at module init — never per-request | no | — (no observable runtime difference on Cloud Run; env doesn't change per-request) | |
-| 15 | HTTPS URLs allowed ONLY inside `fetch()` calls; never in comments / templateIds / other string literals | yes | static | ✅ |
+| 15 | HTTPS URLs allowed ONLY inside `fetch()` calls; never in comments / templateIds / other string literals | yes | llm | |
 | 16 | TypeScript compiles under `tsc --noEmit` | yes | static | ✅ (`handler_typecheck`) |
 | **Forbidden references** | | | | |
 | 18 | No direct import of `lib/platform-call.ts` | yes | static | ✅ |
@@ -143,6 +143,6 @@ Source: every handler-facing prompt block — `platform-ai/subagents/prompts/top
 ## Counts
 
 - **95 rules** total across handler prompts (was 99 — rows 4, 17, 52, 61 removed this turn as not prompt-derived; numbers retained as stable identifiers, gaps left at those positions)
-- **68 validate** → **26 static** rule-rows (✅) — of which **23 regex/AST in `handler_artifact.py`**, **1 by `handler_typecheck` (tsc compile gate, row 16)**, **1 by `handler_graphql`** (row 77), **1 by `shopify_ops.py`** (row 78); plus **42 llm** rule-rows deferred to `agent_rules` + `bug_finder`
+- **68 validate** → **25 static** rule-rows (✅) — of which **22 regex/AST in `handler_artifact.py`**, **1 by `handler_typecheck` (tsc compile gate, row 16)**, **1 by `handler_graphql`** (row 77), **1 by `shopify_ops.py`** (row 78); plus **43 llm** rule-rows deferred to `agent_rules` + `bug_finder` (row 15 reclassified static → llm — catastrophic cases already covered by rows 30 + 70, and the standalone https-outside-fetch regex had high FP surface on JSDoc / comments / error-message URLs)
 - **27 skip** → **13 no** (style / judgment / non-catastrophic / structurally-impossible-given-template — rows 9, 80, 83 fall here because tsc + template imports own the enforcement, no separate check exists) + **14 paranoid** (model handles via prompt; bug_finder catches downstream impact)
 - The static layer is narrow by intent — see the philosophy paragraph above. Rules outside the four bars (structural / frequent / catastrophic / not-tsc-covered) flow through `agent_rules` and `bug_finder`.
