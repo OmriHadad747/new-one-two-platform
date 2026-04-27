@@ -22,6 +22,7 @@ Progress events are published to generation.progress at every stage transition.
 
 from __future__ import annotations
 
+import contextvars
 import dataclasses
 import datetime
 import json
@@ -46,6 +47,7 @@ from contract.validators import (
     TechnicalExplanation,
     AgentTraceEntry,
 )
+from models.adapter import current_input_log_run_dir, input_log
 from subagents.product_agent import run_product_agent
 from subagents.explanation_agent import run_explanation_agent
 from subagents.base import CodegenContext, Generator
@@ -53,11 +55,9 @@ from subagents.architect_agent import run_architect_agent
 from subagents.revision_agent import run_revision_agent
 from subagents.validator_agent import run_validator_agent
 from subagents.registry import GENERATORS
-from validation.static_validation import (
-    validate_architect_plan,
-    validate_widget_handler_contract,
-    validate_admin_handler_contract,
-)
+from llm_validations.arch_plan import validate_architect_plan
+from llm_validations.cross_admin_handler import validate_admin_handler_contract
+from llm_validations.cross_widget_handler import validate_widget_handler_contract
 
 log = logging.getLogger(__name__)
 
@@ -1164,7 +1164,7 @@ def run_codegen_parallel(
     cumulative_errors: Dict[str, List[str]],
     artifacts: Dict[str, str],
     on_start: Optional[Callable[[str], None]] = None,
-    on_done:  Optional[Callable[[str, int, int, int], None]] = None,
+    on_done: Optional[Callable[[str, int, int, int], None]] = None,
 ) -> Tuple[Dict[str, str], Dict[str, Tuple[int, int]]]:
     """
     Run generators in parallel via ThreadPoolExecutor. Used for the first codegen
@@ -1205,15 +1205,28 @@ def run_codegen_parallel(
         )
         for gen in to_run
     }
+
     # Wrap each generator call to emit start/done callbacks with wall-clock
     # timing. Callbacks run on whichever thread finished — safe for the CLI's
     # multi-line spinner (Python print is atomic at the line level and the
     # spinner coordinates via a module-level dict it reads, not prints from).
+    #
+    # If an input_log() block is active in the parent (chat_local.py), we
+    # re-enter it with a generator-specific agent name so each generator's
+    # prompt lands in inputs/codegen_<gen>/attempt_N/ rather than colliding
+    # under one shared dir. The pool boundary is crossed via copy_context()
+    # at submit time below — without it, ContextVar state set on the main
+    # thread is invisible to the workers.
     def _wrapped(gen_name: str, ctx: CodegenContext):
         if on_start is not None:
             on_start(gen_name)
         started = time.monotonic()
-        artifact, in_tok, out_tok = _registry_by_name[gen_name].generate(ctx)
+        parent_run_dir = current_input_log_run_dir()
+        if parent_run_dir is not None:
+            with input_log(f"codegen_{gen_name}", parent_run_dir):
+                artifact, in_tok, out_tok = _registry_by_name[gen_name].generate(ctx)
+        else:
+            artifact, in_tok, out_tok = _registry_by_name[gen_name].generate(ctx)
         if on_done is not None:
             ms = int((time.monotonic() - started) * 1000)
             on_done(gen_name, ms, in_tok, out_tok)
@@ -1221,9 +1234,18 @@ def run_codegen_parallel(
 
     _registry_by_name = {gen.name: gen for gen in to_run}
 
+    # Each submission gets its own context copy — Context.run() is single-use
+    # per Context, so a fresh copy_context() per submit is required to avoid
+    # 'cannot enter context: already entered' when workers run concurrently.
     with ThreadPoolExecutor(max_workers=len(to_run)) as pool:
         futures = [
-            pool.submit(_wrapped, gen.name, ctx_by_gen[gen.name]) for gen in to_run
+            pool.submit(
+                contextvars.copy_context().run,
+                _wrapped,
+                gen.name,
+                ctx_by_gen[gen.name],
+            )
+            for gen in to_run
         ]
         # Use as_completed so on_done fires in actual completion order; the
         # returned dicts still key by name, so callers that only care about
@@ -1293,7 +1315,7 @@ def validate_artifacts(
     # regex layer can't see. Runs only when the regex/contract checks pass —
     # broken bundles produce noisy parse errors with no extra signal.
     if "handler" not in error_map:
-        from validation.graphql_validation import validate_handler_graphql
+        from llm_validations.handler_graphql import validate_handler_graphql
 
         graphql_errors = validate_handler_graphql(artifacts.get("handler", ""))
         if graphql_errors:
@@ -1306,7 +1328,7 @@ def validate_artifacts(
     # point, so there are no prior entries to merge) so the retry loop
     # regenerates the handler with tsc messages as feedback.
     if "handler" not in error_map:
-        from validation.typecheck_validation import validate_handler_typecheck
+        from llm_validations.handler_typecheck import validate_handler_typecheck
 
         tsc_errors = validate_handler_typecheck(artifacts.get("handler", ""))
         if tsc_errors:

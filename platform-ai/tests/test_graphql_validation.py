@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
-from validation import graphql_validation
-from validation.graphql_validation import (
+from llm_validations import handler_graphql as graphql_validation
+from llm_validations.handler_graphql import (
     _ADMIN_HELPERS,
     _STOREFRONT_HELPERS,
     _extract_queries,
@@ -108,7 +108,7 @@ def _patch_admin_schema(monkeypatch):
 
 
 def test_extract_simple_graphql_call() -> None:
-    src = "const r = await shopify.graphql(`query { order(id: \"x\") { id } }`);"
+    src = 'const r = await shopify.graphql(`query { order(id: "x") { id } }`);'
     out = _extract_queries("src/routes/cron.ts", src)
     assert len(out) == 1
     assert out[0][1] == "graphql"
@@ -142,7 +142,7 @@ def test_extract_storefront_call() -> None:
 
 def test_extract_typed_generic_call() -> None:
     # `shopify.graphql<OrderQuery>(\`...\`)` — the typed generic between name and parens.
-    src = "const r = await shopify.graphql<OrderQuery>(`query { order(id: \"x\") { id } }`);"
+    src = 'const r = await shopify.graphql<OrderQuery>(`query { order(id: "x") { id } }`);'
     out = _extract_queries("src/routes/cron.ts", src)
     assert len(out) == 1
     assert out[0][1] == "graphql"
@@ -150,7 +150,7 @@ def test_extract_typed_generic_call() -> None:
 
 def test_extract_replaces_template_interpolation() -> None:
     """`${id}` should become `_X` so graphql-core can still parse the query."""
-    src = "const r = await shopify.graphql(`query { order(id: \"${orderId}\") { id } }`);"
+    src = 'const r = await shopify.graphql(`query { order(id: "${orderId}") { id } }`);'
     out = _extract_queries("src/routes/cron.ts", src)
     assert "${orderId}" not in out[0][2]
     assert "_X" in out[0][2]
@@ -167,8 +167,8 @@ def test_extract_ignores_non_shopify_calls() -> None:
 
 def test_extract_multiple_calls_in_one_file() -> None:
     src = (
-        "const a = await shopify.graphql(`query A { order(id: \"1\") { id } }`);\n"
-        "const b = await shopify.storefront(`query B { product(id: \"2\") { id } }`);\n"
+        'const a = await shopify.graphql(`query A { order(id: "1") { id } }`);\n'
+        'const b = await shopify.storefront(`query B { product(id: "2") { id } }`);\n'
     )
     out = _extract_queries("src/routes/cron.ts", src)
     assert len(out) == 2
@@ -181,7 +181,10 @@ def test_extract_multiple_calls_in_one_file() -> None:
 def test_clean_query_passes(monkeypatch) -> None:
     _patch_admin_schema(monkeypatch)
     bundle = _bundle(
-        ("src/routes/cron.ts", 'await shopify.graphql(`query { order(id: "x") { id name } }`);'),
+        (
+            "src/routes/cron.ts",
+            'await shopify.graphql(`query { order(id: "x") { id name } }`);',
+        ),
     )
     assert validate_handler_graphql(bundle) == []
 
@@ -190,7 +193,10 @@ def test_unknown_field_is_flagged(monkeypatch) -> None:
     _patch_admin_schema(monkeypatch)
     bundle = _bundle(
         # `customer` is not a field on Order
-        ("src/routes/cron.ts", 'await shopify.graphql(`query { order(id: "x") { id customer } }`);'),
+        (
+            "src/routes/cron.ts",
+            'await shopify.graphql(`query { order(id: "x") { id customer } }`);',
+        ),
     )
     findings = validate_handler_graphql(bundle)
     assert any("customer" in f for f in findings)
@@ -200,7 +206,10 @@ def test_missing_required_arg_is_flagged(monkeypatch) -> None:
     _patch_admin_schema(monkeypatch)
     bundle = _bundle(
         # orders requires `first: Int!`
-        ("src/routes/cron.ts", 'await shopify.graphql(`query { orders { edges { node { id } } } }`);'),
+        (
+            "src/routes/cron.ts",
+            "await shopify.graphql(`query { orders { edges { node { id } } } }`);",
+        ),
     )
     findings = validate_handler_graphql(bundle)
     assert any("first" in f.lower() for f in findings)
@@ -210,7 +219,10 @@ def test_wrong_arg_type_is_flagged(monkeypatch) -> None:
     _patch_admin_schema(monkeypatch)
     bundle = _bundle(
         # orders expects `first: Int!`, we pass a String
-        ("src/routes/cron.ts", 'await shopify.graphql(`query { orders(first: "fifty") { edges { node { id } } } }`);'),
+        (
+            "src/routes/cron.ts",
+            'await shopify.graphql(`query { orders(first: "fifty") { edges { node { id } } } }`);',
+        ),
     )
     findings = validate_handler_graphql(bundle)
     assert findings, "expected validation error for non-Int first arg"
@@ -220,7 +232,10 @@ def test_parse_error_is_flagged(monkeypatch) -> None:
     _patch_admin_schema(monkeypatch)
     bundle = _bundle(
         # missing closing brace
-        ("src/routes/cron.ts", 'await shopify.graphql(`query { order(id: "x") { id `);'),
+        (
+            "src/routes/cron.ts",
+            'await shopify.graphql(`query { order(id: "x") { id `);',
+        ),
     )
     findings = validate_handler_graphql(bundle)
     assert findings
@@ -230,7 +245,10 @@ def test_parse_error_is_flagged(monkeypatch) -> None:
 def test_finding_includes_file_path_and_helper(monkeypatch) -> None:
     _patch_admin_schema(monkeypatch)
     bundle = _bundle(
-        ("src/routes/cron.ts", 'await shopify.graphql(`query { order(id: "x") { fakeField } }`);'),
+        (
+            "src/routes/cron.ts",
+            'await shopify.graphql(`query { order(id: "x") { fakeField } }`);',
+        ),
     )
     findings = validate_handler_graphql(bundle)
     assert findings
@@ -242,7 +260,10 @@ def test_storefront_query_skipped_when_catalog_missing(monkeypatch) -> None:
     """If only admin schema is patched in, storefront queries skip silently."""
     _patch_admin_schema(monkeypatch)
     bundle = _bundle(
-        ("src/routes/widget.ts", 'await shopify.storefront(`query { product(id: "x") { fakeField } }`);'),
+        (
+            "src/routes/widget.ts",
+            'await shopify.storefront(`query { product(id: "x") { fakeField } }`);',
+        ),
     )
     # No findings — storefront catalog returns None → skip.
     assert validate_handler_graphql(bundle) == []
@@ -252,8 +273,14 @@ def test_admin_and_storefront_routed_independently(monkeypatch) -> None:
     """Admin queries validate, storefront queries skip when only admin loaded."""
     _patch_admin_schema(monkeypatch)
     bundle = _bundle(
-        ("src/routes/admin.ts", 'await shopify.graphql(`query { order(id: "x") { fakeAdminField } }`);'),
-        ("src/routes/widget.ts", 'await shopify.storefront(`query { product(id: "x") { fakeField } }`);'),
+        (
+            "src/routes/admin.ts",
+            'await shopify.graphql(`query { order(id: "x") { fakeAdminField } }`);',
+        ),
+        (
+            "src/routes/widget.ts",
+            'await shopify.storefront(`query { product(id: "x") { fakeField } }`);',
+        ),
     )
     findings = validate_handler_graphql(bundle)
     # Only the admin finding fires — storefront query has no schema to check against.
@@ -345,7 +372,7 @@ def test_real_catalog_passes_clean_query() -> None:
         (
             "src/routes/cron.ts",
             (
-                'await shopify.graphql(`query GetOrder($id: ID!) { order(id: $id) '
+                "await shopify.graphql(`query GetOrder($id: ID!) { order(id: $id) "
                 "{ id name } }`);"
             ),
         ),

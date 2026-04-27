@@ -21,7 +21,7 @@ from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
 from subagents.prompts.core.widget import WIDGET_BASE
-from validation.static_validation import validate_widget_artifact
+from llm_validations.widget_artifact import validate_widget_artifact
 from subagents.prompts.capabilities import WIDGET_CAPABILITY_DOCS
 
 

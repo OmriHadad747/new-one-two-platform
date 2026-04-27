@@ -65,7 +65,18 @@ shopifyGraphqlOperations: When handlerCapabilities includes "shopify_graphql"
     above (Query / Mutation root field names — bare, not aliased).
   - Pagination + bulk: list the connection's root field once
     (e.g. "orders"); shopify.graphqlPaginate / shopify.bulkQuery walk it
-    from there.\
+    from there.
+  - List ONLY root queries the handler will directly issue. When a
+    sub-resource's fields are reached as a sub-selection of another listed
+    op (e.g. `<root_op>.<sub_field>.<leaf_field>`), do NOT list the
+    sub-resource as a separate operation. Listing it signals to the
+    handler that direct per-item lookups are approved, which contradicts
+    cronBatching / bulk-fetch discipline and invites Invariant-9
+    violations.
+    ✅ ["<root_op_a>", "<root_op_b>"]
+       — sub-resource fields read via `<root_op_a>.<sub_field>.*` inline
+    ❌ ["<root_op_a>", "<sub_resource>", "<root_op_b>"]
+       — invites per-item `<sub_resource>(id:)` lookups inside the loop\
 """
 
 # ── Handler view (always-on runtime contract) ──────────────────────────────────

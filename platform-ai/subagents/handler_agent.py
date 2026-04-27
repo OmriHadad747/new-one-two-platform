@@ -49,7 +49,7 @@ from subagents.base import (
     _THINKING_BUDGET_HIGH,
     needs_extended_thinking,
 )
-from validation.static_validation import validate_handler_artifact
+from llm_validations.handler_artifact import validate_handler_artifact
 from subagents.jit.handler import build_handler_jit_sections
 from subagents.prompts.topics.handler import HANDLER as HARNESS_BASE
 
@@ -362,8 +362,12 @@ def _validate_email_metadata(
         url_like = {v for v in declared_vars if v.lower().endswith("url")}
         cta_label = starter.get("ctaLabel")
         cta_url = starter.get("ctaUrl")
-        if url_like and not (isinstance(cta_label, str) and cta_label.strip()
-                             and isinstance(cta_url, str) and cta_url.strip()):
+        if url_like and not (
+            isinstance(cta_label, str)
+            and cta_label.strip()
+            and isinstance(cta_url, str)
+            and cta_url.strip()
+        ):
             errors.append(
                 "email-metadata.variables includes URL-like entries "
                 f"({sorted(url_like)!r}) so starterContent.ctaLabel + ctaUrl "

@@ -60,7 +60,7 @@ _TSC_ERROR_RE = re.compile(
 )
 
 # Default location of the handler template baseline relative to this file.
-# platform-ai/validation/typecheck_validation.py -> platform-back/templates/handler
+# platform-ai/llm_validations/handler_typecheck.py -> platform-back/templates/handler
 _DEFAULT_TEMPLATE_ROOT = (
     Path(__file__).resolve().parent.parent.parent
     / "platform-back"

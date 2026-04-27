@@ -40,6 +40,27 @@ dbContracts: Authoritative typed table definitions. The migration generator prod
   - Internal record primary keys (id) use UUID.
   - customer_id on storefront-facing tables MUST be BIGINT NULL (nullable).
     Storefront widget visitors can be guests; customerId is null for guests.
+  - Money/price columns (anything representing currency: total, subtotal,
+    amount, price, cost, fee, tax, discount, refund, payout, balance,etc.) MUST
+    be BIGINT storing integer minor units (cents for USD/EUR/GBP, yen for
+    JPY, fils for BHD). NEVER TEXT, NUMERIC, FLOAT, DOUBLE PRECISION, or
+    INTEGER. Reasons: TEXT can't be SUMmed or range-filtered; FLOAT drifts
+    (0.1 + 0.2 ≠ 0.3); INTEGER overflows past $21.47M. Shopify returns
+    amounts as decimal strings on the wire — the handler parses to integer
+    minor units (`Math.round(parseFloat(price) * 100)` for 2-decimal
+    currencies) before INSERT. Pair every money column with a sibling
+    currency column (e.g. `total_cents BIGINT` + `currency TEXT`) so
+    aggregations group by currency and never mix denominations.
+    Naming convention: append `_cents` (or `_minor_units`) to make the
+    storage format obvious — `total_cents`, `subtotal_cents`, `tax_cents`.
+  - Structured JSON columns (line items, payload snapshots, settings
+    blobs, anything you'd otherwise serialize with JSON.stringify) MUST
+    be JSONB — never TEXT. JSONB lets the admin UI and downstream
+    queries index, filter, and aggregate by sub-keys
+    (`WHERE col @> '[{"sku": "ABC"}]'`); TEXT forces application-level
+    parsing on every read and breaks any merchant-facing search. Naming
+    convention: append `_json` for clarity (`line_items_json`,
+    `payload_json`).
   - State-tracking columns MUST be NULLABLE when stateMachine.unknownSentinel is "null".
   - Tables with one record per entity combination (e.g. per customer per product)
     MUST declare a uniqueConstraint on the natural deduplication key.

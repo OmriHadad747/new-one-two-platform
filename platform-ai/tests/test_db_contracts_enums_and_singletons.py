@@ -16,11 +16,9 @@ from __future__ import annotations
 from subagents.handler_agent import _format_db_contracts as handler_format_db
 from subagents.migration_agent import _format_db_contracts as migration_format_db
 from subagents.admin_ui_agent import _format_column_enums
-from validation.static_validation import (
-    validate_admin_ui_artifact,
-    validate_architect_plan,
-    validate_handler_artifact,
-)
+from llm_validations.admin_ui_artifact import validate_admin_ui_artifact
+from llm_validations.arch_plan import validate_architect_plan
+from llm_validations.handler_artifact import validate_handler_artifact
 
 
 # ── Finding 4 — singleton ─────────────────────────────────────────────────────
@@ -49,7 +47,11 @@ def test_architect_plan_rejects_singleton_with_id_column() -> None:
                             "type": "UUID",
                             "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
                         },
-                        {"name": "delay_minutes", "type": "INTEGER", "constraints": "NOT NULL DEFAULT 60"},
+                        {
+                            "name": "delay_minutes",
+                            "type": "INTEGER",
+                            "constraints": "NOT NULL DEFAULT 60",
+                        },
                     ],
                     "uniqueConstraint": None,
                     "indexes": [],
@@ -72,7 +74,9 @@ def test_architect_plan_rejects_singleton_with_id_column() -> None:
         },
     }
     errors = validate_architect_plan(plan, app_archetype="backend_admin")
-    assert any("singleton: true but also" in e and "'id' column" in e for e in errors), errors
+    assert any(
+        "singleton: true but also" in e and "'id' column" in e for e in errors
+    ), errors
 
 
 def test_migration_renders_singleton_pk_column() -> None:
@@ -83,7 +87,11 @@ def test_migration_renders_singleton_pk_column() -> None:
                     "table": "settings",
                     "singleton": True,
                     "columns": [
-                        {"name": "delay_minutes", "type": "INTEGER", "constraints": "NOT NULL DEFAULT 60"},
+                        {
+                            "name": "delay_minutes",
+                            "type": "INTEGER",
+                            "constraints": "NOT NULL DEFAULT 60",
+                        },
                     ],
                     "uniqueConstraint": None,
                     "indexes": [],
@@ -92,7 +100,10 @@ def test_migration_renders_singleton_pk_column() -> None:
         }
     }
     rendered = migration_format_db(plan)
-    assert "singleton  BOOLEAN  PRIMARY KEY DEFAULT true CHECK (singleton = true)" in rendered
+    assert (
+        "singleton  BOOLEAN  PRIMARY KEY DEFAULT true CHECK (singleton = true)"
+        in rendered
+    )
 
 
 def test_handler_render_surfaces_singleton_upsert_pattern() -> None:
@@ -103,7 +114,11 @@ def test_handler_render_surfaces_singleton_upsert_pattern() -> None:
                     "table": "settings",
                     "singleton": True,
                     "columns": [
-                        {"name": "delay_minutes", "type": "INTEGER", "constraints": "NOT NULL DEFAULT 60"},
+                        {
+                            "name": "delay_minutes",
+                            "type": "INTEGER",
+                            "constraints": "NOT NULL DEFAULT 60",
+                        },
                     ],
                     "uniqueConstraint": None,
                     "indexes": [],
@@ -148,7 +163,9 @@ def test_handler_validator_flags_skip_locked_outside_sql_begin() -> None:
         cron_schedule="*/5 * * * *",
         db_contracts=[],
     )
-    assert any("FOR UPDATE SKIP LOCKED" in e and "sql.begin" in e for e in errors), errors
+    assert any(
+        "FOR UPDATE SKIP LOCKED" in e and "sql.begin" in e for e in errors
+    ), errors
 
 
 def test_handler_validator_accepts_skip_locked_inside_sql_begin() -> None:
@@ -177,7 +194,11 @@ _QUEUE_CONTRACTS = [
     {
         "table": "abandoned_cart_queue",
         "columns": [
-            {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
+            {
+                "name": "id",
+                "type": "UUID",
+                "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            },
             {
                 "name": "status",
                 "type": "TEXT",
@@ -208,7 +229,11 @@ def test_architect_plan_rejects_default_outside_enum() -> None:
                 {
                     "table": "abandoned_cart_queue",
                     "columns": [
-                        {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
+                        {
+                            "name": "id",
+                            "type": "UUID",
+                            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+                        },
                         {
                             "name": "status",
                             "type": "TEXT",
@@ -256,7 +281,9 @@ def test_handler_validator_flags_insert_with_unknown_status_literal() -> None:
         cron_schedule="*/5 * * * *",
         db_contracts=_QUEUE_CONTRACTS,
     )
-    assert any("'queued'" in e and "abandoned_cart_queue.status" in e for e in errors), errors
+    assert any(
+        "'queued'" in e and "abandoned_cart_queue.status" in e for e in errors
+    ), errors
 
 
 def test_handler_validator_passes_when_literals_match_enum() -> None:
@@ -286,7 +313,9 @@ def test_admin_ui_validator_flags_invented_status_filters() -> None:
     )
     errors = validate_admin_ui_artifact(
         js,
-        admin_api_catalog=[{"path": "/queue", "method": "GET", "requestShape": {}, "responseShape": {}}],
+        admin_api_catalog=[
+            {"path": "/queue", "method": "GET", "requestShape": {}, "responseShape": {}}
+        ],
         db_contracts=_QUEUE_CONTRACTS,
     )
     invented = [e for e in errors if "always be empty" in e]

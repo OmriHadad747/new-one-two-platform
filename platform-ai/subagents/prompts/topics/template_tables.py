@@ -126,6 +126,7 @@ AD-HOC JOB TRIGGERS — use enqueueJob, NOT a direct INSERT:
 
 # ── Validator view ─────────────────────────────────────────────────────────────
 
+
 def _fmt(table: str) -> str:
     return f"  {table}: {', '.join(_TEMPLATE_TABLE_COLUMNS[table])}"
 

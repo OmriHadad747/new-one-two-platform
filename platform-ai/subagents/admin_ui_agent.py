@@ -24,7 +24,7 @@ from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
 from subagents.prompts.core.admin import ADMIN_BASE
-from validation.static_validation import validate_admin_ui_artifact
+from llm_validations.admin_ui_artifact import validate_admin_ui_artifact
 
 
 class AdminUiGenerator(Generator):

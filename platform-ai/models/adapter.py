@@ -12,10 +12,13 @@ This layer ensures:
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Optional, Union
+from pathlib import Path
+from typing import Iterator, Optional, Union
 
 from anthropic import APIStatusError, APITimeoutError
 from langchain_anthropic import ChatAnthropic
@@ -48,6 +51,111 @@ class LLMResponse:
     cache_creation_tokens: int = 0
 
 
+# ── Input tracing ─────────────────────────────────────────────────────────────
+#
+# Opt-in capture of every LLM call's exact system+user prompt to disk. Off by
+# default — only callers that enter an `input_log(...)` block produce dumps,
+# so the platform/UI server path is a no-op. The chat_local CLI uses this to
+# write per-agent inputs alongside outputs in test_results/<run>/inputs/.
+#
+# Why ContextVar (not threading.local): ThreadPoolExecutor doesn't carry
+# either across the pool boundary, but ContextVar pairs with copy_context()
+# which lets the parent's state surface inside worker threads when the
+# submission is wrapped (see crew.run_codegen_parallel).
+
+
+@dataclass
+class _InputLogState:
+    agent: str
+    run_dir: Path
+
+
+_input_log_ctx: contextvars.ContextVar[Optional[_InputLogState]] = (
+    contextvars.ContextVar("input_log_ctx", default=None)
+)
+
+
+@contextmanager
+def input_log(agent: str, run_dir: Path) -> Iterator[None]:
+    """
+    Enable on-disk capture of every invoke() / invoke_conversation() call made
+    inside this block. Each call writes:
+
+        <run_dir>/inputs/<agent>/attempt_N/{system.txt, user.txt[, retry_suffix.txt]}
+
+    attempt_N is derived by counting existing attempt_* dirs, so multiple calls
+    from the same agent (e.g. revision attempts 1 and 2) produce attempt_1 and
+    attempt_2 automatically.
+
+    Outside any input_log block the dump is skipped — invoke() behaves exactly
+    as it did before the feature was added. This is the platform/UI no-op.
+    """
+    token = _input_log_ctx.set(_InputLogState(agent=agent, run_dir=run_dir))
+    try:
+        yield
+    finally:
+        _input_log_ctx.reset(token)
+
+
+def current_input_log_run_dir() -> Optional[Path]:
+    """Run-dir of the active input_log block, or None when no block is active.
+
+    Used by crew.run_codegen_parallel so each worker thread can re-enter the
+    context with a generator-specific agent name while preserving run_dir.
+    """
+    state = _input_log_ctx.get()
+    return state.run_dir if state else None
+
+
+def _dump_inputs(
+    system: Union[str, list[str]],
+    user: str,
+    retry_suffix: str,
+    *,
+    multi_turn_messages: Optional[list[dict]] = None,
+) -> None:
+    """
+    Write the prompt about to be sent to the LLM, if input_log is active.
+
+    Failures are logged and swallowed — input tracing must never break a
+    generation. Called before _invoke_with_retry so the input is captured even
+    when the API call later fails.
+    """
+    state = _input_log_ctx.get()
+    if state is None:
+        return
+    try:
+        agent_dir = state.run_dir / "inputs" / state.agent
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        existing = sum(
+            1
+            for p in agent_dir.iterdir()
+            if p.is_dir() and p.name.startswith("attempt_")
+        )
+        attempt_dir = agent_dir / f"attempt_{existing + 1}"
+        attempt_dir.mkdir()
+
+        if isinstance(system, list):
+            sys_text = "\n\n".join(s for s in system if s)
+        else:
+            sys_text = system or ""
+        (attempt_dir / "system.txt").write_text(sys_text)
+
+        if multi_turn_messages is not None:
+            transcript = "\n\n".join(
+                f"[{m.get('role', '?')}]\n{m.get('content', '')}"
+                for m in multi_turn_messages
+            )
+            (attempt_dir / "user.txt").write_text(transcript)
+        else:
+            (attempt_dir / "user.txt").write_text(user)
+
+        if retry_suffix:
+            (attempt_dir / "retry_suffix.txt").write_text(retry_suffix)
+    except Exception as exc:  # pragma: no cover — observability must not raise
+        log.warning("input-trace dump failed (agent=%s): %s", state.agent, exc)
+
+
 # Minimum prompt size for caching to be worthwhile. Anthropic's cache has a
 # 1024-token floor; shorter prompts aren't cacheable and trying to mark them
 # wastes a content block. System prompts for the large agents (handler,
@@ -77,7 +185,9 @@ def get_llm(
     resolved_model = model or "claude-haiku-4-5-20251001"
     # Thinking tokens count against max_tokens — increase ceiling to preserve
     # the intended visible-output budget alongside the thinking budget.
-    effective_max_tokens = max_tokens + thinking_budget if thinking_budget else max_tokens
+    effective_max_tokens = (
+        max_tokens + thinking_budget if thinking_budget else max_tokens
+    )
     timeout = _TIMEOUT_BASE_S + int(effective_max_tokens * _TIMEOUT_PER_TOKEN_S)
     kwargs: dict = dict(
         model=resolved_model,  # type: ignore[call-arg]
@@ -108,11 +218,20 @@ def _invoke_with_retry(llm: ChatAnthropic, messages: list) -> object:
         except APITimeoutError:
             if attempt > len(_RETRY_DELAYS):
                 raise
-            log.warning("Anthropic request timed out — retrying in %ds (attempt %d)…", _RETRY_DELAYS[attempt - 1], attempt)
+            log.warning(
+                "Anthropic request timed out — retrying in %ds (attempt %d)…",
+                _RETRY_DELAYS[attempt - 1],
+                attempt,
+            )
         except APIStatusError as exc:
             if exc.status_code not in _RETRYABLE_STATUS or attempt > len(_RETRY_DELAYS):
                 raise
-            log.warning("Anthropic overloaded/rate-limited (%s) — retrying in %ds (attempt %d)…", exc.status_code, _RETRY_DELAYS[attempt - 1], attempt)
+            log.warning(
+                "Anthropic overloaded/rate-limited (%s) — retrying in %ds (attempt %d)…",
+                exc.status_code,
+                _RETRY_DELAYS[attempt - 1],
+                attempt,
+            )
 
 
 def _system_message(system: Union[str, list[str]]) -> SystemMessage:
@@ -187,15 +306,9 @@ def _extract_cache_metrics(usage: dict) -> tuple[int, int]:
     if not usage:
         return 0, 0
     details = usage.get("input_token_details") or {}
-    cache_read = (
-        details.get("cache_read")
-        or usage.get("cache_read_input_tokens")
-        or 0
-    )
+    cache_read = details.get("cache_read") or usage.get("cache_read_input_tokens") or 0
     cache_create = (
-        details.get("cache_creation")
-        or usage.get("cache_creation_input_tokens")
-        or 0
+        details.get("cache_creation") or usage.get("cache_creation_input_tokens") or 0
     )
     return int(cache_read), int(cache_create)
 
@@ -273,6 +386,9 @@ def invoke(
     the stable portion (db schema, JIT sections, capabilities) and only pay full
     price for the new retry_suffix.
     """
+    # Dump before the network call so the prompt is captured even on failure.
+    # No-op unless an input_log() block is active.
+    _dump_inputs(system, user, retry_suffix)
     start = time.monotonic()
     response = _invoke_with_retry(
         llm, [_system_message(system), _build_user_message(user, retry_suffix)]
@@ -298,6 +414,7 @@ def invoke_conversation(
     Multi-turn conversation call.
     messages: list of {"role": "user"|"assistant", "content": str}
     """
+    _dump_inputs(system, "", "", multi_turn_messages=messages)
     start = time.monotonic()
     lc_messages: list = [_system_message(system)]
     for msg in messages:

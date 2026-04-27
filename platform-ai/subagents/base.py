@@ -24,7 +24,7 @@ output slot (handler_email_metadata) written by HandlerGenerator.generate() so
 the orchestrator can read structured metadata without changing the artifacts dict
 shape.
 
-plan shape: see validate_architect_plan in validation/static_validation.py
+plan shape: see validate_architect_plan in llm_validations/arch_plan.py
 and the architect prompt sections in subagents/prompts/architect/ for the
 authoritative schema. (Previously duplicated here — removed to avoid drift.)
 """

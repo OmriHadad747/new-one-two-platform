@@ -33,7 +33,7 @@ from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
 from subagents.prompts.core.migration import MIGRATION_BASE
-from validation.static_validation import validate_migration_artifact
+from llm_validations.migration_artifact import validate_migration_artifact
 
 _SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMENT")
 

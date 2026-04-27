@@ -18,8 +18,8 @@ from unittest.mock import patch
 
 import pytest
 
-from validation import typecheck_validation
-from validation.typecheck_validation import (
+from llm_validations import handler_typecheck as typecheck_validation
+from llm_validations.handler_typecheck import (
     _DEFAULT_TEMPLATE_ROOT,
     _parse_findings,
     validate_handler_typecheck,
@@ -37,7 +37,9 @@ def _bundle(*files: tuple[str, str]) -> str:
     return "\n".join(parts)
 
 
-def _fake_proc(returncode: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+def _fake_proc(
+    returncode: int, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
         args=["tsc"], returncode=returncode, stdout=stdout, stderr=stderr
     )
@@ -78,16 +80,28 @@ def test_returns_empty_on_subprocess_timeout(tmp_path: Path) -> None:
     (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
     (tmp_path / "node_modules").mkdir()
     bundle = _bundle(("src/routes/admin.ts", "export const x = 1;"))
-    with patch.object(typecheck_validation, "_resolve_tsc_command", return_value=["tsc"]):
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["tsc"], timeout=1)):
-            assert validate_handler_typecheck(bundle, template_root=tmp_path, timeout_sec=1) == []
+    with patch.object(
+        typecheck_validation, "_resolve_tsc_command", return_value=["tsc"]
+    ):
+        with patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["tsc"], timeout=1),
+        ):
+            assert (
+                validate_handler_typecheck(
+                    bundle, template_root=tmp_path, timeout_sec=1
+                )
+                == []
+            )
 
 
 def test_returns_empty_when_tsc_exits_zero(tmp_path: Path) -> None:
     (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
     (tmp_path / "node_modules").mkdir()
     bundle = _bundle(("src/routes/admin.ts", "export const x = 1;"))
-    with patch.object(typecheck_validation, "_resolve_tsc_command", return_value=["tsc"]):
+    with patch.object(
+        typecheck_validation, "_resolve_tsc_command", return_value=["tsc"]
+    ):
         with patch("subprocess.run", return_value=_fake_proc(0)):
             assert validate_handler_typecheck(bundle, template_root=tmp_path) == []
 
@@ -96,12 +110,12 @@ def test_returns_empty_when_tsc_exits_zero(tmp_path: Path) -> None:
 
 
 def test_parses_single_diagnostic_with_relative_path(tmp_path: Path) -> None:
-    output = (
-        f"{tmp_path}/src/routes/admin.ts(42,5): error TS2304: Cannot find name 'platfrom'.\n"
-    )
+    output = f"{tmp_path}/src/routes/admin.ts(42,5): error TS2304: Cannot find name 'platfrom'.\n"
     findings = _parse_findings(output, tmp_path)
     assert len(findings) == 1
-    assert findings[0] == "[src/routes/admin.ts:42:5] TS2304: Cannot find name 'platfrom'."
+    assert (
+        findings[0] == "[src/routes/admin.ts:42:5] TS2304: Cannot find name 'platfrom'."
+    )
 
 
 def test_parses_multiple_diagnostics(tmp_path: Path) -> None:
@@ -131,7 +145,7 @@ def test_template_owned_errors_are_filtered_out(tmp_path: Path, caplog) -> None:
         # Generator-owned — must appear
         f"{tmp_path}/src/routes/widget.ts(5,5): error TS2304: real generator bug.\n"
     )
-    with caplog.at_level("ERROR", logger="validation.typecheck_validation"):
+    with caplog.at_level("ERROR", logger="llm_validations.handler_typecheck"):
         findings = _parse_findings(output, tmp_path)
 
     # Only the generator-owned error survives
@@ -160,7 +174,8 @@ def test_non_zero_exit_with_no_parseable_output_yields_one_generic_finding(
 
 
 _TEMPLATE_HAS_DEPS = (
-    _DEFAULT_TEMPLATE_ROOT / "node_modules").exists() and shutil.which("npx") is not None
+    _DEFAULT_TEMPLATE_ROOT / "node_modules"
+).exists() and shutil.which("npx") is not None
 
 
 @pytest.mark.skipif(

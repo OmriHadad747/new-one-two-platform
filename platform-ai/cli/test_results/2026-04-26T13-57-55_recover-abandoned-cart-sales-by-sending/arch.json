@@ -1,0 +1,270 @@
+{
+  "prompt": "Recover abandoned cart sales by sending timely, personalized email reminders to customers before they lose interest.",
+  "intent": {
+    "triggerTypes": [
+      "cron"
+    ],
+    "resources": [
+      "Cart",
+      "Customer",
+      "Email"
+    ],
+    "desiredOutcome": "Recover abandoned cart sales by sending timely, personalized email reminders to customers before they lose interest.",
+    "cronHint": "every 30 minutes (to catch carts at the configured abandonment threshold)",
+    "appCategory": "backend_admin",
+    "qualityBrief": "A solid version handles: (1) Configurable abandonment delay (e.g., 1\u201324 hours) set by the merchant, (2) One email per abandoned cart (idempotency \u2014 never send duplicates), (3) Respects customer email preferences and opt-outs, (4) Excludes carts already converted to orders, (5) Admin panel showing recent reminders sent and open rate tracking (optional but valuable). Common pitfall: sending multiple reminders to the same cart; track 'reminded_at' to prevent this."
+  },
+  "plan": {
+    "shopifyPlan": {
+      "webhookTopics": [],
+      "cronSchedule": "*/30 * * * *"
+    },
+    "appContracts": {
+      "feasibility": "feasible",
+      "blockedReason": null,
+      "complexity": "high",
+      "edgeCases": [
+        "Cart already converted to an order before the cron fires \u2014 exclude by checking Shopify's abandonedCheckouts for carts that have a completed_at timestamp",
+        "Customer has unsubscribed from marketing emails or has no email address \u2014 check email marketing consent before sending and skip silently",
+        "Cron fires twice within the same window due to scheduler overlap \u2014 use FOR UPDATE SKIP LOCKED on the DB queue and check reminded_at IS NULL before processing",
+        "Same cart updated (items added/removed) after the abandonment threshold \u2014 use the cart's updated_at to reset the abandonment clock so reminders reflect the latest cart contents",
+        "Customer is a guest with no Shopify customer record \u2014 guest checkouts have no customer_id; handle null customer_id and use the email captured at checkout directly",
+        "Merchant changes the abandonment delay while a batch is in-flight \u2014 evaluate delay against the settings row at cron start, not per-item, so the batch is internally consistent"
+      ],
+      "uxExpectations": {
+        "storefront": null,
+        "admin": "Dashboard should lead with a summary of recovery performance (emails sent, estimated recovered revenue) followed by a paginated log of recent reminders with cart value, customer identity, sent timestamp, and status. Settings panel for abandonment delay should be prominent and immediately actionable."
+      },
+      "stateMachine": null,
+      "platformGaps": [
+        {
+          "gap": "Shopify does not expose a native abandoned checkout webhook that fires at a merchant-configurable delay",
+          "mitigation": "Cron job polls abandonedCheckouts via Admin GraphQL every 30 minutes, computes elapsed time since updatedAt against the merchant-configured delay stored in the settings table, and filters candidates in-app"
+        },
+        {
+          "gap": "No batch write API for sending emails \u2014 each cart reminder requires an individual platform.email.send call",
+          "mitigation": "Pre-fetch all abandoned checkout and customer data in bulk before the loop via shopify.graphqlPaginate; per-item email.send calls inside the loop are unavoidable for this resource type"
+        },
+        {
+          "gap": "Open rate tracking requires a pixel or click-back signal that the platform email service does not expose",
+          "mitigation": "Track delivery status only (sent/failed) in the reminders table; surface sent count and estimated recovery (orders placed within 24h of reminder) as a proxy metric via the Admin GraphQL orders query"
+        }
+      ],
+      "handlerCapabilities": [
+        "shopify_graphql",
+        "email"
+      ],
+      "shopifyGraphqlOperations": {
+        "admin": [
+          "abandonedCheckouts",
+          "customer",
+          "orders"
+        ],
+        "storefront": []
+      },
+      "emailSpec": {
+        "type": "transactional",
+        "purpose": "Fires once per abandoned cart when the cart has been idle longer than the merchant-configured abandonment delay and the customer has not yet completed checkout"
+      },
+      "cronBatching": {
+        "required": true,
+        "description": "Before the loop begins, bulk-fetch all abandoned checkouts updated more than (abandonment_delay_hours) ago and not yet completed via graphqlPaginate on abandonedCheckouts. In the same pre-fetch pass, collect the customer IDs from those checkouts and resolve customer email marketing consent status via batched customer lookups. Filter out any checkout tokens already present in cart_reminders with a non-null reminded_at. The loop then operates only on pre-resolved data with no per-item Shopify read calls."
+      },
+      "dbContracts": [
+        {
+          "table": "abandonment_settings",
+          "singleton": true,
+          "columns": [
+            {
+              "name": "abandonment_delay_hours",
+              "type": "INTEGER",
+              "constraints": "NOT NULL DEFAULT 1"
+            },
+            {
+              "name": "is_enabled",
+              "type": "BOOLEAN",
+              "constraints": "NOT NULL DEFAULT true"
+            },
+            {
+              "name": "updated_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": null,
+          "indexes": []
+        },
+        {
+          "table": "cart_reminders",
+          "columns": [
+            {
+              "name": "id",
+              "type": "UUID",
+              "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"
+            },
+            {
+              "name": "checkout_token",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "customer_id",
+              "type": "BIGINT",
+              "constraints": "NULL"
+            },
+            {
+              "name": "customer_email",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "cart_total_amount",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "cart_currency",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "cart_line_items_json",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "checkout_url",
+              "type": "TEXT",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "cart_abandoned_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL"
+            },
+            {
+              "name": "status",
+              "type": "TEXT",
+              "constraints": "NOT NULL DEFAULT 'pending'",
+              "enum": [
+                "pending",
+                "sent",
+                "failed",
+                "skipped"
+              ]
+            },
+            {
+              "name": "reminded_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NULL"
+            },
+            {
+              "name": "failure_reason",
+              "type": "TEXT",
+              "constraints": "NULL"
+            },
+            {
+              "name": "created_at",
+              "type": "TIMESTAMPTZ",
+              "constraints": "NOT NULL DEFAULT now()"
+            }
+          ],
+          "uniqueConstraint": {
+            "columns": [
+              "checkout_token"
+            ]
+          },
+          "indexes": [
+            "customer_id",
+            "status",
+            "reminded_at",
+            "cart_abandoned_at"
+          ]
+        }
+      ],
+      "webhookContract": null,
+      "cronContract": {
+        "handlerMustProduce": "For each candidate abandoned checkout, the handler must resolve before acting: (1) checkout_token as the idempotency key, (2) customer display name (first + last name or email prefix) for email personalization, (3) customer_email \u2014 either from the Shopify customer record or the guest email captured on the checkout, (4) customer email marketing consent status \u2014 skip and record as 'skipped' if the customer has opted out or consent is unknown, (5) cart_total_amount and cart_currency for the email subject line and body, (6) cart_line_items_json \u2014 a serialized array of { title, quantity, price, image_url } for the product list in the email body, (7) checkout_url \u2014 the Shopify recovery URL the CTA button points to, (8) cart_abandoned_at \u2014 the checkout's updatedAt timestamp used to confirm the abandonment window has elapsed. The handler must verify no row exists in cart_reminders for checkout_token with reminded_at IS NOT NULL before proceeding to send. After a successful send, it must upsert cart_reminders setting status='sent' and reminded_at=now(). On email send failure it must upsert with status='failed' and failure_reason set to the error message."
+      },
+      "widgetTargetTemplates": null,
+      "widgetApiCatalog": null,
+      "widgetCapabilities": null,
+      "adminApiCatalog": [
+        {
+          "path": "/settings",
+          "method": "GET",
+          "requestShape": {},
+          "responseShape": {
+            "abandonment_delay_hours": "number",
+            "is_enabled": "boolean",
+            "updated_at": "string"
+          }
+        },
+        {
+          "path": "/settings",
+          "method": "POST",
+          "requestShape": {
+            "abandonment_delay_hours": "number",
+            "is_enabled": "boolean"
+          },
+          "responseShape": {
+            "abandonment_delay_hours": "number",
+            "is_enabled": "boolean",
+            "updated_at": "string"
+          }
+        },
+        {
+          "path": "/reminders",
+          "method": "GET",
+          "requestShape": {
+            "page": "number",
+            "page_size": "number",
+            "status": "string"
+          },
+          "responseShape": {
+            "items": [
+              {
+                "id": "string",
+                "checkout_token": "string",
+                "customer_email": "string",
+                "cart_total_amount": "string",
+                "cart_currency": "string",
+                "status": "string",
+                "reminded_at": "string | null",
+                "cart_abandoned_at": "string",
+                "created_at": "string"
+              }
+            ],
+            "total": "number",
+            "page": "number",
+            "page_size": "number"
+          }
+        },
+        {
+          "path": "/stats",
+          "method": "GET",
+          "requestShape": {},
+          "responseShape": {
+            "total_sent": "number",
+            "total_failed": "number",
+            "total_skipped": "number",
+            "total_pending": "number",
+            "last_run_at": "string | null"
+          }
+        },
+        {
+          "path": "/run",
+          "method": "POST",
+          "requestShape": {},
+          "responseShape": {
+            "triggered": "boolean",
+            "message": "string"
+          }
+        }
+      ],
+      "adminCapabilities": []
+    }
+  },
+  "validation_errors": [],
+  "product_prompt": "Merchant request: Recover abandoned cart sales by sending timely, personalized email reminders to customers before they lose interest.\n\nFeature intent:\n{\n  \"triggerTypes\": [\n    \"cron\"\n  ],\n  \"resources\": [\n    \"Cart\",\n    \"Customer\",\n    \"Email\"\n  ],\n  \"desiredOutcome\": \"Recover abandoned cart sales by sending timely, personalized email reminders to customers before they lose interest.\",\n  \"cronHint\": \"every 30 minutes (to catch carts at the configured abandonment threshold)\",\n  \"appCategory\": \"backend_admin\",\n  \"qualityBrief\": \"A solid version handles: (1) Configurable abandonment delay (e.g., 1\\u201324 hours) set by the merchant, (2) One email per abandoned cart (idempotency \\u2014 never send duplicates), (3) Respects customer email preferences and opt-outs, (4) Excludes carts already converted to orders, (5) Admin panel showing recent reminders sent and open rate tracking (optional but valuable). Common pitfall: sending multiple reminders to the same cart; track 'reminded_at' to prevent this.\"\n}\n\nApp archetype: backend_admin\n\nQuality brief (use this to inform edgeCases and uxExpectations):\nA solid version handles: (1) Configurable abandonment delay (e.g., 1\u201324 hours) set by the merchant, (2) One email per abandoned cart (idempotency \u2014 never send duplicates), (3) Respects customer email preferences and opt-outs, (4) Excludes carts already converted to orders, (5) Admin panel showing recent reminders sent and open rate tracking (optional but valuable). Common pitfall: sending multiple reminders to the same cart; track 'reminded_at' to prevent this.\n\nProduce the structural plan and binding contracts."
+}

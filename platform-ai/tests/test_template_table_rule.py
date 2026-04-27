@@ -11,18 +11,24 @@ from __future__ import annotations
 import re
 
 from subagents.prompts.topics.template_tables import TEMPLATE_OWNED_TABLES
-from validation.static_validation import FORBIDDEN_HANDLER_PATTERNS
+from llm_validations.handler_artifact import FORBIDDEN_HANDLER_PATTERNS
 
 
 def _template_table_rule() -> tuple[str, str]:
     """Return the (pattern, message) tuple for the template-owned-table rule."""
     for pattern, message in FORBIDDEN_HANDLER_PATTERNS:
-        if "TEMPLATE-OWNED" in pattern.upper() or "cron_queue" in pattern or "INSERT\\s+INTO" in pattern:
+        if (
+            "TEMPLATE-OWNED" in pattern.upper()
+            or "cron_queue" in pattern
+            or "INSERT\\s+INTO" in pattern
+        ):
             # Match by content — the rule references the template table names
             # in its alternation.
             if any(t in pattern for t in TEMPLATE_OWNED_TABLES):
                 return pattern, message
-    raise AssertionError("template-owned-table rule not found in FORBIDDEN_HANDLER_PATTERNS")
+    raise AssertionError(
+        "template-owned-table rule not found in FORBIDDEN_HANDLER_PATTERNS"
+    )
 
 
 PATTERN, MESSAGE = _template_table_rule()
@@ -30,28 +36,29 @@ PATTERN, MESSAGE = _template_table_rule()
 
 # ── Positive cases — these MUST be flagged ────────────────────────────────────
 
+
 def test_insert_into_cron_queue_uppercase() -> None:
-    code = 'await sql`INSERT INTO cron_queue (job_name) VALUES (${name})`;'
+    code = "await sql`INSERT INTO cron_queue (job_name) VALUES (${name})`;"
     assert re.search(PATTERN, code) is not None
 
 
 def test_insert_into_cron_queue_lowercase() -> None:
-    code = 'await sql`insert into cron_queue (job_name) values (${name})`;'
+    code = "await sql`insert into cron_queue (job_name) values (${name})`;"
     assert re.search(PATTERN, code) is not None
 
 
 def test_select_from_cron_queue() -> None:
-    code = 'const r = await sql`SELECT * FROM cron_queue WHERE id = ${id}`;'
+    code = "const r = await sql`SELECT * FROM cron_queue WHERE id = ${id}`;"
     assert re.search(PATTERN, code) is not None
 
 
 def test_select_from_processed_webhooks() -> None:
-    code = 'await sql`SELECT 1 FROM processed_webhooks LIMIT 1`;'
+    code = "await sql`SELECT 1 FROM processed_webhooks LIMIT 1`;"
     assert re.search(PATTERN, code) is not None
 
 
 def test_update_cron_queue() -> None:
-    code = 'await sql`UPDATE cron_queue SET status = \'done\' WHERE id = ${id}`;'
+    code = "await sql`UPDATE cron_queue SET status = 'done' WHERE id = ${id}`;"
     assert re.search(PATTERN, code) is not None
 
 
@@ -82,6 +89,7 @@ def test_multi_line_sql() -> None:
 
 
 # ── Negative cases — these MUST NOT be flagged ────────────────────────────────
+
 
 def test_user_table_with_similar_prefix_is_safe() -> None:
     code = "await sql`INSERT INTO cron_queue_logs (event) VALUES (${e})`;"
@@ -117,6 +125,7 @@ def test_user_table_named_cron_jobs_is_safe() -> None:
 
 
 # ── Wiring guarantees ─────────────────────────────────────────────────────────
+
 
 def test_message_directs_to_enqueueJob() -> None:
     assert "enqueueJob" in MESSAGE

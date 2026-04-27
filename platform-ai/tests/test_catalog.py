@@ -1,5 +1,5 @@
 """
-Tests for validation.catalog — load + slice + validate helpers used to
+Tests for llm_validations.shopify_ops — load + slice + validate helpers used to
 plumb the Shopify GraphQL catalog through the architect (full index) and
 handler (sliced to architect-approved ops).
 """
@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from validation import catalog as catalog_mod
-from validation.catalog import (
+from llm_validations import shopify_ops as catalog_mod
+from llm_validations.shopify_ops import (
     load_summary,
     slice_summary,
     validate_op_names,
@@ -82,7 +82,9 @@ def test_validate_op_names_flags_unknown() -> None:
     assert invalid == ["fakeOpXYZ"]
 
 
-@pytest.mark.skipif(not _STOREFRONT_PATH.exists(), reason="storefront catalog not committed")
+@pytest.mark.skipif(
+    not _STOREFRONT_PATH.exists(), reason="storefront catalog not committed"
+)
 def test_validate_op_names_storefront() -> None:
     # `product` is a Storefront root query
     invalid = validate_op_names("storefront", ["product"])

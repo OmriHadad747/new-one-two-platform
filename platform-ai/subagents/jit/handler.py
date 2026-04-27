@@ -26,14 +26,18 @@ from typing import Any, Dict, List
 from subagents.prompts.capabilities import HANDLER_CAPABILITY_DOCS
 from subagents.prompts.topics.admin_ui import HANDLER as HARNESS_SECTION_ADMIN
 from subagents.prompts.topics.cron import HANDLER as HARNESS_SECTION_CRON
-from subagents.prompts.topics.shopify_loop import HANDLER as HARNESS_SECTION_CRON_BATCHING
-from subagents.prompts.topics.state_machine import HANDLER as HARNESS_SECTION_STATE_MACHINE
+from subagents.prompts.topics.shopify_loop import (
+    HANDLER as HARNESS_SECTION_CRON_BATCHING,
+)
+from subagents.prompts.topics.state_machine import (
+    HANDLER as HARNESS_SECTION_STATE_MACHINE,
+)
 from subagents.prompts.topics.webhook import HANDLER as HARNESS_SECTION_WEBHOOK
 from subagents.prompts.topics.widget import (
     HANDLER as HARNESS_SECTION_WIDGET,
     HANDLER_STOREFRONT as HARNESS_SECTION_WIDGET_STOREFRONT,
 )
-from validation.catalog import slice_summary
+from llm_validations.shopify_ops import slice_summary
 
 
 def build_handler_jit_sections(
@@ -108,8 +112,7 @@ def build_handler_jit_sections(
         description = (batching.get("description") or "").strip()
         if description:
             sections.append(
-                "CRON BATCHING — architect's plan for this app:\n"
-                f"{description}"
+                "CRON BATCHING — architect's plan for this app:\n" f"{description}"
             )
 
     if widget_catalog:

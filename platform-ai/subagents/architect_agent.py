@@ -59,7 +59,7 @@ from subagents.prompts.topics.widget import (
     ARCHITECT_CATALOG as WIDGET_API_CATALOG,
     ARCHITECT_TEMPLATES as WIDGET_TARGET_TEMPLATES,
 )
-from validation.catalog import load_summary
+from llm_validations.shopify_ops import load_summary
 
 
 _SHOPIFY_PLAN_HEADER = """\
@@ -104,13 +104,7 @@ def _build_shopify_catalog_section() -> str:
     """
     admin = load_summary("admin")
     storefront = load_summary("storefront")
-    return (
-        _SHOPIFY_CATALOG_INTRO
-        + "\n\n"
-        + admin
-        + "\n\n"
-        + storefront
-    )
+    return _SHOPIFY_CATALOG_INTRO + "\n\n" + admin + "\n\n" + storefront
 
 
 def _build_system_prompt(archetype: str) -> tuple[str, str]:
