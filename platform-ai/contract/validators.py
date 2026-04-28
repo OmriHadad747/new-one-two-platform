@@ -124,9 +124,14 @@ class CatalogEntry(BaseModel):
     so the codegen agents never need to think about HTTP method. requestShape
     + responseShape stay in the architect plan; the runtime doesn't need
     them.
+
+    `path` constraints mirror the Zod CatalogEntrySchema in
+    platform-back/apps/api/src/pubsub/schemas.ts so a Bundle that passes
+    Pydantic also passes the subscriber's Zod parse — otherwise messages
+    silently dead-letter at the wire boundary.
     """
 
-    path: str
+    path: str = Field(min_length=1, max_length=512)
     method: Literal["GET", "POST"]
 
 

@@ -178,14 +178,14 @@ function buildHost({ appId, shop, platformUrl }) {
         body = args !== undefined ? JSON.stringify(args) : undefined;
       }
 
-      const res = await fetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "1",
-        },
-        body,
-      });
+      // Only set Content-Type when there's a body — sending it on GET is
+      // harmless but non-pristine and can trigger an unnecessary CORS
+      // preflight on the App Proxy round-trip.
+      const headers = { "ngrok-skip-browser-warning": "1" };
+      if (body !== undefined) {
+        headers["Content-Type"] = "application/json";
+      }
+      const res = await fetch(url, { method, headers, body });
 
       if (!res.ok) {
         const text = await res.text();

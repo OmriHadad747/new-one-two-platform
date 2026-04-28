@@ -101,14 +101,16 @@ export function AdminShell({ shop }: Props) {
           body = JSON.stringify(args ?? {});
         }
 
-        const res = await fetch(url, {
-          method,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body,
-        });
+        // Only set Content-Type when there's a body — sending it on GET is
+        // harmless but non-pristine and triggers an unnecessary CORS preflight
+        // in some browser configurations.
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${token}`,
+        };
+        if (body !== undefined) {
+          headers["Content-Type"] = "application/json";
+        }
+        const res = await fetch(url, { method, headers, body });
         if (!res.ok) {
           const detail = await res.json().catch(() => ({})) as { error?: string };
           throw new Error(

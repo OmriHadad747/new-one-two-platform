@@ -1050,7 +1050,17 @@ def _save_generated_files(
             for r in catalog_rows or []
             if isinstance(r, dict) and isinstance(r.get("path"), str)
         ]
-        return f"window.__PLATFORM_CATALOG__ = {json.dumps(slim)};\n"
+        # Mirror the platform-back bundle-storage saver's `</script>`
+        # escape so locally-saved bundles are byte-identical to the
+        # deployed bundle. Defense in depth — bundles are loaded via
+        # `<script src=...>` not inlined, but the dev/prod parity matters.
+        # Capture-group preserves the matched case (`</SCRIPT` →
+        # `<\/SCRIPT`). Mirrors the TypeScript regex shape so the locally-
+        # saved bundle is byte-identical to the platform-back one.
+        encoded = re.sub(
+            r"</(script)", r"<\\/\1", json.dumps(slim), flags=re.IGNORECASE
+        )
+        return f"window.__PLATFORM_CATALOG__ = {encoded};\n"
 
     if is_storefront and artifacts.get("widget_js"):
         prelude = _prelude(contracts.get("widgetApiCatalog") or []) if plan else ""
@@ -1102,7 +1112,16 @@ def _save_codegen_failure_local(
     can print it to the merchant.
     """
     # Dump artifacts as proper files — same shape as a successful run.
-    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
+    # Wrap in try/except so a disk-full / permission error during failure-
+    # handling doesn't replace the merchant's "validation failed" output
+    # with a Python traceback. We still want the partial state if some
+    # writes succeeded.
+    try:
+        _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
+    except OSError as exc:
+        _log.warning(
+            "could not persist failed-attempt artifacts to %s: %s", run_dir, exc
+        )
 
     ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     path = run_dir / "validation_failure.json"
@@ -1115,7 +1134,10 @@ def _save_codegen_failure_local(
         "token_totals": {k: {"in": v[0], "out": v[1]} for k, v in token_totals.items()},
         "artifact_keys": sorted(artifacts.keys()),
     }
-    path.write_text(json.dumps(payload, indent=2))
+    try:
+        path.write_text(json.dumps(payload, indent=2))
+    except OSError as exc:
+        _log.warning("could not write %s: %s", path, exc)
     return path
 
 

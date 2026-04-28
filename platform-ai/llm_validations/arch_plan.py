@@ -149,15 +149,41 @@ def validate_architect_plan(
             "or remove adminApiCatalog."
         )
 
-    # 7. No path parameters in widgetApiCatalog or adminApiCatalog paths.
-    #    The harness routes on exact string equality — :param segments never match.
+    # 7. Catalog path + method shape — no path parameters, non-empty path
+    #    starting with '/', length within the wire-format budget, and
+    #    method ∈ {GET, POST}. The harness routes on exact string equality
+    #    (so ':param' never matches) and the served bundle's `__PLATFORM_CATALOG__`
+    #    prelude carries (path, method) per row — Pydantic CatalogEntry +
+    #    Zod CatalogEntrySchema both reject empty / oversized paths and
+    #    methods outside {GET, POST}, so failing those at architect-emit
+    #    time keeps the codegen retry loop in scope; without this gate, an
+    #    invalid catalog would pass through codegen and dead-letter at the
+    #    Pub/Sub subscriber instead.
     _PATH_PARAM = re.compile(r"/:[\w]+")
+    _MAX_PATH_LEN = 512
+    _ALLOWED_METHODS = {"GET", "POST"}
     for catalog_name, catalog in [
         ("widgetApiCatalog", widget_catalog),
         ("adminApiCatalog", admin_catalog),
     ]:
         for entry in catalog:
             path = entry.get("path", "")
+            if not isinstance(path, str) or not path:
+                errors.append(
+                    f"{catalog_name} entry has missing/empty `path` — every "
+                    "catalog row must declare a non-empty path starting with '/'."
+                )
+                continue
+            if not path.startswith("/"):
+                errors.append(
+                    f"{catalog_name} path {path!r} must start with '/'."
+                )
+            if len(path) > _MAX_PATH_LEN:
+                errors.append(
+                    f"{catalog_name} path is {len(path)} chars (max "
+                    f"{_MAX_PATH_LEN}). The bundle wire-format / subscriber "
+                    "Zod schema rejects longer paths."
+                )
             if _PATH_PARAM.search(path):
                 errors.append(
                     f"{catalog_name} path {path!r} contains a path parameter — "
@@ -165,6 +191,17 @@ def validate_architect_plan(
                     "Use a flat path and put the identifier in requestShape instead: "
                     f"e.g. '{_PATH_PARAM.sub('', path)}/action' with requestShape: {{\"id\": \"string\"}}"
                 )
+            method = entry.get("method")
+            if method is not None:
+                if not isinstance(method, str) or method.upper() not in _ALLOWED_METHODS:
+                    errors.append(
+                        f"{catalog_name} path {path!r} declares method "
+                        f"{method!r} — must be 'GET' or 'POST'. The "
+                        "method-aware SDK and the cross-handler validator "
+                        "branch on this value; anything else silently "
+                        "downgrades to POST and the catalog declaration "
+                        "becomes a lie at runtime."
+                    )
 
     # 8. stateMachine.unknownSentinel must be the string "null" when stateMachine is set
     sm = impl.get("stateMachine")

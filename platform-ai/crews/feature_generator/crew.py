@@ -1029,22 +1029,47 @@ def _publish_success(
     # for any catalog row that omits `method` (most existing plans before
     # this change emit GET/POST explicitly per ARCH_RULES row 19/29; the
     # default keeps wire-compat with the prior always-POST SDK behaviour).
-    def _slim_catalog(rows: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    # Invalid rows are dropped with a warning so the post-publish bundle
+    # never carries garbage; arch_plan.py is the upstream gate that should
+    # fail the architect attempt before we reach this point — drops here
+    # mean that gate slipped and we want it visible in logs.
+    def _slim_catalog(
+        rows: List[Dict[str, Any]], catalog_name: str
+    ) -> List[Dict[str, str]]:
         out: List[Dict[str, str]] = []
         for row in rows or []:
             path = row.get("path")
-            method = (row.get("method") or "POST").upper()
-            if isinstance(path, str) and method in ("GET", "POST"):
-                out.append({"path": path, "method": method})
+            method_raw = row.get("method") or "POST"
+            method = method_raw.upper() if isinstance(method_raw, str) else ""
+            if not isinstance(path, str) or not path:
+                log.warning(
+                    "%s row dropped from slim manifest: missing/empty path "
+                    "(row=%r). arch_plan.py should have rejected this — "
+                    "investigate the architect output.",
+                    catalog_name,
+                    row,
+                )
+                continue
+            if method not in ("GET", "POST"):
+                log.warning(
+                    "%s row dropped from slim manifest: path=%r method=%r "
+                    "is not GET or POST. arch_plan.py should have rejected "
+                    "this — investigate the architect output.",
+                    catalog_name,
+                    path,
+                    method_raw,
+                )
+                continue
+            out.append({"path": path, "method": method})
         return out
 
     widget_catalog = (
-        _slim_catalog(app_contracts.get("widgetApiCatalog") or [])
+        _slim_catalog(app_contracts.get("widgetApiCatalog") or [], "widgetApiCatalog")
         if is_storefront
         else []
     )
     admin_catalog = (
-        _slim_catalog(app_contracts.get("adminApiCatalog") or [])
+        _slim_catalog(app_contracts.get("adminApiCatalog") or [], "adminApiCatalog")
         if is_admin_ui
         else []
     )
