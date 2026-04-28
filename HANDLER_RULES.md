@@ -81,7 +81,7 @@ Source: every handler-facing prompt block — `platform-ai/subagents/prompts/top
 | **Idempotency / atomicity (Invariants 1–3)** | | | | |
 | 54 | **Inv 1** — Atomic claim: `UPDATE … RETURNING` then act; never SELECT-then-act-then-UPDATE | yes | llm | |
 | 55 | **Inv 2** — Scoping: every SQL op in a request-driven path filters to the entity from the request payload | yes | llm | |
-| 56 | **Inv 3** — Replay-safe INSERTs: `ON CONFLICT DO NOTHING` (or `DO UPDATE` for upserts) paired with `uniqueConstraint` | yes | llm | |
+| 56 | **Inv 3** — Replay-safe INSERTs: `ON CONFLICT DO NOTHING` (or `DO UPDATE` for upserts) paired with `uniqueConstraint` | yes | static (structural target match) + llm (semantic — should this INSERT use ON CONFLICT at all?) | ✅ structural half — `_check_on_conflict_targets` |
 | **State observation & mutation (Invariants 4–5)** | | | | |
 | 57 | **Inv 4** — Read prior state from DB before deciding; null = "never observed" (do not fire on null→value) | yes | llm | |
 | 58 | **Inv 5** — After every Shopify mutation, check `userErrors[]`; non-empty = throw/fail | yes | llm | |
@@ -146,6 +146,67 @@ Source: every handler-facing prompt block — `platform-ai/subagents/prompts/top
 - **68 validate** → **25 static** rule-rows (✅) — of which **22 regex/AST in `handler_artifact.py`**, **1 by `handler_typecheck` (tsc compile gate, row 16)**, **1 by `handler_graphql`** (row 77), **1 by `shopify_ops.py`** (row 78); plus **43 llm** rule-rows deferred to `agent_rules` + `bug_finder` (row 15 reclassified static → llm — catastrophic cases already covered by rows 30 + 70, and the standalone https-outside-fetch regex had high FP surface on JSDoc / comments / error-message URLs)
 - **27 skip** → **13 no** (style / judgment / non-catastrophic / structurally-impossible-given-template — rows 9, 80, 83 fall here because tsc + template imports own the enforcement, no separate check exists) + **14 paranoid** (model handles via prompt; bug_finder catches downstream impact)
 - The static layer is narrow by intent — see the philosophy paragraph above. Rules outside the four bars (structural / frequent / catastrophic / not-tsc-covered) flow through `agent_rules` and `bug_finder`.
+
+---
+
+## Audit findings — ON CONFLICT target ↔ uniqueConstraint static check (2026-04-28)
+
+Documented case (image-optimizer generation, run
+`2026-04-28T20-38-51_automatically-optimize-and-store-product-images`)
+where the handler emitted `ON CONFLICT (run_id, image_id) DO NOTHING`
+on `optimization_run_items` INSERTs but the migration declared no
+matching `uniqueConstraint` on that pair. Postgres throws
+`there is no unique or exclusion constraint matching the ON CONFLICT
+specification` on the FIRST INSERT — every cron run dies before
+processing any image. Both `agent_rules` and `bug_finder` flagged it
+correctly (high-confidence, named the same root cause from two
+angles), but the revision agent returned `[]` and the broken code
+shipped.
+
+The structural half of Inv 3 — "the ON CONFLICT target column-set
+must correspond to a real unique constraint or PRIMARY KEY in
+dbContracts" — clears all four bars of the static-validation policy:
+
+- **(a) Frequency**: real, observed in actual generations. The
+  generated handler reasonably picked a `(run_id, image_id)` dedup
+  key but the migration forgot the matching constraint.
+- **(b) Near-zero FP**: the check parses `INSERT INTO <table> ... ON
+  CONFLICT (cols)` and compares the column-set (order-insensitive)
+  against (i) the table's PRIMARY KEY column(s), (ii) any declared
+  `uniqueConstraint.columns`, (iii) any column-level UNIQUE flag.
+  Skips named-constraint form (`ON CONFLICT ON CONSTRAINT name`) and
+  expression targets and tables not in dbContracts. Smoke-tested
+  across 7 scenarios — only the real bug fires.
+- **(c) Catastrophic**: deploy-time / first-INSERT crash. Whole
+  cron / route dies before any side effect.
+- **(d) Not duplicated downstream**: tsc doesn't read SQL semantics.
+  `handler_typecheck` only types the TypeScript. `handler_graphql`
+  validates GraphQL queries, not SQL. The deployer's
+  `sql-validator.ts` checks the migration DDL but not the handler's
+  runtime SQL. No deterministic gate covers this — the static check
+  IS the only fast-feedback path.
+
+**Implementation:** `llm_validations/handler_artifact.py:_check_on_conflict_targets`
+— wired into `validate_handler_artifact` step 11b (next to the
+existing dbContracts-aware enum-write cross-check). Threaded the
+existing `db_contracts` parameter; no new args. Error message names
+the table, the conflict columns, the declared valid targets, and
+both fix paths (add a uniqueConstraint to dbContracts OR change the
+conflict target).
+
+**Row 56 reclassified to `static (structural) + llm (semantic)`** —
+the structural half (target exists) is now the static check; the
+semantic half (did the agent CHOOSE ON CONFLICT correctly given the
+use case — atomic-claim vs upsert vs idempotency invariant) stays
+llm because that's intent-level reasoning the structural check can't
+make.
+
+**Note on the migration side:** the matching prompt fix (architect's
+`uniqueConstraint` field is the contract; migration agent must emit
+`UNIQUE (cols)` constraint or `CREATE UNIQUE INDEX`) was added in
+the same round to `subagents/prompts/core/migration.py`'s REQUIRED
+PATTERN section, naming the runtime failure mode. See
+MIGRATION_RULES.md audit findings for that side.
 
 ---
 
