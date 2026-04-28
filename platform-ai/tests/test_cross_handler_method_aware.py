@@ -281,3 +281,57 @@ def test_empty_artifacts_short_circuit(surface: Surface) -> None:
     """Either side empty → returns immediately with no errors."""
     assert _run(surface, "", "handler code", None) == {}
     assert _run(surface, "ui code", "", None) == {}
+
+
+# ── Observability: build_method_map warns on dropped rows ────────────────────
+# The shared cross_handler.build_method_map silently defaults invalid
+# methods to POST as defense-in-depth (arch_plan.py is the upstream
+# loud-fail gate), but it logs WARNING when it does so. A real catalog
+# coming from the architect should never trigger these — any line in
+# production logs signals upstream drift worth investigating.
+
+
+def test_build_method_map_warns_on_unknown_method(caplog) -> None:
+    import logging
+
+    from utils.static_validations.cross_handler import build_method_map
+
+    with caplog.at_level(logging.WARNING, logger="utils.static_validations.cross_handler"):
+        out = build_method_map([{"path": "/x", "method": "DELETE"}])
+    assert out == {"/x": "POST"}
+    assert any("DELETE" in rec.getMessage() for rec in caplog.records)
+
+
+def test_build_method_map_warns_on_non_dict_entry(caplog) -> None:
+    import logging
+
+    from utils.static_validations.cross_handler import build_method_map
+
+    with caplog.at_level(logging.WARNING, logger="utils.static_validations.cross_handler"):
+        out = build_method_map(["not-a-dict", {"path": "/x", "method": "GET"}])
+    assert out == {"/x": "GET"}
+    assert any("not a dict" in rec.getMessage() for rec in caplog.records)
+
+
+def test_build_method_map_warns_on_non_string_path(caplog) -> None:
+    import logging
+
+    from utils.static_validations.cross_handler import build_method_map
+
+    with caplog.at_level(logging.WARNING, logger="utils.static_validations.cross_handler"):
+        out = build_method_map([{"path": 42, "method": "GET"}])
+    assert out == {}
+    assert any("non-string path" in rec.getMessage() for rec in caplog.records)
+
+
+def test_build_method_map_silent_on_valid_input(caplog) -> None:
+    import logging
+
+    from utils.static_validations.cross_handler import build_method_map
+
+    with caplog.at_level(logging.WARNING, logger="utils.static_validations.cross_handler"):
+        out = build_method_map(
+            [{"path": "/a", "method": "GET"}, {"path": "/b", "method": "POST"}]
+        )
+    assert out == {"/a": "GET", "/b": "POST"}
+    assert caplog.records == []

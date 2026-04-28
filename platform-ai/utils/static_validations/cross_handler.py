@@ -25,8 +25,11 @@ shape, the public entry-point signature, and the error-message wording.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Dict, List, Optional, Set
+
+log = logging.getLogger(__name__)
 
 
 # ── Slot regexes — same shape, two slots ─────────────────────────────────────
@@ -57,21 +60,39 @@ def build_method_map(
 ) -> Dict[str, str]:
     """
     Build path → method map from the architect's catalog. Missing or
-    invalid method silently defaults to POST — matches the SDK fallback
-    for paths that bypass the catalog. (`arch_plan.py` is the upstream
-    gate that should reject invalid methods loudly; this is defense in
-    depth.)
+    invalid method defaults to POST — matches the SDK fallback for paths
+    that bypass the catalog. (`arch_plan.py` is the upstream gate that
+    should reject invalid methods loudly; this is defense in depth.)
+
+    Catalog rows that fail validation here (non-dict, non-string path,
+    method outside {GET, POST}) are dropped with a WARNING log line —
+    the upstream architect gate should have caught these, so any line
+    here signals architect-output drift worth investigating.
     """
     method_map: Dict[str, str] = {}
     for entry in catalog or []:
         if not isinstance(entry, dict):
+            log.warning("cross-handler catalog entry is not a dict: %r", entry)
             continue
         path = entry.get("path")
         if not isinstance(path, str):
+            log.warning(
+                "cross-handler catalog entry has non-string path: %r", entry
+            )
             continue
         raw_method = entry.get("method") or "POST"
         method = raw_method.upper() if isinstance(raw_method, str) else ""
-        method_map[path] = method if method in _VALID_METHODS else "POST"
+        if method in _VALID_METHODS:
+            method_map[path] = method
+        else:
+            log.warning(
+                "cross-handler catalog path=%r method=%r is not in "
+                "{GET, POST} — defaulting to POST. arch_plan.py should "
+                "have rejected this; investigate the architect output.",
+                path,
+                raw_method,
+            )
+            method_map[path] = "POST"
     return method_map
 
 

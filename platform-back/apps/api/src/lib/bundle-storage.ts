@@ -57,8 +57,16 @@ function catalogPrelude(catalog: CatalogEntry[] | undefined): string {
   // storefront page; admin runs in the embedded App Bridge iframe — both
   // have a window). The SDKs check for the global at call time and fall
   // back to POST when unset.
+  //
+  // The bundle is served via `<script src=...>`, never inlined into HTML,
+  // so an embedded `</script>` inside `path` would not break out today.
+  // Escape it anyway as defense-in-depth: any future debugging tool /
+  // copy-paste / inline-into-template path stays safe. Cost is one
+  // .replace() per saved bundle.
   const slim = catalog ?? [];
-  return `window.__PLATFORM_CATALOG__ = ${JSON.stringify(slim)};\n`;
+  // Capture-group preserves the matched case (`</SCRIPT` → `<\/SCRIPT`).
+  const json = JSON.stringify(slim).replace(/<\/(script)/gi, "<\\/$1");
+  return `window.__PLATFORM_CATALOG__ = ${json};\n`;
 }
 
 export async function saveBundles(appId: string, bundles: BundlePayload): Promise<void> {
