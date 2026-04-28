@@ -207,7 +207,21 @@ def _summary_box(title: str, rows: List[Tuple[str, str]]) -> None:
 
 
 def _bot(text: str) -> None:
-    print(f"\n{_c('▸', _MAGENTA)} {_c('Ton', _CYAN, _BOLD)}  {text}\n")
+    """
+    Print an assistant message. When `text` is multi-line — e.g. the
+    structured `summary` field returned by run_product_agent_analyze in the
+    "ready" state, which uses sectioned plain-text format with newlines and
+    bullet lines — continuation lines are indented to align under the first
+    line's text column (7 visible chars: '▸ Ton  '). Single-line messages
+    render exactly as before.
+    """
+    lines = text.splitlines() if text else [""]
+    head = lines[0] if lines else ""
+    print(f"\n{_c('▸', _MAGENTA)} {_c('Ton', _CYAN, _BOLD)}  {head}")
+    indent = " " * 7  # matches the visible width of '▸ Ton  '
+    for line in lines[1:]:
+        print(f"{indent}{line}" if line else "")
+    print()
 
 
 def _info(text: str) -> None:

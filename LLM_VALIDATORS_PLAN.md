@@ -14,12 +14,78 @@ This plan refactors the LLM side to match: **clear scope, parallel execution, no
 
 ---
 
+## Static-validation policy
+
+**The four-bar policy.** A rule earns a static check ONLY when ALL FOUR bars are cleared:
+
+- **(a) Frequency** — the failure mode has been seen with non-trivial frequency in real generations. Frontier models with explicit prompt teaching essentially never violate enum/schema-shape rules (the schema-as-prompt IS the enforcement); cheap structural checks for things that almost never fail are tax on every gen for unmeasurable benefit.
+- **(b) Near-zero false-positive rate** — the check is cheap & structural and produces no FP on legitimate code patterns. Not "low" FP — *near-zero*. A regex that fires on the same token in a comment, a docstring, an error-message string literal, or a JSDoc reference is FP-prone and disqualified until scrubbed.
+- **(c) Catastrophic blast radius** — the failure causes deploy failure, silent data corruption, charged-the-wrong-amount, double-execution, tenant cross-talk, or **catastrophic-by-cascade** (wrong upstream classification poisons every downstream agent's prompt — wrong `appCategory` from the product agent → wrong archetype contracts from the architect → wrong codegen everywhere). Annoying UX bugs and cosmetic drift do NOT clear this bar.
+- **(d) Not duplicated downstream** — `tsc` (handler TypeScript), `handler_graphql` (Shopify schema), the deployer's `sql-validator.ts` (migration DDL), the App Block runtime (widget modules), and the Shopify Admin iframe runtime (admin modules) are deterministic downstream gates. When one of these catches a rule, the local static check is `no (paranoid)` — duplicating it adds maintenance burden and produces less actionable error messages than the downstream gate.
+
+**Bias toward removing static checks, not adding them.** When in doubt: trust the prompt + bug_finder. Per-surface rule registries (`ARCH_RULES.md`, `HANDLER_RULES.md`, `MIGRATION_RULES.md`, `WIDGET_JS_RULES.md`, `ADMIN_UI_RULES.md`, `PRODUCT_RULES.md`) classify each prompt rule as `static` / `llm` / `no` / `no (paranoid)`. The trend across audit rounds has been net-negative on static count — every round reclassifies multiple checks downward as the four-bar policy is applied more strictly.
+
+**One owner per rule.** No rule is enforced by both static AND llm. Where a rule is also caught by a downstream gate, the local static is `no (paranoid)` and the downstream gate is the owner. The LLM layer (agent_rules + bug_finder) owns everything left.
+
+### FP-class taxonomy and resistance patterns
+
+Static checks fail bar (b) most often through one of these FP classes. Each has a known resistance pattern.
+
+**Comment & string-literal FP.** A regex like `\bdocument\.body\b` will match `// don't use document.body` in a comment or `'document.body access leaks'` in an error message. This bug class has a documented post-merge incident (the handler `tenant_id` regex matching its own forbidden-pattern string-literal). The fix:
+
+- `utils/static_validations/js_parse.py:strip_comments_and_strings(js)` — full scrub for token denylists. Strips JS line comments, block comments, and string literals (single, double, template; template-literal `${...}` interpolation contents are preserved as raw code).
+- `utils/static_validations/js_parse.py:strip_comments_only(js)` — partial scrub for checks where the literal contents inside quotes ARE the data being validated (e.g. `data-status="pending"` or `status === 'pending'` patterns where the literal IS the value to inspect). Strips comments, preserves string literals.
+- `utils/static_validations/sql_parse.py:strip_comments_and_strings(sql)` — SQL equivalent. Handles `-- line`, `/* block */`, `'single-quoted'` with `''` escape, `E'…'` escape strings, `$tag$ … $tag$` dollar-quoted strings. Double-quoted identifiers are NOT scrubbed.
+
+**Order-dependent FP.** Patterns like "innerHTML += after appendChild" depend on order-of-execution, not order-of-text. Two patterns can appear in source order in any ordering across branches that don't actually run sequentially. Static heuristic either misses real bugs or FPs on legitimate scope-separated uses. **These belong to bug_finder**, not static.
+
+**Cross-artifact-context FP.** A pattern can be benign in one context and catastrophic in another (`data-status="loading"` for a UI spinner is fine; `data-status="loading"` as a filter-button value when `loading` is not in any dbContracts column enum is dead UI). Static can't distinguish; agent_rules can. **These belong to agent_rules**, not static.
+
+### Frontier-model tax
+
+Closed-set enum checks for fields whose schema is given to the model in the system prompt almost never fire. Schema-as-prompt IS the enforcement. Specific examples already classified `no (paranoid)`:
+
+- `complexity ∈ {low, medium, high}` (architect)
+- `feasibility ∈ {feasible, blocked}` (architect)
+- `method ∈ {GET, POST}` (admin/widget catalog)
+- `unknownSentinel == "null"` field-presence (architect — only the value check survives static)
+- Required-key presence on JSON outputs across all surfaces
+
+**Default classification:** when the system prompt includes a JSON schema example showing the shape, presence and enum-value checks for that shape are paranoid by default. They earn static only when the failure mode is documented from real gens.
+
+### Catastrophic-by-cascade
+
+A real subclass of catastrophic. Wrong upstream classification produces an output that LOOKS valid in isolation but poisons every downstream agent's prompt. The product agent is the canonical example: bad `appCategory` → architect runs with the wrong archetype gate → handler/widget/admin codegen agents silently skip on archetype mismatch → deploy ships malformed app. Each individual downstream agent's static layer flags the symptoms ten steps later (or not at all), never the root cause.
+
+**Cascade rule:** when the catastrophic-by-cascade pattern is in play, even rules with low individual frequency clear bar (a) — the union frequency across cascading agents is non-trivial, and the cost of unclear blame is high.
+
+### Decision tree
+
+When evaluating whether a rule should be static:
+
+1. Is it structurally checkable (regex / set / cross-field equality / dict-key)? **No** → llm or no.
+2. After applying the appropriate scrubber, does the check have near-zero FP? **No** → llm or no.
+3. Is the failure catastrophic (deploy fail / silent corruption / cascade) — not just UX-degradation? **No** → llm or no.
+4. Does a downstream gate (tsc / handler_graphql / sql-validator / iframe runtime / upstream architect check) catch it? **Yes** → `no (paranoid)`.
+5. Does the schema-as-prompt make the rule essentially impossible to violate? **Yes** → `no (paranoid)`.
+
+**All four "no" branches in steps 1–3 + both "yes" branches in steps 4–5 → not static.** Only rules that survive every gate become static. Apply the policy on every audit round; reclassify when the answers shift (e.g. a new downstream gate ships, or a new FP class is documented).
+
+**Per-surface registries are the canonical source.** Every rule the prompts teach is listed in the matching `*_RULES.md` with a `validate?` column showing the classification and a `done?` column tracking implementation. Rules files are pure registries (table + counts + audit findings); the policy itself lives in this section.
+
+---
+
 ## Target architecture
 
-**Static layer** (`llm_validations/*.py`) — owns every rule that is:
-- Structural (set membership, type predicate, schema shape).
-- HIGH precision (no false positives).
-- Cheap to express in Python.
+**Static layer** (`llm_validations/*.py`) — every rule that survives the four-bar policy lives here. Implementation lives in:
+- `arch_plan.py` — architect plan validation
+- `handler_artifact.py`, `handler_typecheck.py`, `handler_graphql.py` — handler bundle
+- `migration_artifact.py` — migration SQL (mirrors deployer's `sql-validator.ts`)
+- `widget_artifact.py`, `admin_ui_artifact.py` — widget / admin UI modules
+- `cross_widget_handler.py`, `cross_admin_handler.py` — cross-artifact field-shape match
+- `shopify_ops.py` — Shopify GraphQL operation catalog match
+- `product_intent.py` — product agent intent classification
+- `utils/static_validations/{js_parse,sql_parse,shared_checks}.py` — scrubbers + shared denylists
 
 **LLM layer** — three new parallel validators in `subagents/validators/`:
 

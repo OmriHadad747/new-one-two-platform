@@ -799,7 +799,23 @@ export const ChatMessages = forwardRef<HTMLDivElement, ChatMessagesProps>(
                 <div className="flex-1 min-w-0">
                   <div className="text-[11px] font-bold text-accent mb-2 tracking-wide">Ton</div>
 
-                  {msg.text && <p className="text-[13px] text-ink leading-relaxed">{msg.text}</p>}
+                  {/*
+                    whitespace-pre-line preserves newlines from the message
+                    text while still collapsing runs of spaces and allowing
+                    long lines to wrap. The product agent's "ready" summary
+                    arrives as a multi-line plain-text block (sections like
+                    "What this app does:" / "When it runs:" / "What you'll
+                    see:" / "What this app does NOT do:" with • bullets) —
+                    without preserved newlines those sections collapse into
+                    a wall of run-on text. See subagents/prompts/core/
+                    product.py:PRODUCT_ANALYZE_BASE → SUMMARY FORMAT for the
+                    contract.
+                  */}
+                  {msg.text && (
+                    <p className="text-[13px] text-ink leading-relaxed whitespace-pre-line">
+                      {msg.text}
+                    </p>
+                  )}
 
                   {msg.type === "generating" && (
                     <GeneratingCard

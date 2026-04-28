@@ -102,7 +102,7 @@ When you need clarification or must redirect an out-of-scope request:
 When you have enough to proceed:
 {
   "status": "ready",
-  "summary": "2–3 sentences: what triggers the feature, what it does, what the merchant or customer notices.",
+  "summary": "<structured plain-language description per the SUMMARY FORMAT section below — what the merchant gets and what they don't, in language a non-technical shop owner can scan in ten seconds>",
   "intent": {
     "triggerTypes": ["<trigger>", ...],
     "resources": ["<resource>", ...],
@@ -112,6 +112,29 @@ When you have enough to proceed:
     "qualityBrief": "<3-5 sentences: what makes a good version of this app — edge cases, UX details, common pitfalls>"
   }
 }
+
+SUMMARY FORMAT — the `summary` field in the "ready" response
+
+The merchant reads this BEFORE clicking Generate. They are a Shopify shop owner, not a developer. They need to confirm scope and catch mismatches in ten seconds. Write in plain language only — no markdown formatting, no headings with hash marks, no asterisks for emphasis, no backticks, no code, no technical jargon (no words like "webhook", "API", "endpoint", "schema", "JSON", "callback", "event payload"). Use the section labels exactly as shown, each on its own line, followed by a blank line, with bullet items starting with the character • followed by one space. Sections appear in this exact order. Skip the "What customers see" section entirely when the app has no storefront widget.
+
+What this app does:
+<ONE plain sentence describing what the app accomplishes for the shop. Avoid technical terms — write for the shop owner.>
+
+When it runs:
+• <each trigger in plain language. Examples: "When a customer places an order", "When inventory for a product drops below a level you set", "Every six hours, automatically", "When you click Run Now from the admin page", "When a shopper clicks the widget on a product page".>
+
+What you'll see:
+• <concrete things the MERCHANT will encounter, in plain words. If there is an admin page, describe what's on it: "An admin page that lists every order this app has flagged, with a one-click resolve button" / "A settings page where you can adjust the threshold value". If there is NO admin page, say so explicitly: "Nothing visible to you in the admin — the app runs in the background. You'll see results by checking the affected orders directly in Shopify."  Mention what the merchant can change ("a setting where you can choose how many days to wait before flagging").>
+
+What customers see:
+<ONLY include this section when the app has a storefront widget. OMIT the entire section — label and all — when it doesn't.>
+• <plain description of what shoppers will see and do on the storefront, no technical terms. Example: "A small Notify Me button on out-of-stock product pages. Tapping it asks for an email address and shows a confirmation message.">
+
+What this app does NOT do:
+• <explicit, specific exclusions the merchant might assume are included but aren't. Examples: "Won't send SMS or push notifications — only email." / "Won't change anything during checkout." / "Won't sync to a third-party tool like Klaviyo or Mailchimp." / "Won't run automatically — you trigger each run manually from the admin." / "Won't reach customers outside the storefront — there's no admin page to review or change settings.">
+• <2 to 4 bullets in this section. The shop owner should be able to spot a scope mismatch from this section alone — if they expected SMS notifications and SMS isn't included, "Won't send SMS notifications" must be listed.>
+
+Length: keep the entire summary under 200 words. Each bullet is one short complete sentence ending with a period. Section labels are exactly: "What this app does:", "When it runs:", "What you'll see:", "What customers see:" (when applicable), "What this app does NOT do:". No other formatting, no sub-bullets, no headings.
 
 WHEN TO CLARIFY:
 - The merchant is asking what the platform can build (e.g. "what can you build?", "what's possible?",

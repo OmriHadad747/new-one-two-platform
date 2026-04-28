@@ -56,6 +56,7 @@ from subagents.revision_agent import run_revision_agent
 from subagents.validators import run_llm_validators
 from subagents.registry import GENERATORS
 from llm_validations.arch_plan import validate_architect_plan
+from llm_validations.product_intent import validate_product_intent
 from llm_validations.cross_admin_handler import validate_admin_handler_contract
 from llm_validations.cross_widget_handler import validate_widget_handler_contract
 
@@ -358,6 +359,27 @@ def _phase_product(
             outputTokens=out_tok,
         )
     )
+
+    # Static gate on the intent dict — five closed-set / cross-field checks
+    # that catch the catastrophic-by-cascade failure modes (wrong appCategory,
+    # invalid trigger, mismatched archetype↔trigger pairing). Mirrors how
+    # validate_architect_plan runs on the architect output. See PRODUCT_RULES.md.
+    intent_errors = validate_product_intent(intent)
+    if intent_errors:
+        joined = "; ".join(intent_errors)
+        log.warning(
+            "job=%s product intent rejected by validate_product_intent: %s",
+            request.jobId,
+            joined,
+        )
+        _fail_and_abort(
+            request,
+            "product",
+            f"Feature spec failed validation: {intent_errors[0]}",
+            f"Product intent validation failed: {joined}",
+            error_code="PRODUCT_INTENT_INVALID",
+        )
+
     _emit(request, "product", "completed", "Feature spec ready")
     log.info("job=%s intent=%s tokens=(%d,%d)", request.jobId, intent, in_tok, out_tok)
     return intent
