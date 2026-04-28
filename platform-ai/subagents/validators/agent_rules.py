@@ -105,6 +105,26 @@ Form actions without backend wiring. A widget that has data-collection UI but ne
 
 (The deploy-blocking shape rules — exporting `mount(container, host)`, banning raw `fetch`/`XMLHttpRequest`/`eval`/`Function`/`setInterval`, `setTimeout` ≤500ms, document.* / window.parent denylist, hardcoded `tenant_id`, host.call paths within the catalog, host.storefront relative-paths, no `localStorage.setItem('customerId', …)` — are enforced statically by `widget_artifact.py` before this validator runs. Don't re-flag those.)
 
+ADMIN UI — what to look for:
+
+Hardcoded identifiers. The admin panel MUST read identity from `bridge.context.tenantId` and shop-scoped data from `bridge.context.shop` (or from response payloads it has already fetched via `bridge.call`). Never hardcode a shop domain literal (`*.myshopify.com`) or entity IDs (orderId, customerId, productId) as JS literals. A hardcoded literal either renders the wrong store's data when the panel runs in another tenant, or shows the wrong entity's record — both are tenant-cross-talk-class.
+
+Polaris styling discipline. The admin shell injects a base stylesheet into `container` BEFORE `mount()` is called. The panel uses the shipped `shell-*` / `btn-*` / `badge-*` / banner / form classes directly — DON'T redefine them. App-specific CSS, when needed, MUST use Polaris CSS custom properties for every value: `--p-color-*` for colors, `--p-space-*` for spacing, `--p-border-radius-*` for radius, `--p-font-*` for typography, `--p-shadow-*` for shadow. Never hardcode hex colors except `#008060` (Shopify brand green) — hardcoded hex breaks dark mode and high-contrast accessibility for the merchant.
+
+Catalog request/response shape adherence. Every `bridge.call(path, body)` body uses EXACT field names from the architect's `adminApiCatalog` `requestShape` for that path (no renaming, no aliasing, no spreads that drop fields). The panel reads EXACT field names from the catalog's `responseShape` (no field-name guessing on the resolved value). Field-name drift between panel and catalog → handler reads `undefined` → silent feature breakage.
+
+Pagination consistency. List-rendering UI uses the route's catalog-declared `page_size` and reads the standard `(page, page_size, items, total)` shape from the response — don't introduce a different limit or page-shape locally in the panel.
+
+DOM-write safety. Never use `container.innerHTML += "..."` AFTER any `container.appendChild()` call. innerHTML-assign serializes the DOM back to a string and re-parses it, destroying previously-appended nodes and their event listeners. Safe pattern: assign `container.innerHTML = '...'` ONCE at the start of `mount()` to set the full HTML skeleton, then call `appendChild(styleEl)` for the trailing `<style>`.
+
+Backend-interaction UX. When a button triggers a `bridge.call()`, disable it while the call is pending — otherwise a double-click double-submits. Handle `bridge.call()` rejections gracefully — show an error message in the UI (banner, inline error, or `bridge.notify(message, "error")`); never let the panel hang silently or render in an inconsistent partial state when a call fails.
+
+Form actions without backend wiring. A panel that has data-collection UI but never calls `bridge.call()` silently discards what the merchant enters. The narrow case of an explicit submit form is caught statically in `admin_ui_artifact.py`; flag the broader case where the panel has input controls (search field, textarea, custom click-to-submit button) and the click handler doesn't dispatch to `bridge.call()` — distinguish from legitimate read-only UI (filters, navigation, modal close buttons).
+
+Enum vocabulary. Filter buttons, status badges, and conditional rendering branches reference ONLY the literal values declared in some `dbContracts` column-level `enum` (or the `stateMachine.transitions` from/to vocabulary). Inventing values like `'converted'` / `'skipped'` / `'archived'` that no column or transition emits leaves dead UI options the merchant cannot act on. Distinguish carefully from UI-only state attributes (`data-status="loading"`, `data-status="submitting"` for in-flight indicators, `data-state="open"` for modal/disclosure widgets) — those are NOT filter values, they're DOM-state markers, and they're legitimate even when not in any dbContracts enum. The rule applies only when the literal is being used to FILTER or BRANCH on a column the handler writes.
+
+(The deploy-blocking shape rules — exporting `mount(container, bridge)`, banning raw `fetch`/`XMLHttpRequest`/`eval`/`Function`/`setInterval`, `setTimeout` ≤500ms, document.* / window.parent denylist, hardcoded `tenant_id`, bridge.call paths within the catalog — are enforced statically by `admin_ui_artifact.py` before this validator runs. Don't re-flag those.)
+
 MIGRATION SQL — what to look for:
 
 Schema isolation. The migration runner pins `search_path` to the tenant's own Postgres schema, so bare table names land in the right place automatically. The migration must NOT qualify table names with a schema (no `tenant_<uuid>.<table>` style, no cross-database references). A literal `tenant_<...>.foo` either lands in the wrong schema or fails at deploy — silent tenant cross-talk in the worst case.

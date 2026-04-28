@@ -265,24 +265,18 @@ def test_handler_validator_passes_when_literals_match_enum() -> None:
     ), errors
 
 
-def test_admin_ui_validator_flags_invented_status_filters() -> None:
-    js = (
-        "export function mount(container, bridge) {\n"
-        "  container.innerHTML = '<button data-status=\"converted\">Converted</button>';\n"
-        "  if (row.status === 'skipped') { /* dead branch */ }\n"
-        "  bridge.call('/queue').then(r => container.textContent = JSON.stringify(r));\n"
-        "}\n"
-    )
-    errors = validate_admin_ui_artifact(
-        js,
-        admin_api_catalog=[
-            {"path": "/queue", "method": "GET", "requestShape": {}, "responseShape": {}}
-        ],
-        db_contracts=_QUEUE_CONTRACTS,
-    )
-    invented = [e for e in errors if "always be empty" in e]
-    assert any("'converted'" in e for e in invented), errors
-    assert any("'skipped'" in e for e in invented), errors
+# test_admin_ui_validator_flags_invented_status_filters was removed when
+# the static `_check_admin_ui_enum_filters` heuristic was reclassified to
+# `llm` (see ADMIN_UI_RULES.md row 23). The check failed three of four
+# bars in the static-validation policy — non-trivial FP risk against
+# UI-only `data-status` attributes (e.g. `data-status="loading"`) and
+# error messages embedding literal comparisons; UX-degradation rather
+# than catastrophic blast radius; and the canonical detection requires
+# distinguishing UI-state attributes from dbContracts-column filter
+# attributes, which is semantic work agent_rules can do but a regex
+# cannot. The vocabulary is now enforced by the `agent_rules` LLM
+# validator using the cross-artifact context (admin UI + dbContracts +
+# stateMachine + handler writes).
 
 
 def test_admin_ui_format_column_enums_emits_vocabulary() -> None:

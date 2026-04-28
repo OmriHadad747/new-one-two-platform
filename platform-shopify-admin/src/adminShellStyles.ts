@@ -6,10 +6,12 @@
  *   Layout:   .shell-root  .shell-header  .shell-title  .shell-stats-row  .shell-stat-card
  *             .shell-stat-label  .shell-stat-value  .shell-card  .shell-toolbar  .shell-section-title
  *   Table:    .shell-table-wrap  .shell-table
- *   Form:     .shell-search
+ *   Form:     .shell-search  .shell-field  .shell-label  .shell-help  .shell-error
+ *             .shell-input  .shell-textarea  .shell-select
  *   Buttons:  .btn-primary  .btn-secondary  .btn-danger
  *   Badges:   .badge  .badge-success  .badge-neutral  .badge-error  .badge-warning
  *   Feedback: .shell-loading  .shell-spinner  .shell-empty  .shell-error-banner
+ *             .shell-success-banner  .shell-info-banner  .shell-warning-banner
  *   Pagination: .shell-pagination  .shell-pagination-btns
  *   Modal:    .shell-confirm-overlay  .shell-confirm-dialog  .shell-confirm-title
  *             .shell-confirm-body  .shell-confirm-actions
@@ -93,6 +95,78 @@ export const ADMIN_SHELL_CSS = `
     outline: 2px solid #008060;
     outline-offset: 1px;
     border-color: #008060;
+  }
+  /* ── Form fields ────────────────────────────────────────────────────
+     Wrap a label / control / help-or-error trio in .shell-field for
+     consistent vertical spacing. Use .shell-input / .shell-textarea /
+     .shell-select for the control itself. Disabled state ships built-in.
+     Pattern:
+       <div class="shell-field">
+         <label class="shell-label">Email</label>
+         <input class="shell-input" type="email" />
+         <div class="shell-help">We only use this for receipts.</div>
+         <div class="shell-error">Required.</div>
+       </div>
+  */
+  .shell-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--p-space-100);
+    margin-bottom: var(--p-space-300);
+  }
+  .shell-label {
+    font-size: var(--p-font-size-300);
+    font-weight: var(--p-font-weight-medium);
+    color: var(--p-color-text);
+  }
+  .shell-help {
+    font-size: var(--p-font-size-300);
+    color: var(--p-color-text-secondary);
+  }
+  .shell-error {
+    font-size: var(--p-font-size-300);
+    color: var(--p-color-text-critical);
+  }
+  .shell-input,
+  .shell-textarea,
+  .shell-select {
+    padding: var(--p-space-200) var(--p-space-300);
+    border: 1px solid var(--p-color-border);
+    border-radius: var(--p-border-radius-100);
+    font-size: var(--p-font-size-350);
+    font-family: var(--p-font-family-sans);
+    color: var(--p-color-text);
+    background: var(--p-color-bg-surface);
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .shell-textarea {
+    min-height: 80px;
+    resize: vertical;
+  }
+  .shell-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--p-color-icon) 50%),
+                      linear-gradient(135deg, var(--p-color-icon) 50%, transparent 50%);
+    background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+    padding-right: var(--p-space-800);
+  }
+  .shell-input:focus,
+  .shell-textarea:focus,
+  .shell-select:focus {
+    outline: 2px solid #008060;
+    outline-offset: 1px;
+    border-color: #008060;
+  }
+  .shell-input:disabled,
+  .shell-textarea:disabled,
+  .shell-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: var(--p-color-bg-surface-secondary);
   }
   .shell-table-wrap { overflow-x: auto; }
   .shell-table {
@@ -192,13 +266,30 @@ export const ADMIN_SHELL_CSS = `
     color: var(--p-color-text-secondary);
     font-size: var(--p-font-size-350);
   }
-  .shell-error-banner {
-    background: var(--p-color-bg-fill-critical);
-    color: var(--p-color-text-critical);
+  .shell-error-banner,
+  .shell-success-banner,
+  .shell-info-banner,
+  .shell-warning-banner {
     border-radius: var(--p-border-radius-100);
     padding: var(--p-space-300) var(--p-space-400);
     margin-bottom: var(--p-space-400);
     font-size: var(--p-font-size-350);
+  }
+  .shell-error-banner {
+    background: var(--p-color-bg-fill-critical);
+    color: var(--p-color-text-critical);
+  }
+  .shell-success-banner {
+    background: var(--p-color-bg-fill-success);
+    color: var(--p-color-text-success);
+  }
+  .shell-info-banner {
+    background: var(--p-color-bg-surface-secondary);
+    color: var(--p-color-text);
+  }
+  .shell-warning-banner {
+    background: var(--p-color-bg-fill-warning);
+    color: var(--p-color-text);
   }
   .shell-pagination {
     display: flex;

@@ -45,9 +45,14 @@ DESIGN PRINCIPLES:
               .shell-card  .shell-stats-row  .shell-stat-card  .shell-stat-label  .shell-stat-value
               .shell-toolbar  .shell-search
   Table:      .shell-table-wrap  .shell-table  (th and td styled)
+  Form:       .shell-field  .shell-label  .shell-help  .shell-error
+              .shell-input  .shell-textarea  .shell-select
+              (each with :focus and :disabled states styled in)
   Buttons:    .btn-primary  .btn-secondary  .btn-danger  (with :hover and :disabled states)
   Badges:     .badge  .badge-success  .badge-error  .badge-warning  .badge-neutral
-  Feedback:   .shell-loading  .shell-spinner  .shell-empty  .shell-error-banner
+  Banners:    .shell-error-banner  .shell-success-banner
+              .shell-info-banner   .shell-warning-banner
+  Feedback:   .shell-loading  .shell-spinner  .shell-empty
   Pagination: .shell-pagination  .shell-pagination-btns
   Modal:      .shell-confirm-overlay  .shell-confirm-dialog  .shell-confirm-title
               .shell-confirm-body  .shell-confirm-actions
@@ -55,6 +60,33 @@ DESIGN PRINCIPLES:
   Use these classes directly. Only add a <style> block for CSS that is genuinely
   specific to this app (custom columns, unique layouts, extra component variants).
   Keep app-specific CSS minimal.
+
+  Form pattern — wrap a label / input / help-or-error trio in .shell-field:
+    <div class="shell-field">
+      <label class="shell-label">Email</label>
+      <input class="shell-input" type="email" name="email" />
+      <div class="shell-help">We only use this for receipts.</div>
+      <!-- replace .shell-help with <div class="shell-error">Required.</div> on validation failure -->
+    </div>
+
+    <div class="shell-field">
+      <label class="shell-label">Notes</label>
+      <textarea class="shell-textarea" name="notes" rows="4"></textarea>
+    </div>
+
+    <div class="shell-field">
+      <label class="shell-label">Status</label>
+      <select class="shell-select" name="status">
+        <option value="active">Active</option>
+        <option value="paused">Paused</option>
+      </select>
+    </div>
+
+  Banner pattern — pick the variant that matches the message intent:
+    <div class="shell-success-banner">Settings saved.</div>
+    <div class="shell-info-banner">Importing 245 customers…</div>
+    <div class="shell-warning-banner">This action cannot be undone.</div>
+    <div class="shell-error-banner">Could not load orders. Try again.</div>
 
   Essential Polaris CSS tokens to use:
     Colors:

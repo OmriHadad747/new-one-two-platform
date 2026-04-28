@@ -39,6 +39,62 @@ NON_FIELD = {
 }
 
 
+def strip_comments_only(js: str) -> str:
+    """
+    Return `js` with line comments (`// …`) and block comments (`/* … */`)
+    replaced by single spaces. String literals are LEFT INTACT.
+
+    Use this when the literal contents of strings are the data the checker
+    cares about (e.g. enum-filter cross-check that scans `status === 'x'`,
+    `data-status="x"`, `'status': 'x'` patterns — the literal IS the value
+    being validated). For checks where any token mention should be scrubbed
+    (forbidden-token denylists, document.* / fetch / eval bans), use
+    `strip_comments_and_strings` instead.
+
+    Newlines preserved so line numbers stay aligned.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(js)
+    while i < n:
+        c = js[i]
+        # Line comment: // ... \n
+        if c == "/" and i + 1 < n and js[i + 1] == "/":
+            j = js.find("\n", i + 2)
+            j = n if j == -1 else j
+            out.append(" " * (j - i))
+            i = j
+            continue
+        # Block comment: /* ... */
+        if c == "/" and i + 1 < n and js[i + 1] == "*":
+            j = js.find("*/", i + 2)
+            j = n if j == -1 else j + 2
+            block = js[i:j]
+            out.append("".join("\n" if ch == "\n" else " " for ch in block))
+            i = j
+            continue
+        # String / template literal — pass through unchanged so a check
+        # that depends on the literal content still sees it.
+        if c in ("'", '"', "`"):
+            quote = c
+            j = i + 1
+            while j < n:
+                cj = js[j]
+                if cj == "\\":
+                    j += 2
+                    continue
+                if cj == quote:
+                    j += 1
+                    break
+                j += 1
+            out.append(js[i:j])
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def strip_comments_and_strings(js: str) -> str:
     """
     Return `js` with line comments, block comments, and string literals
