@@ -1025,6 +1025,55 @@ def _publish_success(
         else None
     )
 
+    # Slim catalog manifests for the served bundle prelude. Defaults to POST
+    # for any catalog row that omits `method` (most existing plans before
+    # this change emit GET/POST explicitly per ARCH_RULES row 19/29; the
+    # default keeps wire-compat with the prior always-POST SDK behaviour).
+    # Invalid rows are dropped with a warning so the post-publish bundle
+    # never carries garbage; arch_plan.py is the upstream gate that should
+    # fail the architect attempt before we reach this point — drops here
+    # mean that gate slipped and we want it visible in logs.
+    def _slim_catalog(
+        rows: List[Dict[str, Any]], catalog_name: str
+    ) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        for row in rows or []:
+            path = row.get("path")
+            method_raw = row.get("method") or "POST"
+            method = method_raw.upper() if isinstance(method_raw, str) else ""
+            if not isinstance(path, str) or not path:
+                log.warning(
+                    "%s row dropped from slim manifest: missing/empty path "
+                    "(row=%r). arch_plan.py should have rejected this — "
+                    "investigate the architect output.",
+                    catalog_name,
+                    row,
+                )
+                continue
+            if method not in ("GET", "POST"):
+                log.warning(
+                    "%s row dropped from slim manifest: path=%r method=%r "
+                    "is not GET or POST. arch_plan.py should have rejected "
+                    "this — investigate the architect output.",
+                    catalog_name,
+                    path,
+                    method_raw,
+                )
+                continue
+            out.append({"path": path, "method": method})
+        return out
+
+    widget_catalog = (
+        _slim_catalog(app_contracts.get("widgetApiCatalog") or [], "widgetApiCatalog")
+        if is_storefront
+        else []
+    )
+    admin_catalog = (
+        _slim_catalog(app_contracts.get("adminApiCatalog") or [], "adminApiCatalog")
+        if is_admin_ui
+        else []
+    )
+
     bundle = Bundle(
         widgetModule=artifacts.get("widget_js") if is_storefront else None,
         adminUiModule=artifacts.get("admin_ui") if is_admin_ui else None,
@@ -1033,6 +1082,8 @@ def _publish_success(
             if is_storefront
             else None
         ),
+        widgetCatalog=widget_catalog,
+        adminCatalog=admin_catalog,
         handlerModule=HandlerModule(
             files=handler_files,
             webhookTopics=shopify_plan.get("webhookTopics", []),
@@ -1359,10 +1410,15 @@ def validate_artifacts(
             error_map[name] = errs
 
     # Cross-artifact field-name check: always run for storefront apps.
+    # Pass the architect's catalog so the validator can branch on
+    # per-path method (GET routes' fields land in req.query; POST routes'
+    # fields land in req.body — the host.call SDK encodes accordingly).
+    plan_contracts = (ctx.plan or {}).get("appContracts") or {}
     if is_storefront:
         for gen_name, errs in validate_widget_handler_contract(
             artifacts.get("widget_js", ""),
             artifacts.get("handler", ""),
+            plan_contracts.get("widgetApiCatalog") or [],
         ).items():
             if errs:
                 error_map.setdefault(gen_name, []).extend(errs)
@@ -1372,6 +1428,7 @@ def validate_artifacts(
         for gen_name, errs in validate_admin_handler_contract(
             artifacts.get("admin_ui", ""),
             artifacts.get("handler", ""),
+            plan_contracts.get("adminApiCatalog") or [],
         ).items():
             if errs:
                 error_map.setdefault(gen_name, []).extend(errs)

@@ -56,12 +56,29 @@ export const EmailStarterContentSchema = z.object({
   ctaUrl: z.string().nullable().optional(),
 });
 
+// ─── Catalog manifest ───────────────────────────────────────────────────────
+
+// Slim {path, method} projection of widgetApiCatalog / adminApiCatalog. The
+// served bundle gets `window.__PLATFORM_CATALOG__ = [...]` prepended so the
+// SDK (host.call / bridge.call) can dispatch GET-with-querystring vs
+// POST-with-body by per-path lookup at call time. requestShape and
+// responseShape stay in the architect plan — the runtime doesn't need them.
+export const CatalogEntrySchema = z.object({
+  path: z.string().min(1).max(512),
+  method: z.enum(["GET", "POST"]),
+});
+
 // ─── Bundle ─────────────────────────────────────────────────────────────────
 
 export const BundleSchema = z.object({
   widgetModule: z.string().nullable().optional(),
   adminUiModule: z.string().nullable().optional(),
   widgetTargetTemplates: z.array(z.string()).nullable().optional(),
+  // Default to [] so older messages (pre-method-aware-SDK) deserialize
+  // cleanly; bundle-storage falls back to all-POST when the catalog is
+  // empty, matching the prior always-POST SDK behaviour.
+  widgetCatalog: z.array(CatalogEntrySchema).default([]),
+  adminCatalog: z.array(CatalogEntrySchema).default([]),
   handlerModule: HandlerModuleSchema,
   dbMigration: GeneratedFileSchema,
   explanation: FeatureExplanationSchema,
@@ -110,3 +127,4 @@ export type Bundle = z.infer<typeof BundleSchema>;
 export type HandlerModule = z.infer<typeof HandlerModuleSchema>;
 export type GeneratedFile = z.infer<typeof GeneratedFileSchema>;
 export type GenerationMeta = z.infer<typeof GenerationMetaSchema>;
+export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;

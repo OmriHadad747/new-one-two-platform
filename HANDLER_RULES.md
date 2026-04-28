@@ -146,3 +146,58 @@ Source: every handler-facing prompt block — `platform-ai/subagents/prompts/top
 - **68 validate** → **25 static** rule-rows (✅) — of which **22 regex/AST in `handler_artifact.py`**, **1 by `handler_typecheck` (tsc compile gate, row 16)**, **1 by `handler_graphql`** (row 77), **1 by `shopify_ops.py`** (row 78); plus **43 llm** rule-rows deferred to `agent_rules` + `bug_finder` (row 15 reclassified static → llm — catastrophic cases already covered by rows 30 + 70, and the standalone https-outside-fetch regex had high FP surface on JSDoc / comments / error-message URLs)
 - **27 skip** → **13 no** (style / judgment / non-catastrophic / structurally-impossible-given-template — rows 9, 80, 83 fall here because tsc + template imports own the enforcement, no separate check exists) + **14 paranoid** (model handles via prompt; bug_finder catches downstream impact)
 - The static layer is narrow by intent — see the philosophy paragraph above. Rules outside the four bars (structural / frequent / catastrophic / not-tsc-covered) flow through `agent_rules` and `bug_finder`.
+
+---
+
+## Audit findings — method-aware SDK + cross-handler validators (2026-04-28)
+
+A second issue from the same cart-recovery run: the architect declared
+`GET /reminders` and `GET /abandoned-carts` in `adminApiCatalog`, the admin
+codegen agent obediently called `bridge.call('/reminders', { page, ... })`,
+the handler agent obediently wrote `adminRouter.get('/reminders', ...)`
+reading from `req.query` (HTTP-correct for a GET) — and the cross-handler
+validator FP'd "never reads req.body — collected data is silently
+discarded." The validator was right about the symptom but wrong about
+the cause: the bridge SDK was always-POST regardless of catalog method,
+so at runtime the POST hit the GET route and 404'd.
+
+Resolution: the SDK now derives method per path from a
+`window.__PLATFORM_CATALOG__` manifest prepended to the served bundle
+by `platform-back/apps/api/src/lib/bundle-storage.ts:saveBundles`. The
+manifest is a slim `{path, method}[]` projection of the architect's
+catalogs, threaded through `Bundle.widgetCatalog` /
+`Bundle.adminCatalog` (Pydantic + Zod) into the served JS prelude.
+
+Side effects on rules in this file:
+
+- **Rows 88, 93** (widget / admin route handlers read EXACT requestShape
+  field names) — the rules are unchanged in classification but the
+  IMPLEMENTATION expectation is now: for **GET** catalog rows, the
+  handler reads field names from `req.query` (the SDK encodes args as
+  query string); for **POST** catalog rows, from `req.body` (JSON body).
+  `cross_widget_handler.py` and `cross_admin_handler.py` are now
+  method-aware — they parse the architect catalog's `method` field per
+  path and check the appropriate slot. Defaults to POST when the path
+  is absent from the catalog (matches the SDK's fallback behaviour for
+  routes that bypass the catalog).
+- The cross-handler validators' new signature accepts the architect
+  catalog as a third argument; `crew.validate_artifacts` threads it
+  through from `ctx.plan.appContracts.{widgetApiCatalog,adminApiCatalog}`.
+- Codegen prompts UNCHANGED. The architect already declares method per
+  catalog row; the codegen agents already see it; the handler-template
+  prompt already teaches `<router>.<method>(path, ...)` shape. The only
+  thing that changed is the SDK enforcing the catalog at runtime.
+
+---
+
+## Audit findings — sidecar reliability (2026-04-28)
+
+A documented case (cart-recovery generation, run `2026-04-28T16-17-38_recover-lost-sales-by-automatically-reminding`) hit row 33 three retries in a row and never recovered: the static check correctly fired each time, the cumulative_errors mechanism correctly fed the error string forward, and the model consistently chose to drop the sidecar entirely instead of fixing it. The check was right; the prompt design wasn't actionable enough under retry pressure.
+
+Two-part fix this round, both leaving the static check itself unchanged:
+
+- **Requirement promoted into HARNESS_BASE.** The sidecar IS a bundle-output rule (it ships AFTER the final `===END===` marker), so the requirement to emit it now lives in `subagents/prompts/topics/handler.py:HANDLER` next to the `===FILE:===` rules — encountered during the same cognitive pass that produces the bundle. The format spec stays in `subagents/prompts/capabilities/email.py:116-163` (canonical reference, gated by capability-injection — unchanged).
+
+- **Static error message enriched with an inline format example.** `_check_email_sidecar` in `handler_artifact.py` now returns an error string that includes a minimal correct sidecar block + the three governing rules (variables ↔ data: keys equality, no orphan placeholders/declarations, one-block-merge-across-call-sites). The retry loop feeds the message straight into the next attempt's user prompt, so the format example travels with the feedback. No new injection mechanism — the cumulative_errors path was already correct, the message just needed to be self-sufficient.
+
+Row 33 classification stays `static` ✅. The `done?` reference now points at the enriched implementation: `handler_artifact.py:_check_email_sidecar` (error includes inline format example) + the prompt placement in `topics/handler.py:HANDLER` (requirement) + `capabilities/email.py:116-163` (format spec).

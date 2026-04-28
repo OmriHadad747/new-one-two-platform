@@ -48,11 +48,21 @@ async function handleMessage(msg: Message): Promise<void> {
     let bundleGcsPath: string | null = null;
     const widgetJs = parsed.bundle?.widgetModule ?? null;
     const adminUiJs = parsed.bundle?.adminUiModule ?? null;
+    // Slim catalog manifests — the bundle-storage saver prepends them as
+    // `window.__PLATFORM_CATALOG__ = [...]` so the SDKs can dispatch
+    // GET-with-querystring vs POST-with-body by per-path lookup.
+    const widgetCatalog = parsed.bundle?.widgetCatalog ?? [];
+    const adminCatalog = parsed.bundle?.adminCatalog ?? [];
 
     if (parsed.bundle) {
       bundleGcsPath = await saveGenerationBundle(parsed.jobId, parsed.bundle);
       if (widgetJs || adminUiJs) {
-        await saveBundles(parsed.appId, { widgetJs, adminUiJs });
+        await saveBundles(parsed.appId, {
+          widgetJs,
+          adminUiJs,
+          widgetCatalog,
+          adminCatalog,
+        });
       }
       // Keep app_archetype in sync so listAdminAppsForShop stays accurate.
       const archetype =

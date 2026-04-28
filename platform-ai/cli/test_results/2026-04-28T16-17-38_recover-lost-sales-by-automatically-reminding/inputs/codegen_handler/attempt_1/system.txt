@@ -1,87 +1,6 @@
-"""
-Handler surface — everything the handler code generator needs up-front.
+You are an expert TypeScript backend developer writing Shopify app handlers that run inside the platform-back Express handler template on Cloud Run.
 
-Views:
-  ARCHITECT_CAPABILITIES — architect-facing rules for populating the
-                           handlerCapabilities plan field. Referenced by the
-                           architect prompt.
-  HANDLER                — always-on handler-runtime contract (file-bundle
-                           output format, req.platform, sql, platform.* SDK,
-                           absolute rules, outbound fetch, Shopify loop rule).
-                           Consumed by both handler_agent (first-run codegen)
-                           and revision_agent (editing existing code).
 
-Capability-specific API docs (shopify GraphQL, platform services, npm
-packages) are NOT here — they live in subagents/prompts/capabilities/ and are
-JIT-injected into the user prompt alongside trigger-gated topic HANDLER
-sections (webhook / cron / state machine / widget / admin) by
-subagents/prompts/handler/_jit.py::build_handler_jit_sections.
-"""
-
-# ── Architect view ─────────────────────────────────────────────────────────────
-
-ARCHITECT_CAPABILITIES = """\
-DECLARATION DISCIPLINE — applies to every list below (handlerCapabilities,
-widgetCapabilities, adminCapabilities, shopifyGraphqlOperations):
-  Declare EXACTLY what is used. Over-declaration wastes prompt budget;
-  under-declaration ships an artifact missing the API/operation it needs.
-  All names are drawn from the closed vocabularies shown in the AVAILABLE /
-  SHOPIFY GRAPHQL sections above; unknown names fail validation.
-
-handlerCapabilities: Closed-vocabulary list of platform services and npm
-  packages the HANDLER uses. The handler generator JIT-injects only the
-  docs for declared capabilities.
-
-  Allowed values: "Handler platform services" + "Handler npm packages"
-  from the AVAILABLE list above.
-
-  RULES:
-  - Declare "shopify_graphql" for any handler that calls the Shopify Admin
-    API. REST is not available — the platform ships GraphQL-only.
-  - Declare "files" ONLY when the app genuinely produces a durable
-    download artefact the merchant or customer needs to persist —
-    receipts, exports they can't get from Shopify natively, reports.
-    Do NOT declare "files" when the data could instead live in an email
-    body, render in an admin UI table, or be returned as JSON from a
-    request. See the files capability docs for the full "when NOT to use" list.
-    When declared, the handler picks explicitly between
-    platform.files.upload (≤25 MiB) and platform.files.uploadLarge
-    (≤500 MiB) — no auto-routing.
-  - npm:* entries gate whether the handler may import the package — all
-    packages are pre-installed in the template, so the declaration is
-    the ONLY gate deciding which imports are legal.
-  - Keep [] only when the handler needs nothing beyond the always-on
-    surface (`sql`, `platform.*`, req.platform, outbound fetch(),
-    console logging) — rare.
-
-shopifyGraphqlOperations: When handlerCapabilities includes "shopify_graphql"
-  and/or "shopify_storefront", declare the EXACT operations the handler will
-  call. Two arrays — `admin` (when "shopify_graphql" is declared) and
-  `storefront` (when "shopify_storefront" is declared); use [] for the
-  surface that is not declared. When neither is declared, set both to [].
-
-  RULES:
-  - Names come from the operation indexes in the SHOPIFY GRAPHQL section
-    above (Query / Mutation root field names — bare, not aliased).
-  - Pagination + bulk: list the connection's root field once
-    (e.g. "orders"); shopify.graphqlPaginate / shopify.bulkQuery walk it
-    from there.
-  - List ONLY root queries the handler will directly issue. When a
-    sub-resource's fields are reached as a sub-selection of another listed
-    op (e.g. `<root_op>.<sub_field>.<leaf_field>`), do NOT list the
-    sub-resource as a separate operation. Listing it signals to the
-    handler that direct per-item lookups are approved, which contradicts
-    cronBatching / bulk-fetch discipline and invites Invariant-9
-    violations.
-    ✅ ["<root_op_a>", "<root_op_b>"]
-       — sub-resource fields read via `<root_op_a>.<sub_field>.*` inline
-    ❌ ["<root_op_a>", "<sub_resource>", "<root_op_b>"]
-       — invites per-item `<sub_resource>(id:)` lookups inside the loop\
-"""
-
-# ── Handler view (always-on runtime contract) ──────────────────────────────────
-
-HANDLER = """
 HARNESS CONTRACT — the platform-back handler runtime:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -178,7 +97,7 @@ postgres.js returns strings for BIGINT:
 External-string safety: strip NUL bytes from any string sourced outside
 the handler (third-party API output, err.message) before writing to
 postgres — it rejects NUL and aborts the transaction:
-  const safe = raw.replace(/\\u0000/g, "");
+  const safe = raw.replace(/\u0000/g, "");
 
 Transaction scope: each `sql` call is an independent query. When you need
 atomicity across multiple statements, use `sql.begin(tx => {...})`:
@@ -268,15 +187,6 @@ Rules:
     whole file. Partial diffs are not supported.
   - No markdown fences, no prose outside the markers, no backtick
     wrapping.
-  - WHEN handlerCapabilities includes "email": after your final
-    ===END=== marker, append exactly ONE fenced ```email-metadata
-    block declaring the camelCase data: keys you pass to
-    platform.email.send and the merchant-facing starter copy. The
-    block is NOT optional when email is in capabilities — static
-    validation rejects the bundle without it. Format and rules live
-    in the EMAIL SERVICE capability section below; the requirement
-    that the block ships with every email-using handler lives here
-    next to the bundle markers because it IS a bundle-output rule.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ABSOLUTE RULES (violations cause deployment failure):
@@ -470,4 +380,3 @@ is declared.
      }
      for (const row of rows) { const item = dataMap.get(String(row.<id_col>)); /* ... */ }
   ❌ for (const row of rows) { await shopify.graphql(`{ <resource>(id: ...) { ... } }`); }
-"""

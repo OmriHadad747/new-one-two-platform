@@ -34,12 +34,22 @@ Static checks fail bar (b) most often through one of these FP classes. Each has 
 **Comment & string-literal FP.** A regex like `\bdocument\.body\b` will match `// don't use document.body` in a comment or `'document.body access leaks'` in an error message. This bug class has a documented post-merge incident (the handler `tenant_id` regex matching its own forbidden-pattern string-literal). The fix:
 
 - `utils/static_validations/js_parse.py:strip_comments_and_strings(js)` — full scrub for token denylists. Strips JS line comments, block comments, and string literals (single, double, template; template-literal `${...}` interpolation contents are preserved as raw code).
-- `utils/static_validations/js_parse.py:strip_comments_only(js)` — partial scrub for checks where the literal contents inside quotes ARE the data being validated (e.g. `data-status="pending"` or `status === 'pending'` patterns where the literal IS the value to inspect). Strips comments, preserves string literals.
 - `utils/static_validations/sql_parse.py:strip_comments_and_strings(sql)` — SQL equivalent. Handles `-- line`, `/* block */`, `'single-quoted'` with `''` escape, `E'…'` escape strings, `$tag$ … $tag$` dollar-quoted strings. Double-quoted identifiers are NOT scrubbed.
+
+(A partial-scrub variant — strip comments but preserve string literals, for checks where the literal IS the data being validated like `data-status="pending"` enum-filter cross-checks — was prototyped and removed when its only intended caller was reclassified static→llm. Re-add only when a real static check needs the shape, not preemptively.)
 
 **Order-dependent FP.** Patterns like "innerHTML += after appendChild" depend on order-of-execution, not order-of-text. Two patterns can appear in source order in any ordering across branches that don't actually run sequentially. Static heuristic either misses real bugs or FPs on legitimate scope-separated uses. **These belong to bug_finder**, not static.
 
 **Cross-artifact-context FP.** A pattern can be benign in one context and catastrophic in another (`data-status="loading"` for a UI spinner is fine; `data-status="loading"` as a filter-button value when `loading` is not in any dbContracts column enum is dead UI). Static can't distinguish; agent_rules can. **These belong to agent_rules**, not static.
+
+**Recurrence FP — when a correct check produces an unfixable error.** Distinct from the structural FP classes above: the static check is right, the rule is taught in the prompt, the cumulative_errors mechanism feeds the failure forward to the next attempt — and the model still doesn't fix it. Documented case: handler `email-metadata` sidecar (cart-recovery run, 2026-04-28) — 3 retries in a row dropped the sidecar entirely, the static check correctly flagged each time, the model never recovered. Diagnosis: the rule was taught in a JIT capability block (`prompts/capabilities/email.py`) far from the bundle-emission section (`prompts/topics/handler.py:HANDLER`), and the error message named the rule but didn't show the format. Under retry-loop cognitive pressure, late-prompt rules get deprioritized AND abstract error messages don't translate to structural changes.
+
+**Resolution pattern (two halves, both required):**
+
+- **Promote the rule to where the model is already paying attention** — for output-format rules, this is HARNESS_BASE next to the `===FILE:===` markers. For ID/typing rules, it's the SQL/HTTP discipline section. The rule is encountered during the same cognitive pass that produces the violating output.
+- **Enrich the static error message to inline a minimal correct example.** The cumulative_errors retry loop already feeds the message into the next attempt's user prompt — make the message self-sufficient so the model can pattern-match on the example rather than reasoning about the rule. For rules where this matters: ship a 4–8 line code/JSON example inside the error string itself.
+
+The fix lives in the PROMPT and the ERROR MESSAGE, not in the check or the loop budget. Increasing retries or adding a separate enforcement pass papers over the symptom; the underlying rule placement / message actionability is what changed when the failure stopped recurring.
 
 ### Frontier-model tax
 

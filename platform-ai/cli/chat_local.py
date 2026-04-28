@@ -857,6 +857,7 @@ def _phase_codegen(
     base_ctx: CodegenContext,
     is_storefront: bool,
     is_admin_ui: bool,
+    run_dir: Path,
 ) -> Tuple[Dict[str, str], List[Dict], Dict[str, Tuple[int, int]]]:
     """
     Run parallel codegen with static validation retries.
@@ -964,12 +965,34 @@ def _phase_codegen(
         if attempt < _MAX_CODEGEN_RETRIES:
             _retry_line("Validation", notes=f"fixing {failed_summary}")
 
+    # All retries exhausted. Persist whatever the last attempt produced —
+    # the artifacts live only in this stack frame and would otherwise be
+    # lost when sys.exit(1) runs, leaving the merchant with errors but
+    # nothing to inspect. Dump in the same shape as a successful run so
+    # the same workflow (open files in IDE, diff against prior run, etc.)
+    # works for failures too.
+    failure_path = _save_codegen_failure_local(
+        run_dir,
+        artifacts,
+        is_storefront,
+        is_admin_ui,
+        retry_log,
+        error_map,
+        token_totals,
+        plan=base_ctx.plan,
+    )
+
     all_errors = [f"{n}: {e}" for n, errs in error_map.items() for e in errs]
     print(
         f"\n  {_RED}Codegen validation failed after {_MAX_CODEGEN_RETRIES} attempts:{_RESET}"
     )
     for e in all_errors[:5]:
         print(f"    • {e}")
+    print(
+        f"\n  {_DIM}Final-attempt artifacts saved to: "
+        f"{run_dir.relative_to(_HERE)}/{_RESET}"
+    )
+    print(f"  {_DIM}Validation summary: {failure_path.relative_to(_HERE)}{_RESET}")
     sys.exit(1)
 
 
@@ -988,8 +1011,19 @@ def _save_generated_files(
     artifacts: Dict[str, str],
     is_storefront: bool,
     is_admin_ui: bool,
+    plan: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Write generated artifacts as individual files within run_dir."""
+    """
+    Write generated artifacts as individual files within run_dir.
+
+    For widget.js / admin_ui.js, prepend the same `window.__PLATFORM_CATALOG__`
+    manifest the platform-back bundle-storage saver uses on deploy, so the
+    locally-saved file is byte-identical to the served bundle. Without the
+    prelude, locally-tested code would behave differently from deployed code
+    (the SDK would default to all-POST). When `plan` is omitted (legacy
+    callers), fall back to no prelude — the SDK will treat absent manifest
+    as all-POST, matching the pre-method-aware-SDK behaviour.
+    """
     from utils.file_bundle import parse_file_bundle, ParseError
 
     handler_raw = artifacts.get("handler", "")
@@ -1008,11 +1042,33 @@ def _save_generated_files(
         migrations_dir.mkdir(exist_ok=True)
         (migrations_dir / "generated.sql").write_text(migration)
 
+    contracts = ((plan or {}).get("appContracts") or {}) if plan else {}
+
+    def _prelude(catalog_rows: List[Dict[str, Any]]) -> str:
+        slim = [
+            {"path": r["path"], "method": (r.get("method") or "POST").upper()}
+            for r in catalog_rows or []
+            if isinstance(r, dict) and isinstance(r.get("path"), str)
+        ]
+        # Mirror the platform-back bundle-storage saver's `</script>`
+        # escape so locally-saved bundles are byte-identical to the
+        # deployed bundle. Defense in depth — bundles are loaded via
+        # `<script src=...>` not inlined, but the dev/prod parity matters.
+        # Capture-group preserves the matched case (`</SCRIPT` →
+        # `<\/SCRIPT`). Mirrors the TypeScript regex shape so the locally-
+        # saved bundle is byte-identical to the platform-back one.
+        encoded = re.sub(
+            r"</(script)", r"<\\/\1", json.dumps(slim), flags=re.IGNORECASE
+        )
+        return f"window.__PLATFORM_CATALOG__ = {encoded};\n"
+
     if is_storefront and artifacts.get("widget_js"):
-        (run_dir / "widget.js").write_text(artifacts["widget_js"])
+        prelude = _prelude(contracts.get("widgetApiCatalog") or []) if plan else ""
+        (run_dir / "widget.js").write_text(prelude + artifacts["widget_js"])
 
     if is_admin_ui and artifacts.get("admin_ui"):
-        (run_dir / "admin_ui.js").write_text(artifacts["admin_ui"])
+        prelude = _prelude(contracts.get("adminApiCatalog") or []) if plan else ""
+        (run_dir / "admin_ui.js").write_text(prelude + artifacts["admin_ui"])
 
 
 def _save_revision_failure_local(
@@ -1026,6 +1082,62 @@ def _save_revision_failure_local(
     path = failure_dir / f"{ts}_revision_failure.json"
     payload = {"timestamp": ts, "errors": errors, "artifacts": bad_artifacts}
     path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
+def _save_codegen_failure_local(
+    run_dir: Path,
+    artifacts: Dict[str, str],
+    is_storefront: bool,
+    is_admin_ui: bool,
+    retry_log: List[Dict],
+    final_errors: Dict[str, List[str]],
+    token_totals: Dict[str, Tuple[int, int]],
+    plan: Optional[Dict[str, Any]] = None,
+) -> Path:
+    """
+    Persist the LAST-attempt artifacts and the full retry trail when codegen
+    static validation fails after `_MAX_CODEGEN_RETRIES` attempts.
+
+    Without this, the failed-attempt code lives only in memory and is lost
+    when the process exits — leaving the merchant with errors but nothing
+    to inspect. The dumped files use the SAME layout as a successful run
+    (handler split via `===FILE:===` markers, migration in migrations/,
+    single-file widget/admin at the run-dir root) so the same inspection
+    workflow applies to a failed run. `plan` is forwarded so the saved
+    widget.js / admin_ui.js get the same `__PLATFORM_CATALOG__` prelude
+    the deployed bundles get.
+
+    Returns the path to the validation_failure.json summary so the caller
+    can print it to the merchant.
+    """
+    # Dump artifacts as proper files — same shape as a successful run.
+    # Wrap in try/except so a disk-full / permission error during failure-
+    # handling doesn't replace the merchant's "validation failed" output
+    # with a Python traceback. We still want the partial state if some
+    # writes succeeded.
+    try:
+        _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
+    except OSError as exc:
+        _log.warning(
+            "could not persist failed-attempt artifacts to %s: %s", run_dir, exc
+        )
+
+    ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    path = run_dir / "validation_failure.json"
+    payload = {
+        "timestamp": ts,
+        "phase": "codegen",
+        "max_retries": _MAX_CODEGEN_RETRIES,
+        "final_errors": final_errors,
+        "retry_log": retry_log,
+        "token_totals": {k: {"in": v[0], "out": v[1]} for k, v in token_totals.items()},
+        "artifact_keys": sorted(artifacts.keys()),
+    }
+    try:
+        path.write_text(json.dumps(payload, indent=2))
+    except OSError as exc:
+        _log.warning("could not write %s: %s", path, exc)
     return path
 
 
@@ -1285,6 +1397,13 @@ def _phase_validator(
     _finalize("failed")
     bad = {**frontend_revised, **frontend_revised2}
     path = _save_revision_failure_local(run_dir, bad, static_errors2)
+    # Also dump the final merged bundle as proper files at the run-dir root
+    # — same shape as a successful run, so the merchant can open the broken
+    # widget.js / admin_ui.js in their editor instead of fishing them out
+    # of a JSON blob.
+    _save_generated_files(
+        run_dir, merged2, is_storefront, is_admin_ui, plan=revision_ctx.plan
+    )
     _agent_line(
         "Revision",
         ok=False,
@@ -1299,7 +1418,11 @@ def _phase_validator(
     for gen_name, errs in static_errors2.items():
         for e in errs:
             print(f"    • [{gen_name}] {e}")
-    print(f"  Saved for analysis: {path}")
+    print(f"  {_DIM}Failure summary: {path.relative_to(_HERE)}{_RESET}")
+    print(
+        f"  {_DIM}Final-attempt artifacts saved to: "
+        f"{run_dir.relative_to(_HERE)}/{_RESET}"
+    )
     sys.exit(1)
 
 
@@ -1441,7 +1564,7 @@ def _save_artifacts_md(
     total_ms: int = 0,
     all_tokens: Optional[Dict[str, Tuple[int, int]]] = None,
 ) -> Path:
-    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui)
+    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
     path = run_dir / "report.md"
 
     lines = _md_pipeline_header(stop_label, prompt, total_ms, all_tokens or {})
@@ -1830,7 +1953,7 @@ def main() -> None:
         # inputs/codegen_migration/, etc., not under a shared dir.
         with input_log("codegen", run_dir):
             artifacts, retry_log, codegen_tokens = _phase_codegen(
-                base_ctx, is_storefront, is_admin_ui
+                base_ctx, is_storefront, is_admin_ui, run_dir
             )
     except SystemExit:
         _fail_db("Codegen validation failed after max retries")
@@ -1947,7 +2070,7 @@ def main() -> None:
     total_ms = int((time.monotonic() - total_start) * 1000)
 
     # ── Save report + generated files ─────────────────────────────────────────
-    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui)
+    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
     merchant_facing = explanation.get("merchantFacing", "")
     lines = _md_pipeline_header("full", prompt, total_ms, all_tokens)
     lines += [

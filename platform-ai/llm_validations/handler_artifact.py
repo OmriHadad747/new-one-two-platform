@@ -611,11 +611,42 @@ def _check_email_sidecar(artifact: str, files_by_path: Dict[str, str]) -> List[s
     blocks = _EMAIL_SIDECAR_RE.findall(artifact)
 
     if uses_email and not blocks:
+        # Inline a minimal correct example in the error message itself.
+        # The retry loop feeds error strings straight into the next
+        # attempt's user prompt via crew._build_prev_errors. A persistent
+        # failure mode (cart-recovery run 2026-04-28: 3 retries in a row
+        # all dropped the sidecar despite the rule being in the capability
+        # JIT block) suggested the model was deprioritizing a late-prompt
+        # rule under bundle-emission cognitive load. The fix has two
+        # halves: requirement promoted into HARNESS_BASE next to the
+        # ===FILE:=== rules (so it's encountered during the same pass
+        # that produces the bundle), AND this enriched error string so
+        # the retry feedback shows the format inline rather than naming
+        # a rule the model has already proven it doesn't act on.
         errors.append(
             "handler calls platform.email.send/sendBatch but no "
-            "```email-metadata``` sidecar block was emitted — append "
-            "exactly one fenced JSON block with `variables` and "
-            "`starterContent` after the file bundle."
+            "```email-metadata``` sidecar block was emitted. After your "
+            "final ===END=== marker, append exactly ONE fenced block in "
+            "this format (replace placeholders with the actual camelCase "
+            "keys you pass in `data: {...}`):\n"
+            "```email-metadata\n"
+            "{\n"
+            '  "variables": ["customerName", "actionUrl"],\n'
+            '  "starterContent": {\n'
+            '    "subject": "{{customerName}}, an action is waiting",\n'
+            '    "body": "Quick reminder — tap below to continue.",\n'
+            '    "ctaLabel": "Continue",\n'
+            '    "ctaUrl": "{{actionUrl}}"\n'
+            "  }\n"
+            "}\n"
+            "```\n"
+            "Rules: (1) `variables` MUST equal the camelCase keys you "
+            "pass in every `data: {...}` across ALL email send call "
+            "sites, deduplicated. (2) Every `{{token}}` referenced "
+            "anywhere in starterContent MUST be in the variables array, "
+            "and every variable MUST be referenced — no orphans on "
+            "either side. (3) Emit ONE block even across multiple send "
+            "call sites — merge into a single variables array."
         )
         return errors
     if not uses_email and blocks:
