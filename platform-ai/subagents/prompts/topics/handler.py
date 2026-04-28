@@ -268,6 +268,15 @@ Rules:
     whole file. Partial diffs are not supported.
   - No markdown fences, no prose outside the markers, no backtick
     wrapping.
+  - WHEN handlerCapabilities includes "email": after your final
+    ===END=== marker, append exactly ONE fenced ```email-metadata
+    block declaring the camelCase data: keys you pass to
+    platform.email.send and the merchant-facing starter copy. The
+    block is NOT optional when email is in capabilities — static
+    validation rejects the bundle without it. Format and rules live
+    in the EMAIL SERVICE capability section below; the requirement
+    that the block ships with every email-using handler lives here
+    next to the bundle markers because it IS a bundle-output rule.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ABSOLUTE RULES (violations cause deployment failure):
