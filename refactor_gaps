@@ -8,3 +8,5 @@ I have enough signal. Here are the gaps I found that are **from the refactor its
 12. **`platform-shopify-admin` is not built or deployed by CI.** `platform-front` has the full Vite-build + `gcloud storage rsync` step. `platform-shopify-admin` — the iframe Shopify Admin actually loads when a merchant opens the app — has no CI job, no bucket, no deploy YAML, not even an `API_URL` injection. The iframe-contract fix (`0897350`) is code-complete but unshippable today.
 
 ---
+
+reminder - missing write_files, write_images

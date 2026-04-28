@@ -216,7 +216,16 @@ def run_llm_validators(
     (artifact, normalized issue text) are de-duplicated — the prompts ask
     the model to stay in lane but parallel runs can't see each other.
 
-    quality_brief_coverage is skipped when ctx.intent.qualityBrief is empty.
+    quality_brief_coverage is FROZEN as of 2026-04-28. Its findings track
+    scope-class concerns (the brief said "respect rate limits"; the handler
+    didn't add backoff) that often need an architect re-plan rather than a
+    handler patch — pushing them through the codegen revision agent
+    produced churn without resolution. Disabled by skipping the dispatch
+    here. Module + prompt left in place for easy re-enablement: flip the
+    `_QUALITY_BRIEF_FROZEN` constant below to `False` (or wrap with a
+    feature flag) when there's a clear case for re-running it. See
+    REVISION_RULES.md Q1/Q2 deferred questions and the image-optimizer
+    run trace for the rationale.
     """
     # Imports are local to avoid a circular import at module load — these
     # validators import from subagents.base which transitively imports here.
@@ -226,6 +235,8 @@ def run_llm_validators(
         run_quality_brief_coverage_validator,
     )
 
+    _QUALITY_BRIEF_FROZEN = True
+
     quality_brief = (ctx.intent or {}).get("qualityBrief") or ""
     quality_brief = quality_brief.strip()
 
@@ -233,7 +244,7 @@ def run_llm_validators(
         ("agent_rules", run_agent_rules_validator),
         ("bug_finder", run_bug_finder_validator),
     ]
-    if quality_brief:
+    if quality_brief and not _QUALITY_BRIEF_FROZEN:
         runners.append(
             ("quality_brief_coverage", run_quality_brief_coverage_validator)
         )

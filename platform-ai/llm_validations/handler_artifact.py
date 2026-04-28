@@ -312,6 +312,17 @@ def validate_handler_artifact(
     #      item-INSERT time. See HANDLER_RULES.md row 56 audit findings.
     errors.extend(_check_on_conflict_targets(files_by_path, db_contracts or []))
 
+    # 11c. Singleton-table SELECT-without-INSERT cross-check: a settings table
+    #      declared with `singleton: true` is always-empty until something
+    #      inserts the first (and only) row. If the handler reads
+    #      `WHERE singleton = true` but never INSERTs into the table, GET
+    #      always returns zero rows and the merchant sees hardcoded defaults
+    #      forever. Documented case: image-optimizer settings table read by
+    #      GET /settings, written by POST /settings via UPDATE-only — first
+    #      tenant boot saw defaults forever even after Save was clicked.
+    #      See HANDLER_RULES.md row 100 (added this round).
+    errors.extend(_check_singleton_table_has_insert(files_by_path, db_contracts or []))
+
     # 12. Email metadata sidecar: the ```email-metadata``` fenced JSON block
     #     that follows the bundle is required iff the handler calls
     #     platform.email.send/sendBatch. Validates presence/absence, single
@@ -591,6 +602,87 @@ def _check_on_conflict_targets(
                 f"constraint, postgres throws `there is no unique or "
                 f"exclusion constraint matching the ON CONFLICT "
                 f"specification` on the first INSERT."
+            )
+
+    return errors
+
+
+def _check_singleton_table_has_insert(
+    files_by_path: Dict[str, str],
+    db_contracts: List[Dict[str, Any]],
+) -> List[str]:
+    """
+    Cross-check: when the architect declares a `singleton: true` table AND
+    the handler READs from it (`SELECT … FROM <table> WHERE singleton = true`
+    or any SELECT against it), the handler MUST also have an INSERT path —
+    otherwise the table is always empty on a fresh deploy and reads return
+    zero rows forever. UPDATE-only settings POST handlers (the canonical
+    failure pattern) silently degrade to "Save clicked → no row exists →
+    UPDATE affects zero rows → GET still returns nothing → merchant sees
+    hardcoded defaults forever".
+
+    The check fires only when both reads AND no insert are observed. A
+    handler that doesn't touch the singleton at all (e.g. settings read
+    elsewhere) doesn't trip this — that's a different gap (dead table).
+    The acceptable shapes are:
+      - `INSERT INTO <table> ... VALUES (...)`
+      - `INSERT INTO <table> ... ON CONFLICT (singleton) DO UPDATE …` (upsert)
+      - any SQL that mentions `INSERT INTO <table>` once
+
+    Documented case: image-optimizer run 2026-04-28T20-38-51 — settings
+    table had GET/POST handlers, but POST was UPDATE-only. First-deploy
+    UX bug.
+    """
+    if not db_contracts:
+        return []
+
+    singleton_tables: set = set()
+    for contract in db_contracts:
+        if contract.get("singleton") is True:
+            name = (contract.get("table") or "").lower()
+            if name:
+                singleton_tables.add(name)
+
+    if not singleton_tables:
+        return []
+
+    errors: List[str] = []
+    for table in sorted(singleton_tables):
+        # Look for any SELECT against the table — case-insensitive, allow
+        # whitespace and column lists between SELECT and FROM.
+        select_re = re.compile(
+            rf"\bSELECT\b[\s\S]*?\bFROM\s+{re.escape(table)}\b",
+            re.IGNORECASE,
+        )
+        insert_re = re.compile(
+            rf"\bINSERT\s+INTO\s+{re.escape(table)}\b",
+            re.IGNORECASE,
+        )
+
+        reads_in: List[str] = []
+        has_insert = False
+        for path, code in files_by_path.items():
+            if select_re.search(code):
+                reads_in.append(path)
+            if insert_re.search(code):
+                has_insert = True
+
+        if reads_in and not has_insert:
+            errors.append(
+                f"singleton table `{table}` is read by handler "
+                f"({reads_in[0]}) but no `INSERT INTO {table}` exists "
+                f"anywhere in the bundle. The table starts empty on first "
+                f"deploy, so GET reads return zero rows and the merchant "
+                f"sees hardcoded defaults forever — even after the Save / "
+                f"settings-write path runs (UPDATE on zero rows is a no-op). "
+                f"Add an upsert path: "
+                f"`INSERT INTO {table} (singleton, …) VALUES (true, …) "
+                f"ON CONFLICT (singleton) DO UPDATE SET … RETURNING …` "
+                f"to the settings-write route, OR seed the row at first "
+                f"read with INSERT … ON CONFLICT DO NOTHING. The architect's "
+                f"`singleton: true` flag means the table holds exactly one "
+                f"row — the handler is responsible for ensuring that row "
+                f"exists before any read returns useful data."
             )
 
     return errors

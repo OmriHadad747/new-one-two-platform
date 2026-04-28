@@ -2108,8 +2108,32 @@ def main() -> None:
     # Tokens intentionally omitted here — _print_token_summary() just below
     # shows them with the per-agent breakdown, which is strictly more useful
     # than a rolled-up total in the box.
+    #
+    # Detect the silent-failure path: validator found high-confidence issues
+    # and revision punted (returned [] / no_output / merge dropped frontend
+    # artifacts). The pipeline exits cleanly with the original (broken) code,
+    # which historically read identically to a real success. Promote it to a
+    # warning so the merchant sees that real findings were not addressed.
+    unresolved_issues: List[Dict[str, Any]] = []
+    revision_outcome: Optional[str] = None
+    if validator_trace:
+        revision_outcome = validator_trace.get("final_outcome")
+        if revision_outcome in ("kept_originals", "failed"):
+            raw = validator_trace.get("validator", {}).get("issues") or []
+            if isinstance(raw, list):
+                unresolved_issues = [i for i in raw if isinstance(i, dict)]
+
+    if unresolved_issues:
+        status_label = _c(
+            f"⚠ shipped with {len(unresolved_issues)} unresolved finding(s)",
+            _YELLOW,
+            _BOLD,
+        )
+    else:
+        status_label = _c("✓ success", _BRIGHT_GREEN, _BOLD)
+
     rows: List[Tuple[str, str]] = [
-        ("Status", _c("✓ success", _BRIGHT_GREEN, _BOLD)),
+        ("Status", status_label),
         ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
         ("Output", _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
     ]
@@ -2126,6 +2150,36 @@ def main() -> None:
     print()
     _summary_box("◆  RUN COMPLETE", rows)
     _print_token_summary(all_tokens)
+
+    # Banner with the unresolved findings — printed AFTER the box so it's the
+    # last thing on screen before the merchant-facing prose. Goal: a merchant
+    # who shipped a broken bundle cannot miss that real bugs were detected
+    # and not fixed. Shows the first 3 findings inline; the rest live in the
+    # report.md and the revision_traces JSON the box already points at.
+    if unresolved_issues:
+        reason_label = {
+            "kept_originals": "revision returned no usable output — originals kept",
+            "failed": "revision retried twice and still failed static validation",
+        }.get(revision_outcome or "", "revision did not complete")
+        print(
+            f"  {_YELLOW}{_BOLD}⚠  Validator found {len(unresolved_issues)} "
+            f"high-confidence issue(s) — {reason_label}.{_RESET}"
+        )
+        print(
+            f"  {_DIM}The artifacts above MAY break at deploy or runtime. "
+            f"Review the findings before deploying:{_RESET}"
+        )
+        for issue in unresolved_issues[:3]:
+            q = issue.get("question") or issue.get("location") or "?"
+            i = issue.get("issue") or ""
+            print(f"    {_YELLOW}•{_RESET} {_DIM}[{q}]{_RESET} {i[:140]}")
+        if len(unresolved_issues) > 3:
+            print(
+                f"    {_DIM}… and {len(unresolved_issues) - 3} more in "
+                f"{run_dir.relative_to(_HERE)}/report.md{_RESET}"
+            )
+        print()
+
     print()
 
     if merchant_facing:
