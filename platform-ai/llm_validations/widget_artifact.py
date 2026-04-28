@@ -64,6 +64,20 @@ def validate_widget_artifact(
     if not widget_js or not widget_js.strip():
         return errors  # backend — no widget JS to validate
 
+    # Single-file artifact: the revision agent's prompt forbids `===FILE:===`
+    # markers in widget_js / admin_ui (they're handler-bundle-only). If a
+    # marker leaks in, the App Block runtime fails to evaluate the module
+    # (`===` at file head is an ES-module syntax error) — silent storefront
+    # breakage at deploy time with no actionable error. Run against the RAW
+    # source: the marker is a literal token at line start, not something
+    # scrubbing should erase.
+    if re.search(r"^\s*===FILE:\s+", widget_js, re.MULTILINE):
+        errors.append(
+            "widget_js must be a single-file ES module — '===FILE: …===' "
+            "bundle markers are not allowed (handler-bundle format leaked into "
+            "widget output; see prompts/core/revision.py)"
+        )
+
     # Scrub comments + string-literal contents BEFORE applying the token-
     # level denylists. A comment like `// don't use document.body` or an
     # error message like `'eval() is forbidden'` would otherwise FP every
@@ -146,7 +160,7 @@ def validate_widget_artifact(
             widget_js,
         )
     )
-    has_host_call = bool(re.search(r"\bhost\.call\s*\(", widget_js))
+    has_host_call = bool(re.search(r"\bhost\.call\s*\(", scrubbed))
     if has_explicit_submit and not has_host_call:
         errors.append(
             "widget has an explicit form submission (type='submit' / submit listener / "

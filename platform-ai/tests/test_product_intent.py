@@ -83,7 +83,7 @@ def test_cron_hint_without_cron_trigger_rejected() -> None:
     intent["triggerTypes"] = ["webhook"]
     intent["cronHint"] = "every 6 hours"
     errors = validate_product_intent(intent)
-    assert any("cronHint" in e and "ignored" in e.lower() or "not in" in e for e in errors), errors
+    assert any("cronHint" in e and ("ignore" in e.lower() or "not in" in e) for e in errors), errors
 
 
 def test_empty_cron_hint_with_cron_trigger_rejected() -> None:

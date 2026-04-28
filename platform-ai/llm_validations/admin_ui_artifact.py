@@ -54,6 +54,20 @@ def validate_admin_ui_artifact(
     if not admin_ui_js or not admin_ui_js.strip():
         return errors
 
+    # Single-file artifact: the revision agent's prompt forbids `===FILE:===`
+    # markers in widget_js / admin_ui (they're handler-bundle-only). If a
+    # marker leaks in, the Shopify Admin iframe fails to evaluate the module
+    # (`===` at file head is an ES-module syntax error) — silent admin-panel
+    # breakage at deploy time with no actionable error. Run against the RAW
+    # source: the marker is a literal token at line start, not something
+    # scrubbing should erase.
+    if re.search(r"^\s*===FILE:\s+", admin_ui_js, re.MULTILINE):
+        errors.append(
+            "admin_ui must be a single-file ES module — '===FILE: …===' "
+            "bundle markers are not allowed (handler-bundle format leaked into "
+            "admin output; see prompts/core/revision.py)"
+        )
+
     # Scrub comments + string-literal contents BEFORE applying token-level
     # denylists. A comment like `// don't use document.body` or an error
     # message like `'eval() is forbidden'` would otherwise FP every regex
@@ -113,7 +127,7 @@ def validate_admin_ui_artifact(
             admin_ui_js,
         )
     )
-    has_bridge_call = bool(re.search(r"\bbridge\.call\s*\(", admin_ui_js))
+    has_bridge_call = bool(re.search(r"\bbridge\.call\s*\(", scrubbed))
     if has_explicit_submit and not has_bridge_call:
         errors.append(
             "admin UI has an explicit form submission (type='submit' / submit listener / "

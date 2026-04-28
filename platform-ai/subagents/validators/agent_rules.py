@@ -1,17 +1,18 @@
 """
 agent_rules — unified prompt-rule compliance validator (Haiku, no thinking).
 
-Owns every `owner: LLM` rule-row in ARCH_RULES.md and HANDLER_RULES.md.
+Owns every `owner: LLM` rule-row across the per-surface `*_RULES.md`
+registries (PRODUCT, ARCH, HANDLER, MIGRATION, WIDGET_JS, ADMIN_UI today).
 Reads the architect plan + handler bundle + intent and flags places where
 the output violates a prompt-taught rule that a static check cannot catch.
 
-When new generator surfaces (migration / widget / admin / product / revision)
-ship their `<SURFACE>_RULES.md` registries, ADD a section to SYSTEM_PROMPT
-below — do not add a new validator module.
+When a new generator surface ships its `<SURFACE>_RULES.md` registry, ADD
+a section to SYSTEM_PROMPT below — do not add a new validator module.
 
 Source-of-truth handshake:
-  ARCH_RULES.md, HANDLER_RULES.md   — what to validate (per-row)
-  this file's SYSTEM_PROMPT          — how the validator reads the rules
+  PRODUCT_RULES.md, ARCH_RULES.md, HANDLER_RULES.md, MIGRATION_RULES.md,
+  WIDGET_JS_RULES.md, ADMIN_UI_RULES.md   — what to validate (per-row)
+  this file's SYSTEM_PROMPT                — how the validator reads the rules
 
 Both must move together when an `llm` row is added or reclassified.
 """
