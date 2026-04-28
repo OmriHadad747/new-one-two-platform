@@ -857,6 +857,7 @@ def _phase_codegen(
     base_ctx: CodegenContext,
     is_storefront: bool,
     is_admin_ui: bool,
+    run_dir: Path,
 ) -> Tuple[Dict[str, str], List[Dict], Dict[str, Tuple[int, int]]]:
     """
     Run parallel codegen with static validation retries.
@@ -964,12 +965,33 @@ def _phase_codegen(
         if attempt < _MAX_CODEGEN_RETRIES:
             _retry_line("Validation", notes=f"fixing {failed_summary}")
 
+    # All retries exhausted. Persist whatever the last attempt produced —
+    # the artifacts live only in this stack frame and would otherwise be
+    # lost when sys.exit(1) runs, leaving the merchant with errors but
+    # nothing to inspect. Dump in the same shape as a successful run so
+    # the same workflow (open files in IDE, diff against prior run, etc.)
+    # works for failures too.
+    failure_path = _save_codegen_failure_local(
+        run_dir,
+        artifacts,
+        is_storefront,
+        is_admin_ui,
+        retry_log,
+        error_map,
+        token_totals,
+    )
+
     all_errors = [f"{n}: {e}" for n, errs in error_map.items() for e in errs]
     print(
         f"\n  {_RED}Codegen validation failed after {_MAX_CODEGEN_RETRIES} attempts:{_RESET}"
     )
     for e in all_errors[:5]:
         print(f"    • {e}")
+    print(
+        f"\n  {_DIM}Final-attempt artifacts saved to: "
+        f"{run_dir.relative_to(_HERE)}/{_RESET}"
+    )
+    print(f"  {_DIM}Validation summary: {failure_path.relative_to(_HERE)}{_RESET}")
     sys.exit(1)
 
 
@@ -1025,6 +1047,47 @@ def _save_revision_failure_local(
     ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     path = failure_dir / f"{ts}_revision_failure.json"
     payload = {"timestamp": ts, "errors": errors, "artifacts": bad_artifacts}
+    path.write_text(json.dumps(payload, indent=2))
+    return path
+
+
+def _save_codegen_failure_local(
+    run_dir: Path,
+    artifacts: Dict[str, str],
+    is_storefront: bool,
+    is_admin_ui: bool,
+    retry_log: List[Dict],
+    final_errors: Dict[str, List[str]],
+    token_totals: Dict[str, Tuple[int, int]],
+) -> Path:
+    """
+    Persist the LAST-attempt artifacts and the full retry trail when codegen
+    static validation fails after `_MAX_CODEGEN_RETRIES` attempts.
+
+    Without this, the failed-attempt code lives only in memory and is lost
+    when the process exits — leaving the merchant with errors but nothing
+    to inspect. The dumped files use the SAME layout as a successful run
+    (handler split via `===FILE:===` markers, migration in migrations/,
+    single-file widget/admin at the run-dir root) so the same inspection
+    workflow applies to a failed run.
+
+    Returns the path to the validation_failure.json summary so the caller
+    can print it to the merchant.
+    """
+    # Dump artifacts as proper files — same shape as a successful run.
+    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui)
+
+    ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    path = run_dir / "validation_failure.json"
+    payload = {
+        "timestamp": ts,
+        "phase": "codegen",
+        "max_retries": _MAX_CODEGEN_RETRIES,
+        "final_errors": final_errors,
+        "retry_log": retry_log,
+        "token_totals": {k: {"in": v[0], "out": v[1]} for k, v in token_totals.items()},
+        "artifact_keys": sorted(artifacts.keys()),
+    }
     path.write_text(json.dumps(payload, indent=2))
     return path
 
@@ -1285,6 +1348,11 @@ def _phase_validator(
     _finalize("failed")
     bad = {**frontend_revised, **frontend_revised2}
     path = _save_revision_failure_local(run_dir, bad, static_errors2)
+    # Also dump the final merged bundle as proper files at the run-dir root
+    # — same shape as a successful run, so the merchant can open the broken
+    # widget.js / admin_ui.js in their editor instead of fishing them out
+    # of a JSON blob.
+    _save_generated_files(run_dir, merged2, is_storefront, is_admin_ui)
     _agent_line(
         "Revision",
         ok=False,
@@ -1299,7 +1367,11 @@ def _phase_validator(
     for gen_name, errs in static_errors2.items():
         for e in errs:
             print(f"    • [{gen_name}] {e}")
-    print(f"  Saved for analysis: {path}")
+    print(f"  {_DIM}Failure summary: {path.relative_to(_HERE)}{_RESET}")
+    print(
+        f"  {_DIM}Final-attempt artifacts saved to: "
+        f"{run_dir.relative_to(_HERE)}/{_RESET}"
+    )
     sys.exit(1)
 
 
@@ -1830,7 +1902,7 @@ def main() -> None:
         # inputs/codegen_migration/, etc., not under a shared dir.
         with input_log("codegen", run_dir):
             artifacts, retry_log, codegen_tokens = _phase_codegen(
-                base_ctx, is_storefront, is_admin_ui
+                base_ctx, is_storefront, is_admin_ui, run_dir
             )
     except SystemExit:
         _fail_db("Codegen validation failed after max retries")
