@@ -192,7 +192,11 @@ def _summary_box(title: str, rows: List[Tuple[str, str]]) -> None:
     )
     print(f"  {_c('│', _MAGENTA)} {_c('─' * inner_w, _DIM)} {_c('│', _MAGENTA)}")
     for label, value in rows:
-        pad = inner_w - label_w - _visible_len(value) - 3
+        # Row width math: ` {label}{label-pad} · {pad}{value} ` between │…│
+        # = 4 + label_w + pad + value_visible_w content chars; wrapped row
+        # is inner_w + 4 visible chars (matching the top/bottom border), so
+        # pad = inner_w - label_w - value_visible_w - 2.
+        pad = inner_w - label_w - _visible_len(value) - 2
         if pad < 1:
             pad = 1
         line = (

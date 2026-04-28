@@ -1,0 +1,24 @@
+Merchant request: Send one reminder email to customers whose carts have been inactive for longer than a merchant-set delay.
+
+Feature intent:
+{
+  "triggerTypes": [
+    "cron"
+  ],
+  "resources": [
+    "Cart",
+    "Customer",
+    "Email"
+  ],
+  "desiredOutcome": "Send one reminder email to customers whose carts have been inactive for longer than a merchant-set delay.",
+  "cronHint": "every 15 minutes",
+  "appCategory": "backend_admin",
+  "qualityBrief": "A good version of this app will check for abandoned carts reliably without sending duplicates, even if the cron job runs multiple times. It should track which carts have been emailed to avoid spamming. The merchant needs a clear admin page to set the delay threshold and view recent sends. Edge cases: what counts as abandoned (no activity for X hours, not just added to cart), whether to include carts from guests or only logged-in customers, and ensuring the email template is simple and focused on the cart link."
+}
+
+App archetype: backend_admin
+
+Quality brief (use this to inform edgeCases and uxExpectations):
+A good version of this app will check for abandoned carts reliably without sending duplicates, even if the cron job runs multiple times. It should track which carts have been emailed to avoid spamming. The merchant needs a clear admin page to set the delay threshold and view recent sends. Edge cases: what counts as abandoned (no activity for X hours, not just added to cart), whether to include carts from guests or only logged-in customers, and ensuring the email template is simple and focused on the cart link.
+
+Produce the structural plan and binding contracts.
