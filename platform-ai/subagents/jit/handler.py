@@ -37,12 +37,14 @@ from subagents.prompts.topics.widget import (
     HANDLER as HARNESS_SECTION_WIDGET,
     HANDLER_STOREFRONT as HARNESS_SECTION_WIDGET_STOREFRONT,
 )
+from catalogs.shopify_examples import examples_for_ops
 from llm_validations.shopify_ops import slice_summary
 
 
 def build_handler_jit_sections(
     plan: Dict[str, Any],
     widget_catalog: List[Dict[str, str]],
+    intent_hint: str | None = None,
 ) -> str:
     """
     Assemble capability docs + trigger-gated handler topic sections for a
@@ -89,6 +91,12 @@ def build_handler_jit_sections(
                 "── Shopify Admin GraphQL — approved operations ─────────────\n\n"
                 + sliced
             )
+        admin_examples = examples_for_ops(admin_ops, surface="admin", intent_hint=intent_hint)
+        if admin_examples:
+            sections.append(
+                "── Shopify Admin GraphQL — worked examples ──────────────────\n\n"
+                + admin_examples
+            )
         admin_gotchas = gotchas_for_ops(admin_ops, surface="admin")
         if admin_gotchas:
             sections.append(admin_gotchas)
@@ -99,6 +107,14 @@ def build_handler_jit_sections(
             sections.append(
                 "── Shopify Storefront GraphQL — approved operations ────────\n\n"
                 + sliced
+            )
+        storefront_examples = examples_for_ops(
+            storefront_ops, surface="storefront", intent_hint=intent_hint
+        )
+        if storefront_examples:
+            sections.append(
+                "── Shopify Storefront GraphQL — worked examples ─────────────\n\n"
+                + storefront_examples
             )
         storefront_gotchas = gotchas_for_ops(storefront_ops, surface="storefront")
         if storefront_gotchas:

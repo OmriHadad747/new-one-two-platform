@@ -131,7 +131,11 @@ Fix ALL of them in your revised output:
     # revised plan. This is what the revision agent must respect when editing.
     widget_catalog = (plan.get("appContracts") or {}).get("widgetApiCatalog") or []
     handler_surface = (
-        HARNESS_BASE + "\n\n" + build_handler_jit_sections(plan, widget_catalog)
+        HARNESS_BASE
+        + "\n\n"
+        + build_handler_jit_sections(
+            plan, widget_catalog, intent_hint=intent.get("desiredOutcome") or None
+        )
     )
 
     return f"""{handler_surface}

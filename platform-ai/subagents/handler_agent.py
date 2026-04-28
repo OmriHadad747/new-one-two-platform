@@ -80,7 +80,11 @@ class HandlerGenerator(Generator):
         )
 
     def user_prompt(self, ctx: CodegenContext) -> str:
-        jit_sections = _build_jit_sections(ctx.plan, ctx.platform_api_catalog)
+        jit_sections = _build_jit_sections(
+            ctx.plan,
+            ctx.platform_api_catalog,
+            intent_hint=ctx.intent.get("desiredOutcome") or None,
+        )
         webhook_contract_block = _format_webhook_contract(ctx.plan)
         cron_contract_block = _format_cron_contract(ctx.plan)
         gaps_block = _format_platform_gaps(ctx.plan)
@@ -381,10 +385,12 @@ def _validate_email_metadata(
 
 
 def _build_jit_sections(
-    plan: Dict[str, Any], platform_api_catalog: List[Dict[str, str]]
+    plan: Dict[str, Any],
+    platform_api_catalog: List[Dict[str, str]],
+    intent_hint: str | None = None,
 ) -> str:
     """Thin wrapper — delegates to the shared handler JIT assembler."""
-    return build_handler_jit_sections(plan, platform_api_catalog)
+    return build_handler_jit_sections(plan, platform_api_catalog, intent_hint=intent_hint)
 
 
 # ── Prompt-building helpers ────────────────────────────────────────────────────
