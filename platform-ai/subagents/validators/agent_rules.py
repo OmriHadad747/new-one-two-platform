@@ -91,6 +91,12 @@ Widget routes. Route handlers read EXACT field names from the catalog's `request
 
 Admin routes. Same exact-shape rule as widget. List routes implement pagination semantics matching the catalog (`page`, `page_size`, `items`, `total`). When `cronSchedule` is non-null, the manual-trigger POST route in `adminRouter` must dispatch via `enqueueJob` — never via a direct `sql` INSERT into `cron_queue` (the template owns that table).
 
+MIGRATION SQL — what to look for:
+
+Schema isolation. The migration runner pins `search_path` to the tenant's own Postgres schema, so bare table names land in the right place automatically. The migration must NOT qualify table names with a schema (no `tenant_<uuid>.<table>` style, no cross-database references). A literal `tenant_<...>.foo` either lands in the wrong schema or fails at deploy — silent tenant cross-talk in the worst case.
+
+(The deploy-blocking SQL allowlist — DROP / TRUNCATE / DELETE / UPDATE / GRANT / REVOKE / ENABLE RLS / CREATE POLICY / CREATE FUNCTION / CREATE TRIGGER / CREATE EXTENSION / DO $$ / CONCURRENTLY / cron.schedule, plus `tenant_id` columns, plus reserved template-owned tables `processed_webhooks` / `cron_queue` — is enforced statically by `migration_artifact.py` before this validator runs. Don't re-flag those; flag only the residual semantic cases the regex layer can't see.)
+
 OUTPUT FORMAT — return JSON only:
 
 {
