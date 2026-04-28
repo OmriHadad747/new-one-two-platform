@@ -122,14 +122,20 @@ def test_handler_finding_with_widget_finding_locks_migration_only() -> None:
 
 
 def test_plan_finding_alone_locks_both_default() -> None:
-    # Plan-level findings are informational — revision can't re-run the
-    # architect from inside this loop. Falls through to the default.
+    # Defensive: in production, _phase_validator filters plan findings out
+    # before this function is ever called (revision can't re-run the
+    # architect, so plan findings short-circuit the loop). This test pins
+    # the function's fallthrough behavior in case a plan finding ever does
+    # leak through — it must not crash, and it must default to the safe
+    # frontend-only revision lock.
     result = _revision_locked_artifacts([_f("plan")])
     assert result == frozenset({"handler", "migration"})
 
 
 def test_plan_finding_with_handler_finding_locks_migration_only() -> None:
-    # Co-occurring handler finding still drives the lock decision.
+    # Same defensive guarantee as above for the mixed case: even if a plan
+    # finding leaks through filtering, a co-occurring handler finding still
+    # drives the lock decision correctly.
     result = _revision_locked_artifacts([_f("plan"), _f("handler")])
     assert result == frozenset({"migration"})
 
