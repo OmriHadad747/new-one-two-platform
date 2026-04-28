@@ -1,0 +1,43 @@
+App purpose: Recover lost sales by automatically reminding customers about their abandoned carts after a configurable delay.
+App category: backend_admin
+Trigger types: cron
+
+Quality brief — what makes a good version of this app:
+A good version of this app correctly identifies when a cart has been idle for the merchant's chosen duration, avoids sending duplicate reminders to the same customer, and provides a clear admin view of which reminders went out. Handle edge cases: don't email customers who returned and completed checkout, respect customer email preferences if available, and ensure the reminder email is compelling without being spammy. The admin page should show sent reminders with timestamps so the merchant can spot trends and measure impact.
+
+UX expectations for this admin panel:
+The dashboard should lead with a real-time reminder log showing recipient, cart value, sent timestamp, and delivery status so merchants can immediately gauge recovery impact. Settings (delay, enable/disable toggle) should be prominent but secondary. Pagination and date filtering on the log are essential once volume grows.
+
+Column enum vocabulary — the handler stores ONLY these literal values in each column:
+  abandoned_carts.reminder_status: ["pending", "sent", "skipped", "converted", "ineligible"]
+  reminder_log.delivery_status: ["sent", "failed"]
+When rendering filter dropdowns, status badges, or any UI that branches on one of these column values, use ONLY values from the matching list. Do NOT invent additional values (e.g. a 'converted' filter when the column enum is ['pending','sent','failed']) — those render dead options the merchant cannot act on.
+
+Admin API catalog — the ONLY paths the panel may call via bridge.call().
+Use EXACTLY the requestShape shown when building the bridge.call() body.
+Expect EXACTLY the responseShape shown when reading the result.
+  GET /settings
+    send:    bridge.call('/settings', {})
+    receive: {'delay_minutes': 'number', 'is_enabled': 'boolean', 'updated_at': 'string'}
+  POST /settings
+    send:    bridge.call('/settings', {'delay_minutes': 'number', 'is_enabled': 'boolean'})
+    receive: {'delay_minutes': 'number', 'is_enabled': 'boolean', 'updated_at': 'string'}
+  GET /reminders
+    send:    bridge.call('/reminders', {'page': 'number', 'page_size': 'number', 'date_from': 'string | null', 'date_to': 'string | null', 'delivery_status': 'string | null'})
+    receive: {'items': [{'id': 'string', 'abandoned_cart_id': 'string', 'customer_email': 'string', 'customer_id': 'number | null', 'cart_total_cents': 'number', 'currency': 'string', 'line_items_json': 'array', 'recovery_url': 'string | null', 'delivery_status': 'string', 'sent_at': 'string'}], 'total': 'number', 'page': 'number', 'page_size': 'number'}
+  GET /abandoned-carts
+    send:    bridge.call('/abandoned-carts', {'page': 'number', 'page_size': 'number', 'reminder_status': 'string | null'})
+    receive: {'items': [{'id': 'string', 'shopify_checkout_id': 'string', 'customer_email': 'string | null', 'total_cents': 'number', 'currency': 'string', 'line_items_json': 'array', 'reminder_status': 'string', 'reminder_sent_at': 'string | null', 'skip_reason': 'string | null', 'last_seen_at': 'string', 'created_at': 'string'}], 'total': 'number', 'page': 'number', 'page_size': 'number'}
+  POST /run
+    send:    bridge.call('/run', {})
+    receive: {'triggered': 'boolean', 'message': 'string'}
+
+Backend limitations the admin UI should surface:
+  - Shopify REST/GraphQL does not expose an abandoned checkouts feed with idle-since timestamps in a way that distinguishes 'still active' from 'truly abandoned' at the per-cart level: Use the Admin GraphQL abandonedCheckouts connection (sorted by updatedAt) combined with a DB snapshot of last_seen_at per cart; the cron computes idle duration as now() minus last_seen_at stored on each tracked cart row, avoiding reliance on Shopify's own abandonment classification
+  - No batch mutation API exists for sending reminder emails — each customer requires an individual platform.email.send call: Pre-fetch all eligible abandoned cart data in a single bulk GraphQL read before the loop; per-item email sends inside the loop are unavoidable for this resource type
+
+CRITICAL (validation rejects violations):
+- NEVER document.head / document.body — append styles and elements to `container`
+- NEVER import / export default — vanilla JS only, export function mount(...)
+
+Generate the Admin UI panel ES module. Output ONLY the raw JavaScript.

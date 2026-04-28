@@ -979,6 +979,7 @@ def _phase_codegen(
         retry_log,
         error_map,
         token_totals,
+        plan=base_ctx.plan,
     )
 
     all_errors = [f"{n}: {e}" for n, errs in error_map.items() for e in errs]
@@ -1010,8 +1011,19 @@ def _save_generated_files(
     artifacts: Dict[str, str],
     is_storefront: bool,
     is_admin_ui: bool,
+    plan: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Write generated artifacts as individual files within run_dir."""
+    """
+    Write generated artifacts as individual files within run_dir.
+
+    For widget.js / admin_ui.js, prepend the same `window.__PLATFORM_CATALOG__`
+    manifest the platform-back bundle-storage saver uses on deploy, so the
+    locally-saved file is byte-identical to the served bundle. Without the
+    prelude, locally-tested code would behave differently from deployed code
+    (the SDK would default to all-POST). When `plan` is omitted (legacy
+    callers), fall back to no prelude — the SDK will treat absent manifest
+    as all-POST, matching the pre-method-aware-SDK behaviour.
+    """
     from utils.file_bundle import parse_file_bundle, ParseError
 
     handler_raw = artifacts.get("handler", "")
@@ -1030,11 +1042,23 @@ def _save_generated_files(
         migrations_dir.mkdir(exist_ok=True)
         (migrations_dir / "generated.sql").write_text(migration)
 
+    contracts = ((plan or {}).get("appContracts") or {}) if plan else {}
+
+    def _prelude(catalog_rows: List[Dict[str, Any]]) -> str:
+        slim = [
+            {"path": r["path"], "method": (r.get("method") or "POST").upper()}
+            for r in catalog_rows or []
+            if isinstance(r, dict) and isinstance(r.get("path"), str)
+        ]
+        return f"window.__PLATFORM_CATALOG__ = {json.dumps(slim)};\n"
+
     if is_storefront and artifacts.get("widget_js"):
-        (run_dir / "widget.js").write_text(artifacts["widget_js"])
+        prelude = _prelude(contracts.get("widgetApiCatalog") or []) if plan else ""
+        (run_dir / "widget.js").write_text(prelude + artifacts["widget_js"])
 
     if is_admin_ui and artifacts.get("admin_ui"):
-        (run_dir / "admin_ui.js").write_text(artifacts["admin_ui"])
+        prelude = _prelude(contracts.get("adminApiCatalog") or []) if plan else ""
+        (run_dir / "admin_ui.js").write_text(prelude + artifacts["admin_ui"])
 
 
 def _save_revision_failure_local(
@@ -1059,6 +1083,7 @@ def _save_codegen_failure_local(
     retry_log: List[Dict],
     final_errors: Dict[str, List[str]],
     token_totals: Dict[str, Tuple[int, int]],
+    plan: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """
     Persist the LAST-attempt artifacts and the full retry trail when codegen
@@ -1069,13 +1094,15 @@ def _save_codegen_failure_local(
     to inspect. The dumped files use the SAME layout as a successful run
     (handler split via `===FILE:===` markers, migration in migrations/,
     single-file widget/admin at the run-dir root) so the same inspection
-    workflow applies to a failed run.
+    workflow applies to a failed run. `plan` is forwarded so the saved
+    widget.js / admin_ui.js get the same `__PLATFORM_CATALOG__` prelude
+    the deployed bundles get.
 
     Returns the path to the validation_failure.json summary so the caller
     can print it to the merchant.
     """
     # Dump artifacts as proper files — same shape as a successful run.
-    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui)
+    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
 
     ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     path = run_dir / "validation_failure.json"
@@ -1352,7 +1379,9 @@ def _phase_validator(
     # — same shape as a successful run, so the merchant can open the broken
     # widget.js / admin_ui.js in their editor instead of fishing them out
     # of a JSON blob.
-    _save_generated_files(run_dir, merged2, is_storefront, is_admin_ui)
+    _save_generated_files(
+        run_dir, merged2, is_storefront, is_admin_ui, plan=revision_ctx.plan
+    )
     _agent_line(
         "Revision",
         ok=False,
@@ -1513,7 +1542,7 @@ def _save_artifacts_md(
     total_ms: int = 0,
     all_tokens: Optional[Dict[str, Tuple[int, int]]] = None,
 ) -> Path:
-    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui)
+    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
     path = run_dir / "report.md"
 
     lines = _md_pipeline_header(stop_label, prompt, total_ms, all_tokens or {})
@@ -2019,7 +2048,7 @@ def main() -> None:
     total_ms = int((time.monotonic() - total_start) * 1000)
 
     # ── Save report + generated files ─────────────────────────────────────────
-    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui)
+    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
     merchant_facing = explanation.get("merchantFacing", "")
     lines = _md_pipeline_header("full", prompt, total_ms, all_tokens)
     lines += [

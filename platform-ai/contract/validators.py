@@ -116,12 +116,34 @@ class EmailStarterContent(BaseModel):
     ctaUrl: Optional[str] = None
 
 
+class CatalogEntry(BaseModel):
+    """
+    Minimal projection of a widgetApiCatalog / adminApiCatalog row carried in
+    the bundle. Just `path` + `method` — the SDKs (host.call / bridge.call)
+    use this at runtime to dispatch GET-with-querystring vs POST-with-body
+    so the codegen agents never need to think about HTTP method. requestShape
+    + responseShape stay in the architect plan; the runtime doesn't need
+    them.
+    """
+
+    path: str
+    method: Literal["GET", "POST"]
+
+
 class Bundle(BaseModel):
     widgetModule: Optional[str] = None
     adminUiModule: Optional[str] = None
     widgetTargetTemplates: Optional[List[str]] = (
         None  # theme template pages the widget targets, e.g. ["product", "cart"]
     )
+    # Slim catalog manifests — `[{path, method}]` projections of the
+    # architect's full widgetApiCatalog / adminApiCatalog. The platform-back
+    # bundle-storage saver prepends a `window.__PLATFORM_CATALOG__ = ...;`
+    # prelude to the served bundle JS so the widget/admin SDK can dispatch
+    # GET vs POST by path lookup at call time. Empty list when the surface
+    # has no catalog (backend-only / non-storefront).
+    widgetCatalog: List[CatalogEntry] = Field(default_factory=list)
+    adminCatalog: List[CatalogEntry] = Field(default_factory=list)
     handlerModule: HandlerModule
     # dbMigration is a single .sql file under migrations/NNNN_*.sql — the
     # deployer's SQL validator only accepts a narrow allow-list of constructs
@@ -141,6 +163,8 @@ class Bundle(BaseModel):
             "widgetModule": self.widgetModule,
             "adminUiModule": self.adminUiModule,
             "widgetTargetTemplates": self.widgetTargetTemplates,
+            "widgetCatalog": [c.model_dump() for c in self.widgetCatalog],
+            "adminCatalog": [c.model_dump() for c in self.adminCatalog],
             "handlerModule": self.handlerModule.model_dump(),
             "dbMigration": self.dbMigration.model_dump(),
             "explanation": self.explanation.model_dump(),

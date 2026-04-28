@@ -149,6 +149,47 @@ Source: every handler-facing prompt block — `platform-ai/subagents/prompts/top
 
 ---
 
+## Audit findings — method-aware SDK + cross-handler validators (2026-04-28)
+
+A second issue from the same cart-recovery run: the architect declared
+`GET /reminders` and `GET /abandoned-carts` in `adminApiCatalog`, the admin
+codegen agent obediently called `bridge.call('/reminders', { page, ... })`,
+the handler agent obediently wrote `adminRouter.get('/reminders', ...)`
+reading from `req.query` (HTTP-correct for a GET) — and the cross-handler
+validator FP'd "never reads req.body — collected data is silently
+discarded." The validator was right about the symptom but wrong about
+the cause: the bridge SDK was always-POST regardless of catalog method,
+so at runtime the POST hit the GET route and 404'd.
+
+Resolution: the SDK now derives method per path from a
+`window.__PLATFORM_CATALOG__` manifest prepended to the served bundle
+by `platform-back/apps/api/src/lib/bundle-storage.ts:saveBundles`. The
+manifest is a slim `{path, method}[]` projection of the architect's
+catalogs, threaded through `Bundle.widgetCatalog` /
+`Bundle.adminCatalog` (Pydantic + Zod) into the served JS prelude.
+
+Side effects on rules in this file:
+
+- **Rows 88, 93** (widget / admin route handlers read EXACT requestShape
+  field names) — the rules are unchanged in classification but the
+  IMPLEMENTATION expectation is now: for **GET** catalog rows, the
+  handler reads field names from `req.query` (the SDK encodes args as
+  query string); for **POST** catalog rows, from `req.body` (JSON body).
+  `cross_widget_handler.py` and `cross_admin_handler.py` are now
+  method-aware — they parse the architect catalog's `method` field per
+  path and check the appropriate slot. Defaults to POST when the path
+  is absent from the catalog (matches the SDK's fallback behaviour for
+  routes that bypass the catalog).
+- The cross-handler validators' new signature accepts the architect
+  catalog as a third argument; `crew.validate_artifacts` threads it
+  through from `ctx.plan.appContracts.{widgetApiCatalog,adminApiCatalog}`.
+- Codegen prompts UNCHANGED. The architect already declares method per
+  catalog row; the codegen agents already see it; the handler-template
+  prompt already teaches `<router>.<method>(path, ...)` shape. The only
+  thing that changed is the SDK enforcing the catalog at runtime.
+
+---
+
 ## Audit findings — sidecar reliability (2026-04-28)
 
 A documented case (cart-recovery generation, run `2026-04-28T16-17-38_recover-lost-sales-by-automatically-reminding`) hit row 33 three retries in a row and never recovered: the static check correctly fired each time, the cumulative_errors mechanism correctly fed the error string forward, and the model consistently chose to drop the sidecar entirely instead of fixing it. The check was right; the prompt design wasn't actionable enough under retry pressure.

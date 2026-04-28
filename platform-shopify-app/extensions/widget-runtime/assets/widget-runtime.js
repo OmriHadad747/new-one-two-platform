@@ -147,20 +147,49 @@ function buildHost({ appId, shop, platformUrl }) {
     // Widget calls go through Shopify's App Proxy: the browser calls the shop's
     // own domain, Shopify appends an HMAC signature, then forwards to platform-back
     // which verifies it. Containers are never directly browser-accessible.
-    call: async (path, body) => {
-      const proxyUrl = `https://${shop}/apps/new-one-two/${encodeURIComponent(appId)}${path}`;
-      const res = await fetch(proxyUrl, {
-        method: "POST",
+    //
+    // Method dispatch: the served bundle has `window.__PLATFORM_CATALOG__ = [...]`
+    // prepended by platform-back's bundle-storage saver. We look up the
+    // architect-declared method per path and route GET-with-querystring or
+    // POST-with-body accordingly. Default POST when the manifest is absent
+    // or the path isn't listed — matches the pre-method-aware-SDK behaviour
+    // and works for handler-internal routes that bypass the catalog.
+    call: async (path, args) => {
+      const catalog = (typeof window !== "undefined" && window.__PLATFORM_CATALOG__) || [];
+      const entry = catalog.find((e) => e && e.path === path);
+      const method = (entry && entry.method ? entry.method : "POST").toUpperCase();
+
+      let url = `https://${shop}/apps/new-one-two/${encodeURIComponent(appId)}${path}`;
+      let body;
+
+      if (method === "GET") {
+        // Encode args as query string. Skip null/undefined so optional
+        // filters land as "absent param" not "present-but-empty".
+        if (args && typeof args === "object") {
+          const qs = new URLSearchParams();
+          for (const [k, v] of Object.entries(args)) {
+            if (v === undefined || v === null) continue;
+            qs.append(k, String(v));
+          }
+          const s = qs.toString();
+          if (s) url += `?${s}`;
+        }
+      } else {
+        body = args !== undefined ? JSON.stringify(args) : undefined;
+      }
+
+      const res = await fetch(url, {
+        method,
         headers: {
           "Content-Type": "application/json",
           "ngrok-skip-browser-warning": "1",
         },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body,
       });
 
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(`[host.call] ${path} failed [${res.status}]: ${text}`);
+        throw new Error(`[host.call] ${method} ${path} failed [${res.status}]: ${text}`);
       }
 
       return res.json();

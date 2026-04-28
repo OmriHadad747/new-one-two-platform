@@ -63,6 +63,50 @@ Source: every admin-UI-facing prompt block — `platform-ai/subagents/prompts/co
 
 ---
 
+## Audit changes (2026-04-28) — method-aware bridge.call SDK + admin proxy
+
+Documented case (cart-recovery generation, run
+`2026-04-28T16-17-38_recover-lost-sales-by-automatically-reminding`) where
+the architect declared GET `/reminders` and GET `/abandoned-carts` in
+adminApiCatalog, the admin agent obediently called `bridge.call(path,
+{filters})`, the handler agent obediently wrote `adminRouter.get(path,
+async (req, res) => { const {…} = req.query; … })` — and the cross-handler
+validator FP'd "never reads req.body — collected data is silently
+discarded" 8 times across two retries. Worse: at runtime the bridge SDK
+was hardcoded to POST and the platform-back admin proxy was POST-only, so
+the GET catalog declaration was a lie at every layer.
+
+Fix shipped this round (paired with the matching widget changes):
+
+- **`AdminShell.tsx:makeBridge` SDK now derives method from a catalog
+  manifest** baked into the served bundle. The manifest comes from
+  `Bundle.adminCatalog` (Pydantic + Zod schemas updated in lockstep) and
+  is prepended as `window.__PLATFORM_CATALOG__ = [...]` by
+  `platform-back/apps/api/src/lib/bundle-storage.ts:saveBundles`.
+  `bridge.call(path, args)` looks up `path → method` and dispatches
+  GET-with-querystring vs POST-with-body. Defaults to POST when the
+  path is absent from the manifest.
+- **`platform-back/apps/api/src/routes/admin.ts` admin proxy now accepts
+  GET** in addition to POST. On GET the proxy forwards the query string
+  verbatim to the handler; on POST it forwards the raw body bytes (as
+  before). Mirrors the widget edge proxy which already supported both.
+- **`cross_admin_handler.py` is now method-aware.** Row 24's structural
+  field-name match scans `req.body` on POST routes and `req.query` on
+  GET routes, source of truth being the architect catalog passed as
+  the third argument.
+- **`AdminBridge.call` interface** signature updated:
+  `(path: string, args?: unknown) => Promise<unknown>` (the second arg
+  is no longer a "body" — it's args that the SDK encodes per method).
+  No call-site changes needed; the type docstring captures the new
+  semantic.
+- **`chat_local.py:_save_generated_files`** prepends the same manifest
+  to locally-saved `admin_ui.js` so dev-loop testing matches deployed
+  behaviour.
+
+Row classifications unchanged. Like the widget side, this is a
+sub-genre of `Cross-artifact-context FP` resolved at the SDK and
+validator layers without reclassifying any rule.
+
 ## Audit fixes applied this round
 
 All issues flagged during the audit have been resolved, plus one additional reclassification surfaced during static-safety review.

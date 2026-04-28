@@ -77,6 +77,49 @@ The static-yes rule-rows above (✅) are covered by checks in:
 
 ---
 
+## Audit changes (2026-04-28) — method-aware host.call SDK
+
+The architect's `widgetApiCatalog` rows carry a `method` field (GET / POST)
+per ARCH_RULES row 19. Until this round the host.call SDK was always-POST
+regardless: the storefront app proxy widget runtime
+(`platform-shopify-app/extensions/widget-runtime/assets/widget-runtime.js`)
+hardcoded `method: "POST"` for every call. That made the architect's
+catalog `method` field a lie at runtime — GET routes silently became POST
+in the wire, and the platform-back widget edge proxy already forwarded the
+request method verbatim, so a generated `widgetRouter.get(path, ...)` route
+that read from `req.query` got an empty `req.query` because the SDK had
+sent the args in the body of a POST instead.
+
+Fix shipped this round:
+
+- **SDK now derives method from a runtime catalog manifest.** The served
+  widget bundle gets `window.__PLATFORM_CATALOG__ = [{path, method}, ...]`
+  prepended at deploy time by
+  `platform-back/apps/api/src/lib/bundle-storage.ts:saveBundles`. The
+  manifest is a slim projection of `widgetApiCatalog` threaded through
+  `Bundle.widgetCatalog` (Pydantic + Zod schemas updated in lockstep).
+  `host.call(path, args)` looks up `path → method` and routes
+  GET-with-querystring vs POST-with-body accordingly.
+- **`cross_widget_handler.py` is now method-aware.** Row 13's structural
+  half (field-name match between widget and handler) checks `req.body`
+  for POST paths and `req.query` for GET paths, source of truth being
+  the architect catalog passed as the third argument to
+  `validate_widget_handler_contract`. Defaults to POST when the path is
+  absent from the catalog (matches the SDK fallback for routes that
+  bypass the catalog).
+- **`chat_local.py:_save_generated_files`** prepends the same manifest
+  to locally-saved `widget.js` so dev-loop testing matches deployed
+  behaviour.
+
+Row classifications unchanged. The audit recorded the FP class —
+"correct architect declaration, SDK didn't honour it, validator FP'd
+on the symptom not the cause" — as a sub-genre of
+`Cross-artifact-context FP`: the validator was reading the right slot
+(the slot the SDK populated) but the slot was wrong because the SDK
+was wrong. Resolution lived in the SDK (now method-aware) and the
+validator (now method-aware about WHICH slot to check), with no rule
+reclassification needed.
+
 ## Audit changes this round
 
 - **`cross_widget_handler.py` rewritten** to target the current Express `widgetRouter.post("/path", async (req, res) => … req.body …)` shape. The earlier version was anchored to the legacy `ctx.widgetPath === "/path"` / `ctx.widgetBody` harness and silently matched nothing — the cross-artifact field-shape check was effectively disabled for every storefront app. The structural half of row 13 is now active.

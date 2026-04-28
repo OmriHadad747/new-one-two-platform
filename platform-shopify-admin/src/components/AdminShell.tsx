@@ -64,23 +64,56 @@ export function AdminShell({ shop }: Props) {
     (appId: string): AdminBridge => ({
       context: { shop, appId },
 
-      call: async (path: string, body?: unknown) => {
+      call: async (path: string, args?: unknown) => {
         const token = await shopify.idToken();
         // Shop identity now travels inside the App Bridge session JWT —
         // the edge reads claims.shop server-side rather than trusting a
         // URL segment. `path` must start with "/" per the bridge contract.
-        const url = `${API_BASE}/admin/${encodeURIComponent(appId)}${path}`;
+        //
+        // Method dispatch: the served panel bundle has
+        // `window.__PLATFORM_CATALOG__ = [...]` prepended by platform-back's
+        // bundle-storage saver. We look up the architect-declared method
+        // per path and route GET-with-querystring or POST-with-body
+        // accordingly. Default POST when the manifest is absent or the
+        // path isn't listed (matches the pre-method-aware-SDK behaviour
+        // and works for routes that bypass the catalog).
+        const win = window as Window & {
+          __PLATFORM_CATALOG__?: { path: string; method: "GET" | "POST" }[];
+        };
+        const catalog = win.__PLATFORM_CATALOG__ ?? [];
+        const entry = catalog.find((e) => e?.path === path);
+        const method = (entry?.method ?? "POST").toUpperCase();
+
+        let url = `${API_BASE}/admin/${encodeURIComponent(appId)}${path}`;
+        let body: string | undefined;
+
+        if (method === "GET") {
+          if (args && typeof args === "object") {
+            const qs = new URLSearchParams();
+            for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
+              if (v === undefined || v === null) continue;
+              qs.append(k, String(v));
+            }
+            const s = qs.toString();
+            if (s) url += `?${s}`;
+          }
+        } else {
+          body = JSON.stringify(args ?? {});
+        }
+
         const res = await fetch(url, {
-          method: "POST",
+          method,
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(body ?? {}),
+          body,
         });
         if (!res.ok) {
           const detail = await res.json().catch(() => ({})) as { error?: string };
-          throw new Error(detail.error ?? `Request failed with status ${res.status}`);
+          throw new Error(
+            detail.error ?? `${method} ${path} failed with status ${res.status}`,
+          );
         }
         return res.json();
       },

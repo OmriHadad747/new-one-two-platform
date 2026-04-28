@@ -49,7 +49,11 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { appId: string } }>("/:appId/panel.js", adminBundleHandler);
 
   app.route<{ Params: AdminRouteParams }>({
-    method: ["POST", "OPTIONS"],
+    // GET routes carry args in the query string (architect catalogs that
+    // declare method=GET map to read-only list/lookup routes); POST carries
+    // them in the body. The method-aware admin SDK (AdminShell.tsx:call)
+    // routes per-path based on the bundled __PLATFORM_CATALOG__ manifest.
+    method: ["GET", "POST", "OPTIONS"],
     url: "/:appId/*",
     handler: adminProxyHandler,
   });
@@ -160,17 +164,38 @@ async function adminProxyHandler(
   }
 
   // ── 3. Build target URL and forward ──────────────────────────────────────
-  // we forward the full /admin/<path> to the handler so the
-  // handler can route inbound trust domains by URL prefix.
-  const targetUrl = `${resolved.functionUrl}/admin/${subPath}`;
-  // fastify-raw-body captures the original bytes before JSON parsing.
-  // Forwarding those verbatim preserves key order, whitespace, and any
-  // exact-wire-format expectations the handler may have.
-  const rawBody = (request as { rawBody?: Buffer }).rawBody;
+  // we forward the full /admin/<path> to the handler so the handler can
+  // route inbound trust domains by URL prefix. On GET we preserve the
+  // query string verbatim so the handler's `req.query` sees what the
+  // SDK encoded; on POST we forward the raw body bytes so key order /
+  // whitespace / exact-wire-format expectations are honoured.
+  const query = request.query as Record<string, string | string[] | undefined>;
+  const forwardedQuery = new URLSearchParams();
+  for (const [k, v] of Object.entries(query)) {
+    if (v === undefined) continue;
+    if (Array.isArray(v)) {
+      for (const item of v) forwardedQuery.append(k, item);
+    } else {
+      forwardedQuery.append(k, v);
+    }
+  }
+  const qs = forwardedQuery.toString();
+  const targetUrl = `${resolved.functionUrl}/admin/${subPath}${qs ? `?${qs}` : ""}`;
+  // GET requests have no body; on POST, fastify-raw-body captures the
+  // original bytes before JSON parsing.
+  const rawBody = request.method === "GET"
+    ? undefined
+    : (request as { rawBody?: Buffer }).rawBody;
   const contentType = request.headers["content-type"];
 
   log.debug(
-    { targetUrl, shop: claims.shop, appId, tenantId: resolved.tenantId },
+    {
+      targetUrl,
+      method: request.method,
+      shop: claims.shop,
+      appId,
+      tenantId: resolved.tenantId,
+    },
     "admin edge: forwarding",
   );
 
@@ -178,7 +203,7 @@ async function adminProxyHandler(
   try {
     result = await forwardToHandler({
       targetUrl,
-      method: "POST",
+      method: request.method,
       body: rawBody,
       contentType: typeof contentType === "string" ? contentType : undefined,
       ctx: {

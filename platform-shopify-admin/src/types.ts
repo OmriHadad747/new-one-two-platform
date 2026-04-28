@@ -20,10 +20,20 @@ export interface AdminBridge {
   };
   /**
    * Call the app's admin handler.
-   * path  — must start with "/" (e.g. "/fetch-orders")
-   * body  — JSON-serialisable payload, or omit for reads
+   *
+   * path — must start with "/" (e.g. "/fetch-orders").
+   * args — JSON-serialisable payload (object, or omit for empty calls).
+   *
+   * The HTTP method is selected automatically per path from the
+   * `__PLATFORM_CATALOG__` manifest the served bundle ships with:
+   *   - GET routes encode `args` as a query string.
+   *   - POST routes encode `args` as a JSON body.
+   * Defaults to POST when the path is not in the manifest.
+   *
+   * The architect's adminApiCatalog is the source of truth for method
+   * per path. Codegen never needs to specify the method explicitly.
    */
-  call: (path: string, body?: unknown) => Promise<unknown>;
+  call: (path: string, args?: unknown) => Promise<unknown>;
   /**
    * Show a toast notification in Shopify Admin.
    * variant defaults to "success".
