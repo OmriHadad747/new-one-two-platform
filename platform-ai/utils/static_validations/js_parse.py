@@ -39,6 +39,94 @@ NON_FIELD = {
 }
 
 
+def strip_comments_and_strings(js: str) -> str:
+    """
+    Return `js` with line comments, block comments, and string literals
+    replaced by single spaces (preserving offsets so downstream regex line-
+    number math still works).
+
+    Use this before applying token-level forbidden-pattern denylists so a
+    rule like `// don't use document.body` or `'eval() is forbidden'` does
+    not false-positive against a comment or error-message string. Same
+    pattern as `_check_no_tenant_id_in_sql` in `handler_artifact.py`.
+
+    Recognised:
+      - `// line comments`
+      - `/* block comments, possibly multi-line */`
+      - `'single-quoted'`, `"double-quoted"`, `` `template-literal` ``
+        (template-literal interpolation `${…}` is NOT scrubbed — the
+        substituted expression is still real code worth scanning)
+
+    Backslash escapes inside string literals are honored. Regex literals
+    (`/foo/g`) are NOT specifically detected — division operators look
+    identical at the token level. Acceptable because the denylists this
+    feeds don't trigger on regex bodies anyway (no `document.body` etc.
+    inside a regex literal in real widget code).
+    """
+    out: list[str] = []
+    i = 0
+    n = len(js)
+    while i < n:
+        c = js[i]
+        # Line comment: // ... \n
+        if c == "/" and i + 1 < n and js[i + 1] == "/":
+            j = js.find("\n", i + 2)
+            j = n if j == -1 else j
+            out.append(" " * (j - i))
+            i = j
+            continue
+        # Block comment: /* ... */
+        if c == "/" and i + 1 < n and js[i + 1] == "*":
+            j = js.find("*/", i + 2)
+            j = n if j == -1 else j + 2
+            block = js[i:j]
+            # Preserve newlines so line numbers stay aligned.
+            out.append("".join("\n" if ch == "\n" else " " for ch in block))
+            i = j
+            continue
+        # String / template literal — same scan logic for all three quotes.
+        if c in ("'", '"', "`"):
+            quote = c
+            j = i + 1
+            while j < n:
+                cj = js[j]
+                if cj == "\\":
+                    j += 2
+                    continue
+                # Template-literal interpolation: keep ${…} contents real.
+                if quote == "`" and cj == "$" and j + 1 < n and js[j + 1] == "{":
+                    # Emit blank for the literal slice so far, then the raw
+                    # interpolation, then continue scanning the literal.
+                    out.append(" " * (j - i))
+                    depth = 1
+                    k = j + 2
+                    while k < n and depth > 0:
+                        ck = js[k]
+                        if ck == "{":
+                            depth += 1
+                        elif ck == "}":
+                            depth -= 1
+                        k += 1
+                    out.append(js[j:k])
+                    i = k
+                    j = i
+                    if i >= n:
+                        break
+                    continue
+                if cj == quote:
+                    j += 1
+                    break
+                j += 1
+            block = js[i:j]
+            out.append("".join("\n" if ch == "\n" else " " for ch in block))
+            i = j
+            continue
+        # Default: copy through.
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def extract_js_fields(obj_literal: str) -> List[str]:
     """
     Extract property key names from a JS object literal fragment.

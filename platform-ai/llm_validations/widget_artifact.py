@@ -13,6 +13,9 @@ from __future__ import annotations
 import re
 from typing import Dict, List
 
+from utils.static_validations.js_parse import (
+    strip_comments_and_strings as _strip_comments_and_strings,
+)
 from utils.static_validations.shared_checks import (
     find_document_violations as _find_document_violations,
     find_setTimeout_violations as _find_setTimeout_violations,
@@ -61,23 +64,33 @@ def validate_widget_artifact(
     if not widget_js or not widget_js.strip():
         return errors  # backend — no widget JS to validate
 
-    if not re.search(r"\bexport\s+function\s+mount\b", widget_js):
+    # Scrub comments + string-literal contents BEFORE applying the token-
+    # level denylists. A comment like `// don't use document.body` or an
+    # error message like `'eval() is forbidden'` would otherwise FP every
+    # regex below. Same pattern as handler_artifact._check_no_tenant_id_in_sql.
+    # Path-arg extraction (host.call, host.storefront) and the form-submission
+    # signal continue to use the RAW source — they need the literal string
+    # contents inside the quotes that scrubbing would erase.
+    scrubbed = _strip_comments_and_strings(widget_js)
+
+    if not re.search(r"\bexport\s+function\s+mount\b", scrubbed):
         errors.append(
             "must export a named mount function: export function mount(container, host) { ... }"
         )
 
     for pattern, message in FORBIDDEN_WIDGET_JS_PATTERNS:
-        if re.search(pattern, widget_js):
+        if re.search(pattern, scrubbed):
             errors.append(message)
 
     # setTimeout is allowed only as a bounded debounce — check delays.
-    errors.extend(_find_setTimeout_violations(widget_js))
+    errors.extend(_find_setTimeout_violations(scrubbed))
 
     # document.* denylist — reject shapes that leak outside the container or
     # mutate page-wide state; allow safe page reads/events.
-    errors.extend(_find_document_violations(widget_js))
+    errors.extend(_find_document_violations(scrubbed))
 
-    # host.storefront() must use relative paths
+    # host.storefront() must use relative paths. Uses RAW source — the path
+    # we want to inspect lives inside a string literal that scrubbing erases.
     storefront_calls = re.findall(
         r"""host\.storefront\s*\(\s*['"`]([^'"`]+)['"`]""", widget_js
     )
@@ -88,7 +101,8 @@ def validate_widget_artifact(
                 f"not a full URL: '{path[:60]}'"
             )
 
-    # host.call() paths must be in the catalog
+    # host.call() paths must be in the catalog. Uses RAW source for the same
+    # reason — the path is inside the literal that scrubbing erases.
     catalog_paths = {entry["path"] for entry in platform_api_catalog}
     called_paths = re.findall(r"""host\.call\s*\(\s*['"]([^'"]+)['"]""", widget_js)
     for path in called_paths:
@@ -98,28 +112,47 @@ def validate_widget_artifact(
                 f"Allowed: {sorted(catalog_paths)}"
             )
 
-    if re.search(r"\btenant[_-]?id\s*[:=]\s*['\"]", widget_js, re.IGNORECASE):
+    # Hardcoded tenant_id literal. Run against scrubbed source so a comment
+    # like `// hardcoded tenant_id is forbidden` doesn't FP.
+    if re.search(r"\btenant[_-]?id\s*[:=]\s*['\"]", scrubbed, re.IGNORECASE):
         errors.append("hardcoded tenant_id detected — read from host.context instead")
 
-    # Detect form submissions: either an explicit submit button/listener, or a button
-    # click listener combined with a form input — both indicate the widget is collecting
-    # data and attempting to send it somewhere.
+    # Identity persistence: never write `customerId` to localStorage. The
+    # browser is shared across shoppers (public computers, family devices),
+    # so a stored customerId is read by the next shopper as if it were theirs
+    # — wrong-customer data, privacy breach class. host.context supplies it
+    # fresh on every mount; no caching needed. Run against scrubbed source.
+    if re.search(
+        r"""localStorage\s*\.\s*setItem\s*\(\s*['"]customerId['"]""",
+        scrubbed,
+    ):
+        errors.append(
+            "localStorage.setItem('customerId', ...) is forbidden — host.context "
+            "supplies customerId fresh on every mount. Storing it locally leaks "
+            "the previous shopper's identity to the next one on shared browsers."
+        )
+
+    # Form submissions without backend wiring (silent data loss). Tightened
+    # to the explicit-submit signal only — `<button type="submit">`,
+    # `addEventListener("submit", …)`, `.submit()` — which is the
+    # near-zero-FP shape. The earlier (click + input) heuristic was
+    # FP-prone against legitimate read-only filter UIs and is delegated to
+    # the LLM `agent_rules` validator instead. Run against the RAW source —
+    # `type="submit"` lives inside an HTML-attribute string literal that
+    # scrubbing erases, but we still want to detect it.
     has_explicit_submit = bool(
         re.search(
-            r"type=[\"']submit[\"']|addEventListener\([\"']submit|\.submit\s*\(",
+            r"""type=["']submit["']|addEventListener\(\s*["']submit["']|\.submit\s*\(""",
             widget_js,
         )
     )
-    has_form_input = bool(re.search(r"<input|<textarea|\bgetFormData\b", widget_js))
-    has_click_submit = bool(re.search(r"addEventListener\([\"']click", widget_js))
     has_host_call = bool(re.search(r"\bhost\.call\s*\(", widget_js))
-    if (
-        has_explicit_submit or (has_click_submit and has_form_input)
-    ) and not has_host_call:
+    if has_explicit_submit and not has_host_call:
         errors.append(
-            "widget has a form action but never calls host.call() — collected data "
-            "is silently discarded. Add a POST endpoint to platformApiCatalog and call "
-            "it via host.call(path, data) to persist the submission"
+            "widget has an explicit form submission (type='submit' / submit listener / "
+            ".submit()) but never calls host.call() — collected data is silently "
+            "discarded. Add a POST endpoint to platformApiCatalog and call it via "
+            "host.call(path, data) to persist the submission."
         )
 
     return errors

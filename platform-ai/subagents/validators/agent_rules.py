@@ -91,6 +91,20 @@ Widget routes. Route handlers read EXACT field names from the catalog's `request
 
 Admin routes. Same exact-shape rule as widget. List routes implement pagination semantics matching the catalog (`page`, `page_size`, `items`, `total`). When `cronSchedule` is non-null, the manual-trigger POST route in `adminRouter` must dispatch via `enqueueJob` — never via a direct `sql` INSERT into `cron_queue` (the template owns that table).
 
+WIDGET JS — what to look for:
+
+Hardcoded identifiers. The widget MUST read identity from `host.context` (and shop-scoped data from the page URL via `location.pathname` / `location.search`). Never hardcode a shop domain literal (`*.myshopify.com`), variantId, productId, customerId, or collectionId in source. A hardcoded literal either ships wrong-store data when the widget runs in another shop, or shows the wrong shopper's data — both are tenant-cross-talk-class.
+
+Catalog request/response shape adherence. Every `host.call(path, body)` body uses EXACT field names from the architect's `widgetApiCatalog` `requestShape` for that path (no renaming, no aliasing, no spreads that drop fields). The widget reads EXACT field names from the catalog's `responseShape` (no field-name guessing on the resolved value). Field-name drift between widget and the catalog → handler reads `undefined` → silent feature breakage.
+
+`host.call` vs `host.storefront`. Public Shopify data — product details, variant availability, cart state — goes through `host.storefront(<relative-path>)`. Backend reads/writes (DB state, Admin-API-only data, mutations) go through `host.call(<catalog-path>, body)`. Don't proxy storefront reads through the handler when the widget can fetch them directly; don't use `host.storefront` for anything backend-owned.
+
+Customer identity flow. For features that persist per-shopper data, every `host.call()` body must include BOTH `customerId` (read fresh from `host.context`, may be null for guests) AND `guestToken` (minted client-side once via `crypto.randomUUID()`, persisted in `localStorage` under a stable key, reused on every call). After a successful migration response that carried both fields (logged-in shopper after a guest session), the stored `guestToken` MUST be cleared from `localStorage`. Never refuse to render for guests unless the feature genuinely requires authentication.
+
+Form actions without backend wiring. A widget that has data-collection UI but never calls `host.call()` silently discards what the shopper enters. The narrow case of an explicit submit form is caught statically in `widget_artifact.py`; flag the broader case where the widget has input controls (search field, textarea, custom click-to-submit button) and the click handler doesn't dispatch to `host.call()` — distinguish from legitimate read-only filter UI that operates client-side over storefront data.
+
+(The deploy-blocking shape rules — exporting `mount(container, host)`, banning raw `fetch`/`XMLHttpRequest`/`eval`/`Function`/`setInterval`, `setTimeout` ≤500ms, document.* / window.parent denylist, hardcoded `tenant_id`, host.call paths within the catalog, host.storefront relative-paths, no `localStorage.setItem('customerId', …)` — are enforced statically by `widget_artifact.py` before this validator runs. Don't re-flag those.)
+
 MIGRATION SQL — what to look for:
 
 Schema isolation. The migration runner pins `search_path` to the tenant's own Postgres schema, so bare table names land in the right place automatically. The migration must NOT qualify table names with a schema (no `tenant_<uuid>.<table>` style, no cross-database references). A literal `tenant_<...>.foo` either lands in the wrong schema or fails at deploy — silent tenant cross-talk in the worst case.

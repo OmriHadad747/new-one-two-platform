@@ -9,6 +9,10 @@ from __future__ import annotations
 import re
 from typing import List
 
+from utils.static_validations.sql_parse import (
+    strip_comments_and_strings as _strip_comments_and_strings,
+)
+
 
 
 def validate_migration_artifact(
@@ -85,13 +89,24 @@ def validate_migration_artifact(
             "cron.schedule / cron.unschedule (deployer-owned — see TD-023)",
         ),
     ]
+    # FORBIDDEN_PATTERNS run against RAW SQL — this mirrors the platform-back
+    # deployer's sql-validator.ts, which fails-closed on any forbidden token
+    # anywhere in the output (comments and strings included). The MIGRATION_BASE
+    # prompt warns the model upfront. Scrubbing locally would silently accept
+    # migrations the deployer rejects.
     for pattern, name in forbidden:
         if re.search(pattern, sql, re.IGNORECASE):
             errors.append(f"forbidden SQL construct: {name}")
 
+    # The remaining checks are LOCAL (not mirrored by the deployer). Run them
+    # against scrubbed SQL — a column comment like `-- not adding tenant_id,
+    # schema isolation now` or a comment mentioning `CREATE TABLE
+    # processed_webhooks would conflict` would otherwise FP.
+    scrubbed = _strip_comments_and_strings(sql)
+
     # ALTER TABLE is allowed only for `ADD COLUMN IF NOT EXISTS` — matches
     # sql-validator.ts (the ENABLE RLS case is already forbidden above).
-    for stmt in re.findall(r"\bALTER\s+TABLE\b[^;]+;", sql, re.IGNORECASE):
+    for stmt in re.findall(r"\bALTER\s+TABLE\b[^;]+;", scrubbed, re.IGNORECASE):
         if not re.search(r"\bADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\b", stmt, re.IGNORECASE):
             errors.append(
                 "ALTER TABLE is only allowed for ADD COLUMN IF NOT EXISTS. "
@@ -101,7 +116,7 @@ def validate_migration_artifact(
     # tenant_id column is now forbidden — schema isolation replaces it. Flag
     # any column named tenant_id inside a CREATE TABLE body so a drifted
     # generation doesn't silently add it.
-    for stmt in re.findall(r"CREATE\s+TABLE[^;]+\([\s\S]*?\);", sql, re.IGNORECASE):
+    for stmt in re.findall(r"CREATE\s+TABLE[^;]+\([\s\S]*?\);", scrubbed, re.IGNORECASE):
         if re.search(r"\btenant_id\b", stmt, re.IGNORECASE):
             errors.append(
                 "CREATE TABLE must NOT declare a tenant_id column — each tenant "
@@ -113,7 +128,7 @@ def validate_migration_artifact(
     created_tables = {
         t.lower()
         for t in re.findall(
-            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", sql, re.IGNORECASE
+            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", scrubbed, re.IGNORECASE
         )
     }
     template_owned = {"processed_webhooks", "cron_queue"} & created_tables
