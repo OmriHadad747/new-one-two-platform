@@ -299,6 +299,19 @@ def validate_handler_artifact(
     #     docs/FINDINGS_DEFERRED_4_5_6.md.
     errors.extend(_check_enum_writes(files_by_path, db_contracts or []))
 
+    # 11b. ON CONFLICT target cross-check: every `ON CONFLICT (col1, col2)`
+    #      in handler SQL must target either the table's PRIMARY KEY column(s)
+    #      or a declared `uniqueConstraint.columns` set in dbContracts.
+    #      Without this, Postgres raises `there is no unique or exclusion
+    #      constraint matching the ON CONFLICT specification` on the first
+    #      INSERT and the cron / route crashes.
+    #      Documented case: image-optimizer run 2026-04-28T20-38-51 emitted
+    #      `ON CONFLICT (run_id, image_id) DO NOTHING` against
+    #      optimization_run_items but the migration declared no
+    #      uniqueConstraint on that pair. Every cron invocation died at
+    #      item-INSERT time. See HANDLER_RULES.md row 56 audit findings.
+    errors.extend(_check_on_conflict_targets(files_by_path, db_contracts or []))
+
     # 12. Email metadata sidecar: the ```email-metadata``` fenced JSON block
     #     that follows the bundle is required iff the handler calls
     #     platform.email.send/sendBatch. Validates presence/absence, single
@@ -419,6 +432,167 @@ def _check_enum_writes(
                             f"emits CHECK ({col_lower} IN (...)) — this UPDATE "
                             "would be rejected at runtime."
                         )
+    return errors
+
+
+# Match `INSERT INTO <table> (...) VALUES (...) ... ON CONFLICT (col1, col2)`.
+# Captures table name (group 1) and the conflict-target column list (group 2).
+# Order-tolerant of intervening clauses (the column list and VALUES tuple may
+# span multiple lines, and INSERTs may have RETURNING / WHERE clauses before
+# ON CONFLICT). The `[\s\S]*?` is non-greedy and capped by the closing `)` of
+# ON CONFLICT — this won't accidentally match across statements because the
+# table name in group 1 anchors each match to one INSERT.
+_INSERT_ON_CONFLICT_RE = re.compile(
+    r"INSERT\s+INTO\s+(\w+)\b[\s\S]*?\bON\s+CONFLICT\s*\(([^)]+)\)",
+    re.IGNORECASE,
+)
+# Named-constraint variant: `ON CONFLICT ON CONSTRAINT <name>`. We capture
+# the constraint name but don't validate it (architect's dbContracts doesn't
+# carry constraint names — only the column lists). Treat as opaque-but-valid;
+# if the constraint doesn't exist, deploy fails at migration-apply time and
+# tsc/handler-static can't catch it. Not the same FP class as missing-target.
+_INSERT_ON_CONFLICT_NAMED_RE = re.compile(
+    r"INSERT\s+INTO\s+(\w+)\b[\s\S]*?\bON\s+CONFLICT\s+ON\s+CONSTRAINT\s+(\w+)",
+    re.IGNORECASE,
+)
+
+
+def _check_on_conflict_targets(
+    files_by_path: Dict[str, str],
+    db_contracts: List[Dict[str, Any]],
+) -> List[str]:
+    """
+    Cross-check: every `ON CONFLICT (col1, col2, ...)` in handler SQL must
+    target a unique constraint that the migration WILL emit — i.e. the
+    column set must match either:
+
+      - the PRIMARY KEY column(s) of the table (`id` for normal tables;
+        `singleton` for singleton tables), OR
+      - the `uniqueConstraint.columns` list declared in dbContracts (set
+        equality, order-insensitive — postgres treats them as a set), OR
+      - a single column the dbContracts declares with `unique: true`
+        (rare; supported for completeness).
+
+    Without this, postgres throws `there is no unique or exclusion
+    constraint matching the ON CONFLICT specification` on the first
+    INSERT and the cron / route crashes before any work happens.
+    Documented case: image-optimizer run 2026-04-28T20-38-51 emitted
+    `ON CONFLICT (run_id, image_id)` against optimization_run_items
+    with no matching uniqueConstraint declaration — every cron run
+    crashed at item-INSERT time.
+
+    Skipped silently when:
+      - the INSERT targets a table not in dbContracts (template tables,
+        or invented table names — those are flagged elsewhere);
+      - the conflict uses `ON CONSTRAINT <name>` form (constraint-name
+        validation requires DDL parsing of the migration; defer to
+        deploy-time);
+      - the conflict column list contains a non-identifier token (rare;
+        e.g. partial-index expressions — out of scope for static).
+    """
+    if not db_contracts:
+        return []
+
+    # Build per-table set of valid conflict-target column-sets:
+    #   { "table": [ frozenset({"id"}), frozenset({"run_id","image_id"}), ... ] }
+    valid_targets: Dict[str, List[frozenset]] = {}
+    for contract in db_contracts:
+        table = (contract.get("table") or "").lower()
+        if not table:
+            continue
+        targets: List[frozenset] = []
+
+        # Singleton tables: PK is `singleton`, no `id` column.
+        if contract.get("singleton") is True:
+            targets.append(frozenset({"singleton"}))
+        else:
+            # Normal tables: any column whose constraints contains
+            # PRIMARY KEY is the PK. Typically `id UUID PRIMARY KEY ...`.
+            for col in contract.get("columns") or []:
+                constraints = (col.get("constraints") or "").upper()
+                if "PRIMARY KEY" in constraints:
+                    name = (col.get("name") or "").lower()
+                    if name:
+                        targets.append(frozenset({name}))
+
+        # uniqueConstraint at the table level.
+        unique = contract.get("uniqueConstraint")
+        if isinstance(unique, dict):
+            cols = unique.get("columns") or []
+            if isinstance(cols, list) and cols:
+                targets.append(
+                    frozenset(str(c).lower() for c in cols if isinstance(c, str))
+                )
+
+        # Inline column-level UNIQUE flag (rare in our contracts; supported
+        # for completeness so we don't FP if the architect ever emits one).
+        for col in contract.get("columns") or []:
+            constraints = (col.get("constraints") or "").upper()
+            if "UNIQUE" in constraints and "PRIMARY KEY" not in constraints:
+                name = (col.get("name") or "").lower()
+                if name:
+                    targets.append(frozenset({name}))
+
+        if targets:
+            valid_targets[table] = targets
+
+    errors: List[str] = []
+    seen: set = set()
+    for path, code in files_by_path.items():
+        # Skip the named-constraint form — defer to deploy-time validation.
+        # Mark those positions so the column-list scan doesn't double-flag.
+        named_spans: List[tuple] = [
+            (m.start(), m.end()) for m in _INSERT_ON_CONFLICT_NAMED_RE.finditer(code)
+        ]
+
+        for match in _INSERT_ON_CONFLICT_RE.finditer(code):
+            # Skip if this match overlaps a named-constraint match.
+            if any(s <= match.start() < e for s, e in named_spans):
+                continue
+
+            table = match.group(1).lower()
+            cols_block = match.group(2)
+            # Parse columns. Reject non-identifier tokens (expression
+            # targets like `(lower(email))` or `WHERE deleted_at IS NULL`
+            # partial-index targets — out of scope for this check).
+            tokens = [c.strip().strip('`"') for c in cols_block.split(",")]
+            if not all(re.fullmatch(r"[a-zA-Z_]\w*", t) for t in tokens):
+                continue
+            conflict_set = frozenset(t.lower() for t in tokens)
+
+            targets = valid_targets.get(table)
+            if targets is None:
+                # Table not in dbContracts. Don't flag — either it's a
+                # template-owned table (already forbidden by another check)
+                # or an invented table (will fail other checks). Avoid
+                # double-flagging.
+                continue
+
+            if conflict_set in targets:
+                continue
+
+            # Mismatch — surface it. Show what dbContracts DID declare so
+            # the model can either (a) update the migration to add the
+            # constraint, or (b) align the conflict target to a real one.
+            key = (path, table, conflict_set)
+            if key in seen:
+                continue
+            seen.add(key)
+            declared = sorted(sorted(t) for t in targets)
+            errors.append(
+                f"[{path}] INSERT INTO {table} ... ON CONFLICT "
+                f"({', '.join(sorted(conflict_set))}) — but dbContracts "
+                f"declares no matching unique constraint or PRIMARY KEY. "
+                f"Valid conflict targets for `{table}` are: {declared}. "
+                f"Either add `uniqueConstraint: {{columns: "
+                f"{sorted(conflict_set)}}}` to the {table} dbContracts "
+                f"row (architect plan), or change the ON CONFLICT target "
+                f"to one of the declared sets. Without a matching "
+                f"constraint, postgres throws `there is no unique or "
+                f"exclusion constraint matching the ON CONFLICT "
+                f"specification` on the first INSERT."
+            )
+
     return errors
 
 

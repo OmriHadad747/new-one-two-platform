@@ -1,0 +1,7 @@
+
+
+PREVIOUS ATTEMPT FAILED VALIDATION:
+- setTimeout delay 4000ms exceeds 500ms — use event-driven patterns, not timers
+
+Fix ALL listed errors in this new attempt.
+

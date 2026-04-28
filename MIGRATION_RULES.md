@@ -66,3 +66,62 @@ The static-yes rule-rows above (✅) are covered by checks in:
 - **7 validate** → **5 static** rule-rows (✅ all enforced today in `migration_artifact.py`) + **2 llm** rule-rows deferred to `agent_rules` + `bug_finder`
 - **4 skip** → **2 no** (style / cosmetic) + **2 paranoid** (model handles via prompt; deployer catches deploy-blocking versions)
 - **0 critical static gaps** — the local static layer is feature-complete for the rules selected under the four-bar policy. Row 8 (DDL ↔ dbContracts faithfulness) is intentionally `llm` because a faithful structural check requires a full DDL parse + contract diff, which would either duplicate `bug_finder`'s cross-artifact reasoning or carry false-positive risk against legitimate constraint variations. bug_finder's existing prompt (under "Cross-artifact mismatches" and "Silent data loss / corruption") already covers this case.
+
+---
+
+## Audit findings — `created_at` drift (2026-04-28)
+
+Documented case (image-optimizer generation, run
+`2026-04-28T20-38-51_automatically-optimize-and-store-product-images`)
+where the migration emitted `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+on `optimization_runs` AND `optimization_run_items` even though the
+architect's `dbContracts` declared neither — the architect's domain
+timestamps were `started_at` (runs) and `processed_at` (items). This
+violates HANDLER_RULES row 61 (one creation timestamp per table) twice
+in one run, and produces columns the handler never writes — useless
+noise that LLM validation correctly flagged but couldn't fix in one
+revision pass.
+
+Root cause: the migration prompt's REQUIRED PATTERN block was teaching
+`created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()` and `id UUID PRIMARY KEY
+DEFAULT gen_random_uuid()` as universal in every CREATE TABLE example.
+The model was doing exactly what the prompt said.
+
+**Fix this round (prompt-only, NOT static):** the four-bar audit for a
+DDL ↔ dbContracts column-set diff reaches the same conclusion as Row 8
+above — the structural check requires a full DDL parse, has non-trivial
+FP surface against legitimate inline constraints (UNIQUE, CHECK
+variants), and would either duplicate `bug_finder`'s reasoning or
+introduce regressions against legitimate constraint variations. So
+instead of adding a static gate we removed the bug at its source: the
+REQUIRED PATTERN section in `subagents/prompts/core/migration.py` was
+rewritten to:
+
+- Drop `created_at` from the example body. Replaced with an inline
+  comment that says "EVERY column comes EXACTLY from the dbContracts —
+  same name, same type, same constraints. No additions, no removals."
+- Drop `id UUID PRIMARY KEY` from the example body. Singleton tables
+  use `singleton BOOLEAN PRIMARY KEY` and have NO `id` column;
+  non-singleton tables get `id` only when the contract declares it.
+- Add an explicit "do NOT add a `created_at` (or any other timestamp)
+  column unless the dbContracts row for this table explicitly declares
+  it" paragraph naming the failure mode (HANDLER_RULES row 61
+  violation) and the correct mental model (the architect picks the
+  domain-meaningful timestamp per table).
+- Add a `uniqueConstraint` emission paragraph naming the runtime
+  failure mode the handler hits when the migration drops the
+  constraint ("ON CONFLICT will fail with 'no unique or exclusion
+  constraint matching'") so the model understands WHY it must emit
+  the constraint, not just that it must.
+
+Re-evaluate after the next 2–3 generations. If the drift class
+persists, escalate by either: (a) promoting Row 8 to a structural
+static check (cost: full DDL parser + handling for inline UNIQUE /
+CHECK variants — non-trivial), OR (b) tightening
+`migration_artifact.py` with a narrow column-name denylist for
+contract-undeclared `created_at` specifically.
+
+Row 8 classification unchanged this round (`llm` — owned by
+`agent_rules` + `bug_finder`). The prompt fix is the lever; the
+classification reflects where enforcement lives, not where the bug
+gets fixed.

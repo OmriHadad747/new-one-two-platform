@@ -1,0 +1,48 @@
+Feature: Automatically optimize and store product images at 400x400 resolution on a configurable schedule or manual trigger.
+Triggers: cron, admin
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DB CONTRACTS — authoritative column definitions (implement exactly):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Table: optimization_settings
+  singleton  BOOLEAN  PRIMARY KEY DEFAULT true CHECK (singleton = true)
+  schedule_frequency  TEXT  NOT NULL DEFAULT 'daily' CHECK (schedule_frequency IN ('daily', 'weekly', 'custom'))
+  schedule_hour_utc  INTEGER  NOT NULL DEFAULT 2
+  schedule_day_of_week  INTEGER  NULL
+  is_enabled  BOOLEAN  NOT NULL DEFAULT true
+  updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+
+Table: optimization_runs
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  trigger  TEXT  NOT NULL CHECK (trigger IN ('cron', 'manual'))
+  status  TEXT  NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'completed', 'failed'))
+  total_images  INTEGER  NOT NULL DEFAULT 0
+  succeeded_count  INTEGER  NOT NULL DEFAULT 0
+  skipped_count  INTEGER  NOT NULL DEFAULT 0
+  failed_count  INTEGER  NOT NULL DEFAULT 0
+  started_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  completed_at  TIMESTAMPTZ  NULL
+  Indexes: status, started_at
+
+Table: optimization_run_items
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  run_id  UUID  NOT NULL REFERENCES optimization_runs(id) ON DELETE CASCADE
+  product_id  BIGINT  NOT NULL
+  product_title  TEXT  NOT NULL
+  image_id  TEXT  NOT NULL
+  source_url  TEXT  NOT NULL
+  source_width  INTEGER  NULL
+  source_height  INTEGER  NULL
+  outcome  TEXT  NOT NULL DEFAULT 'pending' CHECK (outcome IN ('pending', 'succeeded', 'skipped', 'failed'))
+  failure_reason  TEXT  NULL
+  optimized_url  TEXT  NULL
+  processed_at  TIMESTAMPTZ  NULL
+  Indexes: run_id, outcome, product_id
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Generate the PostgreSQL DDL migration for this feature.
+Plain CREATE TABLE / CREATE INDEX against unqualified names.
+No tenant_id, no RLS, no CREATE POLICY — see the isolation
+model in the system prompt.
+Output ONLY raw SQL (no markdown fences).
