@@ -858,6 +858,11 @@ def _phase_codegen(
     is_storefront: bool,
     is_admin_ui: bool,
     run_dir: Path,
+    *,
+    prior_artifacts: Optional[Dict[str, str]] = None,
+    prior_error_map: Optional[Dict[str, List[str]]] = None,
+    prior_retry_log: Optional[List[Dict]] = None,
+    prior_token_totals: Optional[Dict[str, Tuple[int, int]]] = None,
 ) -> Tuple[Dict[str, str], List[Dict], Dict[str, Tuple[int, int]]]:
     """
     Run parallel codegen with static validation retries.
@@ -865,12 +870,21 @@ def _phase_codegen(
     Returns (artifacts, retry_log, token_totals) where:
       retry_log    — list of {attempt, errors} dicts for every failed round
       token_totals — {agent_name: (total_in, total_out)} accumulated across all attempts
+
+    Resume path: when `prior_artifacts` / `prior_error_map` are passed, the
+    first iteration starts from that state instead of the empty dicts. The
+    crew's `_plan_codegen_batch` already short-circuits any generator whose
+    artifact is present and has no errors, so passing the saved bundle from
+    a previous run is the entire mechanism for "skip handler/widget/admin if
+    they already passed". `prior_retry_log` and `prior_token_totals` carry
+    the audit trail forward so a resumed run's report.md / per-agent token
+    summary reflects the cumulative cost, not just this resumed segment.
     """
-    artifacts: Dict[str, str] = {}
-    error_map: Dict[str, List[str]] = {}
+    artifacts: Dict[str, str] = dict(prior_artifacts or {})
+    error_map: Dict[str, List[str]] = {k: list(v) for k, v in (prior_error_map or {}).items()}
     cumulative_errors: Dict[str, List[str]] = {}
-    retry_log: List[Dict] = []
-    token_totals: Dict[str, Tuple[int, int]] = {}
+    retry_log: List[Dict] = list(prior_retry_log or [])
+    token_totals: Dict[str, Tuple[int, int]] = dict(prior_token_totals or {})
 
     _CODEGEN_LABELS = {
         "handler": "Handler",
@@ -879,14 +893,39 @@ def _phase_codegen(
         "admin_ui": "Admin UI",
     }
 
-    for attempt in range(1, _MAX_CODEGEN_RETRIES + 1):
-        generators_this_round = (
-            list(error_map.keys())
-            if attempt > 1
-            else ["handler", "migration"]
+    # Resume case: when prior_artifacts arrives with an error_map (codegen
+    # was halted mid-pipeline), the first attempt should display only the
+    # failed/missing generators in the spinner — same as a normal retry —
+    # rather than spinning rows for handler/migration/widget/admin and
+    # never advancing the ones that won't run. The crew already filters
+    # correctly via _plan_codegen_batch; this is purely the label list.
+    _is_resumed_first = prior_artifacts and (prior_error_map or any(
+        n not in artifacts for n in (
+            ["handler", "migration"]
             + (["widget_js"] if is_storefront else [])
             + (["admin_ui"] if is_admin_ui else [])
         )
+    ))
+
+    for attempt in range(1, _MAX_CODEGEN_RETRIES + 1):
+        if attempt > 1 or _is_resumed_first:
+            generators_this_round = list(error_map.keys()) or [
+                n for n in (
+                    ["handler", "migration"]
+                    + (["widget_js"] if is_storefront else [])
+                    + (["admin_ui"] if is_admin_ui else [])
+                ) if n not in artifacts
+            ]
+        else:
+            generators_this_round = (
+                ["handler", "migration"]
+                + (["widget_js"] if is_storefront else [])
+                + (["admin_ui"] if is_admin_ui else [])
+            )
+        # After the first iteration we don't want this resume-mode label
+        # filter to keep firing — clear it so subsequent retries follow
+        # the normal `attempt > 1 → error_map.keys()` path.
+        _is_resumed_first = False
 
         labels = [_CODEGEN_LABELS.get(n, n) for n in generators_this_round]
         # Start one animated row per parallel generator so the merchant sees
@@ -936,6 +975,17 @@ def _phase_codegen(
 
         if not error_map:
             _agent_line("Validation", ok=True, ms=ms_val, notes="all artifacts pass")
+            _save_state(
+                run_dir,
+                checkpoint="codegen",
+                halt_reason=None,
+                artifacts=artifacts,
+                retry_log=retry_log,
+                codegen_token_totals={k: list(v) for k, v in token_totals.items()},
+                codegen_error_map=None,
+                handler_email_metadata=base_ctx.handler_email_metadata,
+                handler_raw_response=base_ctx.handler_raw_response,
+            )
             return artifacts, retry_log, token_totals
 
         for name, errs in error_map.items():
@@ -982,6 +1032,22 @@ def _phase_codegen(
         plan=base_ctx.plan,
     )
 
+    # Persist partial state so the run is resumable. checkpoint stays at
+    # "arch" (the last phase that fully succeeded); halt_reason flags this
+    # as a codegen failure so --resume re-runs codegen and the crew's
+    # batch planner re-runs only the failed/missing generators.
+    _save_state(
+        run_dir,
+        checkpoint="arch",
+        halt_reason="codegen_failed",
+        artifacts=artifacts,
+        retry_log=retry_log,
+        codegen_token_totals={k: list(v) for k, v in token_totals.items()},
+        codegen_error_map={k: list(v) for k, v in error_map.items()},
+        handler_email_metadata=base_ctx.handler_email_metadata,
+        handler_raw_response=base_ctx.handler_raw_response,
+    )
+
     all_errors = [f"{n}: {e}" for n, errs in error_map.items() for e in errs]
     print(
         f"\n  {_RED}Codegen validation failed after {_MAX_CODEGEN_RETRIES} attempts:{_RESET}"
@@ -993,6 +1059,10 @@ def _phase_codegen(
         f"{run_dir.relative_to(_HERE)}/{_RESET}"
     )
     print(f"  {_DIM}Validation summary: {failure_path.relative_to(_HERE)}{_RESET}")
+    print(
+        f"  {_DIM}Resume with:  python chat_local.py --resume "
+        f"{run_dir.name}{_RESET}"
+    )
     sys.exit(1)
 
 
@@ -1004,6 +1074,245 @@ def _make_run_dir(run_ts: str, run_slug: str) -> Path:
     run_dir = TEST_RESULTS_DIR / f"{run_ts}_{run_slug}"
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
+
+
+# ── Resume support ────────────────────────────────────────────────────────────
+#
+# Each run dir gets a single state.json that's written incrementally after
+# every phase. It's the sole source of truth for `--list-resume` / `--resume`
+# — we don't reconstruct from the scattered per-phase files. The pipeline
+# already persists the per-phase outputs (arch.json, generated files,
+# revision_traces/) for human inspection; state.json layers a machine-readable
+# index on top so resume can dispatch without re-parsing those.
+#
+# Robustness: every loader tolerates missing files, JSON parse errors, and
+# partial / unexpected fields. The lister silently drops bad entries; the
+# resume dispatcher fails loudly with a specific message naming the missing
+# field so the merchant knows what's wrong with that run.
+
+_STATE_FILE_NAME = "state.json"
+_STATE_VERSION = 1
+
+# Phase order. Each name is the checkpoint stamped when the phase finishes
+# its successful path. _phase_index() lets us compare checkpoints by ordinal.
+_PHASE_ORDER: List[str] = ["intent", "arch", "codegen", "validator", "revision", "done"]
+
+
+def _phase_index(name: Optional[str]) -> int:
+    """Ordinal of a checkpoint name; -1 if unset/unknown so any phase is 'after' it."""
+    if not name:
+        return -1
+    try:
+        return _PHASE_ORDER.index(name)
+    except ValueError:
+        return -1
+
+
+def _state_path(run_dir: Path) -> Path:
+    return run_dir / _STATE_FILE_NAME
+
+
+def _load_state(run_dir: Path) -> Optional[Dict[str, Any]]:
+    """
+    Return the parsed state dict, or None if the file is missing / unreadable
+    / not valid JSON / not a dict / wrong schema version. Never raises — the
+    caller decides how to handle a missing state (the lister drops it; resume
+    fails loudly).
+    """
+    path = _state_path(run_dir)
+    if not path.is_file():
+        return None
+    try:
+        raw = path.read_text()
+    except OSError:
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    # Forward-compat: ignore states from a future schema we don't understand.
+    # Older states without `version` are treated as v1 (pre-versioning).
+    version = data.get("version", _STATE_VERSION)
+    if not isinstance(version, int) or version > _STATE_VERSION:
+        return None
+    return data
+
+
+def _save_state(run_dir: Path, **patch: Any) -> None:
+    """
+    Merge `patch` into the existing state.json (or create it) and write atomically.
+
+    Atomic write prevents a half-written state.json on Ctrl+C between phases:
+    a corrupted state file would render the run un-resumable, which is exactly
+    the failure mode resume is supposed to fix. We still tolerate corrupted
+    state on read (returns None), but we do our best not to create one.
+    """
+    existing = _load_state(run_dir) or {}
+    existing.update(patch)
+    existing["version"] = _STATE_VERSION
+    existing["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    existing.setdefault("created_at", existing["updated_at"])
+    path = _state_path(run_dir)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(json.dumps(existing, indent=2, default=str))
+        os.replace(tmp, path)
+    except OSError as exc:
+        # State write failure is non-fatal — the user can still inspect the
+        # generated files; they just can't resume this run cheaply.
+        _log.warning("could not write %s: %s", path, exc)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _list_resumable() -> List[Dict[str, Any]]:
+    """
+    Walk TEST_RESULTS_DIR, return resumable runs sorted newest-first.
+
+    Skips:
+      - non-directories (a stray file in test_results/)
+      - dirs without state.json (legacy runs from before resume support)
+      - dirs whose state.json fails to load (corrupted / wrong version)
+      - runs already at checkpoint=done (nothing to resume)
+
+    Each entry is a small summary dict — full state is loaded on demand by
+    the resume dispatcher, not here, so a single corrupt entry can't
+    poison the listing.
+    """
+    if not TEST_RESULTS_DIR.is_dir():
+        return []
+    rows: List[Dict[str, Any]] = []
+    # `_RESUMABLE_HALTS` are halt_reasons that mean "the run finished its
+    # pipeline but with unresolved problems the merchant may want to retry".
+    # Even if checkpoint=done, these stay listed so the merchant can re-run
+    # just the revision step against the saved validator issues.
+    # codegen_failed is intentionally NOT here — that halt is only ever
+    # paired with checkpoint=arch (codegen never reaches done after a
+    # failure), so adding it would just hide bugs if the pairing ever broke.
+    _RESUMABLE_HALTS = {"kept_originals", "revision_failed"}
+    for entry in sorted(TEST_RESULTS_DIR.iterdir(), reverse=True):
+        if not entry.is_dir():
+            continue
+        state = _load_state(entry)
+        if state is None:
+            continue
+        checkpoint = state.get("checkpoint")
+        halt = state.get("halt_reason")
+        # A state with neither a known checkpoint nor a prompt is junk —
+        # likely a half-written file or a manually-created skeleton. Drop
+        # it from the list rather than offering an unresumable entry.
+        if (
+            _phase_index(checkpoint) < 0
+            and not state.get("prompt")
+            and not state.get("intent")
+        ):
+            continue
+        if checkpoint == "done" and halt not in _RESUMABLE_HALTS:
+            continue
+        prompt = state.get("prompt") or ""
+        rows.append(
+            {
+                "run_id": entry.name,
+                "checkpoint": checkpoint or "?",
+                "halt_reason": halt,
+                "prompt": prompt,
+                "updated_at": state.get("updated_at") or "",
+            }
+        )
+    return rows
+
+
+def _print_resume_list() -> None:
+    """Print the resumable-runs table. Tolerant of empty / bad entries."""
+    rows = _list_resumable()
+    if not rows:
+        print()
+        _info("No resumable runs found in test_results/.")
+        _info(
+            "(Runs are tracked once they save a state.json — older runs "
+            "from before resume support are skipped.)"
+        )
+        print()
+        return
+
+    print()
+    print(f"  {_BOLD}Resumable runs{_RESET}  {_DIM}(newest first){_RESET}\n")
+    # Column widths
+    id_w = max(len("RUN ID"), max(len(r["run_id"]) for r in rows))
+    cp_w = max(len("CHECKPOINT"), max(len(str(r["checkpoint"])) for r in rows))
+    reason_w = max(
+        len("HALT"), max(len(str(r["halt_reason"] or "")) for r in rows)
+    )
+    print(
+        f"  {_DIM}{'RUN ID'.ljust(id_w)}  "
+        f"{'CHECKPOINT'.ljust(cp_w)}  "
+        f"{'HALT'.ljust(reason_w)}  PROMPT{_RESET}"
+    )
+    for r in rows:
+        prompt = r["prompt"]
+        if len(prompt) > 60:
+            prompt = prompt[:57] + "…"
+        halt = r["halt_reason"] or ""
+        halt_color = _YELLOW if halt else _DIM
+        print(
+            f"  {r['run_id'].ljust(id_w)}  "
+            f"{_c(str(r['checkpoint']).ljust(cp_w), _CYAN)}  "
+            f"{_c(halt.ljust(reason_w), halt_color)}  "
+            f"{_DIM}{prompt}{_RESET}"
+        )
+    print()
+    _info("Resume with:  python chat_local.py --resume <RUN ID>")
+    print()
+
+
+def _resolve_resume_target(run_id: str) -> Tuple[Path, Dict[str, Any]]:
+    """
+    Validate `run_id` and return (run_dir, state). Exits with a clear message
+    on any failure mode (missing dir, missing state.json, corrupted JSON,
+    completed run, missing required fields).
+    """
+    run_dir = TEST_RESULTS_DIR / run_id
+    if not run_dir.is_dir():
+        print(f"\n  {_RED}No such run:{_RESET} {run_id}")
+        _info(f"Looked in {TEST_RESULTS_DIR.relative_to(_HERE)}/")
+        _info("Use --list-resume to see what's available.")
+        sys.exit(2)
+
+    state = _load_state(run_dir)
+    if state is None:
+        print(f"\n  {_RED}Run is not resumable:{_RESET} {run_id}")
+        _info(
+            "state.json is missing, unreadable, or from a newer schema. "
+            "This run predates resume support or was corrupted."
+        )
+        sys.exit(2)
+
+    checkpoint = state.get("checkpoint")
+    halt = state.get("halt_reason")
+    # done + clean = nothing to do. done + unresolved-halt (kept_originals /
+    # revision_failed) is still resumable: the merchant wants to re-run
+    # revision against the saved validator issues.
+    if checkpoint == "done" and halt not in ("kept_originals", "revision_failed"):
+        print(f"\n  {_GREEN}Run already complete — nothing to resume:{_RESET} {run_id}")
+        print(f"  {_DIM}Outputs: {run_dir.relative_to(_HERE)}/{_RESET}\n")
+        sys.exit(0)
+
+    # Every resumable run must at minimum have intent + prompt — that's the
+    # output of the chat phase, which we save first. Without it, we can't
+    # rebuild the codegen context.
+    if not state.get("intent") or not state.get("prompt"):
+        print(f"\n  {_RED}Run is not resumable:{_RESET} {run_id}")
+        _info(
+            "state.json is missing 'intent' or 'prompt' — the chat phase "
+            "didn't complete, so there's nothing meaningful to resume from."
+        )
+        sys.exit(2)
+
+    return run_dir, state
 
 
 def _save_generated_files(
@@ -1159,6 +1468,8 @@ def _phase_validator(
     run_dir: Path,
     run_ts: str,
     run_slug: str,
+    *,
+    resumed_validator: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, str], int, int, Optional[Dict[str, Any]]]:
     """
     Run LLM validator + optional revision pass.
@@ -1171,29 +1482,58 @@ def _phase_validator(
     when no revision was attempted (validator skipped or passed on first pass); a
     dict otherwise, always persisted to test_results/revision_traces/ keyed by
     run_ts + slug so the report .md can link to it.
+
+    Resume path: when `resumed_validator` is passed, the LLM validator call is
+    skipped entirely — we trust the saved issues from the previous run and go
+    straight to revision. This is the cost-saver: validator tokens already paid,
+    don't pay them again. Required keys: `issues`, `in_tokens`, `out_tokens`,
+    `duration_ms`. Token counts are reported back so the run summary still shows
+    the original cost; they are NOT re-added to `total_in/out` here because the
+    caller credits them separately for resumed runs.
     """
     from config import get_settings
 
-    if not get_settings().llm_validation_enabled:
-        _info("Validator skipped (LLM_VALIDATION_ENABLED not set)")
-        return artifacts, 0, 0, None
-
-    _spinner("Validator")
-    t0 = time.monotonic()
-    with input_log("validator", run_dir):
-        issues, val_in, val_out, per_validator = run_llm_validators(
-            artifacts, base_ctx, is_storefront, is_admin_ui
-        )
-    ms = int((time.monotonic() - t0) * 1000)
-    # Surface per-validator latency / errors so a silent fail-open is visible
-    # in the local CLI run, not just the production logs.
-    for name, result in per_validator.items():
-        suffix = f" error={result.error}" if result.error else ""
+    if resumed_validator is not None:
+        # Skip the validator LLM call — reuse saved issues. Falls through to
+        # the revision branch below using `issues` from saved state.
+        issues = resumed_validator.get("issues") or []
+        val_in = int(resumed_validator.get("in_tokens", 0))
+        val_out = int(resumed_validator.get("out_tokens", 0))
+        ms = int(resumed_validator.get("duration_ms", 0))
         _info(
-            f"  ↳ {name}: {result.latency_ms}ms "
-            f"in={result.input_tokens} out={result.output_tokens} "
-            f"findings={len(result.findings)}{suffix}"
+            f"Validator: reusing {len(issues)} saved issue(s) from prior run "
+            f"(no LLM call)"
         )
+    elif not get_settings().llm_validation_enabled:
+        _info("Validator skipped (LLM_VALIDATION_ENABLED not set)")
+        _save_state(
+            run_dir,
+            checkpoint="validator",
+            halt_reason=None,
+            validator_issues=[],
+            validator_tokens={"in": 0, "out": 0, "duration_ms": 0},
+            pre_revision_artifacts=dict(artifacts),
+        )
+        return artifacts, 0, 0, None
+    else:
+        _spinner("Validator")
+        t0 = time.monotonic()
+        with input_log("validator", run_dir):
+            issues, val_in, val_out, per_validator = run_llm_validators(
+                artifacts, base_ctx, is_storefront, is_admin_ui
+            )
+        ms = int((time.monotonic() - t0) * 1000)
+        # Surface per-validator latency / errors so a silent fail-open is
+        # visible in the local CLI run, not just the production logs. Only
+        # available when we actually invoked the validator — resumed runs
+        # skip this since the per-validator breakdown wasn't persisted.
+        for name, result in per_validator.items():
+            suffix = f" error={result.error}" if result.error else ""
+            _info(
+                f"  ↳ {name}: {result.latency_ms}ms "
+                f"in={result.input_tokens} out={result.output_tokens} "
+                f"findings={len(result.findings)}{suffix}"
+            )
 
     if not issues:
         _agent_line(
@@ -1201,6 +1541,14 @@ def _phase_validator(
             ok=True,
             ms=ms,
             notes=_tok_note(val_in, val_out, extra="semantic check passed"),
+        )
+        _save_state(
+            run_dir,
+            checkpoint="validator",
+            halt_reason=None,
+            validator_issues=[],
+            validator_tokens={"in": val_in, "out": val_out, "duration_ms": ms},
+            pre_revision_artifacts=dict(artifacts),
         )
         return artifacts, val_in, val_out, None
 
@@ -1258,9 +1606,37 @@ def _phase_validator(
         "final_outcome": None,
     }
 
-    def _finalize(outcome: str) -> None:
+    # Persist the validator findings + pre-revision artifacts up front. If
+    # the process is killed mid-revision (or revision punts), --resume picks
+    # this up and re-runs only revision against the saved issues, NOT the
+    # validator — that's the point of trusting saved issues.
+    _save_state(
+        run_dir,
+        validator_issues=issues,
+        validator_tokens={"in": val_in, "out": val_out, "duration_ms": ms},
+        pre_revision_artifacts=dict(artifacts),
+    )
+
+    def _finalize(outcome: str, *, final_artifacts: Optional[Dict[str, str]] = None) -> None:
         trace["final_outcome"] = outcome
         _save_revision_trace(run_dir, run_ts, run_slug, trace)
+        # halt_reason is set only for outcomes the user can resume from.
+        # 'resolved' / 'resolved_on_retry' are clean successes — checkpoint
+        # advances to 'revision' and resume goes straight to explanation.
+        if outcome in ("resolved", "resolved_on_retry"):
+            cp, halt = "revision", None
+        elif outcome == "kept_originals":
+            cp, halt = "validator", "kept_originals"
+        else:  # "failed"
+            cp, halt = "validator", "revision_failed"
+        patch: Dict[str, Any] = {
+            "checkpoint": cp,
+            "halt_reason": halt,
+            "revision_outcome": outcome,
+        }
+        if final_artifacts is not None:
+            patch["artifacts"] = final_artifacts
+        _save_state(run_dir, **patch)
 
     _spinner("Revision")
     t0 = time.monotonic()
@@ -1303,7 +1679,7 @@ def _phase_validator(
             ),
         )
         trace["attempts"][-1]["outcome"] = "no_output"
-        _finalize("kept_originals")
+        _finalize("kept_originals", final_artifacts=dict(artifacts))
         return artifacts, total_in, total_out, trace
 
     # Statically validate the revised frontend artifacts before accepting them.
@@ -1321,7 +1697,7 @@ def _phase_validator(
             notes=_tok_note(rev_in, rev_out, extra="semantic issues resolved"),
         )
         trace["attempts"][-1]["outcome"] = "accepted"
-        _finalize("resolved")
+        _finalize("resolved", final_artifacts=dict(merged))
         return merged, total_in, total_out, trace
 
     # First revision failed static validation — retry once with errors fed back.
@@ -1389,11 +1765,15 @@ def _phase_validator(
             ),
         )
         trace["attempts"][-1]["outcome"] = "accepted"
-        _finalize("resolved_on_retry")
+        _finalize("resolved_on_retry", final_artifacts=dict(merged2))
         return merged2, total_in, total_out, trace
 
     # Both revision attempts produced structurally invalid code — fail the run.
     trace["attempts"][-1]["outcome"] = "failed"
+    # Don't pass final_artifacts here — we want the next --resume to start
+    # from the pre-revision artifacts (saved separately as
+    # `pre_revision_artifacts`), NOT the broken merged2 bundle. Re-running
+    # revision against the broken output would compound the damage.
     _finalize("failed")
     bad = {**frontend_revised, **frontend_revised2}
     path = _save_revision_failure_local(run_dir, bad, static_errors2)
@@ -1422,6 +1802,10 @@ def _phase_validator(
     print(
         f"  {_DIM}Final-attempt artifacts saved to: "
         f"{run_dir.relative_to(_HERE)}/{_RESET}"
+    )
+    print(
+        f"  {_DIM}Resume with:  python chat_local.py --resume "
+        f"{run_dir.name}{_RESET}"
     )
     sys.exit(1)
 
@@ -1813,82 +2197,176 @@ def main() -> None:
         default=False,
         help="Skip writing the bundle to the local postgres DB.",
     )
+    parser.add_argument(
+        "--list-resume",
+        action="store_true",
+        default=False,
+        help=(
+            "List runs in test_results/ that can be resumed, then exit. "
+            "Each resumable run shows its last successful checkpoint and, "
+            "if applicable, the halt reason (codegen_failed, kept_originals, "
+            "revision_failed). Use --resume <RUN ID> to continue one."
+        ),
+    )
+    parser.add_argument(
+        "--resume",
+        metavar="RUN_ID",
+        default=None,
+        help=(
+            "Resume the run at test_results/<RUN_ID>/. The CLI loads the "
+            "saved state.json and restarts from the phase after the last "
+            "successful checkpoint, reusing prior artifacts so already-paid "
+            "tokens (intent, architect, clean codegen artifacts, validator "
+            "issues) aren't paid again. Use --list-resume to see candidate "
+            "RUN_IDs."
+        ),
+    )
     args = parser.parse_args()
+
+    # ── --list-resume: print and exit before doing anything else ──────────────
+    if args.list_resume:
+        _print_resume_list()
+        return
+
     stop_after: StopAfter = args.stop_after or "full"
+    resume_state: Optional[Dict[str, Any]] = None
+    resumed_run_dir: Optional[Path] = None
+
+    if args.resume:
+        resumed_run_dir, resume_state = _resolve_resume_target(args.resume)
+
     save_to_db = not args.no_db and stop_after == "full"
 
     print()
-    mode_note = f"Shopify App Builder  ·  mode: {stop_after}"
+    mode_note = (
+        f"Shopify App Builder  ·  mode: {stop_after}"
+        + (f"  ·  resuming {resumed_run_dir.name}" if resumed_run_dir else "")
+    )
     _render_banner(mode_note)
 
-    # ── Step 1: Chat until intent is ready ─────────────────────────────────────
-    first_message = _ask_user(f"\n{_BOLD}You{_RESET}  ")
-    if not first_message:
-        print("Nothing entered — exiting.")
-        return
+    # ── Resume path: skip chat / picker / DB-create; rebuild from state ───────
+    if resume_state is not None and resumed_run_dir is not None:
+        prompt = resume_state["prompt"]
+        intent = resume_state["intent"]
+        archetype = resume_state.get("archetype") or intent.get("appCategory", "")
+        is_storefront = bool(resume_state.get("is_storefront"))
+        is_admin_ui = bool(resume_state.get("is_admin_ui"))
+        run_dir = resumed_run_dir
+        run_ts = resume_state.get("run_ts") or run_dir.name.split("_", 1)[0]
+        run_slug = resume_state.get("run_slug") or "_".join(run_dir.name.split("_")[1:])
+        # DB: reuse saved ids when present. We do NOT re-create rows — they
+        # already exist (possibly marked failed); store_bundle/mark_failed
+        # later will operate on the existing job_id.
+        db_info = resume_state.get("db") or {}
+        app_id = db_info.get("app_id")
+        job_id = db_info.get("job_id")
+        session_id = db_info.get("session_id")
+        slug = db_info.get("slug")
+        save_to_db = bool(db_info) and not args.no_db and stop_after == "full"
+        if save_to_db:
+            import db_local  # noqa: F401  — needed for _fail_db / store_bundle below
 
-    history: List[Dict[str, str]] = [{"role": "user", "content": first_message}]
-    intent, history = _clarify(history)
-    prompt = intent.get("desiredOutcome") or first_message
-
-    # ── Step 2: Confirm or keep refining ───────────────────────────────────────
-    _info(
-        "Press Enter to continue to components  |  type more to refine  |  'n' to cancel"
-    )
-    while True:
-        user_input = _ask_user(f"\n{_BOLD}You{_RESET}  ")
-        if not user_input or user_input.lower() in ("y", "yes"):
-            break
-        if user_input.lower() in ("n", "no"):
-            print("\nAborted.")
+            _info(f"Resuming run {run_dir.name}  ·  DB app id: {app_id}")
+        else:
+            _info(f"Resuming run {run_dir.name}  ·  no DB (resumed)")
+        all_tokens = {
+            k: tuple(v) if isinstance(v, list) else v
+            for k, v in (resume_state.get("all_tokens") or {}).items()
+        }
+        total_start = time.monotonic()
+    else:
+        # ── Step 1: Chat until intent is ready ─────────────────────────────
+        first_message = _ask_user(f"\n{_BOLD}You{_RESET}  ")
+        if not first_message:
+            print("Nothing entered — exiting.")
             return
-        history = history + [{"role": "user", "content": user_input}]
+
+        history: List[Dict[str, str]] = [{"role": "user", "content": first_message}]
         intent, history = _clarify(history)
         prompt = intent.get("desiredOutcome") or first_message
+
+        # ── Step 2: Confirm or keep refining ───────────────────────────────
         _info(
             "Press Enter to continue to components  |  type more to refine  |  'n' to cancel"
         )
+        while True:
+            user_input = _ask_user(f"\n{_BOLD}You{_RESET}  ")
+            if not user_input or user_input.lower() in ("y", "yes"):
+                break
+            if user_input.lower() in ("n", "no"):
+                print("\nAborted.")
+                return
+            history = history + [{"role": "user", "content": user_input}]
+            intent, history = _clarify(history)
+            prompt = intent.get("desiredOutcome") or first_message
+            _info(
+                "Press Enter to continue to components  |  type more to refine  |  'n' to cancel"
+            )
 
-    # ── Step 3: Component picker (mirrors ConfirmCard) ─────────────────────────
-    while True:
-        updated_intent = _pick_components(intent)
-        if updated_intent is not None:
-            intent = updated_intent
-            break
-        # "Change request" — resume clarification from current history
-        _bot("Sure, what would you like to change?")
-        user_input = _ask_user(f"\n{_BOLD}You{_RESET}  ")
-        if not user_input:
-            continue
-        history = history + [{"role": "user", "content": user_input}]
-        intent, history = _clarify(history)
-        prompt = intent.get("desiredOutcome") or first_message
+        # ── Step 3: Component picker (mirrors ConfirmCard) ─────────────────
+        while True:
+            updated_intent = _pick_components(intent)
+            if updated_intent is not None:
+                intent = updated_intent
+                break
+            # "Change request" — resume clarification from current history
+            _bot("Sure, what would you like to change?")
+            user_input = _ask_user(f"\n{_BOLD}You{_RESET}  ")
+            if not user_input:
+                continue
+            history = history + [{"role": "user", "content": user_input}]
+            intent, history = _clarify(history)
+            prompt = intent.get("desiredOutcome") or first_message
 
-    # ── DB: create app + session before pipeline starts ───────────────────────
-    app_name = (intent.get("desiredOutcome") or prompt)[:60]
-    app_id = job_id = session_id = slug = None
-    if save_to_db:
-        try:
-            import uuid
-            import db_local
+        # ── DB: create app + session before pipeline starts ───────────────
+        app_name = (intent.get("desiredOutcome") or prompt)[:60]
+        app_id = job_id = session_id = slug = None
+        if save_to_db:
+            try:
+                import uuid
+                import db_local
 
-            app_id, slug = db_local.create_app(app_name)
-            job_id = str(uuid.uuid4())
-            session_id = db_local.create_session(app_id, prompt, job_id)
-            _info(f"DB: created app '{slug}'")
-        except Exception as exc:
-            _info(f"DB setup failed — continuing without DB: {exc}")
-            save_to_db = False
+                app_id, slug = db_local.create_app(app_name)
+                job_id = str(uuid.uuid4())
+                session_id = db_local.create_session(app_id, prompt, job_id)
+                _info(f"DB: created app '{slug}'")
+            except Exception as exc:
+                _info(f"DB setup failed — continuing without DB: {exc}")
+                save_to_db = False
 
-    archetype = intent.get("appCategory", "")
-    is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
-    is_admin_ui = archetype in ("storefront_backend_admin", "backend_admin")
+        archetype = intent.get("appCategory", "")
+        is_storefront = archetype in ("storefront_backend", "storefront_backend_admin")
+        is_admin_ui = archetype in ("storefront_backend_admin", "backend_admin")
 
-    total_start = time.monotonic()
-    run_ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    run_slug = _slug(prompt)
-    run_dir = _make_run_dir(run_ts, run_slug)
-    all_tokens: Dict[str, Tuple[int, int]] = {}
+        total_start = time.monotonic()
+        run_ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+        run_slug = _slug(prompt)
+        run_dir = _make_run_dir(run_ts, run_slug)
+        all_tokens: Dict[str, Tuple[int, int]] = {}
+
+        # ── Checkpoint: intent + DB ids saved before any LLM phase ────────
+        # If the architect dies here, --resume picks up at this checkpoint
+        # and re-runs only architect onwards; chat tokens stay paid once.
+        _save_state(
+            run_dir,
+            run_ts=run_ts,
+            run_slug=run_slug,
+            prompt=prompt,
+            intent=intent,
+            archetype=archetype,
+            is_storefront=is_storefront,
+            is_admin_ui=is_admin_ui,
+            save_to_db=save_to_db,
+            db={
+                "app_id": app_id,
+                "job_id": job_id,
+                "session_id": session_id,
+                "slug": slug,
+            } if save_to_db else {},
+            all_tokens={},
+            checkpoint="intent",
+            halt_reason=None,
+        )
 
     def _fail_db(reason: str) -> None:
         """Mark the DB session+app as failed before exiting."""
@@ -1898,17 +2376,51 @@ def main() -> None:
             except Exception:
                 pass
 
+    # Where in the pipeline did the previous run get to? -1 means "no
+    # state / fresh run" — every phase runs. Each phase compares against
+    # _phase_index(<phase_name>) and skips itself when its output is already
+    # in the saved state. Halt-reasons override this for resume-and-retry:
+    # codegen_failed forces codegen to re-run with prior partial artifacts;
+    # kept_originals / revision_failed forces revision to re-run with saved
+    # validator issues.
+    _resumed_idx = _phase_index(resume_state.get("checkpoint")) if resume_state else -1
+    _resumed_halt = (resume_state or {}).get("halt_reason")
+
     # ── Phase: Architect ───────────────────────────────────────────────────────
-    _phase_header("ARCHITECT")
-    try:
-        with input_log("architect", run_dir):
-            plan, product_prompt, arch_in, arch_out = _phase_architect(intent, prompt)
-    except SystemExit:
-        _fail_db("Architect phase failed")
-        raise
-    all_tokens["architect"] = (arch_in, arch_out)
+    if resume_state and _resumed_idx >= _phase_index("arch") and resume_state.get("plan"):
+        plan = resume_state["plan"]
+        product_prompt = resume_state.get("product_prompt", "") or ""
+        if "architect" in (resume_state.get("all_tokens") or {}):
+            saved = resume_state["all_tokens"]["architect"]
+            all_tokens["architect"] = tuple(saved) if isinstance(saved, list) else saved
+        _info("Architect: reusing saved plan (skipping LLM call)")
+    else:
+        _phase_header("ARCHITECT")
+        try:
+            with input_log("architect", run_dir):
+                plan, product_prompt, arch_in, arch_out = _phase_architect(intent, prompt)
+        except SystemExit:
+            _fail_db("Architect phase failed")
+            raise
+        all_tokens["architect"] = (arch_in, arch_out)
+        # Checkpoint: arch done. Codegen failure persistence (below) leaves
+        # checkpoint at "arch" with halt_reason=codegen_failed, so this is
+        # the same level resume picks up at after codegen blows up.
+        _save_state(
+            run_dir,
+            plan=plan,
+            product_prompt=product_prompt,
+            all_tokens={k: list(v) for k, v in all_tokens.items()},
+            checkpoint="arch",
+            halt_reason=None,
+        )
 
     if stop_after == "arch":
+        # User-requested stop. Mark the run done so it stops appearing in
+        # --list-resume — partial-pipeline stops are a deliberate exit, not
+        # an interruption. The arch.json + report.md are still on disk for
+        # inspection.
+        _save_state(run_dir, checkpoint="done", halt_reason=None)
         total_ms = int((time.monotonic() - total_start) * 1000)
         _save_arch_json(run_dir, prompt, intent, plan, [], product_prompt)
         # No artifacts at arch stop, but the report still carries the standard
@@ -1939,28 +2451,91 @@ def main() -> None:
         return
 
     # ── Phase: CodeGen + Static Validation ────────────────────────────────────
-    _phase_header("CODEGEN")
     base_ctx = CodegenContext(
         intent=intent,
         plan=plan,
         platform_api_catalog=(plan.get("appContracts") or {}).get("widgetApiCatalog")
         or [],
     )
-    try:
-        # The agent name "codegen" here is a placeholder — workers in
-        # run_codegen_parallel re-enter input_log() with codegen_<gen> per
-        # generator, so individual prompts land in inputs/codegen_handler/,
-        # inputs/codegen_migration/, etc., not under a shared dir.
-        with input_log("codegen", run_dir):
-            artifacts, retry_log, codegen_tokens = _phase_codegen(
-                base_ctx, is_storefront, is_admin_ui, run_dir
+    # Restore handler side-bands when resuming so the bundle build / report
+    # match the prior run.
+    if resume_state and resume_state.get("handler_email_metadata") is not None:
+        base_ctx.handler_email_metadata = resume_state["handler_email_metadata"]
+    if resume_state and resume_state.get("handler_raw_response") is not None:
+        base_ctx.handler_raw_response = resume_state["handler_raw_response"]
+
+    # Resume into codegen if:
+    #   - checkpoint is past codegen (skip entirely; reuse artifacts)
+    #   - checkpoint==arch but halt_reason==codegen_failed (re-run with
+    #     prior partial artifacts and saved error_map)
+    skip_codegen = (
+        resume_state is not None
+        and _resumed_idx >= _phase_index("codegen")
+        and resume_state.get("artifacts")
+    )
+    if skip_codegen:
+        artifacts = dict(resume_state["artifacts"] or {})
+        retry_log = list(resume_state.get("retry_log") or [])
+        # `codegen_tokens` doesn't exist on the resume path — keep an empty
+        # placeholder so any code below that touches it stays happy. The
+        # rolled-up totals come from `codegen_token_totals` instead.
+        codegen_tokens: Dict[str, Tuple[int, int]] = {}
+        # Restore codegen token totals into all_tokens.
+        for name, tokens in (resume_state.get("codegen_token_totals") or {}).items():
+            all_tokens[name] = (
+                tuple(tokens) if isinstance(tokens, list) else tokens
             )
-    except SystemExit:
-        _fail_db("Codegen validation failed after max retries")
-        raise
-    all_tokens.update(codegen_tokens)
+        _info("Codegen: reusing saved artifacts (skipping LLM call)")
+    else:
+        _phase_header("CODEGEN")
+        prior_artifacts = None
+        prior_error_map = None
+        prior_retry_log = None
+        prior_token_totals = None
+        if resume_state and _resumed_halt == "codegen_failed":
+            prior_artifacts = resume_state.get("artifacts") or {}
+            prior_error_map = resume_state.get("codegen_error_map") or {}
+            prior_retry_log = resume_state.get("retry_log") or []
+            saved_tokens = resume_state.get("codegen_token_totals") or {}
+            prior_token_totals = {
+                k: tuple(v) if isinstance(v, list) else v
+                for k, v in saved_tokens.items()
+            }
+            _info(
+                f"Codegen resume: re-running "
+                f"{', '.join(prior_error_map.keys()) or 'missing'} "
+                f"(reusing {len(prior_artifacts)} clean artifact(s))"
+            )
+        try:
+            # The agent name "codegen" here is a placeholder — workers in
+            # run_codegen_parallel re-enter input_log() with codegen_<gen> per
+            # generator, so individual prompts land in inputs/codegen_handler/,
+            # inputs/codegen_migration/, etc., not under a shared dir.
+            with input_log("codegen", run_dir):
+                artifacts, retry_log, codegen_tokens = _phase_codegen(
+                    base_ctx,
+                    is_storefront,
+                    is_admin_ui,
+                    run_dir,
+                    prior_artifacts=prior_artifacts,
+                    prior_error_map=prior_error_map,
+                    prior_retry_log=prior_retry_log,
+                    prior_token_totals=prior_token_totals,
+                )
+        except SystemExit:
+            _fail_db("Codegen validation failed after max retries")
+            raise
+        all_tokens.update(codegen_tokens)
+        # Re-persist all_tokens after codegen rolls in. State already has
+        # checkpoint=codegen written by _phase_codegen on success.
+        _save_state(
+            run_dir, all_tokens={k: list(v) for k, v in all_tokens.items()}
+        )
 
     if stop_after == "codegen":
+        # User-requested stop — mark done so the run drops out of the
+        # resume list (same reasoning as stop_after=arch).
+        _save_state(run_dir, checkpoint="done", halt_reason=None)
         total_ms = int((time.monotonic() - total_start) * 1000)
         _save_artifacts_md(
             run_dir,
@@ -1991,20 +2566,105 @@ def main() -> None:
         return
 
     # ── Phase: LLM Validator + Revision ───────────────────────────────────────
-    _phase_header("VALIDATOR + REVISION")
-    artifacts, val_in, val_out, validator_trace = _phase_validator(
-        base_ctx,
-        artifacts,
-        is_storefront,
-        is_admin_ui,
-        run_dir,
-        run_ts,
-        run_slug,
-    )
-    if val_in or val_out:
-        all_tokens["validator"] = (val_in, val_out)
+    # Resume rules for this combined phase:
+    #   1. checkpoint >= "validator" with NO halt          → skip entirely
+    #   2. checkpoint == "validator" AND halt in
+    #      {kept_originals, revision_failed}                → skip validator,
+    #      re-run revision with saved issues + pre-revision artifacts
+    #   3. checkpoint == "revision" (resolved or resolved_on_retry)
+    #                                                       → skip entirely
+    validator_trace = None
+    if resume_state and _resumed_idx >= _phase_index("validator") and _resumed_halt not in (
+        "kept_originals", "revision_failed"
+    ):
+        # Validator+revision already settled successfully (no unresolved
+        # findings). Reuse artifacts + tokens, no LLM calls.
+        if resume_state.get("validator_tokens"):
+            tk = resume_state["validator_tokens"]
+            all_tokens["validator"] = (int(tk.get("in", 0)), int(tk.get("out", 0)))
+        # Use the merged artifacts from the prior run if revision swapped
+        # widget/admin in.
+        if resume_state.get("artifacts"):
+            artifacts = dict(resume_state["artifacts"])
+        # Try to recover the prior revision trace so the resumed report.md
+        # carries the same Validator + Revision section as the original.
+        # Best-effort: if the trace file is missing/unreadable we just skip
+        # that section (the run still completes).
+        trace_path = run_dir / _REVISION_TRACES_SUBDIR / f"{run_ts}_{run_slug}.json"
+        if trace_path.is_file():
+            try:
+                validator_trace = json.loads(trace_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                validator_trace = None
+        _info("Validator + Revision: reusing saved outcome (skipping LLM call)")
+    elif (
+        resume_state
+        and _resumed_idx >= _phase_index("validator")
+        and _resumed_halt in ("kept_originals", "revision_failed")
+    ):
+        # Resume only the revision step. Feed it the saved validator issues
+        # and the pre-revision artifacts (NOT the broken merged output from
+        # the failed revision — we want a fresh attempt at fixing the same
+        # problem, not to compound prior damage).
+        _phase_header("VALIDATOR + REVISION (revision-only resume)")
+        pre = resume_state.get("pre_revision_artifacts") or resume_state.get("artifacts")
+        if not pre or not resume_state.get("validator_issues"):
+            print(
+                f"\n  {_RED}Cannot resume revision — saved state is missing "
+                f"pre_revision_artifacts or validator_issues.{_RESET}"
+            )
+            _fail_db("Resume revision failed: incomplete saved state")
+            sys.exit(2)
+        resumed_validator = {
+            "issues": resume_state["validator_issues"],
+            "in_tokens": (resume_state.get("validator_tokens") or {}).get("in", 0),
+            "out_tokens": (resume_state.get("validator_tokens") or {}).get("out", 0),
+            "duration_ms": (resume_state.get("validator_tokens") or {}).get("duration_ms", 0),
+        }
+        artifacts, val_in, val_out, validator_trace = _phase_validator(
+            base_ctx,
+            dict(pre),
+            is_storefront,
+            is_admin_ui,
+            run_dir,
+            run_ts,
+            run_slug,
+            resumed_validator=resumed_validator,
+        )
+        # The validator wasn't actually called on this resume path, so the
+        # values returned in val_in/val_out are *revision* tokens — fresh
+        # spend the merchant just paid. The validator's prior cost is
+        # already in the loaded all_tokens snapshot. Track the new revision
+        # spend under a separate key so per-agent reporting stays accurate
+        # (and a follow-up resume reads the cumulative cost from state).
+        prior_rev_in, prior_rev_out = all_tokens.get("revision", (0, 0))
+        all_tokens["revision"] = (prior_rev_in + val_in, prior_rev_out + val_out)
+        _save_state(
+            run_dir, all_tokens={k: list(v) for k, v in all_tokens.items()}
+        )
+    else:
+        _phase_header("VALIDATOR + REVISION")
+        artifacts, val_in, val_out, validator_trace = _phase_validator(
+            base_ctx,
+            artifacts,
+            is_storefront,
+            is_admin_ui,
+            run_dir,
+            run_ts,
+            run_slug,
+        )
+        if val_in or val_out:
+            all_tokens["validator"] = (val_in, val_out)
+        # Persist the rolled-up token totals so a resume after revision
+        # success doesn't lose them.
+        _save_state(
+            run_dir, all_tokens={k: list(v) for k, v in all_tokens.items()}
+        )
 
     if stop_after == "validator":
+        # User-requested stop — mark done so the run drops out of the
+        # resume list (same reasoning as stop_after=arch).
+        _save_state(run_dir, checkpoint="done")
         total_ms = int((time.monotonic() - total_start) * 1000)
         _save_artifacts_md(
             run_dir,
@@ -2146,6 +2806,23 @@ def main() -> None:
         code = artifacts.get(key, "")
         if code:
             rows.append((label, _c(f"{len(code.strip().splitlines())} lines", _DIM)))
+
+    # Carry over halt_reason on completed runs that shipped with unresolved
+    # findings (kept_originals / revision_failed in revision_outcome). The
+    # lister keeps these visible so the merchant can resume just-revision
+    # later.
+    final_halt: Optional[str] = None
+    if revision_outcome == "kept_originals":
+        final_halt = "kept_originals"
+    elif revision_outcome == "failed":
+        final_halt = "revision_failed"
+    _save_state(
+        run_dir,
+        checkpoint="done",
+        halt_reason=final_halt,
+        artifacts=artifacts,
+        all_tokens={k: list(v) for k, v in all_tokens.items()},
+    )
 
     print()
     _summary_box("◆  RUN COMPLETE", rows)
