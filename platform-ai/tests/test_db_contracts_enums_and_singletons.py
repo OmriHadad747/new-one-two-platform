@@ -240,7 +240,6 @@ def test_handler_validator_flags_insert_with_unknown_status_literal() -> None:
     errors = validate_handler_artifact(
         _make_handler_bundle(body),
         api_plan_topics=[],
-        cron_schedule="*/5 * * * *",
         db_contracts=_QUEUE_CONTRACTS,
     )
     assert any(
@@ -257,7 +256,6 @@ def test_handler_validator_passes_when_literals_match_enum() -> None:
     errors = validate_handler_artifact(
         _make_handler_bundle(body),
         api_plan_topics=[],
-        cron_schedule="*/5 * * * *",
         db_contracts=_QUEUE_CONTRACTS,
     )
     assert not any(

@@ -1,0 +1,43 @@
+App purpose: Send one reminder email to each abandoned cart after a merchant-configured delay, with a link to recover the cart.
+App category: backend_admin
+Trigger types: cron
+
+Quality brief — what makes a good version of this app:
+A good version tracks which carts have already received a reminder to avoid duplicates, handles edge cases like carts that were recovered before the email sends, and gives the merchant an easy way to adjust the delay without code. The reminder email should be simple and friendly, with a clear link back to the cart. Log entries should show the customer name, cart value, and send timestamp so the merchant can spot patterns in abandonment.
+
+UX expectations for this admin panel:
+The dashboard should surface a paginated log of sent reminders showing customer display name, cart total with currency, and send timestamp so the merchant can spot abandonment patterns at a glance. A settings panel lets the merchant change the delay (in hours) and enable/disable the feature without touching code. A manual trigger button lets the merchant run an immediate sweep outside the 30-minute schedule.
+
+Column enum vocabulary — the handler stores ONLY these literal values in each column:
+  abandoned_carts.status: ["pending", "sent", "recovered", "ineligible"]
+  reminder_log.outcome: ["sent", "skipped_recovered", "skipped_no_email", "failed"]
+When rendering filter dropdowns, status badges, or any UI that branches on one of these column values, use ONLY values from the matching list. Do NOT invent additional values (e.g. a 'converted' filter when the column enum is ['pending','sent','failed']) — those render dead options the merchant cannot act on.
+
+Admin API catalog — the ONLY paths the panel may call via bridge.call().
+Use EXACTLY the requestShape shown when building the bridge.call() body.
+Expect EXACTLY the responseShape shown when reading the result.
+  GET /settings
+    send:    bridge.call('/settings', {})
+    receive: {'delay_hours': 'number', 'is_enabled': 'boolean', 'updated_at': 'string'}
+  POST /settings
+    send:    bridge.call('/settings', {'delay_hours': 'number', 'is_enabled': 'boolean'})
+    receive: {'delay_hours': 'number', 'is_enabled': 'boolean', 'updated_at': 'string'}
+  GET /reminders
+    send:    bridge.call('/reminders', {'page': 'number', 'page_size': 'number', 'status': 'string | undefined', 'date_from': 'string | undefined', 'date_to': 'string | undefined'})
+    receive: {'items': [{'id': 'string', 'checkout_token': 'string', 'customer_email': 'string', 'customer_display_name': 'string | null', 'total_price_cents': 'number', 'currency': 'string', 'status': 'string', 'last_activity_at': 'string', 'reminder_sent_at': 'string | null', 'created_at': 'string'}], 'total': 'number', 'page': 'number', 'page_size': 'number'}
+  GET /reminders/log
+    send:    bridge.call('/reminders/log', {'page': 'number', 'page_size': 'number', 'date_from': 'string | undefined', 'date_to': 'string | undefined'})
+    receive: {'items': [{'id': 'string', 'abandoned_cart_id': 'string', 'customer_email': 'string', 'customer_display_name': 'string | null', 'total_price_cents': 'number', 'currency': 'string', 'outcome': 'string', 'sent_at': 'string'}], 'total': 'number', 'page': 'number', 'page_size': 'number'}
+  POST /run
+    send:    bridge.call('/run', {})
+    receive: {'queued': 'boolean', 'message': 'string'}
+
+Backend limitations the admin UI should surface:
+  - No Shopify native abandoned-checkout recovery URL is guaranteed in the webhook payload for all plan types: Persist the abandon_url field from the checkouts/create and checkouts/update payloads directly into the DB; fall back to constructing a recovery URL from the shop domain and checkout token when the field is null
+  - No batch write API for sending emails — each abandoned cart requires an individual platform.email.send call: Pre-fetch all required Shopify checkout data (completedAt) in a single bulk query before the loop; per-item email send calls inside the loop are unavoidable for this resource type
+
+CRITICAL (validation rejects violations):
+- NEVER document.head / document.body — append styles and elements to `container`
+- NEVER import / export default — vanilla JS only, export function mount(...)
+
+Generate the Admin UI panel ES module. Output ONLY the raw JavaScript.

@@ -140,11 +140,9 @@ def validate_handler_artifact(
     api_plan_topics: List[str],
     widget_catalog: Optional[List[Dict[str, Any]]] = None,
     admin_catalog: Optional[List[Dict[str, Any]]] = None,
-    cron_batching_required: bool = False,
-    has_state_machine: bool = False,
-    cron_schedule: Optional[str] = None,
     declared_capabilities: Optional[List[str]] = None,
     db_contracts: Optional[List[Dict[str, Any]]] = None,
+    raw_artifact: Optional[str] = None,
 ) -> List[str]:
     """
     Validate the generated handler file bundle.
@@ -244,13 +242,11 @@ def validate_handler_artifact(
                 f"emit only src/routes/*.ts and src/lib/*.ts"
             )
 
-    # 3. Per-trigger gate flags.
-    #    (File-presence checks dropped as paranoid — `handler_typecheck` (tsc)
-    #    catches missing files via the template's named imports of
-    #    webhookHandlers / adminRouter / widgetRouter / jobs. Inverse "must
-    #    not emit when …" cases are dead-code drift, not catastrophic. See
-    #    HANDLER_RULES.md rows 6, 7, 8.)
-    widget_used = bool(widget_catalog)
+    # File-presence triggers dropped as paranoid — `handler_typecheck` (tsc)
+    # catches missing files via the template's named imports of
+    # webhookHandlers / adminRouter / widgetRouter / jobs. Inverse "must not
+    # emit when …" cases are dead-code drift, not catastrophic. See
+    # HANDLER_RULES.md rows 6, 7, 8.
 
     # 4. Per-file TS rules.
     declared_caps = set(declared_capabilities or [])
@@ -272,10 +268,10 @@ def validate_handler_artifact(
                 files_by_path["src/routes/admin.ts"], admin_catalog or []
             )
         )
-    if "src/routes/widget.ts" in files_by_path and widget_used:
+    if "src/routes/widget.ts" in files_by_path and widget_catalog:
         errors.extend(
             _validate_widget_router(
-                files_by_path["src/routes/widget.ts"], widget_catalog or []
+                files_by_path["src/routes/widget.ts"], widget_catalog
             )
         )
     if "src/routes/cron.ts" in files_by_path:
@@ -328,7 +324,12 @@ def validate_handler_artifact(
     #     platform.email.send/sendBatch. Validates presence/absence, single
     #     occurrence, JSON shape, ctaLabel+ctaUrl pairing against URL-flavored
     #     variables, and {{placeholder}} ↔ variables consistency.
-    errors.extend(_check_email_sidecar(artifact, files_by_path))
+    # Sidecar lives OUTSIDE the ===FILE:===/===END=== bundle, so it must be
+    # checked against the raw LLM response (parse() strips the fence out of
+    # `artifact`). Fall back to `artifact` for callers that don't supply a
+    # raw response — those pre-date the OUTPUT-slot wiring and are tested
+    # only with bundles that include the fence inline.
+    errors.extend(_check_email_sidecar(raw_artifact or artifact, files_by_path))
 
     return errors
 
@@ -938,12 +939,19 @@ def _check_email_sidecar(artifact: str, files_by_path: Dict[str, str]) -> List[s
         errors.append(f"```email-metadata``` sidecar block is not valid JSON: {err}")
         return errors
 
-    variables = data.get("variables") or []
-    starter = data.get("starterContent") or {}
-    if not isinstance(variables, list):
+    variables = data.get("variables")
+    starter = data.get("starterContent")
+    if not isinstance(variables, list) or not variables:
         errors.append(
-            "```email-metadata``` sidecar `variables` must be an array of "
-            "camelCase strings."
+            "```email-metadata``` sidecar `variables` must be a non-empty "
+            "array of camelCase strings."
+        )
+        return errors
+    bad = [v for v in variables if not isinstance(v, str) or not v.strip()]
+    if bad:
+        errors.append(
+            "```email-metadata``` sidecar `variables` contains non-string "
+            f"or empty entries: {bad!r}"
         )
         return errors
     if not isinstance(starter, dict):
@@ -951,6 +959,14 @@ def _check_email_sidecar(artifact: str, files_by_path: Dict[str, str]) -> List[s
             "```email-metadata``` sidecar `starterContent` must be an object."
         )
         return errors
+
+    for required in ("subject", "body"):
+        val = starter.get(required)
+        if not isinstance(val, str) or not val.strip():
+            errors.append(
+                f"```email-metadata``` sidecar `starterContent.{required}` "
+                "must be a non-empty string."
+            )
 
     # CTA-pairing check (ctaLabel + ctaUrl together iff URL-flavored variable)
     # dropped as non-catastrophic — broken CTA renders as missing button or

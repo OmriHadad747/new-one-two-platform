@@ -1,0 +1,42 @@
+App purpose: Send one reminder email to customers whose carts remain abandoned after a merchant-configured delay.
+App category: backend_admin
+Trigger types: cron
+
+Quality brief — what makes a good version of this app:
+A good version of this app identifies carts abandoned long enough to meet the delay threshold, avoids sending duplicate emails to the same customer, includes a log so the merchant can verify it's running, and lets the merchant adjust the wait time without touching code. Watch for edge cases: carts completed during the delay window (don't send), customer email validation, and handling carts with no customer email address.
+
+UX expectations for this admin panel:
+The merchant dashboard should prominently show the configurable delay setting with a clear save button, a live count of emails sent today and all-time, and a paginated log of recent abandoned cart emails with cart value, customer email (masked), sent timestamp, and outcome so they can verify the app is running correctly.
+
+Column enum vocabulary — the handler stores ONLY these literal values in each column:
+  abandoned_cart_emails.status: ["pending", "sent", "failed", "skipped_no_email", "skipped_completed"]
+When rendering filter dropdowns, status badges, or any UI that branches on one of these column values, use ONLY values from the matching list. Do NOT invent additional values (e.g. a 'converted' filter when the column enum is ['pending','sent','failed']) — those render dead options the merchant cannot act on.
+
+Admin API catalog — the ONLY paths the panel may call via bridge.call().
+Use EXACTLY the requestShape shown when building the bridge.call() body.
+Expect EXACTLY the responseShape shown when reading the result.
+  GET /settings
+    send:    bridge.call('/settings', {})
+    receive: {'delay_minutes': 'number', 'is_enabled': 'boolean', 'updated_at': 'string'}
+  POST /settings
+    send:    bridge.call('/settings', {'delay_minutes': 'number', 'is_enabled': 'boolean'})
+    receive: {'delay_minutes': 'number', 'is_enabled': 'boolean', 'updated_at': 'string'}
+  GET /stats
+    send:    bridge.call('/stats', {})
+    receive: {'total_sent': 'number', 'sent_today': 'number', 'total_failed': 'number', 'total_skipped': 'number'}
+  GET /emails
+    send:    bridge.call('/emails', {'page': 'number', 'page_size': 'number', 'status': 'string'})
+    receive: {'items': [{'id': 'string', 'cart_token': 'string', 'customer_email': 'string', 'cart_subtotal_cents': 'number', 'currency': 'string', 'line_items_json': 'array', 'status': 'string', 'failure_reason': 'string', 'email_sent_at': 'string', 'detected_at': 'string', 'abandoned_at': 'string'}], 'total': 'number', 'page': 'number', 'page_size': 'number'}
+  POST /run
+    send:    bridge.call('/run', {})
+    receive: {'triggered': 'boolean', 'message': 'string'}
+
+Backend limitations the admin UI should surface:
+  - Shopify does not provide a direct bulk API to list all currently-open abandoned carts with their customer email and line item totals in one call: Use shopify.graphqlPaginate on the abandonedCheckouts query to bulk-fetch all abandoned checkouts before the loop; line item totals and customer email are sub-selected inline so no per-item lookups are needed
+  - No batch write API for the platform email send — each abandoned cart requires an individual platform.email.send call: Pre-fetch all required Shopify cart data before the loop via bulk abandonedCheckouts query; per-item platform.email.send calls inside the loop are unavoidable for this resource type
+
+CRITICAL (validation rejects violations):
+- NEVER document.head / document.body — append styles and elements to `container`
+- NEVER import / export default — vanilla JS only, export function mount(...)
+
+Generate the Admin UI panel ES module. Output ONLY the raw JavaScript.

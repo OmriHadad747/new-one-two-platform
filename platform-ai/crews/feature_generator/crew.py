@@ -1380,6 +1380,8 @@ def run_codegen_parallel(
     handler_ctx = ctx_by_gen.get("handler")
     if handler_ctx is not None and handler_ctx.handler_email_metadata is not None:
         base_ctx.handler_email_metadata = handler_ctx.handler_email_metadata
+    if handler_ctx is not None and handler_ctx.handler_raw_response is not None:
+        base_ctx.handler_raw_response = handler_ctx.handler_raw_response
 
     return artifacts, per_agent_tokens
 

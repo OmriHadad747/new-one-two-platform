@@ -47,14 +47,20 @@ _CATALOGS_ROOT = Path(__file__).resolve().parent
 _SURFACES: FrozenSet[str] = frozenset({"admin", "storefront"})
 
 # Caps tuned to keep the injection block well under the budget agreed in
-# SHOPIFY_KNOWLEDGE_PLAN.md (~500 tok per example × ~5 ops ≈ 2.5k tok max).
-# A scenario rarely exceeds ~400 tok when only the query + variables are
-# kept; response samples are dropped because they don't help the model
-# write the *call* — they help interpret the result, which the typecheck
-# validator covers separately.
+# SHOPIFY_KNOWLEDGE_PLAN.md (~500 tok per example × ~5 ops × 2 scenarios ≈
+# 5k tok max). A scenario rarely exceeds ~400 tok when only the query +
+# variables are kept; response samples are dropped because they don't help
+# the model write the *call* — they help interpret the result, which the
+# typecheck validator covers separately.
 _MAX_QUERY_CHARS = 1800
 _MAX_VARIABLES_CHARS = 600
-_MAX_TOTAL_CHARS = 12000
+_MAX_TOTAL_CHARS = 20000
+
+# How many scenarios to inject per op. Top-2 is cheap insurance against a
+# bad intent_hint signal: when zero-overlap-with-any-title makes top-1
+# arbitrary, top-2 hedges by also showing the runner-up. Diversity is
+# automatic since scenarios within one op already have distinct titles.
+_SCENARIOS_PER_OP = 2
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -100,31 +106,39 @@ def _tokens(s: str) -> List[str]:
     return _TOKEN_RE.findall(s.lower())
 
 
-def _pick_scenario(
+def _pick_scenarios(
     scenarios: List[Dict[str, Any]],
     intent_hint: Optional[str],
-) -> Dict[str, Any]:
+    k: int = _SCENARIOS_PER_OP,
+) -> List[Dict[str, Any]]:
     """
-    Top-1 scenario by token overlap between `intent_hint` and `scenario_title`.
-    Falls back to the first scenario when no overlap (or no hint).
+    Top-k scenarios by token overlap between `intent_hint` and
+    `scenario_title`. Falls back to the first k scenarios when no hint /
+    no overlap. Stable secondary sort on the original-list index keeps
+    output deterministic across runs.
 
     No embeddings, no fuzzy lib — substring/overlap is enough at this scale
-    (3-8 scenarios per op). Tighter retrieval is a Phase 6 concern.
+    (3-8 scenarios per op). Top-k (instead of top-1) is cheap insurance
+    against a zero-overlap hint where top-1 would be effectively arbitrary.
+    Tighter retrieval is a Phase 6 concern.
     """
+    if len(scenarios) <= k:
+        return scenarios
     if not intent_hint:
-        return scenarios[0]
+        return scenarios[:k]
     hint_tokens = set(_tokens(intent_hint))
     if not hint_tokens:
-        return scenarios[0]
-    best = scenarios[0]
-    best_score = -1
-    for s in scenarios:
-        title_tokens = set(_tokens(s.get("scenario_title", "")))
-        score = len(hint_tokens & title_tokens)
-        if score > best_score:
-            best_score = score
-            best = s
-    return best
+        return scenarios[:k]
+    scored = [
+        (
+            len(hint_tokens & set(_tokens(s.get("scenario_title", "")))),
+            -i,  # tiebreak: earlier-listed scenarios win (negate so sort desc keeps order)
+            s,
+        )
+        for i, s in enumerate(scenarios)
+    ]
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [s for _, _, s in scored[:k]]
 
 
 def _format_scenario(op: str, kind: str, scenario: Dict[str, Any]) -> str:
@@ -151,12 +165,12 @@ def examples_for_ops(
     intent_hint: Optional[str] = None,
 ) -> str:
     """
-    Return a formatted multi-op example block (one canonical scenario per op),
+    Return a formatted multi-op example block (top-k scenarios per op),
     or "" if the bank is missing or no requested op has examples.
 
     `op_names` is the architect's approved list (same input as slice_summary).
     `intent_hint` is optional free-text describing what the handler is trying
-    to do — used to pick the most relevant scenario per op.
+    to do — used to pick the most relevant scenarios per op.
     """
     if not op_names:
         return ""
@@ -165,24 +179,34 @@ def examples_for_ops(
         return ""
     blocks: List[str] = []
     total_chars = 0
+    ops_rendered = 0
+    truncated = False
     for op in op_names:
         scenarios = bank.get(op)
         if not scenarios:
             continue
-        scenario = _pick_scenario(scenarios, intent_hint)
-        kind = scenario.get("kind") or ""
-        rendered = _format_scenario(op, kind, scenario)
-        if total_chars + len(rendered) > _MAX_TOTAL_CHARS:
-            blocks.append(f"# ... ({len(op_names) - len(blocks)} more op(s) omitted to fit budget)")
+        picks = _pick_scenarios(scenarios, intent_hint)
+        for scenario in picks:
+            kind = scenario.get("kind") or ""
+            rendered = _format_scenario(op, kind, scenario)
+            if total_chars + len(rendered) > _MAX_TOTAL_CHARS:
+                truncated = True
+                break
+            blocks.append(rendered)
+            total_chars += len(rendered)
+        if truncated:
+            blocks.append(
+                f"# ... ({len(op_names) - ops_rendered - 1} more op(s) "
+                "omitted to fit budget)"
+            )
             break
-        blocks.append(rendered)
-        total_chars += len(rendered)
+        ops_rendered += 1
     if not blocks:
         return ""
     header = (
-        "Worked examples — one canonical scenario per approved op, mined from\n"
-        "shopify.dev. These are real, executable shapes; mirror them when\n"
-        "writing your queries. Some approved ops have no example — write\n"
-        "those from the schema slice above."
+        f"Worked examples — top-{_SCENARIOS_PER_OP} scenarios per approved op, "
+        "mined from shopify.dev. These are real, executable shapes; mirror\n"
+        "them when writing your queries. Some approved ops have no example —\n"
+        "write those from the schema slice above."
     )
     return header + "\n\n" + "\n\n".join(blocks)

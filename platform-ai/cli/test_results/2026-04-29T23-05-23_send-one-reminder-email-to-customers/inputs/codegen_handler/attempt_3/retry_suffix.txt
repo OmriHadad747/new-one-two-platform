@@ -1,0 +1,26 @@
+
+
+PREVIOUS ATTEMPT FAILED VALIDATION:
+- ```email-metadata``` sidecar declares variable(s) ['currencyCode', 'lineItems'] that are not referenced anywhere in `starterContent` — every declared variable must be used.
+- [src/routes/admin.ts:30:22] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:31:19] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:33:9] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:33:9] TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+- [src/routes/admin.ts:34:14] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:35:13] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:73:22] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:74:19] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:76:9] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:76:9] TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter.
+- [src/routes/admin.ts:77:14] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:78:13] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:109:26] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:110:26] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:111:28] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:112:29] TS18048: 'row' is possibly 'undefined'.
+- [src/routes/admin.ts:139:26] TS18048: 'countRow' is possibly 'undefined'.
+- [src/routes/cron.ts:59:13] TS2339: Property 'delay_minutes' does not exist on type '{ delay_minutes: number; is_enabled: boolean; } | undefined'.
+- [src/routes/cron.ts:59:28] TS2339: Property 'is_enabled' does not exist on type '{ delay_minutes: number; is_enabled: boolean; } | undefined'.
+
+Fix ALL listed errors in this new attempt.
+

@@ -1,0 +1,24 @@
+Merchant request: Customers receive a timed email reminder about their abandoned cart after your configured delay, increasing the chance they return to complete the purchase.
+
+Feature intent:
+{
+  "triggerTypes": [
+    "cron"
+  ],
+  "resources": [
+    "cart",
+    "customer",
+    "email"
+  ],
+  "desiredOutcome": "Customers receive a timed email reminder about their abandoned cart after your configured delay, increasing the chance they return to complete the purchase.",
+  "cronHint": "every 1\u20132 hours, checking for carts abandoned beyond your threshold",
+  "appCategory": "backend_admin",
+  "qualityBrief": "The app must identify genuinely abandoned carts (items added but checkout not completed) and avoid re-sending to the same customer. It should handle edge cases like carts cleared before the delay expires, customers who already purchased, and duplicate email prevention. The admin page must make the delay setting obvious and show delivery metrics so the merchant can judge effectiveness. Email should link directly back to the cart."
+}
+
+App archetype: backend_admin
+
+Quality brief (use this to inform edgeCases and uxExpectations):
+The app must identify genuinely abandoned carts (items added but checkout not completed) and avoid re-sending to the same customer. It should handle edge cases like carts cleared before the delay expires, customers who already purchased, and duplicate email prevention. The admin page must make the delay setting obvious and show delivery metrics so the merchant can judge effectiveness. Email should link directly back to the cart.
+
+Produce the structural plan and binding contracts.

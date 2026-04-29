@@ -53,9 +53,9 @@ tenant's own schema. This has two consequences:
 REQUIRED PATTERN for every CREATE TABLE:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CREATE TABLE <table_name> (
-  -- EVERY column comes EXACTLY from the dbContracts in the user
-  -- prompt. Same name, same type, same constraints. No additions, no
-  -- removals.
+  -- Derive every table column EXACTLY from the dbContracts in the user
+  -- prompt — same name, same type, same constraints. No additions, no
+  -- removals. The contract is authoritative; do not second-guess it.
 );
 
 Critical: do NOT add a `created_at` (or any other timestamp) column
@@ -130,10 +130,9 @@ ABSOLUTE RULES:
 5. Add useful indexes when the DB contracts declare them; avoid
    redundant standalone indexes when a composite index already covers
    the same prefix.
-6. Derive ALL table columns EXACTLY from the DB contracts in the user
-   prompt. Generate every column listed there with the exact name,
-   type, and constraints specified. Do not add or remove columns
-   beyond what the contracts declare.
+6. The dbContracts column-set is authoritative — see REQUIRED PATTERN
+   above for the exact rule (every column emitted matches dbContracts
+   on name, type, and constraints; nothing added, nothing removed).
 7. Idempotency markers (IF NOT EXISTS) are added automatically by the
    deployer — do NOT write them yourself. Writing `CREATE TABLE IF NOT
    EXISTS foo` is tolerated but redundant.

@@ -1,0 +1,23 @@
+Merchant request: Send one reminder email to each abandoned cart after a merchant-configured delay, with a link to recover the cart.
+
+Feature intent:
+{
+  "triggerTypes": [
+    "cron"
+  ],
+  "resources": [
+    "cart",
+    "customer"
+  ],
+  "desiredOutcome": "Send one reminder email to each abandoned cart after a merchant-configured delay, with a link to recover the cart.",
+  "cronHint": "Every 30 minutes (or similar frequent interval) to check for carts ready to trigger",
+  "appCategory": "backend_admin",
+  "qualityBrief": "A good version tracks which carts have already received a reminder to avoid duplicates, handles edge cases like carts that were recovered before the email sends, and gives the merchant an easy way to adjust the delay without code. The reminder email should be simple and friendly, with a clear link back to the cart. Log entries should show the customer name, cart value, and send timestamp so the merchant can spot patterns in abandonment."
+}
+
+App archetype: backend_admin
+
+Quality brief (use this to inform edgeCases and uxExpectations):
+A good version tracks which carts have already received a reminder to avoid duplicates, handles edge cases like carts that were recovered before the email sends, and gives the merchant an easy way to adjust the delay without code. The reminder email should be simple and friendly, with a clear link back to the cart. Log entries should show the customer name, cart value, and send timestamp so the merchant can spot patterns in abandonment.
+
+Produce the structural plan and binding contracts.

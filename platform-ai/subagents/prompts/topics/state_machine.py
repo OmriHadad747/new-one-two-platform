@@ -46,7 +46,20 @@ ARCHITECT_SHAPE = """\
 stateMachine (non-null) — only for DISCRETE string/enum transitions:
   { "entity": "<shopify_resource>", "trackedField": "<enum_field_name>",
     "unknownSentinel": "null", "skipWhenUnknown": true,
-    "transitions": [{ "from": "<prior_enum_value>", "to": "<new_enum_value>", "action": "<handler_action>" }] }\
+    "transitions": [{ "from": "<prior_enum_value>", "to": "<new_enum_value>", "action": "<handler_action>" }] }
+
+  The dbContracts column for `trackedField` MUST be NULLABLE — no NOT NULL,
+  no DEFAULT — because null encodes "never observed". The discrete-value
+  enum rule still applies (declare `enum`), but the constraints differ
+  from a normal status column:
+    ✅ { "name": "<enum_field_name>", "type": "TEXT", "constraints": "NULL",
+         "enum": ["<value_a>", "<value_b>", "<value_c>"] }
+    ❌ { "name": "<enum_field_name>", "type": "TEXT",
+         "constraints": "NOT NULL DEFAULT '<value_a>'",
+         "enum": ["<value_a>", "<value_b>", "<value_c>"] }
+        — NOT NULL DEFAULT coerces the first INSERT past the unknown
+        state, so the handler's null-as-never-observed check never fires
+        and the very first event is silently treated as a real transition.\
 """
 
 # ── Handler view ───────────────────────────────────────────────────────────────

@@ -62,6 +62,7 @@ Source: every handler-facing prompt block — `platform-ai/subagents/prompts/top
 | 34 | `variables` ↔ `data:` keys cross-check (sidecar lists exactly the camelCase keys passed in `data`) | yes | llm | |
 | 35 | `ctaLabel` + `ctaUrl` together iff any URL-flavored variable in `variables` (`*Url` / `url`) | no | — (broken CTA renders as missing button or dangling label; merchant edits the sidecar in the Email tab anyway and would notice) | |
 | 36 | `variables` ↔ `starterContent` `{{x}}` references consistent (every placeholder declared, every variable referenced) | yes | static | ✅ |
+| 36b | `variables` is a non-empty array of non-empty camelCase strings; `starterContent.subject` and `starterContent.body` are non-empty strings | yes | static | ✅ |
 | 37 | `starterContent.subject` / `body` reference declared variables with `{{var}}` placeholders | no | — | |
 | 38 | `heading` optional (omit key entirely otherwise) | no (paranoid) | — | |
 | 39 | No `<placeholder>` tokens echoed verbatim in sidecar strings | no (paranoid) | — | |
@@ -267,3 +268,21 @@ Two-part fix this round, both leaving the static check itself unchanged:
 - **Static error message enriched with an inline format example.** `_check_email_sidecar` in `handler_artifact.py` now returns an error string that includes a minimal correct sidecar block + the three governing rules (variables ↔ data: keys equality, no orphan placeholders/declarations, one-block-merge-across-call-sites). The retry loop feeds the message straight into the next attempt's user prompt, so the format example travels with the feedback. No new injection mechanism — the cumulative_errors path was already correct, the message just needed to be self-sufficient.
 
 Row 33 classification stays `static` ✅. The `done?` reference now points at the enriched implementation: `handler_artifact.py:_check_email_sidecar` (error includes inline format example) + the prompt placement in `topics/handler.py:HANDLER` (requirement) + `capabilities/email.py:116-163` (format spec).
+
+---
+
+## Audit findings — sidecar reliability (2026-04-29)
+
+The 2026-04-28 diagnosis was wrong. A second cart-recovery run (`2026-04-29T22-38-57_send-one-reminder-email-to-each`) hit row 33 three retries in a row with the SAME "no sidecar emitted" error — but this time the second-validator path also fired a `lineItemsSummary declares entries not referenced` orphan error on attempt 3. That second error can only fire when the sidecar IS parsed as a dict — proving the model emitted the block on every attempt. The retry loop never converged because the static check was returning a false-positive that masked the real signal.
+
+Root cause: `validate_handler_artifact` was being passed the post-`parse()` artifact (sidecar fence already stripped by `HandlerGenerator.parse()`), so `_check_email_sidecar`'s `_EMAIL_SIDECAR_RE.findall(artifact)` returned `[]` regardless of what the model produced. The "model is dropping the sidecar" hypothesis from 2026-04-28 was a misdiagnosis — the prompt-placement and error-enrichment changes from that round didn't help because the model was never the problem.
+
+Three-part fix this round:
+
+- **Pass the raw response through.** `CodegenContext` gained a `handler_raw_response` OUTPUT slot (mirroring `handler_email_metadata`), populated by `HandlerGenerator.generate()` before `parse()` strips the fence. `validate_handler_artifact` gained an optional `raw_artifact` param, and `_check_email_sidecar` now scans the raw response for the fence instead of the stripped bundle.
+
+- **Consolidated to one validator.** The redundant `_validate_email_metadata` path in `subagents/handler_agent.py` (which operated on the already-extracted dict and was the only thing reporting the orphan error correctly) has been deleted. Its stricter structural checks (non-empty `variables`, no non-string entries, `starterContent.subject` / `body` non-empty) were merged into `_check_email_sidecar` in `llm_validations/handler_artifact.py`. New row 36b covers the merged checks. There is now a single source of truth for sidecar validation.
+
+- **Dropped dead validator params.** `validate_handler_artifact` previously declared `cron_batching_required`, `has_state_machine`, and `cron_schedule` parameters that were passed by the handler generator but never read by the function body (file-presence triggers had already been reclassified as paranoid — see HANDLER_RULES.md rows 6, 7, 8). Removed from both the signature and the call site.
+
+Rows 33 and 36 classifications stay `static` ✅. Row 36b is new and covers the structural checks moved over from the old per-agent validator path.

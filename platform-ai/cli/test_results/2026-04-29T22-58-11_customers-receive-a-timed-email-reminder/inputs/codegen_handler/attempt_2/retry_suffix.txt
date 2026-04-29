@@ -1,0 +1,19 @@
+
+
+PREVIOUS ATTEMPT FAILED VALIDATION:
+- handler calls platform.email.send/sendBatch but no ```email-metadata``` sidecar block was emitted. After your final ===END=== marker, append exactly ONE fenced block in this format (replace placeholders with the actual camelCase keys you pass in `data: {...}`):
+```email-metadata
+{
+  "variables": ["customerName", "actionUrl"],
+  "starterContent": {
+    "subject": "{{customerName}}, an action is waiting",
+    "body": "Quick reminder — tap below to continue.",
+    "ctaLabel": "Continue",
+    "ctaUrl": "{{actionUrl}}"
+  }
+}
+```
+Rules: (1) `variables` MUST equal the camelCase keys you pass in every `data: {...}` across ALL email send call sites, deduplicated. (2) Every `{{token}}` referenced anywhere in starterContent MUST be in the variables array, and every variable MUST be referenced — no orphans on either side. (3) Emit ONE block even across multiple send call sites — merge into a single variables array.
+
+Fix ALL listed errors in this new attempt.
+

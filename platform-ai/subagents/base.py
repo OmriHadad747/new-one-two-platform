@@ -86,6 +86,9 @@ class CodegenContext:
 
     # OUTPUT slot — see docstring. Written by HandlerGenerator.generate().
     handler_email_metadata: Optional[Dict[str, Any]] = None
+    # OUTPUT slot — raw LLM response (pre-parse) so the artifact validator can
+    # see the email-metadata fence that parse() strips out of the bundle.
+    handler_raw_response: Optional[str] = None
 
 
 # Thinking token budget for high-complexity features.

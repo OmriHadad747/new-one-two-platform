@@ -1,0 +1,7 @@
+
+
+PREVIOUS ATTEMPT FAILED VALIDATION:
+- ```email-metadata``` sidecar declares variable(s) ['currencyCode', 'lineItems'] that are not referenced anywhere in `starterContent` — every declared variable must be used.
+
+Fix ALL listed errors in this new attempt.
+
