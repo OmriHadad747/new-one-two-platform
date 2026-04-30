@@ -4,7 +4,8 @@ Interactive chat CLI — mirrors the platform's chat page experience.
 
 Runs the multi-turn product agent clarification loop, then shows the
 component picker (Backend / Widget / Admin UI), then runs the generation
-pipeline phase by phase. Use --stop-after to halt at a specific phase.
+pipeline phase by phase. Use --stop-after to halt at a specific phase, or
+--resume to continue a prior run that was interrupted or failed.
 
 USAGE
 -----
@@ -12,12 +13,45 @@ USAGE
   python chat_local.py --stop-after arch      # product + architect only, prints plan
   python chat_local.py --stop-after codegen   # + codegen + static validation
   python chat_local.py --stop-after validator # + LLM validator + revision pass
+  python chat_local.py --no-db                # skip writing the bundle to postgres
+
+RESUME
+------
+  Every run writes a state.json into its run dir after each phase. Use these
+  flags to recover a run without re-paying tokens for phases that already
+  succeeded:
+
+    python chat_local.py --list-resume         # show every resumable run
+    python chat_local.py --resume <RUN_ID>     # continue a specific run
+
+  The CLI dispatches into the right phase based on the saved checkpoint:
+
+    intent     → re-runs from architect onwards
+    arch       → re-runs from codegen onwards
+    arch + codegen_failed
+               → re-runs codegen, reusing artifacts that already passed
+                 validation (only the failed/missing generators are billed)
+    codegen    → re-runs from validator onwards
+    validator + (kept_originals | revision_failed)
+               → re-runs only the revision agent against the saved
+                 validator issues — the validator LLM call is skipped
+                 entirely (this is the main token-saver)
+    validator (no halt) / revision
+               → skips straight to explanation
+    done + (kept_originals | revision_failed)
+               → run shipped with unresolved findings; --resume re-runs
+                 just the revision step
+
+  Robustness: missing/corrupt/wrong-version state.json files are silently
+  dropped from --list-resume; --resume fails with exit code 2 and a clear
+  message rather than a traceback.
 
 OUTPUT
 ------
   Console: live per-agent progress lines with token counts
   File (stop-after=arch):     test_results/<ts>_<slug>_arch.json
   File (stop-after=codegen/validator or full): test_results/<ts>_<slug>.md
+  File (every run):           test_results/<ts>_<slug>/state.json  (resume index)
 """
 from __future__ import annotations
 
