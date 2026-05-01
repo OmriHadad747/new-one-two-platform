@@ -1,0 +1,215 @@
+```json
+{
+  "schema_version": "1",
+  "archetype": "backend+admin",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "Once daily at the merchant-configured hour, the schedule job reads all product variant inventory levels across every location and computes which variants fall at or below the saved threshold. A new report row is created in the pending state alongside one item row per flagged variant. The system then sends a formatted email to the merchant listing each flagged variant's name, SKU, and stock quantity; on success the report is marked sent, on failure it is marked failed with the reason recorded. At any time the merchant may open the admin panel to view a live low-stock list, browse past report records and their flagged items, and update the stock threshold or daily send hour, all of which are served from the app's own routes without re-querying Shopify except for the live current-stock view.",
+  "triggers": [
+    {
+      "kind": "schedule",
+      "cadence": "once daily at a merchant-configured hour",
+      "jobPurpose": "Identify all variants below the stock threshold and deliver the daily low-stock alert email to the merchant.",
+      "perTickWork": "Fetch all variant inventory levels across all locations, compute the set of variants at or below the threshold, persist a report with one item row per flagged variant, send the alert email, and record the send outcome on the report row.",
+      "bulkFetchRule": true
+    },
+    {
+      "kind": "inbound-request"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "fetch-variant-inventory",
+      "description": "Retrieve inventory quantities for all product variants across every location.",
+      "kind": "read",
+      "dataNeeds": ["variant external identifier", "product name", "variant name", "SKU", "stock quantity", "location identifier"],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "compute-low-stock-variants",
+      "description": "Determine which variants have a stock quantity at or below the configured threshold.",
+      "kind": "compute",
+      "dataNeeds": ["variant external identifier", "product name", "variant name", "SKU", "stock quantity", "stock threshold"],
+      "integration": null
+    },
+    {
+      "id": "record-report",
+      "description": "Persist a new daily report and one item row for each flagged variant.",
+      "kind": "write",
+      "dataNeeds": ["report date", "flagged item count", "variant external identifier", "product name", "variant name", "SKU", "stock quantity"],
+      "integration": null
+    },
+    {
+      "id": "send-alert-email",
+      "description": "Deliver the daily low-stock alert email to the merchant listing every flagged variant.",
+      "kind": "notify",
+      "dataNeeds": ["merchant email address", "report date", "flagged variant list with product name, variant name, SKU, and stock quantity"],
+      "integration": "email"
+    },
+    {
+      "id": "record-report-outcome",
+      "description": "Update the report status to sent or failed and capture any failure reason.",
+      "kind": "write",
+      "dataNeeds": ["report identifier", "outcome", "failure reason", "sent timestamp"],
+      "integration": null
+    },
+    {
+      "id": "read-live-low-stock",
+      "description": "Fetch a live list of variants currently below the threshold for the admin current-stock view.",
+      "kind": "read",
+      "dataNeeds": ["variant external identifier", "product name", "variant name", "SKU", "stock quantity", "stock threshold"],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "read-report-history",
+      "description": "Retrieve past report records with their status and item counts for the admin history view.",
+      "kind": "read",
+      "dataNeeds": ["report identifier", "report date", "status", "flagged item count", "sent timestamp", "failure reason"],
+      "integration": null
+    },
+    {
+      "id": "read-report-items",
+      "description": "Retrieve the flagged variant items belonging to a specific past report.",
+      "kind": "read",
+      "dataNeeds": ["report identifier", "variant external identifier", "product name", "variant name", "SKU", "stock quantity"],
+      "integration": null
+    },
+    {
+      "id": "read-settings",
+      "description": "Retrieve the current stock threshold and daily send hour from the merchant's saved settings.",
+      "kind": "read",
+      "dataNeeds": ["stock threshold", "daily send hour"],
+      "integration": null
+    },
+    {
+      "id": "update-settings",
+      "description": "Save a new stock threshold and daily send hour as specified by the merchant.",
+      "kind": "write",
+      "dataNeeds": ["stock threshold", "daily send hour"],
+      "integration": null
+    }
+  ],
+  "persistence": [
+    {
+      "name": "alert_settings",
+      "purpose": "Stores the merchant's stock threshold and preferred daily send hour for the alert job.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "stock_threshold", "role": "count", "nullable": false, "purpose": "Variants at or below this quantity are flagged" },
+        { "name": "daily_send_hour", "role": "count", "nullable": false, "purpose": "Hour of day (0–23) at which the alert job should fire" },
+        { "name": "updated_at", "role": "timestamp", "nullable": false }
+      ],
+      "keyedBy": "singleton row; one settings record per merchant installation",
+      "statusField": null,
+      "queryPatterns": [
+        "Fetch the single settings row unconditionally on each job tick and on admin settings page load"
+      ]
+    },
+    {
+      "name": "stock_reports",
+      "purpose": "Records each daily alert run with its outcome and summary counts for merchant-facing history.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "report_date", "role": "timestamp", "nullable": false, "purpose": "Calendar date the job ran for" },
+        { "name": "status", "role": "status", "nullable": false },
+        { "name": "flagged_item_count", "role": "count", "nullable": false, "purpose": "Number of variants included in this report" },
+        { "name": "sent_at", "role": "timestamp", "nullable": true, "purpose": "Timestamp the alert email was successfully delivered" },
+        { "name": "failure_reason", "role": "text", "nullable": true, "purpose": "Human-readable reason when email delivery failed" },
+        { "name": "created_at", "role": "timestamp", "nullable": false }
+      ],
+      "keyedBy": "one row per calendar date; keyed by report date",
+      "statusField": "status",
+      "queryPatterns": [
+        "Most recent reports first for the admin history list",
+        "Single report by identifier when drilling into items",
+        "Filter by report date to detect whether today's report already exists before job runs"
+      ]
+    },
+    {
+      "name": "stock_report_items",
+      "purpose": "Stores the individual flagged variant snapshot captured at the time each report was generated.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "report_id", "role": "reference", "nullable": false, "purpose": "The report this item belongs to" },
+        { "name": "variant_external_id", "role": "reference", "nullable": false, "purpose": "Platform identifier for the variant that was flagged" },
+        { "name": "product_name", "role": "text", "nullable": false, "purpose": "Product title at snapshot time" },
+        { "name": "variant_name", "role": "text", "nullable": false, "purpose": "Variant option label at snapshot time" },
+        { "name": "sku", "role": "text", "nullable": true, "purpose": "SKU at snapshot time; null if variant has no SKU" },
+        { "name": "stock_quantity", "role": "count", "nullable": false, "purpose": "Aggregate inventory quantity recorded at snapshot time" },
+        { "name": "created_at", "role": "timestamp", "nullable": false }
+      ],
+      "keyedBy": "one row per variant per report, keyed by the combination of report identifier and variant external identifier",
+      "statusField": null,
+      "queryPatterns": [
+        "All items belonging to a given report, ordered by stock quantity ascending",
+        "Existence check for a specific variant within a specific report to prevent duplicates"
+      ]
+    }
+  ],
+  "stateMachine": {
+    "states": ["pending", "sent", "failed"],
+    "initialState": "pending",
+    "terminalStates": ["sent", "failed"],
+    "transitions": [
+      { "from": "pending", "to": "sent", "trigger": "alert email successfully delivered" },
+      { "from": "pending", "to": "failed", "trigger": "email delivery attempt returned an error" }
+    ],
+    "invariants": [
+      "A report in sent or failed state never returns to pending",
+      "Exactly one report row may exist per calendar date",
+      "A report row must reach a terminal state within the same job tick that created it"
+    ]
+  },
+  "externalContracts": [
+    {
+      "surface": "admin",
+      "path": "/admin/low-stock/current",
+      "method": "GET",
+      "purpose": "Return the live list of variants currently at or below the stock threshold for immediate admin display.",
+      "requestShape": {},
+      "responseShape": { "variants": "list", "threshold": "count", "total": "count" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/reports",
+      "method": "GET",
+      "purpose": "Return paginated report history records so the merchant can review past alert runs.",
+      "requestShape": { "page": "count" },
+      "responseShape": { "reports": "list", "total": "count", "page": "count" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/reports/items",
+      "method": "GET",
+      "purpose": "Return the flagged variant items captured in a specific past report.",
+      "requestShape": { "report_id": "identifier", "page": "count" },
+      "responseShape": { "items": "list", "total": "count", "page": "count" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/settings",
+      "method": "GET",
+      "purpose": "Return the current stock threshold and daily send hour so the admin panel can pre-populate the settings form.",
+      "requestShape": {},
+      "responseShape": { "stock_threshold": "count", "daily_send_hour": "count" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/settings",
+      "method": "POST",
+      "purpose": "Save an updated stock threshold and daily send hour as entered by the merchant.",
+      "requestShape": { "stock_threshold": "count", "daily_send_hour": "count" },
+      "responseShape": { "stock_threshold": "count", "daily_send_hour": "count" }
+    }
+  ],
+  "edgeCases": [
+    "A report for today already exists when the job fires — treat as a no-op and do not create a duplicate report or send a second email.",
+    "The shop has thousands of variants — paginate inventory reads across all locations to avoid exhausting API rate limits and memory, accumulating results before computing the flagged set.",
+    "A variant has zero stock — include it unconditionally regardless of how the threshold is set, as zero is always a meaningful alert.",
+    "Email delivery fails after the report and items have already been persisted — mark the report as failed with the error reason, preserving the item snapshot so the merchant can see what would have been sent via the admin history view.",
+    "The merchant changes the threshold between scheduled ticks — apply the new threshold only on the next job tick; the current tick uses the value read at job start and records it implicitly through the items captured.",
+    "No variants are below the threshold on a given day — record the report as sent with a zero item count and send an email confirming all stock levels are healthy."
+  ]
+}
+```

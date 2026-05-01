@@ -1,0 +1,463 @@
+{
+  "prompt": "Merchant defines segmentation rules in the admin, clicks Run Now, and receives a count of newly tagged customers.",
+  "intent": {
+    "triggerTypes": [
+      "admin"
+    ],
+    "resources": [
+      "Customer"
+    ],
+    "desiredOutcome": "Merchant defines segmentation rules in the admin, clicks Run Now, and receives a count of newly tagged customers.",
+    "cronHint": null,
+    "appCategory": "backend_admin",
+    "qualityBrief": "A good version handles rule creation clearly \u2014 the merchant should be able to add conditions for total spend, order count, and country without confusion. Show the rule logic in plain language so the merchant understands what will be tagged. Handle edge cases like customers with zero orders or missing location data gracefully. The result summary should clearly state how many customers matched and were tagged, and log which rule version was applied so the merchant can audit later runs."
+  },
+  "plan": {
+    "schema_version": "1",
+    "archetype": "backend+admin",
+    "feasibility": "feasible",
+    "blockedReason": null,
+    "complexity": "high",
+    "dataFlow": "A merchant creates or updates a segmentation rule in the admin panel, defining conditions on total spend, order count, and country. When the merchant clicks Run Now, an inbound request creates a rule run record in pending state and immediately transitions it to running via the mark-run-running capability. The system bulk-fetches all customers from Shopify including their spend, order count, country, and existing tags, then evaluates each customer against the rule conditions, excluding any already carrying the target tag. Matching customers are tagged in Shopify in bulk, the run record is transitioned to completed with a count of newly tagged customers and the rule version applied, and the admin panel displays the result summary. If any step in the bulk fetch or tag-apply phase fails, the run is transitioned to failed with a recorded reason.",
+    "triggers": [
+      {
+        "kind": "inbound-request"
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "list-rules",
+        "description": "Retrieve a paginated list of the merchant's segmentation rules for display in the admin panel.",
+        "kind": "read",
+        "dataNeeds": [
+          "rule identifier",
+          "rule name",
+          "rule conditions",
+          "rule created at",
+          "rule updated at",
+          "page cursor"
+        ],
+        "integration": null
+      },
+      {
+        "id": "create-rule",
+        "description": "Persist a new segmentation rule with its conditions to the database.",
+        "kind": "write",
+        "dataNeeds": [
+          "rule name",
+          "rule conditions",
+          "target tag"
+        ],
+        "integration": null
+      },
+      {
+        "id": "update-rule",
+        "description": "Overwrite an existing segmentation rule's name, conditions, or target tag and increment its version.",
+        "kind": "write",
+        "dataNeeds": [
+          "rule identifier",
+          "rule name",
+          "rule conditions",
+          "target tag",
+          "rule version"
+        ],
+        "integration": null
+      },
+      {
+        "id": "delete-rule",
+        "description": "Remove a segmentation rule and prevent it from being run again.",
+        "kind": "write",
+        "dataNeeds": [
+          "rule identifier"
+        ],
+        "integration": null
+      },
+      {
+        "id": "create-run-record",
+        "description": "Insert a new run record in pending state to represent a requested rule execution.",
+        "kind": "write",
+        "dataNeeds": [
+          "rule identifier",
+          "rule version snapshot",
+          "run status"
+        ],
+        "integration": null
+      },
+      {
+        "id": "mark-run-running",
+        "description": "Transition a pending run record to running state before processing begins.",
+        "kind": "write",
+        "dataNeeds": [
+          "run identifier",
+          "run status"
+        ],
+        "integration": null
+      },
+      {
+        "id": "fetch-customers-with-attributes",
+        "description": "Bulk-fetch all customers from Shopify including the fields needed for rule evaluation and deduplication.",
+        "kind": "read",
+        "dataNeeds": [
+          "customer identifier",
+          "customer total spend",
+          "customer order count",
+          "customer country",
+          "customer existing tags"
+        ],
+        "integration": "shopify-admin"
+      },
+      {
+        "id": "evaluate-rule-conditions",
+        "description": "Determine which customers satisfy all rule conditions and do not already carry the target tag.",
+        "kind": "compute",
+        "dataNeeds": [
+          "customer identifier",
+          "customer total spend",
+          "customer order count",
+          "customer country",
+          "customer existing tags",
+          "rule conditions",
+          "target tag"
+        ],
+        "integration": null
+      },
+      {
+        "id": "apply-customer-tags",
+        "description": "Write the target tag to all customers identified as matching the rule.",
+        "kind": "write",
+        "dataNeeds": [
+          "customer identifier",
+          "target tag"
+        ],
+        "integration": "shopify-admin"
+      },
+      {
+        "id": "record-run-outcome",
+        "description": "Transition the run record to its terminal state and persist the count of newly tagged customers, the rule version applied, and any failure reason.",
+        "kind": "write",
+        "dataNeeds": [
+          "run identifier",
+          "run status",
+          "newly tagged customer count",
+          "rule version snapshot",
+          "failure reason"
+        ],
+        "integration": null
+      },
+      {
+        "id": "list-runs",
+        "description": "Retrieve a paginated history of rule runs for a given rule, including their status and result summaries.",
+        "kind": "read",
+        "dataNeeds": [
+          "rule identifier",
+          "run identifier",
+          "run status",
+          "newly tagged customer count",
+          "rule version snapshot",
+          "run started at",
+          "run completed at",
+          "failure reason",
+          "page cursor"
+        ],
+        "integration": null
+      }
+    ],
+    "persistence": [
+      {
+        "name": "segmentation_rules",
+        "purpose": "Stores each merchant-defined segmentation rule with its conditions, target tag, and a version counter incremented on every edit.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "name",
+            "role": "text",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "conditions",
+            "role": "text",
+            "nullable": false,
+            "purpose": "Structured representation of all conditions (spend threshold, order count threshold, country filter)"
+          },
+          {
+            "name": "target_tag",
+            "role": "text",
+            "nullable": false,
+            "purpose": "The Shopify customer tag this rule applies when a customer matches"
+          },
+          {
+            "name": "version",
+            "role": "count",
+            "nullable": false,
+            "purpose": "Monotonically incremented each time the rule is edited, used to audit which version was applied in a run"
+          },
+          {
+            "name": "created_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "updated_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per segmentation rule, keyed by the rule's internal identifier",
+        "statusField": null,
+        "queryPatterns": [
+          "all rules ordered by most recently updated first",
+          "single rule by its identifier"
+        ]
+      },
+      {
+        "name": "rule_runs",
+        "purpose": "Tracks every execution of a segmentation rule, recording its lifecycle state, the rule version applied, and the outcome summary.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "rule_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "The segmentation rule this run belongs to"
+          },
+          {
+            "name": "rule_version_snapshot",
+            "role": "count",
+            "nullable": false,
+            "purpose": "The rule version number at the moment the run was triggered, enabling audit of which logic was applied"
+          },
+          {
+            "name": "status",
+            "role": "status",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "newly_tagged_count",
+            "role": "count",
+            "nullable": true,
+            "purpose": "Number of customers that were newly tagged during this run; null until the run completes"
+          },
+          {
+            "name": "failure_reason",
+            "role": "text",
+            "nullable": true,
+            "purpose": "Human-readable reason the run failed; null for successful runs"
+          },
+          {
+            "name": "started_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "completed_at",
+            "role": "timestamp",
+            "nullable": true,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per rule execution, keyed by the run's internal identifier",
+        "statusField": "status",
+        "queryPatterns": [
+          "all runs for a given rule ordered by most recently started first",
+          "single run by its identifier",
+          "runs in running state to detect stalled jobs"
+        ]
+      }
+    ],
+    "stateMachine": {
+      "states": [
+        "pending",
+        "running",
+        "completed",
+        "failed"
+      ],
+      "initialState": "pending",
+      "terminalStates": [
+        "completed",
+        "failed"
+      ],
+      "transitions": [
+        {
+          "from": "pending",
+          "to": "running",
+          "trigger": "processing begins"
+        },
+        {
+          "from": "running",
+          "to": "completed",
+          "trigger": "all matching customers successfully tagged and count recorded"
+        },
+        {
+          "from": "running",
+          "to": "failed",
+          "trigger": "an unrecoverable error occurs during customer fetch or tag application"
+        }
+      ],
+      "invariants": [
+        "A run in completed or failed state never transitions to any other state.",
+        "A run row always holds the rule version snapshot captured at the moment the run was created.",
+        "Exactly one run row exists per triggered execution; re-triggering the same rule creates a new row."
+      ]
+    },
+    "externalContracts": [
+      {
+        "surface": "admin",
+        "path": "/admin/rules",
+        "method": "GET",
+        "purpose": "Return a paginated list of all segmentation rules for display in the admin panel.",
+        "requestShape": {
+          "page": "count",
+          "cursor": "identifier"
+        },
+        "responseShape": {
+          "rules": "list",
+          "total_count": "count",
+          "next_cursor": "identifier"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/rules/create",
+        "method": "POST",
+        "purpose": "Create a new segmentation rule with the given name, conditions, and target tag.",
+        "requestShape": {
+          "name": "text",
+          "conditions": "object",
+          "target_tag": "text"
+        },
+        "responseShape": {
+          "rule_id": "identifier",
+          "version": "count"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/rules/update",
+        "method": "POST",
+        "purpose": "Overwrite an existing segmentation rule's name, conditions, or target tag and increment its version.",
+        "requestShape": {
+          "rule_id": "identifier",
+          "name": "text",
+          "conditions": "object",
+          "target_tag": "text"
+        },
+        "responseShape": {
+          "rule_id": "identifier",
+          "version": "count"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/rules/remove",
+        "method": "POST",
+        "purpose": "Delete a segmentation rule so it can no longer be run.",
+        "requestShape": {
+          "rule_id": "identifier"
+        },
+        "responseShape": {
+          "deleted": "flag"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/runs/start",
+        "method": "POST",
+        "purpose": "Trigger an immediate execution of a segmentation rule and return the new run record identifier.",
+        "requestShape": {
+          "rule_id": "identifier"
+        },
+        "responseShape": {
+          "run_id": "identifier",
+          "status": "status"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/runs/status",
+        "method": "GET",
+        "purpose": "Return the current status and result summary of a specific run so the admin panel can poll until completion.",
+        "requestShape": {
+          "run_id": "identifier"
+        },
+        "responseShape": {
+          "status": "status",
+          "newly_tagged_count": "count",
+          "failure_reason": "text",
+          "completed_at": "timestamp"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/runs/list",
+        "method": "GET",
+        "purpose": "Return a paginated history of executions for a given rule, ordered most recent first.",
+        "requestShape": {
+          "rule_id": "identifier",
+          "page": "count",
+          "cursor": "identifier"
+        },
+        "responseShape": {
+          "runs": "list",
+          "total_count": "count",
+          "next_cursor": "identifier"
+        }
+      }
+    ],
+    "edgeCases": [
+      "A customer has zero orders or a null spend value \u2014 the system treats missing numeric fields as zero so spend and order-count conditions evaluate correctly rather than erroring.",
+      "A customer has no country set \u2014 country-based conditions are evaluated as non-matching for that customer, and the run completes normally with those customers excluded.",
+      "A customer already carries the target tag \u2014 the evaluate-rule-conditions step excludes them so the tag is not redundantly re-applied and they are not counted in the newly-tagged total.",
+      "The merchant edits a rule and immediately triggers a run \u2014 the run captures the rule version at creation time, so the outcome is always auditable against the exact conditions that were active.",
+      "A run is in running state and the process crashes before recording an outcome \u2014 stalled runs in running state beyond a reasonable elapsed time are detectable via the query pattern on rule_runs and can be marked failed on recovery.",
+      "The merchant triggers a second run while a previous run for the same rule is still running \u2014 both runs proceed independently; each produces its own result row, and the second run's deduplication check reads the tags state at the time of its own customer fetch."
+    ]
+  },
+  "validation_errors": [],
+  "hld_v_findings": [
+    {
+      "severity": "critical",
+      "location": "stateMachine.transitions[0] / capabilities",
+      "issue": "The pending\u2192running transition on rule_runs.status has no backing write capability. The only write capability that touches run status is record-run-outcome, which is explicitly scoped to terminal states (completed, failed). Nothing in the capability list is responsible for flipping a row from pending to running, so the state machine is unbuildable as specified.",
+      "fix": "Add a write capability (e.g., mark-run-running) whose dataNeeds include run identifier and run status, responsible solely for the pending\u2192running transition, and reference it in the dataFlow description."
+    },
+    {
+      "severity": "important",
+      "location": "capabilities[fetch-customers-with-attributes].dataNeeds",
+      "issue": "evaluate-rule-conditions requires existing customer tags as an input to exclude already-tagged customers, but fetch-customers-with-attributes does not declare existing customer tags in its dataNeeds and does not integrate with a source that would supply them. There is no other capability that fetches this field, leaving the deduplication logic without a data source.",
+      "fix": "Add existing customer tags to fetch-customers-with-attributes.dataNeeds and confirm the Shopify bulk query retrieves the tags array alongside spend, order count, and country."
+    },
+    {
+      "severity": "important",
+      "location": "externalContracts[0] (GET /admin/rules)",
+      "issue": "The endpoint returns a list of rules but declares no count field in responseShape and no page param in requestShape. A merchant with hundreds of rules will receive an unpaginated dump, and the caller has no way to detect truncation or request the next page.",
+      "fix": "Add a page (or cursor) field to requestShape and add total_count plus a pagination cursor to responseShape, mirroring the same fix needed on externalContracts[5]."
+    },
+    {
+      "severity": "important",
+      "location": "externalContracts[5] (GET /admin/runs/list)",
+      "issue": "The run-history endpoint returns a list of runs with no count field and no pagination param. For a rule that has been executed many times this is unusable at scale, and the admin panel has no signal for when the list is truncated.",
+      "fix": "Add a page or cursor param to requestShape and add total_count plus a next_cursor field to responseShape."
+    },
+    {
+      "severity": "minor",
+      "location": "externalContracts[1].requestShape (POST /admin/rules/save)",
+      "issue": "requestShape includes rule_id typed as identifier for a combined create-or-update endpoint. When creating a new rule the caller cannot produce this value because it is server-assigned and does not yet exist, violating the rule that requestShape fields must be caller-producible.",
+      "fix": "Mark rule_id as optional (present only for updates) in the shape description, or split the endpoint into a POST /admin/rules/create (no rule_id) and a POST /admin/rules/update (rule_id required)."
+    }
+  ]
+}

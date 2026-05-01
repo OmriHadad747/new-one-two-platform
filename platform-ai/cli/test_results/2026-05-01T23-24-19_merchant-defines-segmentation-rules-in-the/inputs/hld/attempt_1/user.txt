@@ -1,0 +1,18 @@
+Merchant request: Merchant defines segmentation rules in the admin, clicks Run Now, and receives a count of newly tagged customers.
+
+Product-agent intent (use as context — pick the archetype, capabilities,
+and contracts from the merchant's actual needs):
+{
+  "triggerTypes": [
+    "admin"
+  ],
+  "resources": [
+    "Customer"
+  ],
+  "desiredOutcome": "Merchant defines segmentation rules in the admin, clicks Run Now, and receives a count of newly tagged customers.",
+  "cronHint": null,
+  "appCategory": "backend_admin",
+  "qualityBrief": "A good version handles rule creation clearly \u2014 the merchant should be able to add conditions for total spend, order count, and country without confusion. Show the rule logic in plain language so the merchant understands what will be tagged. Handle edge cases like customers with zero orders or missing location data gracefully. The result summary should clearly state how many customers matched and were tagged, and log which rule version was applied so the merchant can audit later runs."
+}
+
+Produce the HLD plan as JSON conforming to the appended schema.

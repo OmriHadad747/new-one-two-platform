@@ -1,0 +1,19 @@
+```json
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "fetch-current-month-orders",
+      "ops": [
+        {
+          "name": "orders",
+          "surface": "admin",
+          "note": "Fetches the full set of current-month orders with cursor-based pagination (pageInfo) to iterate every page until exhausted, returning order identifier, placed date, financial status, total amount, refund totals, and customer email"
+        }
+      ]
+    }
+  ],
+  "webhooks": [],
+  "unsatisfied": []
+}
+```

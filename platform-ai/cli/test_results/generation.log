@@ -78,3 +78,42 @@
 2026-05-01 22:51:44,865 subagents.hld_v_agent.agent INFO hld_v[minor] externalContracts[3] (GET /admin/customers/points/ledger) — This GET route returns a list ("entries") but declares no page parameter in requestShape and no entry count in responseShape; a high-volume customer's ledger will grow unbounded and the endpoint will have no pagination contract for LLD to implement.
 2026-05-01 22:52:31,587 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
 2026-05-01 22:52:45,805 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:01:53,556 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:01:55,072 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:02:06,697 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:02:29,952 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:03:42,814 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:04:30,399 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:04:30,415 subagents.hld_v_agent.agent WARNING hld_v: failed to get/parse response (1 validation error for HLDVOutput
+  Invalid JSON: EOF while parsing a value at line 1 column 0 [type=json_invalid, input_value='', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.11/v/json_invalid) — fail-open
+2026-05-01 23:04:45,885 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:10:08,629 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:10:37,465 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:11:33,757 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:12:52,574 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:12:52,583 subagents.hld_v_agent.agent INFO hld_v[important] capabilities[fetch-current-month-orders] — The capability reads all orders for the current calendar month from the Shopify Admin API but describes no pagination loop. Shopify returns at most 250 orders per page, so any month with more than 250 orders will silently produce metrics computed on a truncated dataset — revenue, AOV, and repeat-customer count will all be understated with no error surfaced.
+2026-05-01 23:12:52,584 subagents.hld_v_agent.agent INFO hld_v[important] edgeCases[4] — The edge case claims concurrent refreshes are 'processed sequentially', but no serialization primitive (database advisory lock, queue, or idempotency key) is defined anywhere in the plan to enforce this. Without a mechanism, two concurrent POST requests will both read order data, both compute, and race on the upsert — the snapshot may reflect the earlier computation depending on commit order, contradicting the stated guarantee.
+2026-05-01 23:12:52,584 subagents.hld_v_agent.agent INFO hld_v[minor] externalContracts[0] GET /admin/metrics — The route always returns the current calendar month with no month_year query parameter in the requestShape, making it impossible for the admin UI to display or compare a prior month's snapshot without introducing a new endpoint or a breaking change to this one.
+2026-05-01 23:12:52,584 subagents.hld_v_agent.agent INFO hld_v[minor] externalContracts[0] GET /admin/metrics / edgeCases — The response shape includes a 'has_data' flag, implying a no-snapshot state (e.g., first load at the start of a new month) is anticipated, but no edge case describes what values the other fields carry when has_data is false — null, zero, or omitted — leaving the front-end rendering logic undefined for this scenario.
+2026-05-01 23:12:52,584 subagents.hld_v_agent.agent INFO hld_v[minor] capabilities[compute-monthly-metrics] / persistence[monthly_metrics_snapshot].columns[repeat_customer_count] — The plan defines 'repeat customer count' as customers with more than one order within the current month only, but the quality brief describes 'repeat customers by email match' without a same-month restriction; a merchant may reasonably expect cross-month repeat customers, and the narrower definition will silently undercount in low-volume months.
+2026-05-01 23:13:38,690 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:13:49,887 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:15:45,732 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:17:52,733 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:19:11,134 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:20:28,246 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:20:28,253 subagents.hld_v_agent.agent WARNING hld_v: failed to get/parse response (1 validation error for HLDVOutput
+  Invalid JSON: EOF while parsing a string at line 23 column 46 [type=json_invalid, input_value='{\n  "findings": [\n    ...bilities[record-report]', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.11/v/json_invalid) — fail-open
+2026-05-01 23:20:42,816 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:24:05,106 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:25:10,000 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:26:09,247 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:26:09,253 subagents.hld_v_agent.agent INFO hld_v[critical] stateMachine.transitions[0] / capabilities — The pending→running transition on rule_runs.status has no backing write capability. The only write capability that touches run status is record-run-outcome, which is explicitly scoped to terminal states (completed, failed). Nothing in the capability list is responsible for flipping a row from pending to running, so the state machine is unbuildable as specified.
+2026-05-01 23:26:09,253 subagents.hld_v_agent.agent INFO hld_v[important] capabilities[fetch-customers-with-attributes].dataNeeds — evaluate-rule-conditions requires existing customer tags as an input to exclude already-tagged customers, but fetch-customers-with-attributes does not declare existing customer tags in its dataNeeds and does not integrate with a source that would supply them. There is no other capability that fetches this field, leaving the deduplication logic without a data source.
+2026-05-01 23:26:09,253 subagents.hld_v_agent.agent INFO hld_v[important] externalContracts[0] (GET /admin/rules) — The endpoint returns a list of rules but declares no count field in responseShape and no page param in requestShape. A merchant with hundreds of rules will receive an unpaginated dump, and the caller has no way to detect truncation or request the next page.
+2026-05-01 23:26:09,253 subagents.hld_v_agent.agent INFO hld_v[important] externalContracts[5] (GET /admin/runs/list) — The run-history endpoint returns a list of runs with no count field and no pagination param. For a rule that has been executed many times this is unusable at scale, and the admin panel has no signal for when the list is truncated.
+2026-05-01 23:26:09,253 subagents.hld_v_agent.agent INFO hld_v[minor] externalContracts[1].requestShape (POST /admin/rules/save) — requestShape includes rule_id typed as identifier for a combined create-or-update endpoint. When creating a new rule the caller cannot produce this value because it is server-assigned and does not yet exist, violating the rule that requestShape fields must be caller-producible.
+2026-05-01 23:26:59,843 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-01 23:27:13,370 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"

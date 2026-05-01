@@ -25,14 +25,14 @@ from typing import Any, Dict, List, Tuple
 
 from pydantic import ValidationError
 
-from models.adapter import extract_json, get_llm, invoke
+from models.adapter import dump_output, extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
 from subagents.hld_v_agent.prompt import build_system_prompt
 from subagents.hld_v_agent.schema import HLDVOutput
 
 log = logging.getLogger(__name__)
 
-_MAX_OUTPUT_TOKENS = 1200
+_MAX_OUTPUT_TOKENS = 3000
 _THINKING_BUDGET = 1024
 
 _USER_TEMPLATE = """\
@@ -72,6 +72,7 @@ def run_hld_validator(
         response = invoke(llm, system, user)
         in_tok = response.input_tokens
         out_tok = response.output_tokens
+        dump_output(response.content)
         raw_json = extract_json(response.content)
         output = HLDVOutput.model_validate_json(raw_json)
     except (ValidationError, json.JSONDecodeError, Exception) as exc:

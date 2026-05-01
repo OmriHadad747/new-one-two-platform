@@ -1648,11 +1648,7 @@ def main() -> None:
         _hld_v_ms = int((time.monotonic() - _hld_v_t0) * 1000)
         all_tokens["hld_v"] = (hld_v_in, hld_v_out)
 
-        _retryable = [
-            f
-            for f in hld_v_findings
-            if f.get("severity") in ("critical", "important")
-        ]
+        _retryable = list(hld_v_findings)
         _sev_note = f"{len(hld_v_findings)} finding(s)" if hld_v_findings else "clean"
         _agent_line(
             "HLD Check", True, _hld_v_ms, _tok_note(hld_v_in, hld_v_out, _sev_note)
@@ -1675,9 +1671,9 @@ def main() -> None:
                 )
 
         if _retryable:
-            # One-shot correction: feed critical+important findings back to
-            # the HLD agent. Minor findings stay informational — they don't
-            # justify the ~12k-token re-run cost.
+            # One-shot correction: feed every finding back to the HLD agent
+            # regardless of severity — if the validator surfaced it, the HLD
+            # should address it.
             _hint = "\n".join(
                 f"- [{f['severity']}] {f['location']}: {f['issue']} Fix: {f['fix']}"
                 for f in _retryable

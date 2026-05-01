@@ -1,0 +1,494 @@
+{
+  "run_ts": "2026-05-01T23-02-43",
+  "run_slug": "merchant-sees-an-alwayscurrent-admin-dashboard",
+  "prompt": "Merchant sees an always-current admin dashboard with revenue, AOV, top products, and repeat customer rate visualized in charts.",
+  "intent": {
+    "triggerTypes": [
+      "webhook"
+    ],
+    "resources": [
+      "Order"
+    ],
+    "desiredOutcome": "Merchant sees an always-current admin dashboard with revenue, AOV, top products, and repeat customer rate visualized in charts.",
+    "cronHint": null,
+    "appCategory": "backend_admin",
+    "qualityBrief": "A good version of this app loads the dashboard instantly, recalculates metrics accurately when orders arrive, and displays charts that are easy to scan at a glance. Edge cases: handle refunds and cancelled orders correctly (include or exclude from revenue), define repeat customer clearly (purchased more than once), and ensure the dashboard remains responsive even with thousands of orders. Avoid overloading the page with too many charts or making the UI cluttered."
+  },
+  "archetype": "backend_admin",
+  "is_storefront": false,
+  "is_admin_ui": true,
+  "save_to_db": false,
+  "db": {},
+  "all_tokens": {
+    "hld": [
+      7203,
+      4361
+    ],
+    "hld_v": [
+      4714,
+      2224
+    ],
+    "ops_picker": [
+      36391,
+      678
+    ]
+  },
+  "checkpoint": "done",
+  "halt_reason": null,
+  "version": 1,
+  "updated_at": "2026-05-01T23:04:45",
+  "created_at": "2026-05-01T23:02:43",
+  "plan": {
+    "schema_version": "1",
+    "archetype": "backend+admin",
+    "feasibility": "feasible",
+    "blockedReason": null,
+    "complexity": "high",
+    "dataFlow": "An order lifecycle event fires (creation, cancellation, or refund). The system reads the order's revenue, line items, and customer identity, then upserts a local order record and updates the associated line item rows, advancing the order's status as appropriate. A daily revenue snapshot is recalculated for the affected calendar day so the time-series chart stays current. When a merchant opens the admin dashboard, inbound requests fetch pre-aggregated summary metrics, the daily revenue series, top-product rankings, and repeat customer rate from local persistence \u2014 no live Shopify query at read time \u2014 ensuring instant page load regardless of order volume.",
+    "triggers": [
+      {
+        "kind": "external-event",
+        "event": "a new order is placed",
+        "signalFields": [
+          "order external identifier",
+          "order revenue",
+          "order currency",
+          "customer external identifier",
+          "customer email",
+          "line item product identifier",
+          "line item product title",
+          "line item quantity",
+          "line item unit price",
+          "order created timestamp"
+        ],
+        "idempotency": "If an order with the same external identifier already exists in a non-cancelled state, treat the event as a no-op to prevent double-counting."
+      },
+      {
+        "kind": "external-event",
+        "event": "an order is updated to a cancelled or refunded state",
+        "signalFields": [
+          "order external identifier",
+          "updated order status",
+          "refund amount",
+          "order updated timestamp"
+        ],
+        "idempotency": "If the order is already recorded in a terminal cancelled or refunded state, treat the event as a no-op."
+      },
+      {
+        "kind": "inbound-request"
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "read-order-details",
+        "description": "Fetch full order details from the external commerce platform when the event payload alone is insufficient.",
+        "kind": "read",
+        "dataNeeds": [
+          "order external identifier",
+          "order revenue",
+          "order currency",
+          "customer external identifier",
+          "customer email",
+          "line item product identifier",
+          "line item product title",
+          "line item quantity",
+          "line item unit price",
+          "order created timestamp"
+        ],
+        "integration": "shopify-admin"
+      },
+      {
+        "id": "record-order",
+        "description": "Persist a newly placed order and its line items so it contributes to all metrics.",
+        "kind": "write",
+        "dataNeeds": [
+          "order external identifier",
+          "customer external identifier",
+          "order revenue",
+          "order currency",
+          "order status",
+          "order created timestamp"
+        ],
+        "integration": null
+      },
+      {
+        "id": "record-order-line-items",
+        "description": "Persist each line item of a new order so product-level sales rankings can be computed.",
+        "kind": "write",
+        "dataNeeds": [
+          "order external identifier",
+          "line item product identifier",
+          "line item product title",
+          "line item quantity",
+          "line item unit price"
+        ],
+        "integration": null
+      },
+      {
+        "id": "record-order-outcome",
+        "description": "Update a stored order's status and adjust its recorded revenue when it is cancelled or refunded.",
+        "kind": "write",
+        "dataNeeds": [
+          "order external identifier",
+          "updated order status",
+          "adjusted revenue amount",
+          "order updated timestamp"
+        ],
+        "integration": null
+      },
+      {
+        "id": "refresh-daily-revenue-snapshot",
+        "description": "Recalculate and upsert the revenue and order-count aggregates for the affected calendar day after any order status change.",
+        "kind": "write",
+        "dataNeeds": [
+          "calendar day",
+          "total revenue for day",
+          "completed order count for day"
+        ],
+        "integration": null
+      },
+      {
+        "id": "compute-summary-metrics",
+        "description": "Derive total revenue, AOV, and total order count from stored order records for a requested date range.",
+        "kind": "compute",
+        "dataNeeds": [
+          "completed order revenue values",
+          "completed order count",
+          "date range"
+        ],
+        "integration": null
+      },
+      {
+        "id": "compute-top-products",
+        "description": "Rank products by total units sold and total revenue contribution using stored line item records.",
+        "kind": "compute",
+        "dataNeeds": [
+          "line item product identifier",
+          "line item product title",
+          "line item quantity",
+          "line item unit price",
+          "parent order status"
+        ],
+        "integration": null
+      },
+      {
+        "id": "compute-repeat-customer-rate",
+        "description": "Calculate the percentage of customers who have placed more than one completed order.",
+        "kind": "compute",
+        "dataNeeds": [
+          "customer external identifier",
+          "completed order count per customer"
+        ],
+        "integration": null
+      },
+      {
+        "id": "fetch-dashboard-summary",
+        "description": "Return pre-aggregated revenue, AOV, order count, and repeat customer rate for the admin dashboard.",
+        "kind": "read",
+        "dataNeeds": [
+          "total revenue",
+          "average order value",
+          "total order count",
+          "repeat customer rate",
+          "date range"
+        ],
+        "integration": null
+      },
+      {
+        "id": "fetch-revenue-series",
+        "description": "Return the daily revenue and order count time series for rendering the revenue chart.",
+        "kind": "read",
+        "dataNeeds": [
+          "calendar day",
+          "daily revenue",
+          "daily order count",
+          "date range"
+        ],
+        "integration": null
+      },
+      {
+        "id": "fetch-top-products",
+        "description": "Return the ranked list of top products by units sold and revenue for the admin dashboard.",
+        "kind": "read",
+        "dataNeeds": [
+          "product identifier",
+          "product title",
+          "total units sold",
+          "total product revenue",
+          "result limit"
+        ],
+        "integration": null
+      }
+    ],
+    "persistence": [
+      {
+        "name": "orders",
+        "purpose": "Stores one record per order as the authoritative source of truth for revenue and customer metrics.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "order_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "Identifies the order in the external commerce platform"
+          },
+          {
+            "name": "customer_external_id",
+            "role": "reference",
+            "nullable": true,
+            "purpose": "Identifies the customer who placed the order"
+          },
+          {
+            "name": "revenue",
+            "role": "money",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "currency",
+            "role": "text",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "status",
+            "role": "status",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "ordered_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "updated_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per order, keyed by the order's external identifier",
+        "statusField": "status",
+        "queryPatterns": [
+          "all completed orders within a date range for revenue and AOV aggregation",
+          "completed order count grouped by customer external identifier for repeat customer rate",
+          "single order row by external identifier for idempotency checks and status updates"
+        ]
+      },
+      {
+        "name": "order_line_items",
+        "purpose": "Stores individual line items for each order to support product-level sales ranking.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "order_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "Links the line item to its parent order"
+          },
+          {
+            "name": "product_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "Identifies the product in the external commerce platform"
+          },
+          {
+            "name": "product_title",
+            "role": "text",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "quantity",
+            "role": "count",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "unit_price",
+            "role": "money",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per line item, keyed by parent order and product external identifier",
+        "statusField": null,
+        "queryPatterns": [
+          "all line items joined to completed orders, grouped by product external identifier for top-product ranking",
+          "all line items for a given order for deletion or exclusion when the order is cancelled"
+        ]
+      },
+      {
+        "name": "daily_revenue_snapshots",
+        "purpose": "Stores pre-aggregated daily revenue and order count to power the time-series revenue chart without scanning the full orders table on every dashboard load.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "snapshot_date",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "total_revenue",
+            "role": "money",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "order_count",
+            "role": "count",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per calendar day",
+        "statusField": null,
+        "queryPatterns": [
+          "all rows within a requested date range ordered by date ascending for chart rendering"
+        ]
+      }
+    ],
+    "stateMachine": {
+      "states": [
+        "pending",
+        "completed",
+        "cancelled",
+        "refunded"
+      ],
+      "initialState": "pending",
+      "terminalStates": [
+        "cancelled",
+        "refunded"
+      ],
+      "transitions": [
+        {
+          "from": "pending",
+          "to": "completed",
+          "trigger": "order payment confirmed"
+        },
+        {
+          "from": "pending",
+          "to": "cancelled",
+          "trigger": "order cancelled before completion"
+        },
+        {
+          "from": "completed",
+          "to": "cancelled",
+          "trigger": "order cancelled after completion"
+        },
+        {
+          "from": "completed",
+          "to": "refunded",
+          "trigger": "full or partial refund issued"
+        }
+      ],
+      "invariants": [
+        "only orders in the completed state contribute to revenue, AOV, top-product, and repeat-customer metrics",
+        "a row in a terminal state never returns to pending or completed",
+        "exactly one row exists per order external identifier",
+        "the daily revenue snapshot for a given day must be recalculated whenever any order on that day transitions state"
+      ]
+    },
+    "externalContracts": [
+      {
+        "surface": "admin",
+        "path": "/admin/metrics/summary",
+        "method": "GET",
+        "purpose": "Returns total revenue, AOV, order count, and repeat customer rate for the selected date range.",
+        "requestShape": {
+          "date_range_start": "timestamp",
+          "date_range_end": "timestamp"
+        },
+        "responseShape": {
+          "total_revenue": "money",
+          "average_order_value": "money",
+          "total_order_count": "count",
+          "repeat_customer_rate": "text"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/metrics/revenue-series",
+        "method": "GET",
+        "purpose": "Returns the daily revenue and order count series for rendering the revenue trend chart.",
+        "requestShape": {
+          "date_range_start": "timestamp",
+          "date_range_end": "timestamp"
+        },
+        "responseShape": {
+          "series": "list"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/metrics/top-products",
+        "method": "GET",
+        "purpose": "Returns the top products ranked by units sold and revenue contribution for the selected date range.",
+        "requestShape": {
+          "date_range_start": "timestamp",
+          "date_range_end": "timestamp",
+          "limit": "count"
+        },
+        "responseShape": {
+          "products": "list"
+        }
+      }
+    ],
+    "edgeCases": [
+      "An order that is cancelled or fully refunded after being counted as completed must have its revenue subtracted from the affected daily snapshot and excluded from all aggregated metrics.",
+      "A partial refund reduces the order's recorded revenue by the refund amount rather than excluding the order entirely \u2014 the order remains in the completed state with adjusted revenue.",
+      "Duplicate event delivery for the same order transition must be detected by checking the current stored status before applying any update, treating a re-delivered event as a no-op.",
+      "A guest order with no customer identifier must be excluded from the repeat customer rate calculation but still counted in revenue and product metrics.",
+      "An order event arriving for an order external identifier that does not yet exist in local persistence must trigger a full order detail read before any metric update proceeds.",
+      "If an order's created timestamp falls on a day boundary in the merchant's local timezone, the daily snapshot must consistently bucket it using a single agreed reference timezone to prevent double-counting across days."
+    ]
+  },
+  "product_prompt": "Merchant request: Merchant sees an always-current admin dashboard with revenue, AOV, top products, and repeat customer rate visualized in charts.\n\nProduct-agent intent:\n{\n  \"triggerTypes\": [\n    \"webhook\"\n  ],\n  \"resources\": [\n    \"Order\"\n  ],\n  \"desiredOutcome\": \"Merchant sees an always-current admin dashboard with revenue, AOV, top products, and repeat customer rate visualized in charts.\",\n  \"cronHint\": null,\n  \"appCategory\": \"backend_admin\",\n  \"qualityBrief\": \"A good version of this app loads the dashboard instantly, recalculates metrics accurately when orders arrive, and displays charts that are easy to scan at a glance. Edge cases: handle refunds and cancelled orders correctly (include or exclude from revenue), define repeat customer clearly (purchased more than once), and ensure the dashboard remains responsive even with thousands of orders. Avoid overloading the page with too many charts or making the UI cluttered.\"\n}",
+  "hld_v_findings": [],
+  "ops_picks": {
+    "schema_version": "1",
+    "capabilities": [
+      {
+        "capability_id": "read-order-details",
+        "ops": [
+          {
+            "name": "order",
+            "surface": "admin",
+            "note": "Fetches full order record by GID including revenue, currency, customer identity, line items, and created timestamp when the webhook payload is insufficient"
+          }
+        ]
+      }
+    ],
+    "webhooks": [
+      {
+        "trigger_event": "a new order is placed",
+        "topic": "orders/create",
+        "note": "Fires when a new order is created in Shopify, delivering the order payload that seeds the local order and line-item records"
+      },
+      {
+        "trigger_event": "an order is updated to a cancelled or refunded state",
+        "topic": "orders/updated",
+        "note": "Fires on any order mutation including cancellation and refund state changes, allowing the system to detect terminal-state transitions and adjust stored revenue and snapshots"
+      }
+    ],
+    "unsatisfied": []
+  }
+}

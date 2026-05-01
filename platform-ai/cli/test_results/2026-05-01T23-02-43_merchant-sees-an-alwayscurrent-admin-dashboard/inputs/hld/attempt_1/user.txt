@@ -1,0 +1,18 @@
+Merchant request: Merchant sees an always-current admin dashboard with revenue, AOV, top products, and repeat customer rate visualized in charts.
+
+Product-agent intent (use as context — pick the archetype, capabilities,
+and contracts from the merchant's actual needs):
+{
+  "triggerTypes": [
+    "webhook"
+  ],
+  "resources": [
+    "Order"
+  ],
+  "desiredOutcome": "Merchant sees an always-current admin dashboard with revenue, AOV, top products, and repeat customer rate visualized in charts.",
+  "cronHint": null,
+  "appCategory": "backend_admin",
+  "qualityBrief": "A good version of this app loads the dashboard instantly, recalculates metrics accurately when orders arrive, and displays charts that are easy to scan at a glance. Edge cases: handle refunds and cancelled orders correctly (include or exclude from revenue), define repeat customer clearly (purchased more than once), and ensure the dashboard remains responsive even with thousands of orders. Avoid overloading the page with too many charts or making the UI cluttered."
+}
+
+Produce the HLD plan as JSON conforming to the appended schema.

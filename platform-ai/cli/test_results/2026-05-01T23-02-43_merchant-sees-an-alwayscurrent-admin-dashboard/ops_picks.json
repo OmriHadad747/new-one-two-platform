@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "read-order-details",
+      "ops": [
+        {
+          "name": "order",
+          "surface": "admin",
+          "note": "Fetches full order record by GID including revenue, currency, customer identity, line items, and created timestamp when the webhook payload is insufficient"
+        }
+      ]
+    }
+  ],
+  "webhooks": [
+    {
+      "trigger_event": "a new order is placed",
+      "topic": "orders/create",
+      "note": "Fires when a new order is created in Shopify, delivering the order payload that seeds the local order and line-item records"
+    },
+    {
+      "trigger_event": "an order is updated to a cancelled or refunded state",
+      "topic": "orders/updated",
+      "note": "Fires on any order mutation including cancellation and refund state changes, allowing the system to detect terminal-state transitions and adjust stored revenue and snapshots"
+    }
+  ],
+  "unsatisfied": []
+}

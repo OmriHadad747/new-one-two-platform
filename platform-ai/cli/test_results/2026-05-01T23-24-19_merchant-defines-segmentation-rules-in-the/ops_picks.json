@@ -1,0 +1,27 @@
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "fetch-customers-with-attributes",
+      "ops": [
+        {
+          "name": "customers",
+          "surface": "admin",
+          "note": "Paginated bulk-fetch of all customers returning spend, order count, country, and existing tags for rule evaluation; pageInfo cursor supports the full traversal required at high complexity"
+        }
+      ]
+    },
+    {
+      "capability_id": "apply-customer-tags",
+      "ops": [
+        {
+          "name": "tagsAdd",
+          "surface": "admin",
+          "note": "Writes the target tag to a matched customer by GID; called once per qualifying customer identified by evaluate-rule-conditions"
+        }
+      ]
+    }
+  ],
+  "webhooks": [],
+  "unsatisfied": []
+}
