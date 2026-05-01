@@ -1,7 +1,7 @@
 """
 Pydantic output schema for the HLD validator agent.
 
-The validator emits at most 3 findings, ranked by severity. When there are
+The validator emits at most 5 findings, ranked by severity. When there are
 no critical issues it escalates to the highest available lower severity so
 the caller always gets actionable signal.
 """
@@ -25,4 +25,4 @@ class HLDVFinding(_StrictModel):
 
 
 class HLDVOutput(_StrictModel):
-    findings: list[HLDVFinding] = Field(max_length=3)
+    findings: list[HLDVFinding] = Field(max_length=5)

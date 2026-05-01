@@ -24,6 +24,11 @@ _DEFAULTS: dict[str, str] = {
     # Planning agents
     "architect": "claude-sonnet-4-6",
     "hld": "claude-sonnet-4-6",
+    # LLD stage 1 — capability → Shopify ops, trigger → webhook topic.
+    # Sonnet: catalog browsing across the full Admin + Storefront indexes
+    # plus picking the smallest non-overlapping op set is multi-step
+    # reasoning that Haiku consistently under-resolves.
+    "ops_picker": "claude-sonnet-4-6",
     # Code generation agents
     "handler": "claude-sonnet-4-6",
     "migration": "claude-sonnet-4-6",

@@ -1,0 +1,335 @@
+{
+  "run_ts": "2026-05-01T22-38-00",
+  "run_slug": "customers-can-sign-up-for-backinstock",
+  "prompt": "Customers can sign up for back-in-stock alerts from the storefront, and the merchant can review signups and send notifications from the admin.",
+  "intent": {
+    "triggerTypes": [
+      "widget",
+      "admin"
+    ],
+    "resources": [
+      "Product",
+      "Inventory",
+      "Customer email"
+    ],
+    "desiredOutcome": "Customers can sign up for back-in-stock alerts from the storefront, and the merchant can review signups and send notifications from the admin.",
+    "cronHint": null,
+    "appCategory": "storefront_backend_admin",
+    "qualityBrief": "A good version handles edge cases like duplicate email signups (merge or warn), shows which products have pending signups at a glance, and makes manual sending simple with one click. The storefront widget should be lightweight and non-intrusive. The admin page should be scannable \u2014 merchants with hundreds of signups need to filter by product quickly. Avoid sending duplicate emails if a product fluctuates in and out of stock."
+  },
+  "archetype": "storefront_backend_admin",
+  "is_storefront": true,
+  "is_admin_ui": true,
+  "save_to_db": false,
+  "db": {},
+  "all_tokens": {
+    "hld": [
+      7232,
+      3666
+    ],
+    "hld_v": [
+      3608,
+      2224
+    ],
+    "ops_picker": [
+      35268,
+      405
+    ]
+  },
+  "checkpoint": "done",
+  "halt_reason": null,
+  "version": 1,
+  "updated_at": "2026-05-01T22:39:51",
+  "created_at": "2026-05-01T22:38:00",
+  "plan": {
+    "schema_version": "1",
+    "archetype": "backend+admin+storefront",
+    "feasibility": "feasible",
+    "blockedReason": null,
+    "complexity": "high",
+    "dataFlow": "A customer viewing an out-of-stock product variant submits their email via the storefront widget; the system checks whether that email is already in pending state for that variant and, if so, returns a confirmation without creating a duplicate record, otherwise persists a new signup in pending state. A merchant opens the admin panel, scans pending signups filtered by product, and triggers a notification send for one or more signups. The system dispatches an email to each selected customer and transitions each signup to notified state. Any signup whose email delivery fails transitions to failed state, leaving it eligible for retry. Subsequent send attempts against already-notified signups are rejected as no-ops, preventing duplicate emails even if the merchant clicks send multiple times.",
+    "triggers": [
+      {
+        "kind": "inbound-request"
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "check-existing-signup",
+        "description": "Determine whether a signup already exists for a given email and product variant so duplicate records are never created.",
+        "kind": "read",
+        "dataNeeds": [
+          "customer email",
+          "product variant external identifier"
+        ],
+        "integration": null
+      },
+      {
+        "id": "fetch-product-variant-details",
+        "description": "Retrieve the product title and variant name so they can be displayed in the admin list and included in notification emails.",
+        "kind": "read",
+        "dataNeeds": [
+          "product variant external identifier",
+          "product title",
+          "variant name"
+        ],
+        "integration": "shopify-admin"
+      },
+      {
+        "id": "create-signup",
+        "description": "Persist a new back-in-stock signup record in pending state for a customer email and product variant.",
+        "kind": "write",
+        "dataNeeds": [
+          "customer email",
+          "product variant external identifier",
+          "product external identifier"
+        ],
+        "integration": null
+      },
+      {
+        "id": "list-signups",
+        "description": "Return all signup records with their current status, optionally filtered by product, for the merchant admin view.",
+        "kind": "read",
+        "dataNeeds": [
+          "signup identifier",
+          "customer email",
+          "product external identifier",
+          "product variant external identifier",
+          "signup status",
+          "created timestamp",
+          "notified timestamp"
+        ],
+        "integration": null
+      },
+      {
+        "id": "send-notification-email",
+        "description": "Deliver a back-in-stock notification email to the customer for a specific product variant.",
+        "kind": "notify",
+        "dataNeeds": [
+          "customer email",
+          "product title",
+          "variant name"
+        ],
+        "integration": "email"
+      },
+      {
+        "id": "record-notification-outcome",
+        "description": "Update a signup's status and outcome details after a notification send attempt, covering both success and failure.",
+        "kind": "write",
+        "dataNeeds": [
+          "signup identifier",
+          "notification outcome",
+          "failure reason",
+          "notified timestamp"
+        ],
+        "integration": null
+      },
+      {
+        "id": "remove-signup",
+        "description": "Delete a pending or failed signup record when the merchant removes it from the admin panel.",
+        "kind": "write",
+        "dataNeeds": [
+          "signup identifier"
+        ],
+        "integration": null
+      }
+    ],
+    "persistence": [
+      {
+        "name": "signups",
+        "purpose": "Records each customer's request to be notified when a specific product variant returns to stock.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "customer_email",
+            "role": "text",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "product_variant_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "Identifies the specific out-of-stock variant the customer signed up for"
+          },
+          {
+            "name": "product_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "Identifies the parent product, used for admin filtering and grouping"
+          },
+          {
+            "name": "status",
+            "role": "status",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "failure_reason",
+            "role": "text",
+            "nullable": true,
+            "purpose": null
+          },
+          {
+            "name": "created_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "notified_at",
+            "role": "timestamp",
+            "nullable": true,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per unique combination of customer email and product variant external identifier",
+        "statusField": "status",
+        "queryPatterns": [
+          "all pending and failed signups for a given product external identifier, ordered by created date",
+          "single row lookup by customer email and product variant external identifier for duplicate check",
+          "all signups ordered by created date descending for the default admin list view",
+          "all rows in pending or failed status for bulk send operations"
+        ]
+      }
+    ],
+    "stateMachine": {
+      "states": [
+        "pending",
+        "notified",
+        "failed"
+      ],
+      "initialState": "pending",
+      "terminalStates": [
+        "notified"
+      ],
+      "transitions": [
+        {
+          "from": "pending",
+          "to": "notified",
+          "trigger": "notification email delivered successfully"
+        },
+        {
+          "from": "pending",
+          "to": "failed",
+          "trigger": "notification email delivery failed"
+        },
+        {
+          "from": "failed",
+          "to": "notified",
+          "trigger": "notification email delivered successfully on retry"
+        }
+      ],
+      "invariants": [
+        "exactly one row per customer email and product variant combination \u2014 no two rows may share both values",
+        "a row in notified state never transitions to any other state",
+        "notified_at is set if and only if the row is in notified state",
+        "failure_reason is set if and only if the row is in failed state"
+      ]
+    },
+    "externalContracts": [
+      {
+        "surface": "widget",
+        "path": "/widget/signups/status",
+        "method": "GET",
+        "purpose": "Returns whether the customer has already signed up for the given product variant so the widget renders the correct initial state without requiring a form submission.",
+        "requestShape": {
+          "customer_email": "text",
+          "product_variant_external_id": "identifier"
+        },
+        "responseShape": {
+          "already_signed_up": "flag",
+          "status": "status"
+        }
+      },
+      {
+        "surface": "widget",
+        "path": "/widget/signups",
+        "method": "POST",
+        "purpose": "Accepts a customer's email and product variant to create a new back-in-stock signup.",
+        "requestShape": {
+          "customer_email": "text",
+          "product_variant_external_id": "identifier",
+          "product_external_id": "identifier"
+        },
+        "responseShape": {
+          "signup_id": "identifier",
+          "status": "status",
+          "already_existed": "flag"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/signups",
+        "method": "GET",
+        "purpose": "Returns a paginated, filterable list of all signups with their current status for the merchant admin view.",
+        "requestShape": {
+          "product_external_id": "identifier",
+          "status": "status",
+          "page": "count"
+        },
+        "responseShape": {
+          "signups": "list",
+          "total_count": "count"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/notifications/send",
+        "method": "POST",
+        "purpose": "Triggers notification emails for one or more selected pending or failed signups.",
+        "requestShape": {
+          "signup_ids": "list"
+        },
+        "responseShape": {
+          "sent_count": "count",
+          "failed_count": "count",
+          "results": "list"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/signups/remove",
+        "method": "DELETE",
+        "purpose": "Removes a signup record from the system when the merchant dismisses it.",
+        "requestShape": {
+          "signup_id": "identifier"
+        },
+        "responseShape": {
+          "removed": "flag"
+        }
+      }
+    ],
+    "edgeCases": [
+      "Customer submits the signup form a second time for the same email and product variant \u2014 the system detects the existing pending row and returns a confirmation without creating a duplicate.",
+      "Merchant clicks send on a signup that has already been notified \u2014 the system rejects the request as a no-op and does not dispatch a second email.",
+      "Notification email delivery fails for one signup in a batch send \u2014 that signup transitions to failed state while successfully sent signups transition to notified, and the response reports per-item outcomes.",
+      "A product variant external identifier referenced by existing signups is deleted or made unavailable in the platform \u2014 the signups remain in the database and the admin list displays the stored product identifiers without crashing.",
+      "Customer submits a signup with a malformed or missing email address \u2014 the system rejects the request before writing any record and returns a validation error to the widget."
+    ]
+  },
+  "product_prompt": "Merchant request: Customers can sign up for back-in-stock alerts from the storefront, and the merchant can review signups and send notifications from the admin.\n\nProduct-agent intent:\n{\n  \"triggerTypes\": [\n    \"widget\",\n    \"admin\"\n  ],\n  \"resources\": [\n    \"Product\",\n    \"Inventory\",\n    \"Customer email\"\n  ],\n  \"desiredOutcome\": \"Customers can sign up for back-in-stock alerts from the storefront, and the merchant can review signups and send notifications from the admin.\",\n  \"cronHint\": null,\n  \"appCategory\": \"storefront_backend_admin\",\n  \"qualityBrief\": \"A good version handles edge cases like duplicate email signups (merge or warn), shows which products have pending signups at a glance, and makes manual sending simple with one click. The storefront widget should be lightweight and non-intrusive. The admin page should be scannable \\u2014 merchants with hundreds of signups need to filter by product quickly. Avoid sending duplicate emails if a product fluctuates in and out of stock.\"\n}",
+  "hld_v_findings": [],
+  "ops_picks": {
+    "schema_version": "1",
+    "capabilities": [
+      {
+        "capability_id": "fetch-product-variant-details",
+        "ops": [
+          {
+            "name": "productVariant",
+            "surface": "admin",
+            "note": "Fetches variant name and parent product title by variant GID for admin list display and notification email content"
+          }
+        ]
+      }
+    ],
+    "webhooks": [],
+    "unsatisfied": []
+  }
+}

@@ -36,10 +36,10 @@ Missing = no failure-path signal for LLD.
 
 SEVERITY:
   critical  — unbuildable, data corruption, double side-effect, broken core flow.
-  important — real gap, core flow works but a scenario is unhandled.
-  minor     — completeness issue, limited runtime impact.
+  important — real gap, core flow works but a scenario is unhandled, app end to end correctness impact.
+  minor     — completeness issue, no runtime impact.
 
-Return at most 3 findings, highest severity first. If no critical issues exist, \
+Return at most 5 findings, highest severity first. If no critical issues exist, \
 escalate to the best lower-severity findings — never return empty. Name the exact \
 plan location (e.g. "capabilities", "externalContracts[1]") and give a one-sentence \
 fix. Do NOT re-flag Pydantic-enforced rules or stylistic preferences.

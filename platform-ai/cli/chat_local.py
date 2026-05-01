@@ -112,13 +112,14 @@ from cli.pipeline_local import (
     _phase_codegen,
     _phase_explanation,
     _phase_hld,
+    _phase_ops_picker,
     _phase_validator,
     _save_generated_files,
 )
 
 TEST_RESULTS_DIR = _HERE / "test_results"
 
-StopAfter = Literal["hld", "codegen", "validator", "full"]
+StopAfter = Literal["hld", "ops-picker", "codegen", "validator", "full"]
 
 # ── Display helpers ────────────────────────────────────────────────────────────
 #
@@ -156,6 +157,7 @@ _BRIGHT_GREEN = "\033[92m"
 _AGENT_COLOR: Dict[str, str] = {
     "HLD": _MAGENTA,
     "HLD Check": _MAGENTA,
+    "Ops": _CYAN,
     "Handler": _BLUE,
     "Migration": _CYAN,
     "Widget JS": _YELLOW,
@@ -775,7 +777,15 @@ _STATE_VERSION = 1
 
 # Phase order. Each name is the checkpoint stamped when the phase finishes
 # its successful path. _phase_index() lets us compare checkpoints by ordinal.
-_PHASE_ORDER: List[str] = ["intent", "hld", "codegen", "validator", "revision", "done"]
+_PHASE_ORDER: List[str] = [
+    "intent",
+    "hld",
+    "ops-picker",
+    "codegen",
+    "validator",
+    "revision",
+    "done",
+]
 
 
 def _phase_index(name: Optional[str]) -> int:
@@ -1025,6 +1035,17 @@ def _save_hld_json(
     return run_dir
 
 
+def _save_ops_picks_json(run_dir: Path, picks: Dict[str, Any]) -> Path:
+    """
+    Persist the ops-picker output as a sibling to hld.json. Same pattern
+    as `_save_hld_json` — the stop=ops report links to this file rather
+    than inlining the JSON.
+    """
+    path = run_dir / "ops_picks.json"
+    path.write_text(json.dumps(picks, indent=2))
+    return path
+
+
 def _validator_revision_md_lines(trace: Dict[str, Any]) -> List[str]:
     """Render a concise '## Validator + Revision' section from a trace dict.
     Includes a relative-path link back to the full trace JSON on disk."""
@@ -1065,6 +1086,7 @@ def _validator_revision_md_lines(trace: Dict[str, Any]) -> List[str]:
 
 _STOP_LABEL_TITLES: Dict[str, str] = {
     "hld": "HLD Stop",
+    "ops-picker": "Ops Picker Stop",
     "codegen": "Codegen Stop",
     "validator": "Validator Stop",
     "full": "Full Pipeline",
@@ -1364,11 +1386,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--stop-after",
-        choices=["hld", "codegen", "validator"],
+        choices=["hld", "ops-picker", "codegen", "validator"],
         default=None,
         help=(
             "Stop after a specific phase: "
             "'hld' = HLD only, "
+            "'ops-picker' = + ops picker (LLD stage 1), "
             "'codegen' = + codegen + static validation, "
             "'validator' = + LLM validator + revision. "
             "Omit to run the full pipeline."
@@ -1616,38 +1639,29 @@ def main() -> None:
         _hld_v_t0 = time.monotonic()
         try:
             with input_log("hld_v", run_dir):
-                hld_v_findings, hld_v_in, hld_v_out = run_hld_validator(plan, prompt, intent)
+                hld_v_findings, hld_v_in, hld_v_out = run_hld_validator(
+                    plan, prompt, intent
+                )
         except Exception as _exc:
             _log.warning("hld_v: failed (%s) — fail-open", _exc)
             hld_v_findings, hld_v_in, hld_v_out = [], 0, 0
         _hld_v_ms = int((time.monotonic() - _hld_v_t0) * 1000)
         all_tokens["hld_v"] = (hld_v_in, hld_v_out)
 
-        _critical = [f for f in hld_v_findings if f.get("severity") == "critical"]
+        _retryable = [
+            f
+            for f in hld_v_findings
+            if f.get("severity") in ("critical", "important")
+        ]
         _sev_note = f"{len(hld_v_findings)} finding(s)" if hld_v_findings else "clean"
-        _agent_line("HLD Check", True, _hld_v_ms, _tok_note(hld_v_in, hld_v_out, _sev_note))
+        _agent_line(
+            "HLD Check", True, _hld_v_ms, _tok_note(hld_v_in, hld_v_out, _sev_note)
+        )
 
-        if _critical:
-            # One-shot correction: feed critical findings back to the HLD agent.
-            _hint = "\n".join(
-                f"- [{f['severity']}] {f['location']}: {f['issue']} Fix: {f['fix']}"
-                for f in _critical
-            )
-            _retry_line("HLD", f"retrying with {len(_critical)} critical finding(s)")
-            _spinner("HLD")
-            try:
-                plan, _r_in, _r_out = run_hld_agent(
-                    prompt, intent, validator_hint=_hint,
-                    on_attempt_failed=lambda a, e: _retry_line("HLD", f"attempt {a+1} invalid"),
-                )
-                _r_in_prev, _r_out_prev = all_tokens.get("hld", (0, 0))
-                all_tokens["hld"] = (_r_in_prev + _r_in, _r_out_prev + _r_out)
-                product_prompt = ""
-                _agent_line("HLD", True, None, "corrected")
-            except Exception as _exc:
-                _log.warning("hld_v retry: HLD re-run failed (%s) — keeping original", _exc)
-                _agent_line("HLD", False, None, "retry failed — original kept")
-
+        # Print findings BEFORE the retry so the operator sees what is being
+        # acted on before the next spinner starts. With critical+important
+        # both triggering a retry, putting this after the retry block hid
+        # the findings behind the spinner until after the re-run finished.
         if hld_v_findings:
             _SEV_COLOR = {"critical": _RED, "important": _YELLOW, "minor": _DIM}
             for _f in hld_v_findings:
@@ -1659,6 +1673,35 @@ def main() -> None:
                     f"    {_c('•', _sc)} {_c('[' + _sev_label + ']', _sc)}"
                     f"  {_c(_loc, _DIM)}  {_iss}"
                 )
+
+        if _retryable:
+            # One-shot correction: feed critical+important findings back to
+            # the HLD agent. Minor findings stay informational — they don't
+            # justify the ~12k-token re-run cost.
+            _hint = "\n".join(
+                f"- [{f['severity']}] {f['location']}: {f['issue']} Fix: {f['fix']}"
+                for f in _retryable
+            )
+            _retry_line("HLD", f"retrying with {len(_retryable)} finding(s)")
+            _spinner("HLD")
+            try:
+                plan, _r_in, _r_out = run_hld_agent(
+                    prompt,
+                    intent,
+                    validator_hint=_hint,
+                    on_attempt_failed=lambda a, e: _retry_line(
+                        "HLD", f"attempt {a+1} invalid"
+                    ),
+                )
+                _r_in_prev, _r_out_prev = all_tokens.get("hld", (0, 0))
+                all_tokens["hld"] = (_r_in_prev + _r_in, _r_out_prev + _r_out)
+                product_prompt = ""
+                _agent_line("HLD", True, None, "corrected")
+            except Exception as _exc:
+                _log.warning(
+                    "hld_v retry: HLD re-run failed (%s) — keeping original", _exc
+                )
+                _agent_line("HLD", False, None, "retry failed — original kept")
 
         _save_state(
             run_dir,
@@ -1694,6 +1737,71 @@ def main() -> None:
             "◆  HLD STOP",
             [
                 ("Status", _c("✓ HLD plan only", _BRIGHT_GREEN, _BOLD)),
+                ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
+                ("Output", _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
+            ],
+        )
+        _print_token_summary(all_tokens)
+        print()
+        return
+
+    # ── Phase: Ops Picker (LLD stage 1) ───────────────────────────────────────
+    # Picks Shopify GraphQL ops per HLD capability + webhook topic per
+    # external-event trigger. Resume rule mirrors HLD: if the saved
+    # checkpoint is past "ops-picker" and `ops_picks` is on disk, reuse it.
+    if (
+        resume_state
+        and _resumed_idx >= _phase_index("ops-picker")
+        and resume_state.get("ops_picks")
+    ):
+        ops_picks = resume_state["ops_picks"]
+        if "ops_picker" in (resume_state.get("all_tokens") or {}):
+            saved = resume_state["all_tokens"]["ops_picker"]
+            all_tokens["ops_picker"] = (
+                tuple(saved) if isinstance(saved, list) else saved
+            )
+        _info("Ops Picker: reusing saved picks (skipping LLM call)")
+    else:
+        _phase_header("OPS PICKER")
+        try:
+            ops_picks, ops_in, ops_out = _phase_ops_picker(plan, prompt, run_dir)
+        except SystemExit:
+            _fail_db("Ops Picker phase failed")
+            raise
+        all_tokens["ops_picker"] = (ops_in, ops_out)
+        _save_ops_picks_json(run_dir, ops_picks)
+        _save_state(
+            run_dir,
+            ops_picks=ops_picks,
+            all_tokens={k: list(v) for k, v in all_tokens.items()},
+            checkpoint="ops-picker",
+            halt_reason=None,
+        )
+
+    if stop_after == "ops-picker":
+        # User-requested stop — same finalisation pattern as stop=hld.
+        # ops_picks.json + report.md are on disk for inspection; the run
+        # is marked done so it stops appearing in --list-resume.
+        _save_state(run_dir, checkpoint="done", halt_reason=None)
+        total_ms = int((time.monotonic() - total_start) * 1000)
+        _save_artifacts_md(
+            run_dir,
+            prompt,
+            {},
+            "ops-picker",
+            is_storefront,
+            is_admin_ui,
+            intent=intent,
+            plan=plan,
+            total_ms=total_ms,
+            all_tokens=all_tokens,
+            hld_v_findings=hld_v_findings,
+        )
+        print()
+        _summary_box(
+            "◆  OPS PICKER STOP",
+            [
+                ("Status", _c("✓ ops picks ready", _BRIGHT_GREEN, _BOLD)),
                 ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
                 ("Output", _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
             ],

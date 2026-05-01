@@ -1,0 +1,17 @@
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "fetch-product-variant-details",
+      "ops": [
+        {
+          "name": "productVariant",
+          "surface": "admin",
+          "note": "Fetches variant name and parent product title by variant GID for admin list display and notification email content"
+        }
+      ]
+    }
+  ],
+  "webhooks": [],
+  "unsatisfied": []
+}

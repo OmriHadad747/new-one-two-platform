@@ -184,6 +184,19 @@ def slice_summary(
     return "\n".join(lines).rstrip()
 
 
+def get_op_names(
+    surface: str,
+    version: str = WEBHOOK_API_VERSION,
+) -> frozenset[str]:
+    """
+    Return the set of operation names for `surface`. Empty set if the
+    catalog isn't built. Used by the ops-picker agent for offline
+    catalog-membership checks on its picks (Pydantic alone cannot see
+    the catalog; the runner cross-references against this set).
+    """
+    return frozenset(_build_op_index(surface, version).keys())
+
+
 def validate_op_names(
     surface: str,
     op_names: List[str],

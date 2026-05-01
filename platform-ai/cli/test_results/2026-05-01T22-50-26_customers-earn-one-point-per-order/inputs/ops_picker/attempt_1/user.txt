@@ -1,0 +1,279 @@
+Merchant request: Customers earn one point per order and see their total points balance in the cart; you can view and manually adjust points in the admin.
+
+HLD plan (your source of truth — pick ops that satisfy each
+shopify-integration capability, and a webhook topic for each
+external-event trigger):
+{
+  "schema_version": "1",
+  "archetype": "backend+admin+storefront",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "When an order is completed, the system reads the order to confirm it is a non-guest, completed order and retrieves the customer identifier and completion status. If no award already exists for that order, the system appends a one-point ledger entry and increments the customer's running balance and order count; duplicate deliveries for the same order are no-ops. When a customer views their cart, the widget calls the app's balance endpoint and displays the stored point total. In the admin, a merchant lists customers sorted by points balance with pagination, and may submit a manual adjustment that appends an audited ledger entry and updates the customer's balance, subject to a non-negative balance invariant.",
+  "triggers": [
+    {
+      "kind": "external-event",
+      "event": "an order is completed",
+      "signalFields": [
+        "order identifier",
+        "customer identifier",
+        "order completion status",
+        "guest flag"
+      ],
+      "idempotency": "if a points ledger entry for the same order identifier already exists, treat the event as a no-op and do not award additional points"
+    },
+    {
+      "kind": "inbound-request"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "read-completed-order",
+      "description": "Fetch the completed order to confirm it is a non-guest order and retrieve the customer identifier needed to award points.",
+      "kind": "read",
+      "dataNeeds": [
+        "order identifier",
+        "customer identifier",
+        "order completion status",
+        "guest flag"
+      ],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "check-existing-award",
+      "description": "Determine whether a points ledger entry already exists for the given order to enforce idempotency.",
+      "kind": "read",
+      "dataNeeds": [
+        "order identifier"
+      ],
+      "integration": null
+    },
+    {
+      "id": "record-order-points-award",
+      "description": "Append a one-point earned entry to the customer's points ledger for the completed order.",
+      "kind": "write",
+      "dataNeeds": [
+        "customer identifier",
+        "order identifier",
+        "points awarded"
+      ],
+      "integration": null
+    },
+    {
+      "id": "update-customer-balance",
+      "description": "Increment the customer's stored total points balance and lifetime order count after a points award.",
+      "kind": "write",
+      "dataNeeds": [
+        "customer identifier",
+        "updated points total",
+        "order count increment"
+      ],
+      "integration": null
+    },
+    {
+      "id": "read-customer-points-balance",
+      "description": "Return the current points total for a specific customer so the cart widget can display it.",
+      "kind": "read",
+      "dataNeeds": [
+        "customer identifier",
+        "current points total"
+      ],
+      "integration": null
+    },
+    {
+      "id": "read-admin-customer-list",
+      "description": "Return a paginated list of customers with their points balance and lifetime order count for the admin panel.",
+      "kind": "read",
+      "dataNeeds": [
+        "customer identifier",
+        "customer display name",
+        "points total",
+        "order count",
+        "page number",
+        "per-page limit"
+      ],
+      "integration": null
+    },
+    {
+      "id": "apply-manual-adjustment",
+      "description": "Record a merchant-initiated points adjustment in the ledger and update the customer's stored balance.",
+      "kind": "write",
+      "dataNeeds": [
+        "customer identifier",
+        "adjustment amount",
+        "adjustment reason",
+        "adjusting staff identifier",
+        "adjustment timestamp",
+        "updated points total"
+      ],
+      "integration": null
+    }
+  ],
+  "persistence": [
+    {
+      "name": "customer_points",
+      "purpose": "Stores each customer's current points balance and lifetime order count as a single authoritative summary row.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "customer_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "links this row to the customer in the external platform"
+        },
+        {
+          "name": "points_total",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "order_count",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per customer, keyed by the customer's external identifier",
+      "statusField": null,
+      "queryPatterns": [
+        "single row lookup by customer external identifier for widget balance reads",
+        "full list ordered by points total descending with page-based offset for admin list",
+        "single row lookup by customer external identifier before and after a manual adjustment"
+      ]
+    },
+    {
+      "name": "points_ledger",
+      "purpose": "Immutable append-only log of every points transaction \u2014 both order-earned awards and manual adjustments \u2014 for audit and idempotency.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "customer_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "the customer whose balance this transaction affects"
+        },
+        {
+          "name": "order_external_id",
+          "role": "reference",
+          "nullable": true,
+          "purpose": "the order that triggered an earned-points award; null for manual adjustments"
+        },
+        {
+          "name": "transaction_kind",
+          "role": "status",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "points_delta",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "reason",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "staff_identifier",
+          "role": "reference",
+          "nullable": true,
+          "purpose": "the staff member who submitted a manual adjustment; null for system-generated awards"
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per transaction; order-earned rows are additionally unique by order external identifier",
+      "statusField": null,
+      "queryPatterns": [
+        "lookup by order external identifier to enforce idempotency before awarding points",
+        "all transactions for a given customer ordered by created_at descending for audit display",
+        "all manual-adjustment transactions filtered by staff identifier for auditing"
+      ]
+    }
+  ],
+  "stateMachine": null,
+  "externalContracts": [
+    {
+      "surface": "widget",
+      "path": "/widget/points/balance",
+      "method": "GET",
+      "purpose": "Returns the current points balance for the authenticated customer so the cart widget can render it on page load.",
+      "requestShape": {
+        "customer_identifier": "identifier"
+      },
+      "responseShape": {
+        "points_total": "count"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/customers/points",
+      "method": "GET",
+      "purpose": "Returns a paginated list of customers with their points balance and order count, sorted by points descending.",
+      "requestShape": {
+        "page": "count",
+        "per_page": "count"
+      },
+      "responseShape": {
+        "customers": "list",
+        "total_count": "count",
+        "page": "count",
+        "per_page": "count"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/customers/points/adjust",
+      "method": "POST",
+      "purpose": "Applies a merchant-initiated points adjustment to a customer and records it in the audit ledger.",
+      "requestShape": {
+        "customer_identifier": "identifier",
+        "adjustment_amount": "count",
+        "reason": "text"
+      },
+      "responseShape": {
+        "customer_identifier": "identifier",
+        "updated_points_total": "count"
+      }
+    }
+  ],
+  "edgeCases": [
+    "A guest checkout triggers an order-completed event but carries no customer identifier \u2014 the system must detect the guest flag and skip awarding points without creating a ledger entry.",
+    "The same order-completed event is delivered more than once \u2014 the system must detect the existing ledger entry for that order identifier and treat the duplicate as a no-op, leaving the balance unchanged.",
+    "A manual adjustment submitted in the admin would reduce a customer's points total below zero \u2014 the system must reject the adjustment and return a validation error before writing any records.",
+    "An order-completed event arrives before the customer summary row exists \u2014 the system must create the customer_points row as part of the same award operation to avoid a missing-row error on the balance update.",
+    "The cart widget is loaded immediately after an order completes, before the webhook has been processed \u2014 the widget must display the last-known persisted balance rather than inferring a real-time total, and no stale-read correction is required beyond eventual consistency."
+  ]
+}
+
+Produce the ops picks as JSON conforming to the appended schema.

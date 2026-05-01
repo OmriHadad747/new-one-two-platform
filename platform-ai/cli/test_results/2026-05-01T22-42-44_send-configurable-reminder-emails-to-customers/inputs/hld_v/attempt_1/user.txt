@@ -1,0 +1,461 @@
+MERCHANT REQUEST
+Send configurable reminder emails to customers with abandoned carts based on delay and frequency settings.
+
+INTENT
+{
+  "triggerTypes": [
+    "cron"
+  ],
+  "resources": [
+    "Cart",
+    "Email"
+  ],
+  "desiredOutcome": "Send configurable reminder emails to customers with abandoned carts based on delay and frequency settings.",
+  "cronHint": "every 10 minutes",
+  "appCategory": "backend_admin",
+  "qualityBrief": "A good version handles edge cases: respects customer opt-out preferences where possible, avoids sending duplicate emails in the same batch, tracks which carts have already received how many emails, and stops sending once the max is reached. The admin page should show clear, readable logs of sent emails with customer names and cart values so merchants can see what's working. Common pitfall: sending the same email multiple times in quick succession if the cron job runs too frequently without proper state tracking."
+}
+
+HLD PLAN
+{
+  "schema_version": "1",
+  "archetype": "backend+admin",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "Every ten minutes the scheduler fetches all abandoned carts from the external platform and, for each cart, checks whether a reminder record already exists; new carts are inserted as pending. For each pending or active cart, the system computes whether the configured delay since abandonment (or since the last send) has elapsed and whether the maximum send count has not been reached. Carts whose customer has opted out of marketing are immediately marked suppressed and skipped. Eligible carts receive a reminder email, and the send is recorded in the audit log while the cart reminder row is advanced to active and its send count incremented. Once the send count reaches the configured maximum, the cart is marked completed and no further emails are sent.",
+  "triggers": [
+    {
+      "kind": "schedule",
+      "cadence": "every 10 minutes",
+      "jobPurpose": "Identify abandoned carts due for a reminder email and dispatch those emails within configured limits.",
+      "perTickWork": "Fetch all recently abandoned carts, evaluate each against delay and frequency settings, send reminder emails to eligible carts, and persist the outcome for every cart processed.",
+      "bulkFetchRule": true
+    },
+    {
+      "kind": "inbound-request"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "fetch-abandoned-carts",
+      "description": "Retrieve all currently abandoned carts from the platform, including customer contact information and cart value.",
+      "kind": "read",
+      "dataNeeds": [
+        "cart external identifier",
+        "customer email",
+        "customer name",
+        "cart subtotal",
+        "cart line items",
+        "cart abandonment time"
+      ],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "check-customer-opt-out",
+      "description": "Verify whether each cart's customer has opted out of marketing communications.",
+      "kind": "read",
+      "dataNeeds": [
+        "customer external identifier",
+        "customer marketing consent status"
+      ],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "load-reminder-settings",
+      "description": "Load the merchant's configured initial delay, inter-email frequency, and maximum send count.",
+      "kind": "read",
+      "dataNeeds": [
+        "initial delay duration",
+        "frequency between sends",
+        "maximum emails per cart"
+      ],
+      "integration": null
+    },
+    {
+      "id": "evaluate-send-eligibility",
+      "description": "Determine, for each tracked cart, whether enough time has elapsed since abandonment or last send and the send limit has not been reached.",
+      "kind": "compute",
+      "dataNeeds": [
+        "cart abandonment time",
+        "last send time",
+        "send count",
+        "initial delay duration",
+        "frequency between sends",
+        "maximum emails per cart"
+      ],
+      "integration": null
+    },
+    {
+      "id": "send-reminder-email",
+      "description": "Deliver a personalised abandoned-cart reminder email to the customer.",
+      "kind": "notify",
+      "dataNeeds": [
+        "customer email",
+        "customer name",
+        "cart subtotal",
+        "cart line items",
+        "cart external identifier"
+      ],
+      "integration": "email"
+    },
+    {
+      "id": "record-send-outcome",
+      "description": "Persist the result of a send attempt, increment the cart's send count, and advance the cart reminder to its next state.",
+      "kind": "write",
+      "dataNeeds": [
+        "cart external identifier",
+        "send outcome",
+        "send timestamp",
+        "send count",
+        "cart reminder status"
+      ],
+      "integration": null
+    },
+    {
+      "id": "upsert-cart-reminder",
+      "description": "Create a new cart reminder row for a newly discovered abandoned cart, or confirm an existing one is already tracked.",
+      "kind": "write",
+      "dataNeeds": [
+        "cart external identifier",
+        "customer external identifier",
+        "cart abandonment time"
+      ],
+      "integration": null
+    },
+    {
+      "id": "suppress-cart-reminder",
+      "description": "Mark a cart reminder as suppressed when the customer has opted out of marketing, recording the reason.",
+      "kind": "write",
+      "dataNeeds": [
+        "cart external identifier",
+        "suppression reason",
+        "cart reminder status"
+      ],
+      "integration": null
+    },
+    {
+      "id": "list-email-logs",
+      "description": "Return a paginated list of reminder send records for display in the merchant admin panel.",
+      "kind": "read",
+      "dataNeeds": [
+        "customer name",
+        "customer email",
+        "cart subtotal",
+        "send timestamp",
+        "send outcome",
+        "send count at time of send"
+      ],
+      "integration": null
+    },
+    {
+      "id": "save-reminder-settings",
+      "description": "Persist updated merchant configuration for delay, frequency, and maximum email count.",
+      "kind": "write",
+      "dataNeeds": [
+        "initial delay duration",
+        "frequency between sends",
+        "maximum emails per cart"
+      ],
+      "integration": null
+    }
+  ],
+  "persistence": [
+    {
+      "name": "cart_reminders",
+      "purpose": "Tracks each abandoned cart's reminder lifecycle, including how many emails have been sent and the current state.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "cart_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "Identifies the abandoned cart in the external platform"
+        },
+        {
+          "name": "customer_external_id",
+          "role": "reference",
+          "nullable": true,
+          "purpose": "Identifies the customer who owns the cart"
+        },
+        {
+          "name": "customer_email",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "customer_name",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "cart_value",
+          "role": "money",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "abandoned_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "last_sent_at",
+          "role": "timestamp",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "send_count",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "status",
+          "role": "status",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per abandoned cart, keyed by the cart's external identifier",
+      "statusField": "status",
+      "queryPatterns": [
+        "rows in pending or active state ordered by last send time ascending, for batch eligibility evaluation",
+        "single row by cart external identifier for idempotency check on upsert",
+        "rows by status for admin summary counts"
+      ]
+    },
+    {
+      "name": "reminder_sends",
+      "purpose": "Audit log of every email send attempt, recording outcome and cart state at the moment of sending.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "cart_reminder_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "Links to the parent cart reminder row"
+        },
+        {
+          "name": "cart_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "Denormalised cart identifier for efficient log queries without join"
+        },
+        {
+          "name": "customer_email",
+          "role": "text",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "customer_name",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "cart_value_at_send",
+          "role": "money",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "send_number",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "outcome",
+          "role": "status",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "failure_reason",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "sent_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per send attempt, keyed by internal identifier",
+      "statusField": null,
+      "queryPatterns": [
+        "all sends for a given cart reminder, ordered by send number ascending",
+        "most recent sends across all carts ordered by sent time descending, for admin log display",
+        "sends filtered by outcome for merchant reporting"
+      ]
+    },
+    {
+      "name": "reminder_settings",
+      "purpose": "Stores the merchant's single active configuration for reminder timing and send limits.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "initial_delay_minutes",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "frequency_minutes",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "max_sends_per_cart",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "single-row configuration record; only one active settings row exists at any time",
+      "statusField": null,
+      "queryPatterns": [
+        "full row read on every scheduler tick to load current configuration"
+      ]
+    }
+  ],
+  "stateMachine": {
+    "states": [
+      "pending",
+      "active",
+      "completed",
+      "suppressed"
+    ],
+    "initialState": "pending",
+    "terminalStates": [
+      "completed",
+      "suppressed"
+    ],
+    "transitions": [
+      {
+        "from": "pending",
+        "to": "active",
+        "trigger": "first reminder email successfully sent"
+      },
+      {
+        "from": "active",
+        "to": "active",
+        "trigger": "subsequent reminder email successfully sent within the maximum limit"
+      },
+      {
+        "from": "active",
+        "to": "completed",
+        "trigger": "maximum configured email count reached"
+      },
+      {
+        "from": "pending",
+        "to": "suppressed",
+        "trigger": "customer opted out of marketing before any send"
+      },
+      {
+        "from": "active",
+        "to": "suppressed",
+        "trigger": "customer opted out of marketing after at least one send"
+      }
+    ],
+    "invariants": [
+      "A cart in the completed state never receives another reminder email",
+      "A cart in the suppressed state never receives another reminder email",
+      "Exactly one cart_reminders row exists per cart external identifier",
+      "The send_count on a cart_reminders row always equals the number of successful send records in reminder_sends for that cart",
+      "send_count never exceeds max_sends_per_cart at the moment of any send attempt"
+    ]
+  },
+  "externalContracts": [
+    {
+      "surface": "admin",
+      "path": "/admin/settings",
+      "method": "GET",
+      "purpose": "Return the current reminder configuration so the merchant can review delay, frequency, and send limit values.",
+      "requestShape": {},
+      "responseShape": {
+        "initial_delay_minutes": "count",
+        "frequency_minutes": "count",
+        "max_sends_per_cart": "count"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/settings",
+      "method": "POST",
+      "purpose": "Save updated reminder configuration values supplied by the merchant.",
+      "requestShape": {
+        "initial_delay_minutes": "count",
+        "frequency_minutes": "count",
+        "max_sends_per_cart": "count"
+      },
+      "responseShape": {
+        "success": "flag"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/logs",
+      "method": "GET",
+      "purpose": "Return a paginated list of reminder send records showing customer name, email, cart value, send time, and outcome for merchant review.",
+      "requestShape": {
+        "page": "count",
+        "page_size": "count"
+      },
+      "responseShape": {
+        "sends": "list",
+        "total_count": "count"
+      }
+    }
+  ],
+  "edgeCases": [
+    "A cart is discovered on two consecutive ticks before the first send is committed \u2014 the upsert must be idempotent so only one reminder row is created and only one email is dispatched.",
+    "A customer's email address is absent from the cart payload \u2014 the cart reminder is created as suppressed immediately with the reason recorded, and no send is attempted.",
+    "The merchant reduces max_sends_per_cart below the send count already recorded for some active carts \u2014 those carts must be transitioned to completed on the next tick without sending an additional email.",
+    "The scheduler tick duration exceeds the cadence interval, causing overlapping runs \u2014 each tick must check last_sent_at and send_count atomically before dispatching to prevent double-sends in the same window.",
+    "A customer opts out of marketing between two reminder sends \u2014 the opt-out check runs at the start of each tick, so the cart is suppressed before the next send regardless of elapsed time.",
+    "The external platform returns a cart that was subsequently purchased before the email is sent \u2014 the reminder email is still dispatched since purchase status is not tracked; merchants should be informed this is expected behaviour and use cart recovery conversion metrics to assess impact."
+  ]
+}

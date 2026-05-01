@@ -37,6 +37,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from models.adapter import input_log
 from subagents.hld_agent.agent import HLDValidationError, run_hld_agent
+from subagents.ops_picker_agent.agent import (
+    OpsPickerValidationError,
+    run_ops_picker_agent,
+)
 from subagents.base import CodegenContext
 from subagents.explanation_agent import run_explanation_agent
 from subagents.revision_agent import run_revision_agent
@@ -289,6 +293,94 @@ def _phase_hld(
         sys.exit(1)
 
     return plan, product_prompt, hld_in, hld_out
+
+
+def _phase_ops_picker(
+    plan: Dict[str, Any], prompt: str, run_dir: Path
+) -> Tuple[Dict[str, Any], int, int]:
+    """
+    Run the ops-picker agent (LLD stage 1).
+
+    Loads the live Admin/Storefront GraphQL summaries + the webhook topic
+    catalog, threads them through the agent, and returns the parsed
+    `OpsPicks` dict plus token totals. Errors retry inside the agent
+    (Pydantic + catalog membership + HLD-cross-reference); on retry
+    exhaustion the `OpsPickerValidationError` is surfaced to the operator
+    the same way `_phase_hld` surfaces an `HLDValidationError`.
+
+    Returns (picks_dict, in_tokens, out_tokens).
+    """
+    from cli.chat_local import (
+        _DIM,
+        _RED,
+        _RESET,
+        _agent_line,
+        _retry_line,
+        _spinner,
+        _tok_note,
+    )
+    from llm_validations.shopify_ops import get_op_names, load_summary
+    from subagents.prompts.topics.webhook import WEBHOOK_TOPICS
+
+    admin_idx = load_summary("admin")
+    storefront_idx = load_summary("storefront")
+    admin_names = get_op_names("admin")
+    storefront_names = get_op_names("storefront")
+    # Render WEBHOOK_TOPICS as a flat catalog. The frozenset has 194
+    # entries, sorted; one topic per line is the clearest form for the
+    # picker (no resource-prefix folding — we want each literal verbatim
+    # next to the model's eyes, since the contract is to copy them
+    # verbatim).
+    topic_catalog = "## Shopify webhook topics\n\n" + "\n".join(
+        f"  {t}" for t in sorted(WEBHOOK_TOPICS)
+    )
+
+    def _on_attempt_failed(attempt: int, errors: List[str]) -> None:
+        first = errors[0] if errors else "validation failed"
+        more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+        _agent_line(
+            "Ops",
+            ok=False,
+            ms=None,
+            notes=f"attempt {attempt} rejected: {first}{more}",
+        )
+        for e in errors:
+            print(f"    {_DIM}• {e}{_RESET}")
+        _retry_line("Ops", notes=f"retry attempt {attempt + 1}")
+        _spinner("Ops")
+
+    _spinner("Ops")
+    t0 = time.monotonic()
+    try:
+        with input_log("ops_picker", run_dir):
+            picks, in_tok, out_tok = run_ops_picker_agent(
+                prompt=prompt,
+                plan=plan,
+                admin_operation_index=admin_idx,
+                storefront_operation_index=storefront_idx,
+                webhook_topic_catalog=topic_catalog,
+                admin_op_names=admin_names,
+                storefront_op_names=storefront_names,
+                webhook_topics=WEBHOOK_TOPICS,
+                on_attempt_failed=_on_attempt_failed,
+            )
+    except OpsPickerValidationError as err:
+        ms = int((time.monotonic() - t0) * 1000)
+        _agent_line(
+            "Ops",
+            ok=False,
+            ms=ms,
+            notes=f"failed after {err.attempts} attempt(s)  "
+            + _tok_note(err.in_tokens, err.out_tokens),
+        )
+        print(f"\n  {_RED}Ops Picker failed after {err.attempts} attempts:{_RESET}")
+        for e in err.errors:
+            print(f"    • {e}")
+        sys.exit(1)
+
+    ms = int((time.monotonic() - t0) * 1000)
+    _agent_line("Ops", ok=True, ms=ms, notes=_tok_note(in_tok, out_tok))
+    return picks, in_tok, out_tok
 
 
 def _phase_codegen(
