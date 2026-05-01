@@ -23,15 +23,43 @@ Validation policy
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Literal, Optional, Union, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Semantic kind for column roles — scalar only (no collection types).
+ColumnRole = Literal[
+    "identifier",
+    "reference",
+    "timestamp",
+    "money",
+    "status",
+    "flag",
+    "text",
+    "count",
+]
+
+# Semantic kind for requestShape / responseShape values — extends ColumnRole
+# with collection types that only make sense at the API boundary.
+ShapeKind = Literal[
+    "identifier",
+    "reference",
+    "timestamp",
+    "money",
+    "status",
+    "flag",
+    "text",
+    "count",
+    "list",
+    "object",
+]
+
+_VALID_SHAPE_KINDS: frozenset[str] = frozenset(get_args(ShapeKind))
 
 # Forbidden column names.
 # Email-template fields are platform-owned (the platform stores subject /
 # body / CTA / from-name on its own — declaring them in app DDL collides
-# with the platform's migration). `tenant_id` is implicit at runtime
-# (search_path is pinned per tenant) — declaring it breaks multi-tenancy.
+# with the platform's migration).
 _PLATFORM_OWNED_COLUMNS: frozenset[str] = frozenset(
     {
         "email_subject",
@@ -42,16 +70,15 @@ _PLATFORM_OWNED_COLUMNS: frozenset[str] = frozenset(
         "email_from_name",
     }
 )
-_IMPLICIT_COLUMNS: frozenset[str] = frozenset({"tenant_id"})
 
 
 # Surfaces implied by archetype — used by the externalContracts ↔ archetype
 # correlation validator.
 _ARCHETYPE_SURFACES: dict[str, frozenset[str]] = {
-    "storefront": frozenset({"widget"}),
-    "admin": frozenset({"admin"}),
-    "storefront+admin": frozenset({"widget", "admin"}),
     "backend": frozenset(),
+    "backend+admin": frozenset({"admin"}),
+    "backend+storefront": frozenset({"widget"}),
+    "backend+admin+storefront": frozenset({"widget", "admin"}),
 }
 
 
@@ -105,21 +132,13 @@ class Capability(_StrictModel):
 
 class Column(_StrictModel):
     name: str
-    role: Literal[
-        "identifier",
-        "reference",
-        "timestamp",
-        "money",
-        "status",
-        "flag",
-        "text",
-        "count",
-    ]
+    role: ColumnRole
     nullable: bool
+    purpose: Optional[str] = None
 
-    # Rules #46 + #47 — deny-listed column names. Platform-owned email
-    # template fields and implicit-tenant `tenant_id` must never appear in
-    # an HLD plan.
+    # Rule #46 — deny-listed column names. Platform-owned email template
+    # fields are managed by the platform's own migration; declaring them
+    # in app DDL collides with platform state.
     @field_validator("name")
     @classmethod
     def _name_not_forbidden(cls, v: str) -> str:
@@ -128,11 +147,6 @@ class Column(_StrictModel):
                 f"column name '{v}' is platform-owned (email template "
                 "fields are managed by the platform; do not declare them "
                 "in HLD)"
-            )
-        if v in _IMPLICIT_COLUMNS:
-            raise ValueError(
-                f"column name '{v}' is implicit — multi-tenancy is "
-                "handled by the runtime; do not declare a tenant_id column"
             )
         return v
 
@@ -143,6 +157,7 @@ class Table(_StrictModel):
     columns: list[Column]
     keyedBy: str
     statusField: Optional[str] = None
+    queryPatterns: list[str] = Field(default_factory=list)
 
     # Rule #40 — when statusField is set, it must name an existing column
     # on this same table. Otherwise LLD will write to a non-existent
@@ -234,6 +249,21 @@ class ExternalContract(_StrictModel):
             )
         return v
 
+    # Rule #65 — requestShape and responseShape values must be semantic
+    # kinds, not TS types. Enforces the closed set including collection
+    # types (list, object) that are valid at the API boundary but not
+    # as column roles.
+    @field_validator("requestShape", "responseShape")
+    @classmethod
+    def _shape_values_are_semantic_kinds(cls, v: dict[str, str]) -> dict[str, str]:
+        for key, kind in v.items():
+            if kind not in _VALID_SHAPE_KINDS:
+                raise ValueError(
+                    f"shape value '{kind}' for key '{key}' is not a valid "
+                    f"semantic kind; allowed: {sorted(_VALID_SHAPE_KINDS)}"
+                )
+        return v
+
 
 # ── HLD plan (top-level) ──────────────────────────────────────────────
 
@@ -245,7 +275,9 @@ class HLDPlan(_StrictModel):
     """
 
     schema_version: Literal["1"] = "1"
-    archetype: Literal["storefront", "admin", "storefront+admin", "backend"]
+    archetype: Literal[
+        "backend", "backend+admin", "backend+storefront", "backend+admin+storefront"
+    ]
     feasibility: Literal["feasible", "blocked"]
     blockedReason: Optional[str]
     complexity: Literal["low", "medium", "high"]
@@ -307,10 +339,11 @@ class HLDPlan(_StrictModel):
     @model_validator(mode="after")
     def _archetype_matches_external_contracts(self) -> "HLDPlan":
         allowed = _ARCHETYPE_SURFACES[self.archetype]
-        if self.archetype == "backend":
+        if not allowed:
             if self.externalContracts:
                 raise ValueError(
-                    "archetype 'backend' must not declare any externalContracts"
+                    f"archetype '{self.archetype}' exposes no UI surface "
+                    "and must not declare any externalContracts"
                 )
             return self
         for i, c in enumerate(self.externalContracts):

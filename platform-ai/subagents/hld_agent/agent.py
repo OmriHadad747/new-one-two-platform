@@ -34,6 +34,7 @@ from subagents.hld_agent.schema import HLDPlan
 
 _MAX_ATTEMPTS = 3
 _MAX_TOKENS = 4000
+_THINKING_BUDGET = 4000
 
 
 _USER_TEMPLATE = """\
@@ -78,7 +79,7 @@ def run_hld_agent(
         prompt=prompt,
         intent_json=json.dumps(intent, indent=2),
     )
-    llm = get_llm(model=get_agent_model("hld"), max_tokens=_MAX_TOKENS)
+    llm = get_llm(model=get_agent_model("hld"), max_tokens=_MAX_TOKENS, thinking_budget=_THINKING_BUDGET)
 
     total_in = 0
     total_out = 0

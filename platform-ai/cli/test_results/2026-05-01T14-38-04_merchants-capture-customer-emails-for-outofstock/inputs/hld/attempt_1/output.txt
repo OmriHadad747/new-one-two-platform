@@ -1,0 +1,270 @@
+{
+  "schema_version": "1",
+  "archetype": "storefront+admin",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "A customer viewing an out-of-stock product submits their email via the storefront widget; the system records the subscription only if that email is not already subscribed for that product and the product is still out of stock at the moment of submission. When an inventory restocked event fires, the system looks up all pending subscriptions for the restocked product. In auto-send mode, notification emails are dispatched immediately and each subscription is marked notified; in approval mode, subscriptions are held in a pending-approval state until a merchant approves the batch from the admin panel. Every notification dispatch — whether auto or manual — creates a notification log entry recording the product, recipient count, and timestamp. The admin panel surfaces per-product subscription counts and the full notification log, and allows the merchant to toggle between auto-send and approval mode without affecting existing subscription records.",
+  "triggers": [
+    {
+      "kind": "inbound-request"
+    },
+    {
+      "kind": "external-event",
+      "event": "a product's inventory level is restored to a positive quantity",
+      "signalFields": ["product identifier", "variant identifier", "new inventory quantity"],
+      "idempotency": "if notifications for the same product restock event have already been dispatched or queued, treat subsequent deliveries of the same event as a no-op"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "check-product-stock",
+      "description": "Verify whether the product variant is still out of stock at the moment of subscription submission.",
+      "kind": "read",
+      "dataNeeds": ["product identifier", "variant identifier", "current inventory quantity"],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "record-subscription",
+      "description": "Persist a customer's email subscription for a specific out-of-stock product variant.",
+      "kind": "write",
+      "dataNeeds": ["customer email", "product identifier", "variant identifier", "subscription timestamp"],
+      "integration": null
+    },
+    {
+      "id": "fetch-pending-subscriptions",
+      "description": "Retrieve all active subscriptions for a product variant that has just restocked.",
+      "kind": "read",
+      "dataNeeds": ["product identifier", "variant identifier", "subscription status"],
+      "integration": null
+    },
+    {
+      "id": "fetch-product-details",
+      "description": "Retrieve product title and variant details to include in the notification email.",
+      "kind": "read",
+      "dataNeeds": ["product identifier", "variant identifier", "product title", "variant title", "product URL"],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "resolve-send-mode",
+      "description": "Determine whether the merchant's current configuration calls for auto-send or approval mode.",
+      "kind": "read",
+      "dataNeeds": ["send mode setting"],
+      "integration": null
+    },
+    {
+      "id": "send-restock-notification",
+      "description": "Deliver a restock notification email to each subscribed customer for the restocked product.",
+      "kind": "notify",
+      "dataNeeds": ["customer email", "product title", "variant title", "product URL"],
+      "integration": "email"
+    },
+    {
+      "id": "record-subscription-outcome",
+      "description": "Update each subscription's status after a notification attempt is made or approved.",
+      "kind": "write",
+      "dataNeeds": ["subscription identifier", "outcome status", "notified timestamp"],
+      "integration": null
+    },
+    {
+      "id": "record-notification-log-entry",
+      "description": "Create a log record capturing the product, recipient count, send mode, and timestamp for each dispatch event.",
+      "kind": "write",
+      "dataNeeds": ["product identifier", "variant identifier", "recipient count", "send mode used", "dispatched timestamp"],
+      "integration": null
+    },
+    {
+      "id": "read-notification-log",
+      "description": "Fetch the full notification log for display in the admin panel.",
+      "kind": "read",
+      "dataNeeds": ["product identifier", "variant identifier", "recipient count", "send mode used", "dispatched timestamp"],
+      "integration": null
+    },
+    {
+      "id": "read-subscription-counts",
+      "description": "Aggregate pending subscription counts per product variant for the admin dashboard.",
+      "kind": "read",
+      "dataNeeds": ["product identifier", "variant identifier", "pending subscription count"],
+      "integration": null
+    },
+    {
+      "id": "update-send-mode",
+      "description": "Persist the merchant's chosen send mode (auto-send or approval) to the merchant configuration.",
+      "kind": "write",
+      "dataNeeds": ["send mode setting"],
+      "integration": null
+    },
+    {
+      "id": "approve-notification-batch",
+      "description": "Mark a held batch of subscriptions as approved for dispatch in approval mode.",
+      "kind": "write",
+      "dataNeeds": ["product identifier", "variant identifier", "approved by", "approval timestamp"],
+      "integration": null
+    }
+  ],
+  "persistence": [
+    {
+      "name": "merchant_settings",
+      "purpose": "Stores the merchant's global configuration for the app, including the active send mode.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "send_mode", "role": "status", "nullable": false, "purpose": "whether the merchant has chosen auto-send or approval mode" },
+        { "name": "created_at", "role": "timestamp", "nullable": false },
+        { "name": "updated_at", "role": "timestamp", "nullable": false }
+      ],
+      "keyedBy": "one row per merchant installation",
+      "statusField": null
+    },
+    {
+      "name": "subscriptions",
+      "purpose": "Records each customer email signup for a specific out-of-stock product variant, and tracks whether notification has been sent.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "product_external_id", "role": "reference", "nullable": false, "purpose": "identifies the product the customer signed up for" },
+        { "name": "variant_external_id", "role": "reference", "nullable": false, "purpose": "identifies the specific variant the customer signed up for" },
+        { "name": "customer_email", "role": "text", "nullable": false },
+        { "name": "status", "role": "status", "nullable": false },
+        { "name": "subscribed_at", "role": "timestamp", "nullable": false },
+        { "name": "notified_at", "role": "timestamp", "nullable": true },
+        { "name": "notification_log_id", "role": "reference", "nullable": true, "purpose": "links to the notification log entry that covered this subscription" }
+      ],
+      "keyedBy": "one row per unique combination of customer email and product variant",
+      "statusField": "status"
+    },
+    {
+      "name": "notification_logs",
+      "purpose": "Records every notification dispatch event with its outcome, recipient count, and send mode used.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "product_external_id", "role": "reference", "nullable": false, "purpose": "identifies the product for which notifications were sent" },
+        { "name": "variant_external_id", "role": "reference", "nullable": false, "purpose": "identifies the specific variant for which notifications were sent" },
+        { "name": "recipient_count", "role": "count", "nullable": false },
+        { "name": "send_mode_used", "role": "status", "nullable": false },
+        { "name": "dispatched_at", "role": "timestamp", "nullable": false },
+        { "name": "approved_by", "role": "text", "nullable": true },
+        { "name": "approved_at", "role": "timestamp", "nullable": true }
+      ],
+      "keyedBy": "one row per dispatch event per product variant",
+      "statusField": null
+    }
+  ],
+  "stateMachine": {
+    "states": ["pending", "awaiting-approval", "notified", "skipped"],
+    "initialState": "pending",
+    "terminalStates": ["notified", "skipped"],
+    "transitions": [
+      { "from": "pending", "to": "awaiting-approval", "trigger": "restock event received and merchant is in approval mode" },
+      { "from": "pending", "to": "notified", "trigger": "restock event received and merchant is in auto-send mode and email delivered" },
+      { "from": "awaiting-approval", "to": "notified", "trigger": "merchant approves the batch and email is delivered" },
+      { "from": "pending", "to": "skipped", "trigger": "subscription found to be a duplicate or product was back in stock when the customer signed up" },
+      { "from": "awaiting-approval", "to": "skipped", "trigger": "merchant explicitly discards the pending batch" }
+    ],
+    "invariants": [
+      "exactly one subscription row exists per customer email and product variant combination",
+      "a subscription in notified or skipped state never transitions to any other state",
+      "a subscription may only move to awaiting-approval when the merchant's send mode is approval at the time of the restock event",
+      "every transition to notified must produce exactly one notification_logs entry referencing the batch"
+    ]
+  },
+  "externalContracts": [
+    {
+      "surface": "widget",
+      "path": "/api/subscriptions",
+      "method": "POST",
+      "purpose": "Accept a customer's email signup for an out-of-stock product variant from the storefront widget.",
+      "requestShape": {
+        "product_id": "reference",
+        "variant_id": "reference",
+        "email": "text"
+      },
+      "responseShape": {
+        "success": "flag",
+        "message": "text"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/api/settings",
+      "method": "GET",
+      "purpose": "Retrieve the current merchant configuration including send mode.",
+      "requestShape": {},
+      "responseShape": {
+        "send_mode": "status"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/api/settings",
+      "method": "PUT",
+      "purpose": "Update the merchant's send mode preference.",
+      "requestShape": {
+        "send_mode": "status"
+      },
+      "responseShape": {
+        "success": "flag"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/api/subscriptions",
+      "method": "GET",
+      "purpose": "Return per-product-variant subscription counts and the list of pending subscribers for the admin dashboard.",
+      "requestShape": {
+        "product_id": "reference"
+      },
+      "responseShape": {
+        "variants": "list"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/api/notification-logs",
+      "method": "GET",
+      "purpose": "Return the full paginated notification log for display in the admin panel.",
+      "requestShape": {
+        "page": "count",
+        "page_size": "count"
+      },
+      "responseShape": {
+        "logs": "list",
+        "total": "count"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/api/subscriptions/approve",
+      "method": "POST",
+      "purpose": "Approve a held batch of restock notifications for a product variant in approval mode.",
+      "requestShape": {
+        "product_id": "reference",
+        "variant_id": "reference"
+      },
+      "responseShape": {
+        "success": "flag",
+        "dispatched_count": "count"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/api/subscriptions/discard",
+      "method": "POST",
+      "purpose": "Discard a held batch of restock notifications, marking those subscriptions as skipped.",
+      "requestShape": {
+        "product_id": "reference",
+        "variant_id": "reference"
+      },
+      "responseShape": {
+        "success": "flag",
+        "skipped_count": "count"
+      }
+    }
+  ],
+  "edgeCases": [
+    "A customer submits their email for a product that restocked between the page load and form submission — the system must verify stock at submission time and reject the signup with a clear message that the item is now available.",
+    "The same customer email is submitted twice for the same product variant — the second submission must be silently deduplicated with a success response to prevent enumeration of existing subscribers.",
+    "The restock event is delivered more than once for the same product variant — if notifications are already dispatched or queued for that variant, subsequent event deliveries must be treated as no-ops.",
+    "The merchant switches from approval mode to auto-send while a batch is in awaiting-approval state — those subscriptions remain in awaiting-approval and must be explicitly approved or discarded; the mode change does not retroactively dispatch them.",
+    "One or more email addresses in a batch are undeliverable — the system must record the failure per subscription and still mark the remaining recipients as notified, ensuring the log entry reflects the actual dispatched count.",
+    "A product variant restocks and then immediately goes out of stock again before the approval is granted — the merchant should see a warning in the admin that the variant is no longer in stock before confirming the dispatch."
+  ]
+}

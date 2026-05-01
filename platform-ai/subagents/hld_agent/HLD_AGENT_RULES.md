@@ -26,14 +26,14 @@ Source: every rule expressed by `platform-ai/subagents/hld_agent/prompt.py:SYSTE
 | 3 | No `<placeholder>` tokens echoed verbatim in any string field | no (paranoid) | — | |
 | 4 | No extra/unknown keys at any level | yes | static (`extra="forbid"`) | |
 | **Archetype** | | | | |
-| 5 | `archetype ∈ {"storefront","admin","storefront+admin","backend"}` | yes | static (`Literal[...]`) | |
-| 6 | `archetype` correlates with `externalContracts` — backend has none; surfaces declared in contracts must be a subset of those implied by archetype | yes | static (`@model_validator`) | |
+| 5 | `archetype ∈ {"backend","backend+admin","backend+storefront","backend+admin+storefront"}` | yes | static (`Literal[...]`) | |
+| 6 | `archetype` correlates with `externalContracts` — `backend` has none; surfaces declared in contracts must be a subset of those implied by archetype | yes | static (`@model_validator`) | |
 | **Feasibility** | | | | |
 | 7 | `feasibility ∈ {"feasible","blocked"}` | yes | static (`Literal[...]`) | |
 | 8 | `blockedReason` is non-null iff `feasibility == "blocked"` | yes | static (`@model_validator`) | |
 | **Complexity** | | | | |
 | 9 | `complexity ∈ {"low","medium","high"}` | yes | static (`Literal[...]`) | |
-| 10 | `complexity == "high"` when any structural trigger fires (stateMachine declared, OR a schedule with `bulkFetchRule=true`, OR ≥2 external-event triggers, OR both widget+admin in externalContracts) | yes | static (`@model_validator`) | |
+| 10 | `complexity == "high"` when any structural trigger fires (stateMachine declared, OR a schedule with `bulkFetchRule=true`, OR ≥2 external-event triggers, OR archetype is `backend+admin+storefront`) | yes | static (`@model_validator`) | |
 | **Triggers** | | | | |
 | 11 | `triggers` is a non-empty list | yes | static (`Field(min_length=1)`) | |
 | 12 | Each trigger's `kind ∈ {"external-event","schedule","inbound-request"}` | yes | static (discriminated union) | |
@@ -74,7 +74,7 @@ Source: every rule expressed by `platform-ai/subagents/hld_agent/prompt.py:SYSTE
 | 44 | Column `name` is not a SQL reserved word (`order`, `user`, `group`, `from`, `to`, etc.) | yes | static (deny-list regex) | |
 | 45 | Column roles match the column's domain meaning (e.g. `*_at` columns are `timestamp`, `*_amount` is `money`) | yes | llm | |
 | 46 | Email-template columns (`email_subject`, `email_body`, `email_cta_label`, `email_cta_url`, `email_from_name`) are NOT declared — platform-owned | yes | static (deny-list) | ✅ |
-| 47 | No `tenant_id` column on any table — multi-tenancy is implicit | yes | static (deny-list) | ✅ |
+| 47 | No tenant-identifier column (`tenant_id`, `shop_domain`, `shop_id`, or any equivalent) — the platform runs each app in its own isolated database schema; any such column is always redundant dead weight | no | — | |
 | **State machine** | | | | |
 | 48 | `stateMachine` is `null` or an object with `states[]`, `initialState`, `terminalStates[]`, `transitions[]`, `invariants[]` | yes | static (typing) | |
 | 49 | `states` is non-empty and entries are unique | yes | static (`@model_validator`) | |
@@ -87,14 +87,14 @@ Source: every rule expressed by `platform-ai/subagents/hld_agent/prompt.py:SYSTE
 | 56 | `transition.trigger` is a domain phrase, not an enum literal from a specific API | yes | llm | |
 | 57 | Invariants are non-trivial (no "the row exists" / "the value is set") | yes | llm | |
 | **External contracts** | | | | |
-| 58 | `externalContracts` is empty for `archetype == "backend"` | yes | static (`@model_validator`) | ✅ |
+| 58 | `externalContracts` is empty when `archetype == "backend"` (no UI surfaces) | yes | static (`@model_validator`) | ✅ |
 | 59 | Each entry's `surface ∈ {"widget","admin"}` | yes | static (`Literal[...]`) | |
-| 60 | Surfaces in `externalContracts` are a subset of those implied by `archetype` | yes | static (`@model_validator`) | |
-| 61 | Each `path` starts with `/` | yes | static (`Field(pattern="^/")`) | |
+| 60 | Surfaces in `externalContracts` are a subset of those implied by `archetype` | yes | static (`@model_validator`) | ✅ |
+| 61 | Each `path` starts with `/` | yes | static (`Field(pattern="^/")`) | ✅ |
 | 62 | Each `path` contains no `:param` segments | yes | static (regex reject `:`) | ✅ |
 | 63 | Each `method ∈ {"GET","POST","PUT","DELETE"}` | yes | static (`Literal[...]`) | |
 | 64 | `(surface, path, method)` triples are unique | yes | static (`@model_validator`) | |
-| 65 | `requestShape` and `responseShape` values are semantic-kind strings, not TS types (no `string`, `number`, `boolean[]`, etc.) | yes | static (deny-list regex on values) | |
+| 65 | `requestShape` and `responseShape` values are drawn from the closed semantic-kind set (`identifier`, `reference`, `timestamp`, `money`, `status`, `flag`, `text`, `count`, `list`, `object`) — no TS types | yes | static (closed-set `@field_validator` on both dicts) | ✅ |
 | 66 | List/index routes include pagination keys in both shapes (`page`, `page_size`, `items`, `total`) | yes | llm | |
 | 67 | When a `schedule` trigger exists and the archetype includes admin, the catalog has a manual-trigger POST route | yes | llm | |
 | 68 | `requestShape` contains only data the caller (widget/admin) can produce — no server-side fields | yes | llm | |
@@ -111,15 +111,20 @@ Source: every rule expressed by `platform-ai/subagents/hld_agent/prompt.py:SYSTE
 | 77 | No string field contains TypeScript type syntax (`: string`, `: number`, `Promise<`, `Array<`) | yes | static (deny-list regex) | |
 | 78 | No string field contains npm package names or version pins (`dayjs@1.11.13`, `sharp`) | yes | llm | |
 | 79 | No string field contains capability registry names (`shopify_graphql`, `shopify_storefront`, `email` as a capability literal — `"email"` as `integration` value is fine because that's the schema enum) | yes | llm | |
+| **Persistence — column purpose** | | | | |
+| 80 | Each column may declare an optional `purpose` field — a one-phrase description of what the column stores in domain terms | yes | static (`Optional[str]`) | ✅ |
+| 81 | When a column's `role == "reference"`, its `purpose` should be provided and written in domain language (not API field names or platform-specific terms) | yes | llm | |
+| **Capabilities — granularity** | | | | |
+| 82 | State transitions on the same record are one capability regardless of terminal-state count — name for the outcome (`record-cart-outcome`), not per state (`mark-cart-sent` / `mark-cart-skipped` / `mark-cart-failed`) | yes | llm | |
 
 ---
 
 ## Counts
 
-- **79 rules** total across the HLD prompt + schema.
-- **Static: 50** — every one of these lives inside `HLDPlan` (field constraints, `@field_validator`, or `@model_validator`). No separate validator module today.
-- **LLM: 22** — semantic, prose-judgment checks deferred to a future `hld_validators.py` (parallel to `agent_rules` / `bug_finder`).
-- **No / paranoid: 7** — covered by parse-or-fail behavior of Pydantic itself, or judgment calls with FP risk that outweighs value.
+- **82 rules** total across the HLD prompt + schema.
+- **Static: 51** — every one of these lives inside `HLDPlan` (field constraints, `@field_validator`, or `@model_validator`). No separate validator module today.
+- **LLM: 23** — semantic, prose-judgment checks deferred to a future `hld_validators.py` (parallel to `agent_rules` / `bug_finder`).
+- **No / paranoid: 8** — covered by parse-or-fail behavior of Pydantic itself, or judgment calls with FP risk that outweighs value.
 
 ## Why this lives in Pydantic, not a separate module
 

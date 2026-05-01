@@ -175,9 +175,7 @@ def validate_architect_plan(
                 )
                 continue
             if not path.startswith("/"):
-                errors.append(
-                    f"{catalog_name} path {path!r} must start with '/'."
-                )
+                errors.append(f"{catalog_name} path {path!r} must start with '/'.")
             if len(path) > _MAX_PATH_LEN:
                 errors.append(
                     f"{catalog_name} path is {len(path)} chars (max "
@@ -193,7 +191,10 @@ def validate_architect_plan(
                 )
             method = entry.get("method")
             if method is not None:
-                if not isinstance(method, str) or method.upper() not in _ALLOWED_METHODS:
+                if (
+                    not isinstance(method, str)
+                    or method.upper() not in _ALLOWED_METHODS
+                ):
                     errors.append(
                         f"{catalog_name} path {path!r} declares method "
                         f"{method!r} — must be 'GET' or 'POST'. The "

@@ -1,0 +1,345 @@
+{
+  "run_ts": "2026-05-01T14-51-06",
+  "run_slug": "customers-receive-automatic-email-notifications-when",
+  "prompt": "Customers receive automatic email notifications when out-of-stock products are restocked, and the merchant can view all signups and sent notifications in the admin.",
+  "intent": {
+    "triggerTypes": [
+      "widget",
+      "webhook"
+    ],
+    "resources": [
+      "Product",
+      "Inventory",
+      "Customer email"
+    ],
+    "desiredOutcome": "Customers receive automatic email notifications when out-of-stock products are restocked, and the merchant can view all signups and sent notifications in the admin.",
+    "cronHint": null,
+    "appCategory": "storefront_backend_admin",
+    "qualityBrief": "A good version handles duplicate signups gracefully (one signup per customer per product), avoids sending multiple emails if inventory fluctuates, and shows the merchant clear data: who signed up, which products, when notifications were sent. Edge case: if a product is restocked then goes out of stock again before the email sends, clarify whether to still notify or cancel. The admin panel should be scannable at a glance and let the merchant remove spam or duplicate signups easily."
+  },
+  "archetype": "storefront_backend_admin",
+  "is_storefront": true,
+  "is_admin_ui": true,
+  "save_to_db": false,
+  "db": {},
+  "all_tokens": {
+    "hld": [
+      13862,
+      5033
+    ]
+  },
+  "checkpoint": "done",
+  "halt_reason": null,
+  "version": 1,
+  "updated_at": "2026-05-01T14:52:25",
+  "created_at": "2026-05-01T14:51:06",
+  "plan": {
+    "schema_version": "1",
+    "archetype": "backend+admin+storefront",
+    "feasibility": "feasible",
+    "blockedReason": null,
+    "complexity": "high",
+    "dataFlow": "A customer visits a product page where the storefront widget detects an out-of-stock product and presents a signup form; the customer submits their email and the product reference, which is recorded as a pending signup in the database, deduplicated so each customer-product pair has exactly one active signup. When an inventory restocked event fires, the system queries all pending signups for that product, marks each as notified, and sends each customer an email. The merchant can view all signups and notification history in the admin panel, filtered by product or status, and can delete individual signups. If a product goes back out of stock before emails are dispatched, the send still proceeds since the restock event has been observed.",
+    "triggers": [
+      {
+        "kind": "inbound-request"
+      },
+      {
+        "kind": "external-event",
+        "event": "a product variant's inventory level is restocked from zero to a positive quantity",
+        "signalFields": [
+          "product identifier",
+          "variant identifier",
+          "new inventory quantity"
+        ],
+        "idempotency": "if a restock event arrives for a product whose pending signups have already been moved to notified by a prior delivery of the same event, treat subsequent deliveries as no-ops"
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "register-signup",
+        "description": "Record a customer's request to be notified when a specific out-of-stock product is restocked.",
+        "kind": "write",
+        "dataNeeds": [
+          "customer email",
+          "product identifier",
+          "variant identifier"
+        ],
+        "integration": null
+      },
+      {
+        "id": "check-duplicate-signup",
+        "description": "Determine whether an active signup already exists for the given customer email and product variant before inserting a new one.",
+        "kind": "compute",
+        "dataNeeds": [
+          "customer email",
+          "variant identifier"
+        ],
+        "integration": null
+      },
+      {
+        "id": "fetch-pending-signups",
+        "description": "Retrieve all pending signups for a given product variant so notifications can be dispatched.",
+        "kind": "read",
+        "dataNeeds": [
+          "variant identifier",
+          "signup status"
+        ],
+        "integration": null
+      },
+      {
+        "id": "fetch-product-details",
+        "description": "Retrieve product and variant details needed to populate the notification email.",
+        "kind": "read",
+        "dataNeeds": [
+          "product name",
+          "variant name",
+          "product page URL",
+          "product image URL"
+        ],
+        "integration": "shopify-admin"
+      },
+      {
+        "id": "send-restock-notification",
+        "description": "Send a restock notification email to a customer informing them that the product they requested is available again.",
+        "kind": "notify",
+        "dataNeeds": [
+          "customer email",
+          "product name",
+          "variant name",
+          "product page URL",
+          "product image URL"
+        ],
+        "integration": "email"
+      },
+      {
+        "id": "record-notification-outcome",
+        "description": "Update the signup record to reflect whether the notification email was successfully sent or failed.",
+        "kind": "write",
+        "dataNeeds": [
+          "signup identifier",
+          "outcome",
+          "outcome reason",
+          "notification timestamp"
+        ],
+        "integration": null
+      },
+      {
+        "id": "list-signups-for-admin",
+        "description": "Return a paginated, filterable list of signups and their notification statuses for the merchant admin view.",
+        "kind": "read",
+        "dataNeeds": [
+          "customer email",
+          "product identifier",
+          "variant identifier",
+          "signup status",
+          "signup date",
+          "notification date"
+        ],
+        "integration": null
+      },
+      {
+        "id": "delete-signup",
+        "description": "Allow the merchant to remove a specific signup record from the system.",
+        "kind": "write",
+        "dataNeeds": [
+          "signup identifier"
+        ],
+        "integration": null
+      }
+    ],
+    "persistence": [
+      {
+        "name": "restock_signups",
+        "purpose": "Stores each customer's request to be notified when a specific product variant is restocked, and tracks the lifecycle of that notification.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "customer_email",
+            "role": "text",
+            "nullable": false,
+            "purpose": "email address the customer wants the notification sent to"
+          },
+          {
+            "name": "product_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "identifies the parent product in the external catalog"
+          },
+          {
+            "name": "variant_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "identifies the specific variant the customer is waiting for"
+          },
+          {
+            "name": "product_name",
+            "role": "text",
+            "nullable": true,
+            "purpose": "denormalized product title captured at signup time for display in admin"
+          },
+          {
+            "name": "variant_name",
+            "role": "text",
+            "nullable": true,
+            "purpose": "denormalized variant title captured at signup time for display in admin"
+          },
+          {
+            "name": "status",
+            "role": "status",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "signed_up_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": "when the customer submitted the signup"
+          },
+          {
+            "name": "notified_at",
+            "role": "timestamp",
+            "nullable": true,
+            "purpose": "when the notification email was successfully dispatched"
+          },
+          {
+            "name": "failure_reason",
+            "role": "text",
+            "nullable": true,
+            "purpose": "description of why notification delivery failed, if applicable"
+          }
+        ],
+        "keyedBy": "one row per customer email and variant combination; duplicate active signups for the same pair are not permitted",
+        "statusField": "status"
+      },
+      {
+        "name": "restock_events",
+        "purpose": "Records each observed restock event so that duplicate webhook deliveries for the same restock can be detected and suppressed.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "variant_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "the variant that was restocked"
+          },
+          {
+            "name": "received_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": "when the restock event was first received"
+          },
+          {
+            "name": "processed",
+            "role": "flag",
+            "nullable": false,
+            "purpose": "whether signups for this restock have already been dispatched"
+          }
+        ],
+        "keyedBy": "one row per restock event, keyed by the variant identifier and a deduplication window",
+        "statusField": null
+      }
+    ],
+    "stateMachine": {
+      "states": [
+        "pending",
+        "notified",
+        "failed",
+        "cancelled"
+      ],
+      "initialState": "pending",
+      "terminalStates": [
+        "notified",
+        "failed",
+        "cancelled"
+      ],
+      "transitions": [
+        {
+          "from": "pending",
+          "to": "notified",
+          "trigger": "restock notification email successfully delivered"
+        },
+        {
+          "from": "pending",
+          "to": "failed",
+          "trigger": "restock notification email delivery attempt failed"
+        },
+        {
+          "from": "pending",
+          "to": "cancelled",
+          "trigger": "merchant deletes the signup before notification fires"
+        }
+      ],
+      "invariants": [
+        "exactly one active (pending) signup per customer email and variant pair at any time",
+        "a signup in a terminal state never returns to pending",
+        "notified_at is set if and only if the signup is in the notified state"
+      ]
+    },
+    "externalContracts": [
+      {
+        "surface": "widget",
+        "path": "/widget/signup",
+        "method": "POST",
+        "purpose": "Accept a customer's restock notification signup for an out-of-stock product variant.",
+        "requestShape": {
+          "customer_email": "text",
+          "product_id": "reference",
+          "variant_id": "reference"
+        },
+        "responseShape": {
+          "success": "flag",
+          "message": "text"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/signups",
+        "method": "GET",
+        "purpose": "Return a paginated list of all signups with their status, filterable by product or status.",
+        "requestShape": {
+          "page": "count",
+          "page_size": "count",
+          "product_id": "reference",
+          "status": "status"
+        },
+        "responseShape": {
+          "signups": "list",
+          "total_count": "count",
+          "page": "count"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/signups/remove",
+        "method": "POST",
+        "purpose": "Allow the merchant to delete a specific signup record by its identifier.",
+        "requestShape": {
+          "signup_id": "identifier"
+        },
+        "responseShape": {
+          "success": "flag"
+        }
+      }
+    ],
+    "edgeCases": [
+      "A customer submits a signup form twice for the same product variant \u2014 the second request is rejected as a duplicate and the existing pending signup is preserved.",
+      "A product is restocked and immediately oversold before notification emails are dispatched \u2014 the system still sends notifications because the restock event was legitimately observed.",
+      "The email provider returns a delivery failure for one customer in a batch \u2014 that signup is marked failed with the reason recorded, while all other signups in the batch continue to be processed.",
+      "A restock webhook is delivered more than once for the same variant within a short window \u2014 the restock events table deduplicates processing so customers receive at most one notification per restock cycle.",
+      "A customer's email address is malformed at signup \u2014 the request is rejected immediately with a validation error and no record is persisted.",
+      "The merchant deletes a pending signup before the restock event fires \u2014 the signup transitions to cancelled and is excluded from future notification batches."
+    ]
+  },
+  "product_prompt": "Merchant request: Customers receive automatic email notifications when out-of-stock products are restocked, and the merchant can view all signups and sent notifications in the admin.\n\nProduct-agent intent:\n{\n  \"triggerTypes\": [\n    \"widget\",\n    \"webhook\"\n  ],\n  \"resources\": [\n    \"Product\",\n    \"Inventory\",\n    \"Customer email\"\n  ],\n  \"desiredOutcome\": \"Customers receive automatic email notifications when out-of-stock products are restocked, and the merchant can view all signups and sent notifications in the admin.\",\n  \"cronHint\": null,\n  \"appCategory\": \"storefront_backend_admin\",\n  \"qualityBrief\": \"A good version handles duplicate signups gracefully (one signup per customer per product), avoids sending multiple emails if inventory fluctuates, and shows the merchant clear data: who signed up, which products, when notifications were sent. Edge case: if a product is restocked then goes out of stock again before the email sends, clarify whether to still notify or cancel. The admin panel should be scannable at a glance and let the merchant remove spam or duplicate signups easily.\"\n}"
+}
