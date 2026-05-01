@@ -46,6 +46,9 @@ _DEFAULTS: dict[str, str] = {
     "agent_rules": "claude-haiku-4-5-20251001",
     "bug_finder": "claude-sonnet-4-6",
     "quality_brief_coverage": "claude-haiku-4-5-20251001",
+    # HLD semantic validator — Sonnet: cross-section reasoning across a
+    # complex plan JSON; Haiku misses subtle capability/contract gaps.
+    "hld_v": "claude-sonnet-4-6",
 }
 
 

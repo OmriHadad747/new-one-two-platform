@@ -46,11 +46,20 @@ and contracts from the merchant's actual needs):
 
 Produce the HLD plan as JSON conforming to the appended schema."""
 
+_VALIDATOR_HINT_SUFFIX = """\
+
+
+SEMANTIC REVIEW FEEDBACK — a prior draft of this plan was reviewed and the
+following issues were found. Produce a corrected plan that addresses all of
+them:
+{findings_text}"""
+
 
 def run_hld_agent(
     prompt: str,
     intent: Dict[str, Any],
     on_attempt_failed: Optional[Callable[[int, List[str]], None]] = None,
+    validator_hint: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], int, int]:
     """
     Run the HLD agent. Returns (plan_dict, in_tokens, out_tokens).
@@ -79,6 +88,8 @@ def run_hld_agent(
         prompt=prompt,
         intent_json=json.dumps(intent, indent=2),
     )
+    if validator_hint:
+        base_user += _VALIDATOR_HINT_SUFFIX.format(findings_text=validator_hint)
     llm = get_llm(model=get_agent_model("hld"), max_tokens=_MAX_TOKENS, thinking_budget=_THINKING_BUDGET)
 
     total_in = 0

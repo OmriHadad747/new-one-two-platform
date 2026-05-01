@@ -105,6 +105,7 @@ _log.basicConfig(
 
 from subagents.base import CodegenContext
 from subagents.product_agent import run_product_agent_analyze
+from models.adapter import input_log
 from cli.pipeline_local import (
     _MAX_CODEGEN_RETRIES,
     _REVISION_TRACES_SUBDIR,
@@ -154,6 +155,7 @@ _BRIGHT_GREEN = "\033[92m"
 # wall of text. Keys match the labels passed to `_spinner` / `_agent_line`.
 _AGENT_COLOR: Dict[str, str] = {
     "HLD": _MAGENTA,
+    "HLD Check": _MAGENTA,
     "Handler": _BLUE,
     "Migration": _CYAN,
     "Widget JS": _YELLOW,
@@ -1006,6 +1008,7 @@ def _save_hld_json(
     plan: Dict,
     errors: List[str],
     product_prompt: str = "",
+    hld_v_findings: Optional[List] = None,
 ) -> Path:
     payload: Dict[str, Any] = {
         "prompt": prompt,
@@ -1015,6 +1018,8 @@ def _save_hld_json(
     }
     if product_prompt:
         payload["product_prompt"] = product_prompt
+    if hld_v_findings is not None:
+        payload["hld_v_findings"] = hld_v_findings
     path = run_dir / "hld.json"
     path.write_text(json.dumps(payload, indent=2))
     return run_dir
@@ -1128,13 +1133,14 @@ def _save_artifacts_md(
     handler_email_metadata: Optional[Dict[str, Any]] = None,
     total_ms: int = 0,
     all_tokens: Optional[Dict[str, Tuple[int, int]]] = None,
+    hld_v_findings: Optional[List] = None,
 ) -> Path:
     _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
     # Always persist the canonical HLD output as a sibling file. The report
     # only links to it, never re-inlines the JSON, so plan and report stay
     # in sync via a single source of truth.
     if plan:
-        _save_hld_json(run_dir, prompt, intent or {}, plan, [], "")
+        _save_hld_json(run_dir, prompt, intent or {}, plan, [], "", hld_v_findings)
     path = run_dir / "report.md"
 
     lines = _md_pipeline_header(stop_label, prompt, total_ms, all_tokens or {})
@@ -1598,6 +1604,69 @@ def main() -> None:
             halt_reason=None,
         )
 
+    # ── HLD Validator + optional one-shot retry ───────────────────────────────
+    hld_v_findings: List[Dict[str, Any]] = []
+    if resume_state and resume_state.get("hld_v_findings") is not None:
+        hld_v_findings = resume_state["hld_v_findings"]
+    else:
+        from subagents.hld_v_agent.agent import run_hld_validator
+        from subagents.hld_agent.agent import run_hld_agent
+
+        _spinner("HLD Check")
+        _hld_v_t0 = time.monotonic()
+        try:
+            with input_log("hld_v", run_dir):
+                hld_v_findings, hld_v_in, hld_v_out = run_hld_validator(plan, prompt, intent)
+        except Exception as _exc:
+            _log.warning("hld_v: failed (%s) — fail-open", _exc)
+            hld_v_findings, hld_v_in, hld_v_out = [], 0, 0
+        _hld_v_ms = int((time.monotonic() - _hld_v_t0) * 1000)
+        all_tokens["hld_v"] = (hld_v_in, hld_v_out)
+
+        _critical = [f for f in hld_v_findings if f.get("severity") == "critical"]
+        _sev_note = f"{len(hld_v_findings)} finding(s)" if hld_v_findings else "clean"
+        _agent_line("HLD Check", True, _hld_v_ms, _tok_note(hld_v_in, hld_v_out, _sev_note))
+
+        if _critical:
+            # One-shot correction: feed critical findings back to the HLD agent.
+            _hint = "\n".join(
+                f"- [{f['severity']}] {f['location']}: {f['issue']} Fix: {f['fix']}"
+                for f in _critical
+            )
+            _retry_line("HLD", f"retrying with {len(_critical)} critical finding(s)")
+            _spinner("HLD")
+            try:
+                plan, _r_in, _r_out = run_hld_agent(
+                    prompt, intent, validator_hint=_hint,
+                    on_attempt_failed=lambda a, e: _retry_line("HLD", f"attempt {a+1} invalid"),
+                )
+                _r_in_prev, _r_out_prev = all_tokens.get("hld", (0, 0))
+                all_tokens["hld"] = (_r_in_prev + _r_in, _r_out_prev + _r_out)
+                product_prompt = ""
+                _agent_line("HLD", True, None, "corrected")
+            except Exception as _exc:
+                _log.warning("hld_v retry: HLD re-run failed (%s) — keeping original", _exc)
+                _agent_line("HLD", False, None, "retry failed — original kept")
+
+        if hld_v_findings:
+            _SEV_COLOR = {"critical": _RED, "important": _YELLOW, "minor": _DIM}
+            for _f in hld_v_findings:
+                _sc = _SEV_COLOR.get(_f.get("severity", ""), _DIM)
+                _sev_label = _f.get("severity", "?")
+                _loc = _f.get("location", "")
+                _iss = _f.get("issue", "")[:120]
+                print(
+                    f"    {_c('•', _sc)} {_c('[' + _sev_label + ']', _sc)}"
+                    f"  {_c(_loc, _DIM)}  {_iss}"
+                )
+
+        _save_state(
+            run_dir,
+            plan=plan,
+            hld_v_findings=hld_v_findings,
+            all_tokens={k: list(v) for k, v in all_tokens.items()},
+        )
+
     if stop_after == "hld":
         # User-requested stop. Mark the run done so it stops appearing in
         # --list-resume — partial-pipeline stops are a deliberate exit, not
@@ -1618,6 +1687,7 @@ def main() -> None:
             plan=plan,
             total_ms=total_ms,
             all_tokens=all_tokens,
+            hld_v_findings=hld_v_findings,
         )
         print()
         _summary_box(
@@ -1723,6 +1793,7 @@ def main() -> None:
             handler_email_metadata=base_ctx.handler_email_metadata,
             total_ms=total_ms,
             all_tokens=all_tokens,
+            hld_v_findings=hld_v_findings,
         )
         print()
         _summary_box(
@@ -1855,6 +1926,7 @@ def main() -> None:
             handler_email_metadata=base_ctx.handler_email_metadata,
             total_ms=total_ms,
             all_tokens=all_tokens,
+            hld_v_findings=hld_v_findings,
         )
         print()
         _summary_box(
@@ -1899,7 +1971,7 @@ def main() -> None:
     # ── Save report + generated files ─────────────────────────────────────────
     _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
     # Always persist the canonical HLD output alongside the report.
-    _save_hld_json(run_dir, prompt, intent, plan, [], "")
+    _save_hld_json(run_dir, prompt, intent, plan, [], "", hld_v_findings)
     merchant_facing = explanation.get("merchantFacing", "")
     lines = _md_pipeline_header("full", prompt, total_ms, all_tokens)
     lines += [
