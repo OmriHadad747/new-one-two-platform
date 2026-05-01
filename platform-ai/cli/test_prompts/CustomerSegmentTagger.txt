@@ -1,0 +1,1 @@
+I want to define rules for grouping customers — like spent over $500, ordered 3+ times, or from a specific country — and have the app tag everyone who matches. I'll set the rules in the admin and hit a button to run it. Show me how many got tagged when it's done.

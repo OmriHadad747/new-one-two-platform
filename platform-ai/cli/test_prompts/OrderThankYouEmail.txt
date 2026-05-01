@@ -1,0 +1,1 @@
+After someone buys from my store I want them to get a thank-you email automatically — using their name, listing what they ordered, and with a short personal note from me. Nothing that looks like a normal transactional receipt.

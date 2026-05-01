@@ -1,0 +1,1 @@
+Add a popup with a spin-the-wheel game where visitors enter their email and spin to win a discount code. The code should be unique per person and emailed to them. In my admin I want to see who spun, what prize they got, and which codes were actually used.

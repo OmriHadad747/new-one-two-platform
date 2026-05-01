@@ -156,6 +156,38 @@ def _dump_inputs(
         log.warning("input-trace dump failed (agent=%s): %s", state.agent, exc)
 
 
+def dump_output(content: str) -> None:
+    """
+    Persist a model response into the most recent attempt_N dir created by
+    `_dump_inputs` for the active `input_log` block. No-op outside an
+    `input_log` block.
+
+    Lets the agent runner save raw model output side-by-side with its
+    prompts (system.txt / user.txt / retry_suffix.txt) for post-mortem.
+    Failures are swallowed — observability must never break a run.
+    """
+    state = _input_log_ctx.get()
+    if state is None:
+        return
+    try:
+        agent_dir = state.run_dir / "inputs" / state.agent
+        if not agent_dir.is_dir():
+            return
+        attempts = sorted(
+            (
+                p
+                for p in agent_dir.iterdir()
+                if p.is_dir() and p.name.startswith("attempt_")
+            ),
+            key=lambda p: int(p.name.split("_", 1)[1]) if p.name.split("_", 1)[1].isdigit() else 0,
+        )
+        if not attempts:
+            return
+        (attempts[-1] / "output.txt").write_text(content)
+    except Exception as exc:  # pragma: no cover — observability must not raise
+        log.warning("output-trace dump failed (agent=%s): %s", state.agent, exc)
+
+
 # Minimum prompt size for caching to be worthwhile. Anthropic's cache has a
 # 1024-token floor; shorter prompts aren't cacheable and trying to mark them
 # wastes a content block. System prompts for the large agents (handler,

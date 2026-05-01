@@ -1,0 +1,1 @@
+I want a simple banner at the top of my store where I can put a quick message like "Free shipping over $50" or my holiday hours. Should be easy to update the text and the background color from somewhere without me having to touch the theme.

@@ -1,0 +1,1 @@
+Show a row of trust badges (secure checkout, money-back guarantee, that sort of thing) right under the Add to Cart button on every product page. I just want to pick which ones to display from a small list — no need to upload my own images.

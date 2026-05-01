@@ -75,12 +75,6 @@ def build_handler_jit_sections(
     # handlerCapabilities, storefront only when shopify_storefront is.
     # Empty/missing approved lists are no-ops (the static capability doc
     # already tells the handler what to do in that case).
-    # Per-op pitfall registry — JIT-injected next to the approved-ops list.
-    # Captures op-specific failure modes (response-shape unions, async
-    # polling, deprecated fields, paired-endpoint requirements) that the
-    # cross-cutting Shopify prompt in shopify_graphql.py can't generalise.
-    # Source-of-truth + maintenance contract live in catalogs/gotchas.py.
-    from catalogs.gotchas import gotchas_for_ops
 
     ops = (impl.get("shopifyGraphqlOperations") or {}) if isinstance(impl, dict) else {}
     if "shopify_graphql" in declared:
@@ -97,9 +91,6 @@ def build_handler_jit_sections(
                 "── Shopify Admin GraphQL — worked examples ──────────────────\n\n"
                 + admin_examples
             )
-        admin_gotchas = gotchas_for_ops(admin_ops, surface="admin")
-        if admin_gotchas:
-            sections.append(admin_gotchas)
     if "shopify_storefront" in declared:
         storefront_ops = ops.get("storefront") or []
         sliced = slice_summary("storefront", storefront_ops) if storefront_ops else ""
@@ -116,9 +107,6 @@ def build_handler_jit_sections(
                 "── Shopify Storefront GraphQL — worked examples ─────────────\n\n"
                 + storefront_examples
             )
-        storefront_gotchas = gotchas_for_ops(storefront_ops, surface="storefront")
-        if storefront_gotchas:
-            sections.append(storefront_gotchas)
 
     # Trigger-gated topic sections.
     if shopify.get("webhookTopics"):

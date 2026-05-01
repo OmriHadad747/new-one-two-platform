@@ -1,0 +1,1 @@
+Build a dashboard inside my Shopify admin that shows the numbers I actually care about — revenue this month, average order value, top selling products, and repeat customer rate — with charts. I want something cleaner than the default Shopify reports.

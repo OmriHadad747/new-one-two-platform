@@ -23,6 +23,7 @@ import os
 _DEFAULTS: dict[str, str] = {
     # Planning agents
     "architect": "claude-sonnet-4-6",
+    "hld": "claude-sonnet-4-6",
     # Code generation agents
     "handler": "claude-sonnet-4-6",
     "migration": "claude-sonnet-4-6",
