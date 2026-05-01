@@ -70,7 +70,7 @@ Source: every rule expressed by `platform-ai/subagents/hld_agent/prompt.py:SYSTE
 | 40 | If `statusField` is set, it names an existing column on the same table | yes | static (`@model_validator`) | ✅ |
 | 41 | If `statusField` is set, that column's `role == "status"` | yes | static (`@model_validator`) | |
 | 42 | If `statusField` is set, `stateMachine` must be non-null | yes | static (`@model_validator`) | ✅ |
-| 43 | If `stateMachine` is non-null, exactly one persistence table has a `statusField` set | yes | static (`@model_validator`) | ✅ |
+| 43 | If `stateMachine` is non-null, **at least one** persistence table has a `statusField` set (no upper-bound — apps may bind the same state machine to multiple lifecycle-tracked tables) | yes | static (`@model_validator`) | ✅ |
 | 44 | Column `name` is not a SQL reserved word (`order`, `user`, `group`, `from`, `to`, etc.) | yes | static (deny-list regex) | |
 | 45 | Column roles match the column's domain meaning (e.g. `*_at` columns are `timestamp`, `*_amount` is `money`) | yes | llm | |
 | 46 | Email-template columns (`email_subject`, `email_body`, `email_cta_label`, `email_cta_url`, `email_from_name`) are NOT declared — platform-owned | yes | static (deny-list) | ✅ |

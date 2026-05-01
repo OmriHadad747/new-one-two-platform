@@ -1,0 +1,420 @@
+# Chat Local — HLD Stop
+
+**Date:** 2026-05-01 13:31:15  
+**Status:** ✅ SUCCESS  
+**Total:** 42497ms  
+**Tokens:** in=6210 out=2871 total=9081  
+**Prompt:** Send a single reminder email to customers whose carts have been abandoned for a merchant-set duration, with a link back to their cart.
+
+## Per-agent tokens
+
+| Agent | Input | Output | Total |
+|---|---:|---:|---:|
+| hld | 6,210 | 2,871 | 9,081 |
+
+## Intent (Product Agent)
+
+```json
+{
+  "triggerTypes": [
+    "cron"
+  ],
+  "resources": [
+    "Cart",
+    "Customer"
+  ],
+  "desiredOutcome": "Send a single reminder email to customers whose carts have been abandoned for a merchant-set duration, with a link back to their cart.",
+  "cronHint": "every 1 hour",
+  "appCategory": "backend_admin",
+  "qualityBrief": "A good version of this app tracks abandoned carts accurately (carts with items, no recent checkout activity), avoids sending duplicate reminders to the same cart, includes a pre-filled cart recovery link in the email, and respects customer email preferences. Edge cases: customers who check out shortly after abandonment should not receive a reminder, and carts older than 30 days should be ignored to avoid stale data."
+}
+```
+
+## HLD Plan
+
+```json
+{
+  "schema_version": "1",
+  "archetype": "admin",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "Once per hour, the scheduled job fetches all tracked abandoned carts that are in the pending state, have been abandoned for at least the merchant-configured delay, and are no older than 30 days. For each qualifying cart, the system verifies the cart has not since converted to a completed order; if converted, the cart is marked skipped. For remaining carts, the system reads the customer email and cart recovery URL, then sends a single reminder email. On successful delivery the cart is marked sent; on failure it is marked failed. Subsequent job ticks treat sent, skipped, and failed carts as no-ops.",
+  "triggers": [
+    {
+      "kind": "schedule",
+      "cadence": "every hour",
+      "jobPurpose": "Identify eligible abandoned carts and dispatch a single recovery email per cart.",
+      "perTickWork": "Load all pending abandoned-cart records whose abandonment timestamp falls within the merchant-configured delay window and within the 30-day staleness ceiling, verify none have converted, send the recovery email for each eligible cart, and transition each record to its terminal state.",
+      "bulkFetchRule": true
+    },
+    {
+      "kind": "external-event",
+      "event": "a customer abandons a cart",
+      "signalFields": [
+        "cart identifier",
+        "customer identifier",
+        "customer email",
+        "cart line items",
+        "cart subtotal",
+        "cart recovery URL",
+        "abandonment timestamp"
+      ],
+      "idempotency": "Duplicate abandonment events for the same cart are treated as a no-op; only the first event creates a pending record."
+    },
+    {
+      "kind": "external-event",
+      "event": "a checkout is completed and paid",
+      "signalFields": [
+        "cart identifier",
+        "order identifier",
+        "completion timestamp"
+      ],
+      "idempotency": "Duplicate order-completion events for the same cart are treated as a no-op; the cart is marked skipped if still pending, otherwise no state change occurs."
+    },
+    {
+      "kind": "inbound-request"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "read-abandoned-carts",
+      "description": "Fetch all pending abandoned-cart records eligible for a recovery email based on merchant-configured delay and staleness ceiling.",
+      "kind": "read",
+      "dataNeeds": [
+        "cart identifier",
+        "customer identifier",
+        "abandonment timestamp",
+        "current record status"
+      ],
+      "integration": null
+    },
+    {
+      "id": "verify-cart-not-converted",
+      "description": "Confirm that an abandoned cart has not been converted to a completed order before sending a reminder.",
+      "kind": "read",
+      "dataNeeds": [
+        "cart identifier",
+        "associated order status"
+      ],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "read-cart-details",
+      "description": "Retrieve the customer email address, cart line items, cart subtotal, and cart recovery URL needed to personalise the reminder email.",
+      "kind": "read",
+      "dataNeeds": [
+        "customer email",
+        "cart line items",
+        "cart subtotal",
+        "cart recovery URL"
+      ],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "check-customer-email-opt-out",
+      "description": "Determine whether the customer has opted out of marketing emails before dispatching a reminder.",
+      "kind": "read",
+      "dataNeeds": [
+        "customer identifier",
+        "customer email marketing consent"
+      ],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "send-recovery-email",
+      "description": "Send a single personalised cart recovery email containing the cart line items, subtotal, and a direct recovery link.",
+      "kind": "notify",
+      "dataNeeds": [
+        "customer email",
+        "cart line items",
+        "cart subtotal",
+        "cart recovery URL"
+      ],
+      "integration": "email"
+    },
+    {
+      "id": "mark-cart-sent",
+      "description": "Record that a recovery email was successfully dispatched for a given cart so no further emails are sent.",
+      "kind": "write",
+      "dataNeeds": [
+        "cart identifier",
+        "sent timestamp"
+      ],
+      "integration": null
+    },
+    {
+      "id": "mark-cart-skipped",
+      "description": "Record that a cart was skipped due to conversion or opted-out customer so it is excluded from future processing.",
+      "kind": "write",
+      "dataNeeds": [
+        "cart identifier",
+        "skip reason"
+      ],
+      "integration": null
+    },
+    {
+      "id": "mark-cart-failed",
+      "description": "Record that the email delivery attempt for a cart failed so the merchant can review without triggering a retry.",
+      "kind": "write",
+      "dataNeeds": [
+        "cart identifier",
+        "failure reason"
+      ],
+      "integration": null
+    },
+    {
+      "id": "read-merchant-settings",
+      "description": "Retrieve the merchant-configured abandonment delay and any other campaign settings needed at job runtime.",
+      "kind": "read",
+      "dataNeeds": [
+        "abandonment delay duration",
+        "sender name",
+        "sender email address"
+      ],
+      "integration": null
+    },
+    {
+      "id": "save-merchant-settings",
+      "description": "Persist merchant-configured settings such as abandonment delay and sender details.",
+      "kind": "write",
+      "dataNeeds": [
+        "abandonment delay duration",
+        "sender name",
+        "sender email address"
+      ],
+      "integration": null
+    }
+  ],
+  "persistence": [
+    {
+      "name": "abandoned_carts",
+      "purpose": "Tracks every detected abandoned cart and its recovery email lifecycle state.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false
+        },
+        {
+          "name": "cart_token",
+          "role": "reference",
+          "nullable": false
+        },
+        {
+          "name": "shop_domain",
+          "role": "reference",
+          "nullable": false
+        },
+        {
+          "name": "customer_id",
+          "role": "reference",
+          "nullable": true
+        },
+        {
+          "name": "customer_email",
+          "role": "text",
+          "nullable": true
+        },
+        {
+          "name": "cart_subtotal",
+          "role": "money",
+          "nullable": false
+        },
+        {
+          "name": "recovery_url",
+          "role": "text",
+          "nullable": false
+        },
+        {
+          "name": "abandoned_at",
+          "role": "timestamp",
+          "nullable": false
+        },
+        {
+          "name": "status",
+          "role": "status",
+          "nullable": false
+        },
+        {
+          "name": "email_sent_at",
+          "role": "timestamp",
+          "nullable": true
+        },
+        {
+          "name": "skip_reason",
+          "role": "text",
+          "nullable": true
+        },
+        {
+          "name": "failure_reason",
+          "role": "text",
+          "nullable": true
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false
+        },
+        {
+          "name": "updated_at",
+          "role": "timestamp",
+          "nullable": false
+        }
+      ],
+      "keyedBy": "one row per abandoned cart, keyed by the cart's external token scoped to the shop domain",
+      "statusField": "status"
+    },
+    {
+      "name": "merchant_settings",
+      "purpose": "Stores per-shop configuration for the abandonment delay and email sender identity.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false
+        },
+        {
+          "name": "shop_domain",
+          "role": "reference",
+          "nullable": false
+        },
+        {
+          "name": "abandonment_delay_minutes",
+          "role": "count",
+          "nullable": false
+        },
+        {
+          "name": "sender_name",
+          "role": "text",
+          "nullable": false
+        },
+        {
+          "name": "sender_email",
+          "role": "text",
+          "nullable": false
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false
+        },
+        {
+          "name": "updated_at",
+          "role": "timestamp",
+          "nullable": false
+        }
+      ],
+      "keyedBy": "one row per shop, keyed by the shop domain",
+      "statusField": null
+    }
+  ],
+  "stateMachine": {
+    "states": [
+      "pending",
+      "sent",
+      "skipped",
+      "failed"
+    ],
+    "initialState": "pending",
+    "terminalStates": [
+      "sent",
+      "skipped",
+      "failed"
+    ],
+    "transitions": [
+      {
+        "from": "pending",
+        "to": "sent",
+        "trigger": "recovery email delivered successfully"
+      },
+      {
+        "from": "pending",
+        "to": "skipped",
+        "trigger": "cart converted to order before email was sent"
+      },
+      {
+        "from": "pending",
+        "to": "skipped",
+        "trigger": "customer has opted out of marketing emails"
+      },
+      {
+        "from": "pending",
+        "to": "skipped",
+        "trigger": "cart is older than 30 days"
+      },
+      {
+        "from": "pending",
+        "to": "skipped",
+        "trigger": "cart has no customer email address"
+      },
+      {
+        "from": "pending",
+        "to": "failed",
+        "trigger": "email delivery attempt failed"
+      }
+    ],
+    "invariants": [
+      "A cart in a terminal state never transitions to any other state.",
+      "Exactly one row exists per cart token per shop domain.",
+      "A cart in the sent state has a non-null email sent timestamp.",
+      "A cart in the skipped state has a non-null skip reason.",
+      "A cart in the failed state has a non-null failure reason."
+    ]
+  },
+  "externalContracts": [
+    {
+      "surface": "admin",
+      "path": "/api/settings",
+      "method": "GET",
+      "purpose": "Retrieve the current merchant settings for display in the admin panel.",
+      "requestShape": {},
+      "responseShape": {
+        "abandonment_delay_minutes": "count",
+        "sender_name": "text",
+        "sender_email": "text"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/api/settings",
+      "method": "PUT",
+      "purpose": "Save updated merchant settings for abandonment delay and sender identity.",
+      "requestShape": {
+        "abandonment_delay_minutes": "count",
+        "sender_name": "text",
+        "sender_email": "text"
+      },
+      "responseShape": {
+        "success": "flag"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/api/carts",
+      "method": "GET",
+      "purpose": "Return a paginated list of tracked abandoned carts and their current statuses for merchant review.",
+      "requestShape": {
+        "status_filter": "status",
+        "page": "count"
+      },
+      "responseShape": {
+        "carts": "text",
+        "total_count": "count",
+        "page": "count"
+      }
+    }
+  ],
+  "edgeCases": [
+    "A customer completes checkout within the abandonment delay window \u2014 the cart must be marked skipped before the email is dispatched, never after.",
+    "Duplicate abandonment events arrive for the same cart token \u2014 only the first event creates a record; subsequent deliveries are discarded without altering state.",
+    "The cart record has no associated customer email address \u2014 the cart is immediately marked skipped with the reason recorded, and no email is attempted.",
+    "The hourly job tick overlaps with a prior tick that has not yet finished \u2014 concurrent processing of the same pending cart must resolve to exactly one email sent.",
+    "A cart remains pending beyond 30 days due to missed ticks \u2014 the job marks it skipped on first encounter rather than sending a stale recovery link.",
+    "The customer's email marketing consent is withdrawn between cart abandonment and the job tick \u2014 the cart is marked skipped to honour the opt-out before any send attempt."
+  ]
+}
+```
+
+## Artifacts
+

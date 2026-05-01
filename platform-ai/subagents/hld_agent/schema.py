@@ -271,11 +271,16 @@ class HLDPlan(_StrictModel):
             seen.add(cap.id)
         return self
 
-    # Rules #42 + #43 — stateMachine and statusField are bound 1:1.
-    # If stateMachine is null, no table may declare a statusField.
-    # If stateMachine is non-null, exactly one table must declare a
-    # statusField. Either side broken means the state machine has no
-    # column to apply transitions to (or has more than one).
+    # Rules #42 + #43 — stateMachine and statusField are linked, but the
+    # cardinality is many-to-one rather than one-to-one. An app may bind
+    # the same state machine to multiple lifecycle-tracked tables; what
+    # we enforce is the link itself:
+    #   - stateMachine null  ⟹  no table may declare statusField
+    #     (a status column with no governing state machine is just an
+    #      enum, and "just an enum" doesn't go in statusField).
+    #   - stateMachine set   ⟹  at least one table must declare statusField
+    #     (otherwise the state machine is orphaned — declared transitions
+    #      with no column to write them to).
     @model_validator(mode="after")
     def _state_machine_bound_to_status_field(self) -> "HLDPlan":
         tables_with_status = [t for t in self.persistence if t.statusField is not None]
@@ -284,20 +289,14 @@ class HLDPlan(_StrictModel):
                 names = [t.name for t in tables_with_status]
                 raise ValueError(
                     f"tables {names} declare a statusField but stateMachine "
-                    "is null; statusField is only valid when stateMachine "
-                    "is declared"
+                    "is null; statusField is only valid when a state machine "
+                    "governs the column"
                 )
             return self
-        if len(tables_with_status) == 0:
+        if not tables_with_status:
             raise ValueError(
                 "stateMachine is declared but no persistence table has a "
-                "statusField; bind the state machine to exactly one table"
-            )
-        if len(tables_with_status) > 1:
-            names = [t.name for t in tables_with_status]
-            raise ValueError(
-                f"stateMachine is declared but multiple tables {names} "
-                "have a statusField; bind to exactly one"
+                "statusField; bind the state machine to at least one table"
             )
         return self
 

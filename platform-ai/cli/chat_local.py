@@ -358,6 +358,32 @@ def _agent_line(name: str, ok: bool, ms: Optional[int], notes: str = "") -> None
     print(f"\r{line}")
 
 
+def _retry_line(name: str, notes: str) -> None:
+    """
+    Print (or, when a multi-line spinner group is active, in-place update)
+    a retry indicator for the named agent.
+
+    Used by phase runners to surface "validator rejected, retrying" cues
+    live, instead of letting the spinner sit silent through 30s+ of retry
+    work. Routes through the group when one is active so the row updates
+    in place; falls back to a single-line print otherwise.
+    """
+    if _group_state.get("active"):
+        for slot in _group_state["slots"]:
+            if slot["name"] == name:
+                slot["status"] = "retry"
+                slot["notes"] = notes[:60]
+                break
+        return
+    _stop_spinner()
+    color = _AGENT_COLOR.get(name, _CYAN)
+    line = (
+        f"  {_c(name.ljust(14), color, _BOLD)} {_c('↻', _YELLOW, _BOLD)}  "
+        f"{'':7}  {_c(notes[:60], _DIM)}"
+    )
+    print(f"\r{line}")
+
+
 # ── Multi-line spinner group ──────────────────────────────────────────────────
 #
 # Codegen runs handler/migration/widget/admin in parallel via a
@@ -1104,6 +1130,11 @@ def _save_artifacts_md(
     all_tokens: Optional[Dict[str, Tuple[int, int]]] = None,
 ) -> Path:
     _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
+    # Always persist the canonical HLD output as a sibling file. The report
+    # only links to it, never re-inlines the JSON, so plan and report stay
+    # in sync via a single source of truth.
+    if plan:
+        _save_hld_json(run_dir, prompt, intent or {}, plan, [], "")
     path = run_dir / "report.md"
 
     lines = _md_pipeline_header(stop_label, prompt, total_ms, all_tokens or {})
@@ -1121,9 +1152,7 @@ def _save_artifacts_md(
         lines += [
             "## HLD Plan",
             "",
-            "```json",
-            json.dumps(plan, indent=2),
-            "```",
+            "See [`hld.json`](hld.json) for the canonical plan.",
             "",
         ]
 
@@ -1576,9 +1605,8 @@ def main() -> None:
         # inspection.
         _save_state(run_dir, checkpoint="done", halt_reason=None)
         total_ms = int((time.monotonic() - total_start) * 1000)
-        _save_hld_json(run_dir, prompt, intent, plan, [], product_prompt)
-        # No artifacts at hld stop, but the report still carries the standard
-        # header + intent + plan so it's inspectable the same way as later stops.
+        # `_save_artifacts_md` writes hld.json itself, so no standalone call
+        # is needed here. The report links to it instead of inlining the JSON.
         _save_artifacts_md(
             run_dir,
             prompt,
@@ -1870,6 +1898,8 @@ def main() -> None:
 
     # ── Save report + generated files ─────────────────────────────────────────
     _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
+    # Always persist the canonical HLD output alongside the report.
+    _save_hld_json(run_dir, prompt, intent, plan, [], "")
     merchant_facing = explanation.get("merchantFacing", "")
     lines = _md_pipeline_header("full", prompt, total_ms, all_tokens)
     lines += [
@@ -1881,9 +1911,7 @@ def main() -> None:
         "",
         "## HLD Plan",
         "",
-        "```json",
-        json.dumps(plan, indent=2),
-        "```",
+        "See [`hld.json`](hld.json) for the canonical plan.",
         "",
     ]
     if retry_log:

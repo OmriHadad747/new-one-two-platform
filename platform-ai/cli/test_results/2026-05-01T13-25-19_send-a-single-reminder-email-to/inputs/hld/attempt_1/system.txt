@@ -1,19 +1,3 @@
-"""
-System prompt for the HLD (high-level design) agent.
-
-The runtime prompt is the static text below + the JSON schema derived from
-`HLDPlan` (single source of truth). Use `build_system_prompt()` rather than
-reading `SYSTEM_PROMPT_TEMPLATE` directly so the schema can never drift from
-the Pydantic model.
-"""
-
-from __future__ import annotations
-
-import json
-
-from subagents.hld_agent.schema import HLDPlan
-
-SYSTEM_PROMPT_TEMPLATE = """\
 You are a senior software architect designing a production grade Shopify-integrated application. Your job is HIGH-LEVEL DESIGN ONLY.
 
 You produce a schema-agnostic, integration-agnostic plan: archetype, data flow, contracts, business invariants.
@@ -208,16 +192,479 @@ No markdown fences, no prose, no comments. Use null for fields that do not
 apply to this archetype; never invent empty stubs.
 
 ```json
-__SCHEMA_JSON__
+{
+  "$defs": {
+    "Capability": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "read",
+            "write",
+            "compute",
+            "notify"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "dataNeeds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dataneeds",
+          "type": "array"
+        },
+        "integration": {
+          "anyOf": [
+            {
+              "enum": [
+                "shopify-admin",
+                "shopify-storefront",
+                "email"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Integration"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "kind",
+        "dataNeeds",
+        "integration"
+      ],
+      "title": "Capability",
+      "type": "object"
+    },
+    "Column": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "identifier",
+            "reference",
+            "timestamp",
+            "money",
+            "status",
+            "flag",
+            "text",
+            "count"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "nullable": {
+          "title": "Nullable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "role",
+        "nullable"
+      ],
+      "title": "Column",
+      "type": "object"
+    },
+    "ExternalContract": {
+      "additionalProperties": false,
+      "properties": {
+        "surface": {
+          "enum": [
+            "widget",
+            "admin"
+          ],
+          "title": "Surface",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "purpose": {
+          "title": "Purpose",
+          "type": "string"
+        },
+        "requestShape": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Requestshape",
+          "type": "object"
+        },
+        "responseShape": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Responseshape",
+          "type": "object"
+        }
+      },
+      "required": [
+        "surface",
+        "path",
+        "method",
+        "purpose",
+        "requestShape",
+        "responseShape"
+      ],
+      "title": "ExternalContract",
+      "type": "object"
+    },
+    "ExternalEventTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "external-event",
+          "title": "Kind",
+          "type": "string"
+        },
+        "event": {
+          "title": "Event",
+          "type": "string"
+        },
+        "signalFields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Signalfields",
+          "type": "array"
+        },
+        "idempotency": {
+          "title": "Idempotency",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "event",
+        "signalFields",
+        "idempotency"
+      ],
+      "title": "ExternalEventTrigger",
+      "type": "object"
+    },
+    "InboundRequestTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "inbound-request",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "InboundRequestTrigger",
+      "type": "object"
+    },
+    "ScheduleTrigger": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "schedule",
+          "title": "Kind",
+          "type": "string"
+        },
+        "cadence": {
+          "title": "Cadence",
+          "type": "string"
+        },
+        "jobPurpose": {
+          "title": "Jobpurpose",
+          "type": "string"
+        },
+        "perTickWork": {
+          "title": "Pertickwork",
+          "type": "string"
+        },
+        "bulkFetchRule": {
+          "title": "Bulkfetchrule",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "cadence",
+        "jobPurpose",
+        "perTickWork",
+        "bulkFetchRule"
+      ],
+      "title": "ScheduleTrigger",
+      "type": "object"
+    },
+    "StateMachine": {
+      "additionalProperties": false,
+      "properties": {
+        "states": {
+          "items": {
+            "type": "string"
+          },
+          "title": "States",
+          "type": "array"
+        },
+        "initialState": {
+          "title": "Initialstate",
+          "type": "string"
+        },
+        "terminalStates": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Terminalstates",
+          "type": "array"
+        },
+        "transitions": {
+          "items": {
+            "$ref": "#/$defs/Transition"
+          },
+          "title": "Transitions",
+          "type": "array"
+        },
+        "invariants": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Invariants",
+          "type": "array"
+        }
+      },
+      "required": [
+        "states",
+        "initialState",
+        "terminalStates",
+        "transitions",
+        "invariants"
+      ],
+      "title": "StateMachine",
+      "type": "object"
+    },
+    "Table": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "purpose": {
+          "title": "Purpose",
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "$ref": "#/$defs/Column"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "keyedBy": {
+          "title": "Keyedby",
+          "type": "string"
+        },
+        "statusField": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Statusfield"
+        }
+      },
+      "required": [
+        "name",
+        "purpose",
+        "columns",
+        "keyedBy"
+      ],
+      "title": "Table",
+      "type": "object"
+    },
+    "Transition": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "title": "To",
+          "type": "string"
+        },
+        "trigger": {
+          "title": "Trigger",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "trigger"
+      ],
+      "title": "Transition",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top-level HLD plan. Single source of truth for the prompt's JSON\nschema and the parser's contract.",
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "archetype": {
+      "enum": [
+        "storefront",
+        "admin",
+        "storefront+admin",
+        "backend"
+      ],
+      "title": "Archetype",
+      "type": "string"
+    },
+    "feasibility": {
+      "enum": [
+        "feasible",
+        "blocked"
+      ],
+      "title": "Feasibility",
+      "type": "string"
+    },
+    "blockedReason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Blockedreason"
+    },
+    "complexity": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Complexity",
+      "type": "string"
+    },
+    "dataFlow": {
+      "title": "Dataflow",
+      "type": "string"
+    },
+    "triggers": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "external-event": "#/$defs/ExternalEventTrigger",
+            "inbound-request": "#/$defs/InboundRequestTrigger",
+            "schedule": "#/$defs/ScheduleTrigger"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ExternalEventTrigger"
+          },
+          {
+            "$ref": "#/$defs/ScheduleTrigger"
+          },
+          {
+            "$ref": "#/$defs/InboundRequestTrigger"
+          }
+        ]
+      },
+      "title": "Triggers",
+      "type": "array"
+    },
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/Capability"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "persistence": {
+      "items": {
+        "$ref": "#/$defs/Table"
+      },
+      "title": "Persistence",
+      "type": "array"
+    },
+    "stateMachine": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StateMachine"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "externalContracts": {
+      "items": {
+        "$ref": "#/$defs/ExternalContract"
+      },
+      "title": "Externalcontracts",
+      "type": "array"
+    },
+    "edgeCases": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Edgecases",
+      "type": "array"
+    }
+  },
+  "required": [
+    "archetype",
+    "feasibility",
+    "blockedReason",
+    "complexity",
+    "dataFlow",
+    "triggers",
+    "capabilities",
+    "persistence",
+    "stateMachine",
+    "externalContracts",
+    "edgeCases"
+  ],
+  "title": "HLDPlan",
+  "type": "object"
+}
 ```
-"""
-
-
-def build_system_prompt() -> str:
-    """
-    Render the HLD agent's system prompt with the live `HLDPlan` JSON schema
-    appended. The Pydantic model is the single source of truth — bumping
-    `HLDPlan` automatically updates what the agent sees.
-    """
-    schema_json = json.dumps(HLDPlan.model_json_schema(), indent=2)
-    return SYSTEM_PROMPT_TEMPLATE.replace("__SCHEMA_JSON__", schema_json)
