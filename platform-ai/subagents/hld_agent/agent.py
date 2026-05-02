@@ -49,9 +49,21 @@ Produce the HLD plan as JSON conforming to the appended schema."""
 _VALIDATOR_HINT_SUFFIX = """\
 
 
-SEMANTIC REVIEW FEEDBACK — a prior draft of this plan was reviewed and the
-following issues were found. Produce a corrected plan that addresses all of
-them:
+SEMANTIC REVIEW FEEDBACK — you already produced an HLD plan for this
+request and a reviewer flagged the issues below. Your job now is to emit a
+corrected version with MINIMAL changes:
+
+  - Address every finding listed.
+  - Keep everything the reviewer did NOT flag exactly as it was — same
+    capability ids, same table names and column orders, same contract
+    paths, same edge-case wording, same dataFlow phrasing where unaffected.
+  - Do not refactor, rename, reorder, or reword sections that are not part
+    of a finding. Do not add new capabilities, tables, or edge cases beyond
+    what the findings require.
+  - When a finding requires renumbering (e.g. splitting one contract into
+    two), update only the affected indices and any explicit cross-references.
+
+Findings:
 {findings_text}"""
 
 

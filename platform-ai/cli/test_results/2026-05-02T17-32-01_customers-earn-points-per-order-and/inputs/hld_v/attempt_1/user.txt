@@ -1,0 +1,384 @@
+MERCHANT REQUEST
+Customers earn points per order and see their balance on product pages and a dedicated loyalty page.
+
+INTENT
+{
+  "triggerTypes": [
+    "webhook",
+    "widget"
+  ],
+  "resources": [
+    "Order",
+    "Customer"
+  ],
+  "desiredOutcome": "Customers earn points per order and see their balance on product pages and a dedicated loyalty page.",
+  "cronHint": null,
+  "appCategory": "storefront_backend_admin",
+  "qualityBrief": "A good version handles order creation reliably, stores points per customer accurately, and displays balances consistently across the storefront. Watch for: customers viewing their page before their first order (show zero gracefully), rounding when points per dollar is fractional, and ensuring the product page widget loads without slowing page speed. The loyalty page should show recent orders clearly so customers understand how they earned points."
+}
+
+HLD PLAN
+{
+  "schema_version": "1",
+  "archetype": "backend+admin+storefront",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "An order-paid event fires carrying the order total and customer identifier. The system checks whether a points transaction for that order already exists; if one does, the event is a no-op. Otherwise it reads the configured points rate, computes whole points earned by flooring the fractional result, inserts a pending transaction row, increments the customer balance row (creating it at zero if the customer has never earned points before), and marks the transaction as credited. The storefront widget calls the balance endpoint on page load and renders zero gracefully when no balance row exists yet. The loyalty page additionally fetches the customer's recent transaction history so they can see which orders contributed points.",
+  "triggers": [
+    {
+      "kind": "external-event",
+      "event": "a customer places and pays for an order",
+      "signalFields": [
+        "order external identifier",
+        "order total amount",
+        "customer external identifier"
+      ],
+      "idempotency": "if a points transaction already exists for the same order external identifier, discard the duplicate event and make no further changes"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "read-order-details",
+      "description": "Fetch the paid order's monetary total and associated customer identifier from the order event payload.",
+      "kind": "read",
+      "dataNeeds": [
+        "order external identifier"
+      ],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "read-points-config",
+      "description": "Retrieve the merchant-configured points rate (points awarded per unit of currency spent).",
+      "kind": "read",
+      "dataNeeds": [],
+      "integration": null
+    },
+    {
+      "id": "compute-points-earned",
+      "description": "Calculate whole points earned from the order total and configured rate, flooring any fractional result.",
+      "kind": "compute",
+      "dataNeeds": [
+        "order total amount",
+        "points rate"
+      ],
+      "integration": null
+    },
+    {
+      "id": "record-points-transaction",
+      "description": "Persist a new pending points transaction row linking the order to the customer and the computed point amount.",
+      "kind": "write",
+      "dataNeeds": [
+        "order external identifier",
+        "customer external identifier",
+        "points earned amount"
+      ],
+      "integration": null
+    },
+    {
+      "id": "update-customer-balance",
+      "description": "Increment the customer's running points balance by the earned amount, creating the balance row at zero if none exists.",
+      "kind": "write",
+      "dataNeeds": [
+        "customer external identifier",
+        "points earned amount"
+      ],
+      "integration": null
+    },
+    {
+      "id": "mark-transaction-credited",
+      "description": "Transition the points transaction to credited once the customer balance has been successfully updated.",
+      "kind": "write",
+      "dataNeeds": [
+        "order external identifier"
+      ],
+      "integration": null
+    },
+    {
+      "id": "mark-transaction-failed",
+      "description": "Transition the points transaction to failed and record the reason when processing cannot complete.",
+      "kind": "write",
+      "dataNeeds": [
+        "order external identifier",
+        "failure reason"
+      ],
+      "integration": null
+    },
+    {
+      "id": "fetch-customer-balance",
+      "description": "Retrieve a customer's current points balance for display on the product page widget or loyalty page.",
+      "kind": "read",
+      "dataNeeds": [
+        "customer external identifier"
+      ],
+      "integration": null
+    },
+    {
+      "id": "fetch-transaction-history",
+      "description": "Retrieve the customer's recent points-earning transactions so the loyalty page can show how points were accumulated.",
+      "kind": "read",
+      "dataNeeds": [
+        "customer external identifier"
+      ],
+      "integration": null
+    },
+    {
+      "id": "write-points-config",
+      "description": "Persist an updated points rate set by the merchant via the admin panel.",
+      "kind": "write",
+      "dataNeeds": [
+        "points rate"
+      ],
+      "integration": null
+    },
+    {
+      "id": "admin-read-customer-balance",
+      "description": "Fetch a specific customer's points balance and recent transaction history for merchant review in the admin panel.",
+      "kind": "read",
+      "dataNeeds": [
+        "customer external identifier"
+      ],
+      "integration": null
+    }
+  ],
+  "persistence": [
+    {
+      "name": "points_transaction",
+      "purpose": "Records one points-earning event per paid order, tracking the amount awarded and processing status.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "order_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies the paid order that triggered this transaction"
+        },
+        {
+          "name": "customer_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies the customer who earned the points"
+        },
+        {
+          "name": "points_earned",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "order_total",
+          "role": "money",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "status",
+          "role": "status",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "failure_reason",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per paid order, keyed by order external identifier",
+      "statusField": "status",
+      "queryPatterns": [
+        "look up a single transaction by order external identifier to enforce idempotency",
+        "all transactions for a given customer ordered most-recent first, for the loyalty page history view",
+        "all transactions in a given status for operational monitoring"
+      ]
+    },
+    {
+      "name": "customer_balance",
+      "purpose": "Stores the running points total for each customer, updated atomically with each credited transaction.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "customer_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies the customer whose balance this row represents"
+        },
+        {
+          "name": "total_points",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per customer, keyed by customer external identifier",
+      "statusField": null,
+      "queryPatterns": [
+        "look up a single row by customer external identifier for widget display and balance updates"
+      ]
+    },
+    {
+      "name": "loyalty_config",
+      "purpose": "Holds the merchant-configured points rate used to calculate points per currency unit spent.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "points_per_currency_unit",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "single configuration row for the store",
+      "statusField": null,
+      "queryPatterns": [
+        "fetch the single active configuration row on every order-processing event"
+      ]
+    }
+  ],
+  "stateMachine": {
+    "states": [
+      "pending",
+      "credited",
+      "failed"
+    ],
+    "initialState": "pending",
+    "terminalStates": [
+      "credited",
+      "failed"
+    ],
+    "transitions": [
+      {
+        "from": "pending",
+        "to": "credited",
+        "trigger": "customer balance successfully incremented"
+      },
+      {
+        "from": "pending",
+        "to": "failed",
+        "trigger": "balance update could not be completed"
+      }
+    ],
+    "invariants": [
+      "exactly one transaction row may exist per order external identifier",
+      "a row in credited or failed never returns to pending",
+      "total_points in customer_balance equals the sum of points_earned across all credited transactions for that customer"
+    ]
+  },
+  "externalContracts": [
+    {
+      "surface": "widget",
+      "path": "/widget/balance",
+      "method": "GET",
+      "purpose": "Returns the authenticated customer's current points balance for display on the product page or loyalty page widget.",
+      "requestShape": {
+        "customer_external_id": "identifier"
+      },
+      "responseShape": {
+        "total_points": "count",
+        "customer_exists": "flag"
+      }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/transactions",
+      "method": "GET",
+      "purpose": "Returns the authenticated customer's recent points-earning transactions for display on the loyalty page.",
+      "requestShape": {
+        "customer_external_id": "identifier"
+      },
+      "responseShape": {
+        "transactions": "list"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/config",
+      "method": "GET",
+      "purpose": "Retrieves the current points-per-currency-unit rate for display in the admin settings panel.",
+      "requestShape": {},
+      "responseShape": {
+        "points_per_currency_unit": "count",
+        "updated_at": "timestamp"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/config",
+      "method": "POST",
+      "purpose": "Updates the points rate that will be applied to all future qualifying orders.",
+      "requestShape": {
+        "points_per_currency_unit": "count"
+      },
+      "responseShape": {
+        "points_per_currency_unit": "count",
+        "updated_at": "timestamp"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/customers/balance",
+      "method": "GET",
+      "purpose": "Looks up a specific customer's current points balance and recent transaction history for merchant review.",
+      "requestShape": {
+        "customer_external_id": "identifier"
+      },
+      "responseShape": {
+        "total_points": "count",
+        "transactions": "list"
+      }
+    }
+  ],
+  "edgeCases": [
+    "Duplicate event delivery for the same order \u2014 check for an existing transaction row by order external identifier and treat any duplicate as a no-op before any writes occur.",
+    "Customer visits a product page or the loyalty page before placing their first order \u2014 the balance endpoint must return zero gracefully when no customer_balance row exists.",
+    "Order total multiplied by the points rate produces a fractional result \u2014 floor to the nearest whole number so no partial points are ever credited.",
+    "Guest checkout where no persistent customer identifier is present in the order event \u2014 skip the transaction and record the skip as a failed transaction with reason 'no customer account'.",
+    "Merchant updates the points rate while an order event is in flight \u2014 the rate read at the start of that event's processing must be used for that transaction so the balance invariant remains consistent.",
+    "Concurrent delivery of two order-paid events for the same customer \u2014 the balance update must be atomic so that both increments are applied without a lost update."
+  ]
+}

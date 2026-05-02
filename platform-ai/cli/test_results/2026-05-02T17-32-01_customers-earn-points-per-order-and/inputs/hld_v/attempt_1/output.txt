@@ -1,0 +1,36 @@
+```json
+{
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "externalContracts[0].requestShape, externalContracts[1].requestShape",
+      "issue": "Both widget GET endpoints (/widget/balance and /widget/transactions) declare customer_external_id as a caller-supplied field in requestShape. Any authenticated customer can pass an arbitrary customer_external_id and read another customer's balance or transaction history — a horizontal privilege-escalation hole that makes the app unbuildable safely.",
+      "fix": "Remove customer_external_id from both widget requestShapes and derive customer identity exclusively server-side from the authenticated session or Shopify storefront customer token."
+    },
+    {
+      "severity": "important",
+      "location": "externalContracts[1] (/widget/transactions GET), externalContracts[4] (/admin/customers/balance GET)",
+      "issue": "Both endpoints return a transactions list but declare no count field in responseShape and no page/limit parameter in requestShape; a customer with hundreds of orders will cause unbounded queries and response payloads that are unusable at scale.",
+      "fix": "Add a page (or cursor) param to each requestShape and a total_count field to each responseShape so callers can paginate and LLD can implement bounded DB queries."
+    },
+    {
+      "severity": "important",
+      "location": "edgeCases, capabilities[update-customer-balance], capabilities[mark-transaction-credited]",
+      "issue": "No edge case covers the partial-failure window where update-customer-balance succeeds but mark-transaction-credited is never written (e.g., process crash). On re-delivery the idempotency guard finds no existing credited row, re-enters processing, and re-increments the balance — corrupting total_points and violating the stated invariant that total_points equals the sum of credited transactions.",
+      "fix": "Add an edge case for 'transaction is pending but customer balance has already been incremented' and introduce a capability (or dataNeeds entry) to detect this state so re-entrant processing is a true no-op rather than a double-increment."
+    },
+    {
+      "severity": "minor",
+      "location": "capabilities[read-order-details].dataNeeds",
+      "issue": "The capability description states it fetches 'order total amount' and 'customer external identifier' from the Shopify Admin integration, but dataNeeds lists only 'order external identifier'; the two produced values are never declared, so compute-points-earned's inputs have no traceable source in the capability graph.",
+      "fix": "Add 'order total amount' and 'customer external identifier' to read-order-details' dataNeeds (as outputs it supplies), or explicitly note in the dataFlow that these fields are carried directly from the webhook signalFields and the Shopify Admin call is supplemental."
+    },
+    {
+      "severity": "minor",
+      "location": "capabilities[fetch-transaction-history].dataNeeds",
+      "issue": "The capability declares only 'customer external identifier' in dataNeeds with no page or limit field, giving LLD no signal to implement a bounded query; combined with the loyalty page query pattern 'all transactions for a given customer ordered most-recent first', this implies a full table scan for any active customer.",
+      "fix": "Add a 'page' or 'limit' field to fetch-transaction-history's dataNeeds so LLD can implement keyset or offset pagination on the underlying query."
+    }
+  ]
+}
+```

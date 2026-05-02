@@ -1,0 +1,20 @@
+Merchant request: Customers earn points per order and see their balance on product pages and a dedicated loyalty page.
+
+Product-agent intent (use as context — pick the archetype, capabilities,
+and contracts from the merchant's actual needs):
+{
+  "triggerTypes": [
+    "webhook",
+    "widget"
+  ],
+  "resources": [
+    "Order",
+    "Customer"
+  ],
+  "desiredOutcome": "Customers earn points per order and see their balance on product pages and a dedicated loyalty page.",
+  "cronHint": null,
+  "appCategory": "storefront_backend_admin",
+  "qualityBrief": "A good version handles order creation reliably, stores points per customer accurately, and displays balances consistently across the storefront. Watch for: customers viewing their page before their first order (show zero gracefully), rounding when points per dollar is fractional, and ensuring the product page widget loads without slowing page speed. The loyalty page should show recent orders clearly so customers understand how they earned points."
+}
+
+Produce the HLD plan as JSON conforming to the appended schema.
