@@ -1,20 +1,26 @@
 """
 Read + slice helpers for the committed Shopify GraphQL catalogs.
 
-Two consumers
--------------
-1. The Architect prompt — needs the FULL operation index so it can pick
-   which operations the handler should use, and emit those names back in
-   `appContracts.shopifyGraphqlOperations`. Use `load_summary(surface)`.
+Three consumers
+---------------
+1. The Architect / Ops-picker prompts — need the FULL operation index so
+   they can pick which ops the handler should use. Use `load_summary(surface)`.
 
 2. The Handler prompt — needs ONLY the operations the architect approved,
-   so the handler picks field names from a tight whitelist instead of
-   hallucinating from the full schema. Use `slice_summary(surface, names)`.
+   so it picks field names from a tight whitelist instead of hallucinating
+   from the full schema. Use `slice_summary(surface, names)`.
 
-Both paths share the same source-of-truth file
-(`catalogs/shopify_<surface>/<version>/summary.md`) and the same version
-pin (`WEBHOOK_API_VERSION` in webhook.py). A single bump there refreshes
-every consumer.
+3. The LLD prompt — needs the full per-op detail (signature, return-type
+   SDL, input types, examples) for each op the ops-picker selected, plus
+   the runtime ability to look up nested types on demand:
+     - `load_op_details(surface, op_names)` returns per-op detail records.
+     - `lookup_type(surface, type_name)` backs the LLD's tool-call to
+       fetch one type's SDL when a nested selection isn't covered by the
+       op's bundled examples.
+
+All paths share the same source-of-truth files under
+`catalogs/shopify_<surface>/<version>/` and the same version pin
+(`WEBHOOK_API_VERSION` in webhook.py). A single bump refreshes every consumer.
 
 Graceful skip
 -------------
@@ -26,10 +32,12 @@ catalog.
 
 from __future__ import annotations
 
+import functools
+import json
 import logging
 import re
 from pathlib import Path
-from typing import Dict, FrozenSet, List, Optional
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional
 
 from subagents.prompts.topics.webhook import WEBHOOK_API_VERSION
 
@@ -217,6 +225,103 @@ def validate_op_names(
     return [name for name in op_names if name not in index]
 
 
+# ── Per-op detail + type lookup (LLD inputs) ─────────────────────────────────
+#
+# operations_detail.json and types_sdl.json are produced by
+# catalogs/scripts/build_operations_detail.py. The LLD agent gets per-op
+# detail injected into its user prompt for every op the ops-picker selected,
+# plus a `lookup_type` tool backed by `lookup_type(...)` below for nested
+# types its examples don't cover.
+
+
+def _operations_detail_path(surface: str, version: str) -> Path:
+    return _CATALOGS_ROOT / f"shopify_{surface}" / version / "operations_detail.json"
+
+
+def _types_sdl_path(surface: str, version: str) -> Path:
+    return _CATALOGS_ROOT / f"shopify_{surface}" / version / "types_sdl.json"
+
+
+@functools.lru_cache(maxsize=4)
+def _load_operations_detail(surface: str, version: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Load the per-op detail map. Cached so repeated runs in one process
+    pay the parse cost once. Returns {} if the file is missing.
+    """
+    if surface not in _SURFACES:
+        raise ValueError(f"unknown surface: {surface!r}")
+    path = _operations_detail_path(surface, version)
+    if not path.exists():
+        log.warning(
+            "catalog: %s %s operations_detail.json missing at %s — run "
+            "`python platform-ai/catalogs/scripts/build_operations_detail.py %s %s` "
+            "to build it",
+            surface,
+            version,
+            path,
+            surface,
+            version,
+        )
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@functools.lru_cache(maxsize=4)
+def _load_types_sdl(surface: str, version: str) -> Dict[str, str]:
+    """
+    Load the {type_name: sdl} map. Cached. Returns {} if missing.
+    """
+    if surface not in _SURFACES:
+        raise ValueError(f"unknown surface: {surface!r}")
+    path = _types_sdl_path(surface, version)
+    if not path.exists():
+        log.warning(
+            "catalog: %s %s types_sdl.json missing at %s — run "
+            "`python platform-ai/catalogs/scripts/build_operations_detail.py %s %s` "
+            "to build it",
+            surface,
+            version,
+            path,
+            surface,
+            version,
+        )
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_op_details(
+    surface: str,
+    op_names: Iterable[str],
+    version: str = WEBHOOK_API_VERSION,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Return {op_name: detail_record} for the requested ops, drawn from
+    operations_detail.json. Names not present in the catalog are silently
+    omitted — the ops-picker runner already validates membership against
+    `get_op_names`, so a miss here would mean the file is stale or being
+    rebuilt; either way the caller can degrade gracefully (LLD still has
+    the ops-picker note + summary line).
+    """
+    table = _load_operations_detail(surface, version)
+    if not table:
+        return {}
+    return {name: table[name] for name in op_names if name in table}
+
+
+def lookup_type(
+    surface: str,
+    type_name: str,
+    version: str = WEBHOOK_API_VERSION,
+) -> Optional[str]:
+    """
+    Return the SDL for one type, or None if it isn't in the catalog.
+    Backs the LLD's `lookup_type` tool — called only when the LLD needs to
+    nest into a type its op's examples don't already show.
+    """
+    table = _load_types_sdl(surface, version)
+    return table.get(type_name)
+
+
 # ── Test hook ─────────────────────────────────────────────────────────────────
 
 
@@ -224,3 +329,5 @@ def _reset_caches() -> None:
     """For tests only — clear all internal caches."""
     _summary_cache.clear()
     _op_index_cache.clear()
+    _load_operations_detail.cache_clear()
+    _load_types_sdl.cache_clear()

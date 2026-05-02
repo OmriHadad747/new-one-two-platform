@@ -34,6 +34,7 @@ from pydantic import ValidationError
 
 from models.adapter import dump_output, extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
+from llm_validations.shopify_ops import load_op_details
 from subagents.ops_picker_agent.prompt import build_system_prompt
 from subagents.ops_picker_agent.schema import OpsPicks
 
@@ -177,9 +178,39 @@ def run_ops_picker_agent(
                 on_attempt_failed(attempt, last_errors)
             continue
 
-        return picks.model_dump(mode="json"), total_in, total_out
+        enriched = _enrich_with_op_details(picks.model_dump(mode="json"))
+        return enriched, total_in, total_out
 
     raise OpsPickerValidationError(_MAX_ATTEMPTS, last_errors, total_in, total_out)
+
+
+def _enrich_with_op_details(picks: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    For every picked op, merge its catalog detail (kind, args,
+    returnTypeName, isConnection, userErrorsField, returnTypeSdl,
+    inputTypesSdl, examples) onto the pick in place. Loaded from
+    `operations_detail.json` via `load_op_details`. Picks whose op
+    name is missing from the catalog (stale or being rebuilt) keep
+    only the LLM-emitted fields — the LLD will degrade to working
+    from the note + summary line in that case.
+    """
+    by_surface: Dict[str, List[str]] = {}
+    for cap in picks.get("capabilities") or []:
+        for op in cap.get("ops") or []:
+            by_surface.setdefault(op["surface"], []).append(op["name"])
+
+    detail_by_surface: Dict[str, Dict[str, Dict[str, Any]]] = {
+        surface: load_op_details(surface, names)
+        for surface, names in by_surface.items()
+    }
+
+    for cap in picks.get("capabilities") or []:
+        for op in cap.get("ops") or []:
+            detail = detail_by_surface.get(op["surface"], {}).get(op["name"])
+            if detail:
+                op.update(detail)
+
+    return picks
 
 
 # ── Internals ─────────────────────────────────────────────────────────

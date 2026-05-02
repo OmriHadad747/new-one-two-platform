@@ -47,6 +47,12 @@ class OpPick(_StrictModel):
     needs it. `note` is one phrase describing what part of the
     capability the op satisfies — stage 2 uses it to bind the op to the
     right point in the data flow.
+
+    Per-op catalog detail (signature, return-type SDL, input types,
+    examples) does NOT live here. The model picks just the op name; the
+    runner enriches the dump from `operations_detail.json` before passing
+    the picks to the LLD agent. Keeping the LLM-emitted shape minimal
+    avoids re-derivation of catalog data the runner already has.
     """
 
     name: str = Field(min_length=1)
