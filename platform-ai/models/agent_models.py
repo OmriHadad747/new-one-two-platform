@@ -29,6 +29,11 @@ _DEFAULTS: dict[str, str] = {
     # plus picking the smallest non-overlapping op set is multi-step
     # reasoning that Haiku consistently under-resolves.
     "ops_picker": "claude-sonnet-4-6",
+    # LLD stage 2 — translates HLD + ops-picks into the complete codegen
+    # spec (database, recipes, routes, state machine). Sonnet: long
+    # structured output with cross-section invariants; Haiku undersizes
+    # recipe coverage on multi-trigger apps.
+    "lld": "claude-sonnet-4-6",
     # Code generation agents
     "handler": "claude-sonnet-4-6",
     "migration": "claude-sonnet-4-6",

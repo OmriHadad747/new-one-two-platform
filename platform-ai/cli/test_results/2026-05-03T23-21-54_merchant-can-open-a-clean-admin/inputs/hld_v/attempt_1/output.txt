@@ -1,0 +1,36 @@
+```json
+{
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "persistence[0] (dashboard_snapshot), persistence[1] (top_product_snapshot)",
+      "issue": "Neither snapshot table contains a shop or tenant identifier column. Shopify apps are multi-tenant; with the current schema every merchant installation overwrites the same rows, causing cross-merchant data corruption and information leakage.",
+      "fix": "Add a non-nullable `shop_domain` (or `shop_id`) column to both tables, include it in the keyedBy definition, and make all query patterns and capability dataNeeds filter by it."
+    },
+    {
+      "severity": "important",
+      "location": "externalContracts[0] responseShape",
+      "issue": "`top_products` is typed as a bare list with no count field and the requestShape declares no limit or page parameter, violating the requirement that GET routes returning a list must expose pagination controls.",
+      "fix": "Add a `top_products_count` integer field to responseShape and a `limit` query parameter to requestShape (e.g., default 10, max 50) so callers can control and reason about list size."
+    },
+    {
+      "severity": "important",
+      "location": "triggers[0] (schedule) and edgeCases",
+      "issue": "No edge case addresses overlapping job executions: if the hourly job takes longer than 60 minutes (large order history) a second instance starts and both attempt to atomically replace the same snapshot rows simultaneously, risking partial or interleaved writes.",
+      "fix": "Add an edge case specifying that the scheduler must acquire a distributed lock (or a job-running flag in the DB) before beginning a run and abort if the lock is already held, ensuring only one computation runs at a time."
+    },
+    {
+      "severity": "minor",
+      "location": "capabilities[5] (read-dashboard-snapshot) dataNeeds",
+      "issue": "dataNeeds lists \"snapshot row\" and \"top product rows\" — table-level aliases rather than individual column names — making it impossible for LLD to derive which fields are read and verify column coverage against the persistence definitions.",
+      "fix": "Replace with explicit field names from both tables (e.g., `total_revenue`, `average_order_value`, `repeat_customer_rate`, `computed_at`, `product_external_id`, `rank_position`, etc.)."
+    },
+    {
+      "severity": "minor",
+      "location": "edgeCases",
+      "issue": "The edge case for an empty snapshot covers the zero-orders scenario but not the window between app installation and the first scheduled job completion, during which the snapshot table has no row at all and the admin GET has nothing to return.",
+      "fix": "Add an edge case stating that on first install a seed row of zeroes must be written immediately (e.g., at OAuth callback or app install webhook) so the admin panel never encounters a missing snapshot."
+    }
+  ]
+}
+```

@@ -112,6 +112,7 @@ from cli.pipeline_local import (
     _phase_codegen,
     _phase_explanation,
     _phase_hld,
+    _phase_lld,
     _phase_ops_picker,
     _phase_validator,
     _save_generated_files,
@@ -119,7 +120,7 @@ from cli.pipeline_local import (
 
 TEST_RESULTS_DIR = _HERE / "test_results"
 
-StopAfter = Literal["hld", "ops-picker", "codegen", "validator", "full"]
+StopAfter = Literal["hld", "ops-picker", "lld", "codegen", "validator", "full"]
 
 # ── Display helpers ────────────────────────────────────────────────────────────
 #
@@ -781,6 +782,7 @@ _PHASE_ORDER: List[str] = [
     "intent",
     "hld",
     "ops-picker",
+    "lld",
     "codegen",
     "validator",
     "revision",
@@ -957,11 +959,18 @@ def _print_resume_list() -> None:
     print()
 
 
-def _resolve_resume_target(run_id: str) -> Tuple[Path, Dict[str, Any]]:
+def _resolve_resume_target(
+    run_id: str, stop_after: Optional[str] = None
+) -> Tuple[Path, Dict[str, Any]]:
     """
     Validate `run_id` and return (run_dir, state). Exits with a clear message
     on any failure mode (missing dir, missing state.json, corrupted JSON,
     completed run, missing required fields).
+
+    `stop_after` is consulted only to decide whether a `done` run is still
+    resumable for the purpose of backfilling a phase that didn't exist
+    when the run originally completed (currently: lld). Pass None to keep
+    the strict policy (done = nothing to do).
     """
     run_dir = TEST_RESULTS_DIR / run_id
     if not run_dir.is_dir():
@@ -984,7 +993,28 @@ def _resolve_resume_target(run_id: str) -> Tuple[Path, Dict[str, Any]]:
     # done + clean = nothing to do. done + unresolved-halt (kept_originals /
     # revision_failed) is still resumable: the merchant wants to re-run
     # revision against the saved validator issues.
-    if checkpoint == "done" and halt not in ("kept_originals", "revision_failed"):
+    #
+    # Exception: when the run pre-dates a newer phase (e.g. it finished
+    # before LLD existed and so has no `lld` field), and the operator is
+    # asking to stop at exactly that newer phase, treat the run as
+    # resumable — they want to backfill the missing phase artifact, not
+    # re-run anything already done. The phase block itself short-circuits
+    # cleanly when the field is present and runs the LLM otherwise, so the
+    # gate just needs to let them in.
+    _MISSING_PHASE_FIELDS = {
+        "lld": "lld",
+        # Add new phases here when they're introduced post-launch.
+    }
+    asks_to_backfill_missing = (
+        stop_after in _MISSING_PHASE_FIELDS
+        and not state.get(_MISSING_PHASE_FIELDS[stop_after])
+    )
+
+    if (
+        checkpoint == "done"
+        and halt not in ("kept_originals", "revision_failed")
+        and not asks_to_backfill_missing
+    ):
         print(f"\n  {_GREEN}Run already complete — nothing to resume:{_RESET} {run_id}")
         print(f"  {_DIM}Outputs: {run_dir.relative_to(_HERE)}/{_RESET}\n")
         sys.exit(0)
@@ -1046,6 +1076,17 @@ def _save_ops_picks_json(run_dir: Path, picks: Dict[str, Any]) -> Path:
     return path
 
 
+def _save_lld_json(run_dir: Path, lld: Dict[str, Any]) -> Path:
+    """
+    Persist the LLD output as a sibling to hld.json + ops_picks.json.
+    The LLD plan contains the complete codegen spec — stop=lld report
+    links to this file rather than inlining the (large) JSON.
+    """
+    path = run_dir / "lld.json"
+    path.write_text(json.dumps(lld, indent=2))
+    return path
+
+
 def _validator_revision_md_lines(trace: Dict[str, Any]) -> List[str]:
     """Render a concise '## Validator + Revision' section from a trace dict.
     Includes a relative-path link back to the full trace JSON on disk."""
@@ -1087,6 +1128,7 @@ def _validator_revision_md_lines(trace: Dict[str, Any]) -> List[str]:
 _STOP_LABEL_TITLES: Dict[str, str] = {
     "hld": "HLD Stop",
     "ops-picker": "Ops Picker Stop",
+    "lld": "LLD Stop",
     "codegen": "Codegen Stop",
     "validator": "Validator Stop",
     "full": "Full Pipeline",
@@ -1386,12 +1428,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--stop-after",
-        choices=["hld", "ops-picker", "codegen", "validator"],
+        choices=["hld", "ops-picker", "lld", "codegen", "validator"],
         default=None,
         help=(
             "Stop after a specific phase: "
             "'hld' = HLD only, "
             "'ops-picker' = + ops picker (LLD stage 1), "
+            "'lld' = + LLD (LLD stage 2 — full codegen spec), "
             "'codegen' = + codegen + static validation, "
             "'validator' = + LLM validator + revision. "
             "Omit to run the full pipeline."
@@ -1439,7 +1482,9 @@ def main() -> None:
     resumed_run_dir: Optional[Path] = None
 
     if args.resume:
-        resumed_run_dir, resume_state = _resolve_resume_target(args.resume)
+        resumed_run_dir, resume_state = _resolve_resume_target(
+            args.resume, stop_after=stop_after
+        )
 
     save_to_db = not args.no_db and stop_after == "full"
 
@@ -1705,6 +1750,14 @@ def main() -> None:
             hld_v_findings=hld_v_findings,
             all_tokens={k: list(v) for k, v in all_tokens.items()},
         )
+        # Always persist hld.json after the HLD phase completes — same
+        # pattern as ops_picks.json / lld.json. Earlier the file was only
+        # written from `_save_artifacts_md` at a finalising stop, which
+        # left mid-pipeline runs without a standalone HLD artifact on disk
+        # (the data lived only inside state.json).
+        _save_hld_json(
+            run_dir, prompt, intent, plan, [], product_prompt, hld_v_findings
+        )
 
     if stop_after == "hld":
         # User-requested stop. Mark the run done so it stops appearing in
@@ -1798,6 +1851,77 @@ def main() -> None:
             "◆  OPS PICKER STOP",
             [
                 ("Status", _c("✓ ops picks ready", _BRIGHT_GREEN, _BOLD)),
+                ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
+                ("Output", _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
+            ],
+        )
+        _print_token_summary(all_tokens)
+        print()
+        return
+
+    # ── Phase: LLD (LLD stage 2) ──────────────────────────────────────────────
+    # Translates HLD + ops-picks into the complete codegen spec
+    # (database, recipes, routes, state machine). Resume rule mirrors
+    # ops-picker: if the saved checkpoint is past "lld" and `lld` is on
+    # disk, reuse it.
+    #
+    # Old runs saved before the ops-picker enrichment landed have bare
+    # ops_picks (just name/surface/note). Re-enrich on load so the LLD
+    # always sees the full per-op detail (`load_op_details` is lru_cached
+    # and idempotent — re-enriching an already-enriched op is a no-op).
+    from subagents.ops_picker_agent.agent import _enrich_with_op_details
+
+    ops_picks = _enrich_with_op_details(ops_picks)
+
+    if (
+        resume_state
+        and _resumed_idx >= _phase_index("lld")
+        and resume_state.get("lld")
+    ):
+        lld = resume_state["lld"]
+        if "lld" in (resume_state.get("all_tokens") or {}):
+            saved = resume_state["all_tokens"]["lld"]
+            all_tokens["lld"] = tuple(saved) if isinstance(saved, list) else saved
+        _info("LLD: reusing saved spec (skipping LLM call)")
+    else:
+        _phase_header("LLD")
+        try:
+            lld, lld_in, lld_out = _phase_lld(plan, ops_picks, prompt, run_dir)
+        except SystemExit:
+            _fail_db("LLD phase failed")
+            raise
+        all_tokens["lld"] = (lld_in, lld_out)
+        _save_lld_json(run_dir, lld)
+        _save_state(
+            run_dir,
+            lld=lld,
+            all_tokens={k: list(v) for k, v in all_tokens.items()},
+            checkpoint="lld",
+            halt_reason=None,
+        )
+
+    if stop_after == "lld":
+        # User-requested stop. Mark done, write report, exit cleanly.
+        _save_state(run_dir, checkpoint="done", halt_reason=None)
+        total_ms = int((time.monotonic() - total_start) * 1000)
+        _save_artifacts_md(
+            run_dir,
+            prompt,
+            {},
+            "lld",
+            is_storefront,
+            is_admin_ui,
+            intent=intent,
+            plan=plan,
+            total_ms=total_ms,
+            all_tokens=all_tokens,
+            hld_v_findings=hld_v_findings,
+        )
+        print()
+        _summary_box(
+            "◆  LLD STOP",
+            [
+                ("Status", _c("✓ LLD spec ready", _BRIGHT_GREEN, _BOLD)),
                 ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
                 ("Output", _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
             ],

@@ -27,7 +27,6 @@ from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-
 # ── Strict base ──────────────────────────────────────────────────────────────
 
 
@@ -228,13 +227,35 @@ class StateTransition(_StrictModel):
 
 
 class StateMachine(_StrictModel):
+    """
+    Two flavours, picked by `kind`:
+
+      "observation" — change-detection on an EXTERNAL value (Shopify enum
+                       field flipping over time). Column is NULLABLE with no
+                       DEFAULT — null encodes "never observed". Recipes
+                       MUST treat null→value as a non-transition when
+                       `skipWhenUnknown=true`. This matches the canonical
+                       HLD use of stateMachine.
+
+      "workflow"    — internal lifecycle driven by THIS app's own writes
+                       (e.g. job queue: pending→running→completed). Column
+                       is NOT NULL DEFAULT '<initialState>'. Per HLD policy
+                       the upstream agent should NOT emit a stateMachine for
+                       workflow lifecycles (they're plain enum columns
+                       bound via `statusField`); this kind exists so the
+                       LLD can still represent a workflow when one
+                       legitimately surfaces, without forcing a misleading
+                       NULLABLE column.
+    """
+
+    kind: Literal["observation", "workflow"]
     table: str = Field(min_length=1)
     column: str = Field(min_length=1)
     states: list[str] = Field(min_length=1)
     initialState: str
     terminalStates: list[str] = Field(default_factory=list)
     unknownSentinel: Literal["null"] = "null"
-    skipWhenUnknown: bool
+    skipWhenUnknown: bool = False
     transitions: list[StateTransition] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -616,7 +637,9 @@ def _contains_response(steps: list) -> bool:
         if isinstance(s, ResponseStep):
             return True
         if isinstance(s, DecisionStep):
-            if _contains_response(list(s.ifTrue)) or _contains_response(list(s.ifFalse)):
+            if _contains_response(list(s.ifTrue)) or _contains_response(
+                list(s.ifFalse)
+            ):
                 return True
         elif isinstance(s, ForEachStep):
             if _contains_response(list(s.steps)):
@@ -717,14 +740,48 @@ class LLDPlan(_StrictModel):
                 f"stateMachine.column '{sm.column}' enum is missing states "
                 f"{missing}"
             )
-        # The column must be nullable (constraints contains NULL but not
-        # NOT NULL) so null can encode "never observed".
+        # Nullability + DEFAULT requirements differ by state-machine kind.
         upper = column.constraints.upper()
-        if "NOT NULL" in upper:
-            raise ValueError(
-                f"stateMachine.column '{sm.column}' on table '{sm.table}' must "
-                "be NULLABLE (no NOT NULL) so null encodes 'never observed'"
-            )
+        import re as _re
+
+        if sm.kind == "observation":
+            # Observation: column tracks an external value; null encodes
+            # "never observed". Must be NULLABLE with no DEFAULT.
+            if "NOT NULL" in upper:
+                raise ValueError(
+                    f"stateMachine kind='observation' on '{sm.table}.{sm.column}' "
+                    "requires the column to be NULLABLE (no NOT NULL) so null "
+                    "encodes 'never observed'"
+                )
+            if "DEFAULT" in upper:
+                raise ValueError(
+                    f"stateMachine kind='observation' on '{sm.table}.{sm.column}' "
+                    "must NOT declare a DEFAULT — a default coerces the first "
+                    "INSERT past the unknown state and the recipe's "
+                    "null-as-never-observed check never fires"
+                )
+        else:
+            # Workflow: column carries the lifecycle state of an internal row;
+            # initialState is set at INSERT. Must be NOT NULL with
+            # DEFAULT='<initialState>'.
+            if "NOT NULL" not in upper:
+                raise ValueError(
+                    f"stateMachine kind='workflow' on '{sm.table}.{sm.column}' "
+                    "requires the column to be NOT NULL (every row carries a state)"
+                )
+            m = _re.search(r"DEFAULT\s+'([^']+)'", column.constraints)
+            if not m:
+                raise ValueError(
+                    f"stateMachine kind='workflow' on '{sm.table}.{sm.column}' "
+                    f"requires a DEFAULT '{sm.initialState}' clause so newly "
+                    "inserted rows start in the initial state"
+                )
+            if m.group(1) != sm.initialState:
+                raise ValueError(
+                    f"stateMachine kind='workflow' on '{sm.table}.{sm.column}': "
+                    f"column DEFAULT '{m.group(1)}' does not match "
+                    f"initialState '{sm.initialState}'"
+                )
         return self
 
     @model_validator(mode="after")

@@ -18,7 +18,7 @@
     "feasibility": "feasible",
     "blockedReason": null,
     "complexity": "high",
-    "dataFlow": "An order lifecycle event fires (creation, cancellation, or refund). The system reads the order's revenue, line items, and customer identity, then upserts a local order record and updates the associated line item rows, advancing the order's status as appropriate. A daily revenue snapshot is recalculated for the affected calendar day so the time-series chart stays current. When a merchant opens the admin dashboard, inbound requests fetch pre-aggregated summary metrics, the daily revenue series, top-product rankings, and repeat customer rate from local persistence \u2014 no live Shopify query at read time \u2014 ensuring instant page load regardless of order volume.",
+    "dataFlow": "An order lifecycle event fires: creation, cancellation, or refund. On creation the system reads the order's revenue, line items, and customer identity and inserts a local order record and one row per line item. On cancellation the order transitions to cancelled and the affected daily snapshot is recalculated. On refund the cumulative refunded amount is compared against gross order revenue: if equal, the order transitions to refunded; if less, the order remains in completed but its stored revenue is reduced by the cumulative refund; in both cases the affected daily snapshot is recalculated. When a merchant opens the admin dashboard, inbound requests fetch pre-aggregated summary metrics (revenue, AOV, total orders, repeat-customer count, total-customer count), the daily revenue series, and top-product rankings from local persistence \u2014 no live Shopify query at read time \u2014 ensuring instant page load regardless of order volume.",
     "triggers": [
       {
         "kind": "external-event",
@@ -39,14 +39,24 @@
       },
       {
         "kind": "external-event",
-        "event": "an order is updated to a cancelled or refunded state",
+        "event": "an order is cancelled",
         "signalFields": [
           "order external identifier",
           "updated order status",
-          "refund amount",
           "order updated timestamp"
         ],
-        "idempotency": "If the order is already recorded in a terminal cancelled or refunded state, treat the event as a no-op."
+        "idempotency": "If the order is already recorded in a terminal cancelled state, treat the event as a no-op."
+      },
+      {
+        "kind": "external-event",
+        "event": "a refund is created for an order (full or partial)",
+        "signalFields": [
+          "order external identifier",
+          "refund amount",
+          "gross order revenue",
+          "order updated timestamp"
+        ],
+        "idempotency": "Refunds are aggregated cumulatively per order; if a refund event with the same external refund identifier has already been applied, treat the event as a no-op. Only when cumulative refunds equal gross order revenue does the order transition to refunded; otherwise it remains in completed with reduced revenue."
       },
       {
         "kind": "inbound-request"
@@ -147,7 +157,7 @@
       },
       {
         "id": "compute-repeat-customer-rate",
-        "description": "Calculate the percentage of customers who have placed more than one completed order.",
+        "description": "Return both the repeat-customer count (customers with more than one completed order) and the total-customer count (distinct customers with at least one completed order) for the requested date range, leaving the rate calculation to the caller; guest orders with no customer identifier are excluded from both counts.",
         "kind": "compute",
         "dataNeeds": [
           "customer external identifier",
@@ -157,13 +167,14 @@
       },
       {
         "id": "fetch-dashboard-summary",
-        "description": "Return pre-aggregated revenue, AOV, order count, and repeat customer rate for the admin dashboard.",
+        "description": "Return pre-aggregated revenue, AOV, total order count, repeat-customer count, and total-customer count for the admin dashboard; the rate is derived client-side from the two count fields.",
         "kind": "read",
         "dataNeeds": [
           "total revenue",
           "average order value",
           "total order count",
-          "repeat customer rate",
+          "repeat customer count",
+          "total customer count",
           "date range"
         ],
         "integration": null
@@ -371,14 +382,15 @@
         {
           "from": "completed",
           "to": "refunded",
-          "trigger": "full or partial refund issued"
+          "trigger": "full refund issued (refund total equals order revenue) — partial refunds do NOT trigger this transition; they leave the order in completed with revenue reduced by the partial refund amount"
         }
       ],
       "invariants": [
-        "only orders in the completed state contribute to revenue, AOV, top-product, and repeat-customer metrics",
+        "only orders in the completed state contribute to revenue, AOV, top-product, and repeat-customer metrics; cancelled and refunded rows are fully excluded",
         "a row in a terminal state never returns to pending or completed",
         "exactly one row exists per order external identifier",
-        "the daily revenue snapshot for a given day must be recalculated whenever any order on that day transitions state"
+        "the daily revenue snapshot for a given day must be recalculated whenever any order on that day transitions state or has its recorded revenue adjusted by a partial refund",
+        "an order in the completed state with a partial refund applied has its stored revenue equal to gross order revenue minus the cumulative refunded amount, which must remain greater than zero"
       ]
     },
     "externalContracts": [
@@ -386,7 +398,7 @@
         "surface": "admin",
         "path": "/admin/metrics/summary",
         "method": "GET",
-        "purpose": "Returns total revenue, AOV, order count, and repeat customer rate for the selected date range.",
+        "purpose": "Returns total revenue, AOV, order count, repeat-customer count, and total-customer count for the selected date range. The dashboard derives the repeat-customer rate as repeat_customer_count / total_customer_count, which keeps the response shape strictly typed (counts only) and lets the front-end format the percentage with the precision it needs.",
         "requestShape": {
           "date_range_start": "timestamp",
           "date_range_end": "timestamp"
@@ -395,7 +407,8 @@
           "total_revenue": "money",
           "average_order_value": "money",
           "total_order_count": "count",
-          "repeat_customer_rate": "text"
+          "repeat_customer_count": "count",
+          "total_customer_count": "count"
         }
       },
       {
@@ -427,8 +440,8 @@
       }
     ],
     "edgeCases": [
-      "An order that is cancelled or fully refunded after being counted as completed must have its revenue subtracted from the affected daily snapshot and excluded from all aggregated metrics.",
-      "A partial refund reduces the order's recorded revenue by the refund amount rather than excluding the order entirely \u2014 the order remains in the completed state with adjusted revenue.",
+      "An order that is cancelled or fully refunded (refund total equals gross order revenue) after being counted as completed must transition to cancelled/refunded, have its revenue subtracted from the affected daily snapshot, and be excluded from all aggregated metrics including the repeat-customer counts.",
+      "A partial refund (refund total is non-zero but less than gross order revenue) reduces the order's recorded revenue by the cumulative refunded amount rather than excluding the order entirely \u2014 the order remains in the completed state with adjusted revenue, and the affected daily snapshot is recalculated to reflect the new revenue figure; the order continues to count toward order count and repeat-customer counts.",
       "Duplicate event delivery for the same order transition must be detected by checking the current stored status before applying any update, treating a re-delivered event as a no-op.",
       "A guest order with no customer identifier must be excluded from the repeat customer rate calculation but still counted in revenue and product metrics.",
       "An order event arriving for an order external identifier that does not yet exist in local persistence must trigger a full order detail read before any metric update proceeds.",

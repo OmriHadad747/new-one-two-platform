@@ -265,7 +265,36 @@ Set to null UNLESS:
   (b) Your recipes detect a transition on a stored value before deciding
       whether to act (e.g. comparing payload status to last-stored status).
 
-When non-null, every field carries the EXACT physical binding:
+Two flavours, picked by `kind`:
+
+  kind="observation" — change-detection on an EXTERNAL value (typically a
+                       Shopify enum field that flips over time). The recipe
+                       compares the new observation to the last-stored
+                       value and acts only when they differ. THIS IS THE
+                       CANONICAL HLD USE — when the HLD declares a
+                       stateMachine, it is almost always observation.
+                       Column requirements:
+                         constraints MUST be `NULL` (no NOT NULL, no DEFAULT)
+                         enum lists every state literal
+                         (do NOT add "null" — it's encoded by the column
+                          being nullable).
+                       `unknownSentinel` is always "null"; `skipWhenUnknown`
+                       MUST be true (first observation never triggers; only
+                       known->known transitions do).
+
+  kind="workflow"    — internal lifecycle driven by THIS app's own writes
+                       (e.g. job queue: pending->running->completed). HLD
+                       policy says workflow status columns should be plain
+                       enum columns bound via `statusField`, NOT a
+                       stateMachine — but if one legitimately surfaces
+                       (cross-recipe lifecycle that genuinely needs the
+                       transition rules surfaced for codegen), declare it
+                       here so the column doesn't get forced NULLABLE.
+                       Column requirements:
+                         constraints MUST be `NOT NULL DEFAULT '<initialState>'`
+                         enum lists every state literal.
+
+Common fields:
 
   table             the database.tables[].name that holds the lifecycle row
   column            the database column whose value is the state (must
@@ -274,20 +303,11 @@ When non-null, every field carries the EXACT physical binding:
                      handler writes). NEVER use range labels.
                      OK   ["pending", "sent", "failed"]
                      BAD  ["zero_or_negative", "positive"]
-  initialState      the value a freshly-inserted row carries
-                     (must be in states; must equal the column's DEFAULT)
+  initialState      the value a freshly-inserted row carries (workflow) OR
+                     the conceptual "first known" external value (observation)
   terminalStates    states from which no further transition occurs
-  unknownSentinel   ALWAYS the string "null" (never 0, false, "")
-                     Reason: 0 is a real state value; null means "never
-                     observed". The column on `table` MUST be NULLABLE
-                     when this is set.
-  skipWhenUnknown   true  -> first observation skipped (act only on
-                              known->known transitions)
-                     false -> first observation triggers the action
-                              (acting on the very first event makes sense)
   transitions       list of {from, to, trigger, action}
-                     from/to: exact stored values (or "null" for the unknown
-                              sentinel branch)
+                     from/to: exact stored values
                      trigger: business-language description of what causes
                               the transition
                      action: one phrase describing the side effect (the

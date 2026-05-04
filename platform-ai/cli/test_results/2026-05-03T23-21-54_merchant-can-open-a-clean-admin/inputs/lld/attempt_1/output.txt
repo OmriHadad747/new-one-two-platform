@@ -1,0 +1,95 @@
+```json
+{
+  "schema_version": "1",
+  "shopifyIntegration": {
+    "webhookTopics": [],
+    "cronSchedule": "0 * * * *",
+    "bulkFetchRequired": true
+  },
+  "database": {
+    "tables": [
+      {
+        "name": "job_lock",
+        "purpose": "Singleton row that prevents concurrent hourly metric-computation runs by acting as an atomic mutex.",
+        "singleton": true,
+        "columns": [
+          {
+            "name": "running",
+            "sqlType": "BOOLEAN",
+            "constraints": "NOT NULL DEFAULT false",
+            "enum": null,
+            "purpose": "True while the cron job is executing; guards against overlapping runs."
+          },
+          {
+            "name": "locked_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "Timestamp when the current run acquired the lock; used for stale-lock self-healing after 2 hours."
+          }
+        ],
+        "uniqueConstraint": null,
+        "indexes": [],
+        "foreignKeys": []
+      },
+      {
+        "name": "dashboard_snapshot",
+        "purpose": "Stores the most recently computed summary metrics so the admin panel can load instantly without touching Shopify.",
+        "singleton": true,
+        "columns": [
+          {
+            "name": "total_revenue_cents",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL DEFAULT 0",
+            "enum": null,
+            "purpose": "Total eligible order revenue in minor currency units (integer cents)."
+          },
+          {
+            "name": "average_order_value_cents",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL DEFAULT 0",
+            "enum": null,
+            "purpose": "Total revenue divided by eligible order count in minor currency units (integer cents)."
+          },
+          {
+            "name": "repeat_customer_rate_bps",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "enum": null,
+            "purpose": "Share of identified customers who placed more than one order, stored as integer basis points (0–10000)."
+          },
+          {
+            "name": "eligible_order_count",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "enum": null,
+            "purpose": "Count of non-cancelled, non-refunded orders included in this computation."
+          },
+          {
+            "name": "computed_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "Timestamp of the job run that produced this snapshot; null means seed row — no job has completed yet."
+          }
+        ],
+        "uniqueConstraint": null,
+        "indexes": [],
+        "foreignKeys": []
+      },
+      {
+        "name": "top_product_snapshot",
+        "purpose": "Stores the ranked list of top products by revenue for the merchant, fully replaced on every successful job run.",
+        "singleton": false,
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT

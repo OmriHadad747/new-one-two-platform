@@ -1,0 +1,19 @@
+```json
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "fetch-orders",
+      "ops": [
+        {
+          "name": "orders",
+          "surface": "admin",
+          "note": "Paginated list of all orders (with pageInfo for cursor-based traversal) supplying order identifier, total, financial status, refund status, customer identifier, and line item product identifier and revenue"
+        }
+      ]
+    }
+  ],
+  "webhooks": [],
+  "unsatisfied": []
+}
+```

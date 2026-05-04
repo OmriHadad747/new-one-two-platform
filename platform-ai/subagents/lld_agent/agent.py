@@ -1,0 +1,285 @@
+"""
+LLD (low-level design) agent runner — stage 2 of the LLD-replacing-architect chain.
+
+Replaces the legacy architect's structural plan with a complete, codegen-ready
+implementation specification. The LLD reads the HLD plan + the ops-picker's
+enriched picks, and emits an `LLDPlan` covering: physical SQL schema, wire
+HTTP route shapes, Shopify integration plan (webhook topics + cron expression),
+and per-capability ordered algorithm recipes.
+
+Flow
+----
+1. Build the system prompt via `prompt.build_system_prompt()` — static text
+   + `LLDPlan.model_json_schema()`. Single source of truth.
+2. Build a user message containing the merchant prompt, the HLD plan, and
+   the enriched ops-picks (each pick already carries args, returnTypeSdl,
+   inputTypesSdl, examples — added by the ops-picker runner).
+3. Invoke the LLM, extract JSON, parse with `LLDPlan.model_validate_json`.
+4. Enrich the parsed plan in place with platform-runtime examples
+   (`platform_runtime_examples.example_for_step`). The runner stamps each
+   external-call step with the matching working-TS snippet so codegen
+   downstream never has to JIT-load Shopify / platform docs.
+5. On `pydantic.ValidationError` (rule violation) or `json.JSONDecodeError`
+   (malformed output), format the errors into a retry suffix and re-invoke
+   with the same cached system prompt up to `_MAX_ATTEMPTS` times.
+
+Returns the parsed plan as a JSON-shape dict (keys mirror the wire format)
+plus token totals.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from pydantic import ValidationError
+
+from models.adapter import dump_output, extract_json, get_llm, invoke
+from models.agent_models import get_agent_model
+from subagents.lld_agent.platform_runtime_examples import example_for_step
+from subagents.lld_agent.prompt import build_system_prompt
+from subagents.lld_agent.schema import LLDPlan
+
+_MAX_ATTEMPTS = 3
+# LLD output is large — full database + httpRoutes + capabilityRecipes can
+# easily exceed 8K output tokens, especially on multi-trigger apps. 16K
+# matches the codegen agents' ceiling and leaves headroom for the schema's
+# discriminated-union recipe steps. Truncated output → empty extract_json
+# → "EOF while parsing" on attempt 1.
+_MAX_TOKENS = 32_000
+# Thinking is counted against `max_tokens` by Anthropic. Recipe writing is
+# structured (template + bindings), not free-reasoning, so a tighter budget
+# leaves more room for the actual JSON output. Bump back if recipes start
+# missing edge cases.
+_THINKING_BUDGET = 0
+
+
+_USER_TEMPLATE = """\
+Merchant request: {prompt}
+
+HLD plan (schema-agnostic, integration-agnostic — your domain spine):
+{hld_json}
+
+Ops-picker output (Shopify GraphQL ops + webhook topics, with each op
+enriched with its signature, return-type SDL, input types, and real
+example queries from Shopify's docs — use these to write the actual
+GraphQL strings inside your shopify_query / shopify_mutation steps):
+{ops_picks_json}
+
+Produce the LLD plan as JSON conforming to the appended schema."""
+
+
+_VALIDATOR_HINT_SUFFIX = """\
+
+
+SEMANTIC REVIEW FEEDBACK — you already produced an LLD plan for this
+request and a reviewer flagged the issues below. Emit a corrected version
+with MINIMAL changes:
+
+  - Address every finding listed.
+  - Keep everything the reviewer did NOT flag exactly as it was — same
+    table names and column orders, same recipe ids, same step ordering,
+    same SQL templates, same GraphQL strings where unaffected.
+  - Do not refactor, rename, or reorder sections that are not part of
+    a finding.
+
+Findings:
+{findings_text}"""
+
+
+def run_lld_agent(
+    prompt: str,
+    plan: Dict[str, Any],
+    ops_picks: Dict[str, Any],
+    on_attempt_failed: Optional[Callable[[int, List[str]], None]] = None,
+    validator_hint: Optional[str] = None,
+) -> Tuple[Dict[str, Any], int, int]:
+    """
+    Run the LLD agent. Returns (lld_dict, in_tokens, out_tokens).
+
+    Validation lives inside the schema (`LLDPlan`). The agent retries on
+    its own when validation fails — the caller does not need an outer
+    retry loop.
+
+    Parameters
+    ----------
+    prompt:
+        Merchant request — kept in the user message for context.
+    plan:
+        The parsed HLDPlan dict (output of `run_hld_agent`).
+    ops_picks:
+        The enriched ops-picks dict (output of `run_ops_picker_agent`,
+        already merged with per-op catalog detail).
+    on_attempt_failed:
+        Optional callback invoked when an attempt is rejected, before the
+        next attempt fires. Receives `(attempt_index, errors)` so the CLI
+        can surface live retry feedback. Not called on the final failure
+        (`LLDValidationError` carries those errors directly).
+    validator_hint:
+        Optional pre-seeded findings (e.g. from a future `lld_v` validator)
+        appended to the first user message.
+
+    Raises
+    ------
+    LLDValidationError
+        When all `_MAX_ATTEMPTS` attempts fail validation.
+    """
+    system = build_system_prompt()
+    base_user = _USER_TEMPLATE.format(
+        prompt=prompt,
+        hld_json=json.dumps(plan, indent=2),
+        ops_picks_json=json.dumps(ops_picks, indent=2),
+    )
+    if validator_hint:
+        base_user += _VALIDATOR_HINT_SUFFIX.format(findings_text=validator_hint)
+    llm = get_llm(
+        model=get_agent_model("lld"),
+        max_tokens=_MAX_TOKENS,
+        thinking_budget=_THINKING_BUDGET,
+    )
+
+    total_in = 0
+    total_out = 0
+    last_errors: List[str] = []
+
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        retry_suffix = _format_retry_suffix(last_errors) if last_errors else ""
+        result = invoke(llm, system, base_user, retry_suffix=retry_suffix)
+        total_in += result.input_tokens
+        total_out += result.output_tokens
+
+        # Persist the raw model response next to the prompt files. No-op
+        # outside an active `input_log` block.
+        dump_output(result.content)
+
+        try:
+            raw_json = extract_json(result.content)
+        except Exception as err:
+            last_errors = [f"could not extract a JSON object from output: {err}"]
+            if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
+                on_attempt_failed(attempt, last_errors)
+            continue
+
+        try:
+            parsed = LLDPlan.model_validate_json(raw_json)
+        except ValidationError as err:
+            last_errors = _format_pydantic_errors(err)
+            if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
+                on_attempt_failed(attempt, last_errors)
+            continue
+        except json.JSONDecodeError as err:
+            last_errors = [f"output is not valid JSON: {err}"]
+            if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
+                on_attempt_failed(attempt, last_errors)
+            continue
+
+        # `by_alias=True` so transitions use `from` (not `from_`) on the
+        # wire — matches the schema the model was prompted with.
+        lld_dict = parsed.model_dump(mode="json", by_alias=True)
+        _enrich_with_runtime_examples(lld_dict, ops_picks)
+        return lld_dict, total_in, total_out
+
+    raise LLDValidationError(_MAX_ATTEMPTS, last_errors, total_in, total_out)
+
+
+# ── Internals ─────────────────────────────────────────────────────────
+
+
+class LLDValidationError(RuntimeError):
+    """Raised when the LLD agent exhausts its retry budget."""
+
+    def __init__(
+        self,
+        attempts: int,
+        errors: List[str],
+        in_tokens: int,
+        out_tokens: int,
+    ) -> None:
+        self.attempts = attempts
+        self.errors = errors
+        self.in_tokens = in_tokens
+        self.out_tokens = out_tokens
+        bullets = "\n".join(f"  - {e}" for e in errors)
+        super().__init__(f"LLD agent failed after {attempts} attempt(s):\n{bullets}")
+
+
+def _format_pydantic_errors(err: ValidationError) -> List[str]:
+    """
+    Turn a Pydantic ValidationError into compact, model-friendly bullet
+    lines: `<json.path>: <message>`. Same shape as HLD/ops-picker.
+    """
+    out: List[str] = []
+    for e in err.errors():
+        loc = ".".join(str(p) for p in e.get("loc", ())) or "<root>"
+        msg = e.get("msg", "validation error")
+        out.append(f"{loc}: {msg}")
+    return out
+
+
+def _format_retry_suffix(errors: List[str]) -> str:
+    bullets = "\n".join(f"  - {e}" for e in errors)
+    return (
+        f"\n\nPREVIOUS ATTEMPT FAILED VALIDATION:\n{bullets}\n"
+        "Fix ALL listed errors in this new attempt. Emit a single JSON "
+        "object that conforms to the schema; no markdown fences, no prose.\n"
+    )
+
+
+# ── Runtime-example enrichment ────────────────────────────────────────────────
+
+
+def _build_op_surface_index(ops_picks: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Build {op_name: surface} from enriched ops-picks. Used to stamp the
+    `surface` field on each shopify_query step before snippet selection,
+    so storefront vs admin queries get the right example.
+    """
+    out: Dict[str, str] = {}
+    for cap in ops_picks.get("capabilities") or []:
+        for op in cap.get("ops") or []:
+            name = op.get("name")
+            surface = op.get("surface")
+            if name and surface:
+                out[name] = surface
+    return out
+
+
+def _enrich_with_runtime_examples(
+    lld_dict: Dict[str, Any], ops_picks: Dict[str, Any]
+) -> None:
+    """
+    Walk every step in every recipe and stamp `step["example"]` with the
+    matching working-TS snippet from `platform_runtime_examples`. Steps
+    that need no example (sql/compute/control-flow/log/response/fetch)
+    are left untouched.
+
+    Walks into nested step containers (decision.ifTrue/ifFalse,
+    for_each.steps, sql_transaction.steps) so deeply-nested external
+    calls also receive their snippet.
+    """
+    op_surface = _build_op_surface_index(ops_picks)
+    for recipe in (lld_dict.get("capabilityRecipes") or {}).values():
+        _walk_steps(recipe.get("steps") or [], op_surface)
+
+
+def _walk_steps(steps: List[Dict[str, Any]], op_surface: Dict[str, str]) -> None:
+    """Stamp `example` onto every external-call step, recursing into nested containers."""
+    for step in steps:
+        kind = step.get("kind")
+        # For shopify_query steps, look up the picked op's surface so the
+        # snippet picker can route storefront vs admin examples.
+        if kind == "shopify_query":
+            op_name = step.get("op")
+            if op_name and op_name in op_surface and "surface" not in step:
+                step["surface"] = op_surface[op_name]
+        snippet = example_for_step(step)
+        if snippet is not None:
+            step["example"] = snippet
+        # Recurse into containers.
+        if kind == "decision":
+            _walk_steps(step.get("ifTrue") or [], op_surface)
+            _walk_steps(step.get("ifFalse") or [], op_surface)
+        elif kind == "for_each":
+            _walk_steps(step.get("steps") or [], op_surface)
+        elif kind == "sql_transaction":
+            _walk_steps(step.get("steps") or [], op_surface)

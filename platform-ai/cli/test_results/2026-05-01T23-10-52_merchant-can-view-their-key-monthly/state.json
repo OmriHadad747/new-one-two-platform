@@ -33,10 +33,10 @@
       443
     ]
   },
-  "checkpoint": "done",
+  "checkpoint": "ops-picker",
   "halt_reason": null,
   "version": 1,
-  "updated_at": "2026-05-01T23:13:50",
+  "updated_at": "2026-05-03T20:33:31+00:00",
   "created_at": "2026-05-01T23:10:52",
   "plan": {
     "schema_version": "1",
@@ -44,7 +44,7 @@
     "feasibility": "feasible",
     "blockedReason": null,
     "complexity": "medium",
-    "dataFlow": "A merchant opens the admin dashboard and the page calls the read-metrics-snapshot route, which returns the most recently computed snapshot for the current calendar month along with its timestamp and any in-progress flag. When the merchant clicks Refresh, the admin panel calls the refresh route, which sets the in-progress flag, acquires a per-shop advisory lock so no concurrent refresh can race ahead, fetches all current-month orders from the external system page by page until no further pages remain, hands the full order set to the compute step to derive revenue, AOV, order count, and repeat-customer count, then upserts the result into the snapshot table and clears the in-progress flag. The admin panel polls the read route during refresh to show the loading state, and on completion renders the updated metrics and the new timestamp.",
+    "dataFlow": "A merchant opens the admin dashboard and the page calls the read-metrics-snapshot route, optionally with a month_year, which returns the stored snapshot for that month (defaulting to the current calendar month) along with its timestamp and any in-progress flag. When the merchant clicks Refresh, the admin panel calls the refresh route, which sets the in-progress flag, acquires a per-shop advisory lock so no concurrent refresh can race ahead, fetches all current-month orders from the external system page by page until no further pages remain, hands the full order set to the compute step to derive revenue, AOV, order count, and repeat-customer count, then upserts the result into the snapshot table (clearing the in-progress flag as part of that upsert). If the fetch or compute step throws, the route invokes clear-refresh-in-progress to release the flag without overwriting the previously stored metric values. The admin panel polls the read route during refresh to show the loading state, and on completion renders the updated metrics and the new timestamp.",
     "triggers": [
       {
         "kind": "inbound-request"
@@ -83,7 +83,7 @@
       },
       {
         "id": "compute-monthly-metrics",
-        "description": "Derives the four key metrics \u2014 net revenue excluding refunds, average order value across completed orders, total completed order count, and repeat customer count by email deduplication \u2014 from the full in-memory order set.",
+        "description": "Derives the four key metrics \u2014 net revenue excluding refunds, average order value across completed orders, total completed order count, and repeat customer count (defined as customers whose email appears on more than one completed order placed within the current calendar month only; cross-month repeats are out of scope to keep the snapshot self-contained per month) \u2014 from the full in-memory order set.",
         "kind": "compute",
         "dataNeeds": [
           "order identifier",
@@ -113,6 +113,16 @@
       {
         "id": "set-refresh-in-progress",
         "description": "Marks the current-month snapshot row as refresh-in-progress so the admin UI can display a loading state immediately after the merchant clicks Refresh.",
+        "kind": "write",
+        "dataNeeds": [
+          "snapshot month",
+          "refresh in-progress flag"
+        ],
+        "integration": null
+      },
+      {
+        "id": "clear-refresh-in-progress",
+        "description": "Clears the refresh-in-progress flag without modifying the previously stored metric values; called when the order fetch or compute step fails so the snapshot row does not remain stuck in the in-progress state forever.",
         "kind": "write",
         "dataNeeds": [
           "snapshot month",
@@ -160,7 +170,7 @@
             "name": "repeat_customer_count",
             "role": "count",
             "nullable": true,
-            "purpose": "Number of customers who placed more than one order, matched by email"
+            "purpose": "Number of customers whose email appears on more than one completed order within this snapshot's calendar month (intra-month repeats only; cross-month repeats are not counted)"
           },
           {
             "name": "computed_at",
@@ -189,8 +199,10 @@
         "surface": "admin",
         "path": "/admin/metrics",
         "method": "GET",
-        "purpose": "Returns the stored metrics snapshot for the current calendar month, including all four metric values, the last-computed timestamp, and the in-progress flag so the UI can render the correct initial state.",
-        "requestShape": {},
+        "purpose": "Returns the stored metrics snapshot for a calendar month, including all four metric values, the last-computed timestamp, and the in-progress flag so the UI can render the correct initial state. Defaults to the server's current calendar month when no month_year is supplied; when a month_year is supplied the snapshot for that historical month is returned, and if no row exists for that month the server returns null metric values with computed_at null and refresh_in_progress false so the UI can render an empty state.",
+        "requestShape": {
+          "month_year": "text"
+        },
         "responseShape": {
           "snapshot_month": "timestamp",
           "revenue": "money",
@@ -218,7 +230,7 @@
       "All orders in the month were fully refunded \u2014 net revenue must be zero and AOV must be computed only over completed non-zero orders, not produce a divide-by-zero error.",
       "Every customer in the month placed exactly one order \u2014 repeat customer count must be recorded as zero and the visualization must render a graceful empty state rather than omitting the metric.",
       "A refresh is triggered while a previous refresh for the same shop is still in flight \u2014 the system must enforce a per-shop advisory lock so only one computation runs at a time; the second request must either wait for the lock and then return the in-progress status, or return the in-progress status immediately, preventing a race condition where both computations reach the upsert and the snapshot reflects whichever commit arrived last.",
-      "The external system returns an error or times out mid-pagination \u2014 the refresh must be rolled back, the in-progress flag must be cleared, and the previously stored snapshot must remain intact so the dashboard does not display partial or empty metrics.",
+      "The external system returns an error or times out mid-pagination \u2014 the refresh must be rolled back via clear-refresh-in-progress, the in-progress flag must be cleared without touching the previously stored metric values, and the previously stored snapshot must remain intact so the dashboard does not display partial or empty metrics; without this explicit clear capability the row would remain stuck in refresh_in_progress=true and block all future Refresh attempts.",
       "The merchant's clock-local month boundary differs from UTC \u2014 the system must consistently define the month boundary in a single reference timezone applied uniformly to both the fetch filter and the snapshot key to avoid orders near midnight on month boundaries being double-counted or dropped."
     ]
   },

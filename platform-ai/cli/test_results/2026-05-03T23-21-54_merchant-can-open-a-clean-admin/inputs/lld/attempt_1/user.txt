@@ -1,0 +1,685 @@
+Merchant request: Merchant can open a clean admin dashboard to view revenue, average order value, top products, and repeat customer rate at a glance.
+
+HLD plan (schema-agnostic, integration-agnostic — your domain spine):
+{
+  "schema_version": "1",
+  "archetype": "backend+admin",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "Once per hour the scheduled job fetches all non-cancelled, non-refunded orders from Shopify for the merchant's store. It computes total revenue, average order value, repeat customer rate, and top products by revenue from the full order history. The resulting metrics are atomically written into the dashboard snapshot and top product snapshot tables, replacing any prior values for that merchant. When the merchant opens the admin panel, the frontend calls the dashboard GET endpoint, which reads directly from the pre-computed snapshot rows and returns them instantly without touching Shopify.",
+  "triggers": [
+    {
+      "kind": "schedule",
+      "cadence": "once per hour",
+      "jobPurpose": "Recompute all dashboard metrics from the full order history and refresh the persisted snapshot.",
+      "perTickWork": "The job fetches all eligible orders from Shopify, computes the four key metrics, and atomically upserts the dashboard snapshot and top product snapshot rows for the merchant, replacing the previous values.",
+      "bulkFetchRule": true
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "fetch-orders",
+      "description": "Retrieve all non-cancelled, non-refunded orders for the store including customer identity and line item revenue.",
+      "kind": "read",
+      "dataNeeds": [
+        "order identifier",
+        "order total",
+        "order status",
+        "refund status",
+        "customer identifier",
+        "line item product identifier",
+        "line item revenue"
+      ],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "compute-revenue",
+      "description": "Sum net order totals across all eligible orders to produce total revenue.",
+      "kind": "compute",
+      "dataNeeds": [
+        "order total",
+        "order status",
+        "refund status"
+      ],
+      "integration": null
+    },
+    {
+      "id": "compute-aov",
+      "description": "Divide total revenue by eligible order count to produce average order value.",
+      "kind": "compute",
+      "dataNeeds": [
+        "total revenue",
+        "eligible order count"
+      ],
+      "integration": null
+    },
+    {
+      "id": "compute-top-products",
+      "description": "Rank products by total revenue contribution across all eligible orders.",
+      "kind": "compute",
+      "dataNeeds": [
+        "line item product identifier",
+        "line item revenue"
+      ],
+      "integration": null
+    },
+    {
+      "id": "compute-repeat-customer-rate",
+      "description": "Calculate the share of customers who placed more than one eligible order across the full order history.",
+      "kind": "compute",
+      "dataNeeds": [
+        "customer identifier",
+        "order identifier"
+      ],
+      "integration": null
+    },
+    {
+      "id": "read-dashboard-snapshot",
+      "description": "Read the latest pre-computed metric snapshot for the merchant to serve the admin dashboard.",
+      "kind": "read",
+      "dataNeeds": [
+        "shop domain",
+        "total revenue",
+        "average order value",
+        "repeat customer rate",
+        "eligible order count",
+        "computed at timestamp",
+        "product external id",
+        "product name",
+        "rank position",
+        "product revenue"
+      ],
+      "integration": null
+    },
+    {
+      "id": "write-dashboard-snapshot",
+      "description": "Persist the newly computed summary metrics into the dashboard snapshot row for the merchant.",
+      "kind": "write",
+      "dataNeeds": [
+        "shop domain",
+        "total revenue",
+        "average order value",
+        "repeat customer rate",
+        "eligible order count",
+        "computed at timestamp"
+      ],
+      "integration": null
+    },
+    {
+      "id": "write-top-product-snapshot",
+      "description": "Persist the ranked product list into the top product snapshot rows for the merchant, replacing any prior entries.",
+      "kind": "write",
+      "dataNeeds": [
+        "shop domain",
+        "product external id",
+        "product name",
+        "rank position",
+        "product revenue"
+      ],
+      "integration": null
+    }
+  ],
+  "persistence": [
+    {
+      "name": "dashboard_snapshot",
+      "purpose": "Stores the most recently computed summary metrics for each merchant so the admin panel can load instantly.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "shop_domain",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies which merchant installation this snapshot belongs to"
+        },
+        {
+          "name": "total_revenue",
+          "role": "money",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "average_order_value",
+          "role": "money",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "repeat_customer_rate",
+          "role": "money",
+          "nullable": false,
+          "purpose": "ratio of customers with more than one order, stored as a decimal"
+        },
+        {
+          "name": "eligible_order_count",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "computed_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per merchant installation, keyed by shop domain \u2014 upserted on each job run",
+      "statusField": null,
+      "queryPatterns": [
+        "single row lookup by shop domain to serve the admin dashboard"
+      ]
+    },
+    {
+      "name": "top_product_snapshot",
+      "purpose": "Stores the ranked list of top products by revenue for each merchant, refreshed on every job run.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "shop_domain",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies which merchant installation these product rows belong to"
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies the product in the external catalog"
+        },
+        {
+          "name": "product_name",
+          "role": "text",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "rank_position",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_revenue",
+          "role": "money",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "computed_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per product per merchant installation, keyed by shop domain and product external identifier \u2014 fully replaced on each job run",
+      "statusField": null,
+      "queryPatterns": [
+        "all rows for a given shop domain ordered by rank position ascending"
+      ]
+    }
+  ],
+  "stateMachine": null,
+  "externalContracts": [
+    {
+      "surface": "admin",
+      "path": "/admin/dashboard",
+      "method": "GET",
+      "purpose": "Return all pre-computed dashboard metrics and the ranked top products list for display in the admin panel.",
+      "requestShape": {
+        "limit": "count"
+      },
+      "responseShape": {
+        "total_revenue": "money",
+        "average_order_value": "money",
+        "repeat_customer_rate": "text",
+        "eligible_order_count": "count",
+        "computed_at": "timestamp",
+        "top_products": "list",
+        "top_products_count": "count"
+      }
+    }
+  ],
+  "edgeCases": [
+    "An order that was later fully refunded must be excluded from all metric computations so it does not inflate revenue or order counts.",
+    "If the full order history spans multiple pages of API results, all pages must be fetched before any metric is computed to prevent understating repeat customer rate.",
+    "A customer who placed orders under multiple identifiers (guest then account) must not be double-counted as a repeat customer if they cannot be resolved to a single identity.",
+    "If the snapshot table contains no row for a merchant \u2014 such as during the window between app installation and the first completed job run \u2014 the dashboard GET must return a zeroed seed row rather than an error; this seed row must be written immediately at install time.",
+    "If the hourly job is still running when the next scheduled tick arrives, the new instance must detect the in-progress run via a job-running flag and abort rather than allowing two concurrent computations to interleave writes to the same snapshot rows.",
+    "If Shopify returns a partial or error response during order pagination, the job must abort and retain the previous snapshot rather than overwriting it with incomplete data."
+  ]
+}
+
+Ops-picker output (Shopify GraphQL ops + webhook topics, with each op
+enriched with its signature, return-type SDL, input types, and real
+example queries from Shopify's docs — use these to write the actual
+GraphQL strings inside your shopify_query / shopify_mutation steps):
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "fetch-orders",
+      "ops": [
+        {
+          "name": "orders",
+          "surface": "admin",
+          "note": "Paginated list of all orders (with pageInfo for cursor-based traversal) supplying order identifier, total, financial status, refund status, customer identifier, and line item product identifier and revenue",
+          "args": [
+            {
+              "name": "first",
+              "required": false,
+              "type": "Int"
+            },
+            {
+              "name": "after",
+              "required": false,
+              "type": "String"
+            },
+            {
+              "name": "last",
+              "required": false,
+              "type": "Int"
+            },
+            {
+              "name": "before",
+              "required": false,
+              "type": "String"
+            },
+            {
+              "name": "reverse",
+              "required": false,
+              "type": "Boolean"
+            },
+            {
+              "name": "sortKey",
+              "required": false,
+              "type": "OrderSortKeys"
+            },
+            {
+              "name": "query",
+              "required": false,
+              "type": "String"
+            },
+            {
+              "name": "savedSearchId",
+              "required": false,
+              "type": "ID"
+            }
+          ],
+          "examples": [
+            {
+              "query": "query {\n  orders(first: 10) {\n    edges {\n      cursor\n      node {\n        id\n      }\n    }\n    pageInfo {\n      hasNextPage\n      hasPreviousPage\n      startCursor\n      endCursor\n    }\n  }\n}",
+              "response": {
+                "orders": {
+                  "edges": [
+                    {
+                      "cursor": "eyJsYXN0X2lkIjoxMjYyMTY1MTYsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                      "node": {
+                        "id": "gid://shopify/Order/126216516"
+                      }
+                    },
+                    {
+                      "cursor": "eyJsYXN0X2lkIjoxNDg5Nzc3NzYsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                      "node": {
+                        "id": "gid://shopify/Order/148977776"
+                      }
+                    },
+                    {
+                      "cursor": "eyJsYXN0X2lkIjoyMzUyNDAzMDIsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                      "node": {
+                        "id": "gid://shopify/Order/235240302"
+                      }
+                    },
+                    {
+                      "cursor": "eyJsYXN0X2lkIjozNTc5NDQ4NTQsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                      "node": {
+                        "id": "gid://shopify/Order/357944854"
+                      }
+                    },
+                    {
+                      "cursor": "eyJsYXN0X2lkIjo0MDQ0ODE1NzUsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                      "node": {
+                        "id": "gid://shopify/Order/404481575"
+                      }
+                    },
+                    {
+                      "cursor": "eyJsYXN0X2lkIjo0MDkyMTQzNjMsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                      "node": {
+                        "id": "gid://shopify/Order/409214363"
+                      }
+                    },
+                    {
+                      "cursor": "eyJsYXN0X2lkIjo0NzE4NjExMjksImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                      "node": {
+                        "id": "gid://shopify/Order/471861129"
+                      }
+                    },
+                    {
+                      "cursor": "eyJsYXN0X2lkIjo0ODA3OTYxODksImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                      "node": {
+                        "id": "gid://shopify/Order/480796189"
+                      }
+                    },
+                    {
+                      "cursor": "eyJsYXN0X2lkIjo1MjcyMjkyODksImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                      "node": {
+                        "id": "gid://shopify/Order/527229289"
+                      }
+                    },
+                    {
+                      "cursor": "eyJsYXN0X2lkIjo1NTY1Mjc2MzgsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                      "node": {
+                        "id": "gid://shopify/Order/556527638"
+                      }
+                    }
+                  ],
+                  "pageInfo": {
+                    "endCursor": "eyJsYXN0X2lkIjo1NTY1Mjc2MzgsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9",
+                    "hasNextPage": true,
+                    "hasPreviousPage": false,
+                    "startCursor": "eyJsYXN0X2lkIjoxMjYyMTY1MTYsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9"
+                  }
+                }
+              },
+              "scenario_title": "Retrieve a list of orders",
+              "variables": null
+            },
+            {
+              "query": "query {\n  order1: order(id: \"gid://shopify/Order/148977776\") {\n    name\n  }\n  order2: order(id: \"gid://shopify/Order/1073459961\") {\n    name\n  }\n}",
+              "response": {
+                "order1": {
+                  "name": "#1001"
+                },
+                "order2": {
+                  "name": "#1018"
+                }
+              },
+              "scenario_title": "Retrieve a list of orders using their IDs and GraphQL aliases",
+              "variables": null
+            },
+            {
+              "query": "query {\n  orders(first: 5) {\n    edges {\n      node {\n        id\n        name\n        createdAt\n        displayFinancialStatus\n        displayFulfillmentStatus\n        totalPriceSet {\n          shopMoney {\n            amount\n            currencyCode\n          }\n        }\n        subtotalPriceSet {\n          shopMoney {\n            amount\n            currencyCode\n          }\n        }\n        email\n        shippingAddress {\n          address1\n          city\n          provinceCode\n          zip\n        }\n        lineItems(first: 5) {\n          edges {\n            node {\n              name\n              quantity\n              sku\n              variant {\n                id\n                title\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}",
+              "response": {
+                "orders": {
+                  "edges": [
+                    {
+                      "node": {
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "displayFinancialStatus": "PAID",
+                        "displayFulfillmentStatus": "UNFULFILLED",
+                        "email": "bob@example.com",
+                        "id": "gid://shopify/Order/158040885",
+                        "lineItems": {
+                          "edges": [
+                            {
+                              "node": {
+                                "name": "Draft - 151cm",
+                                "quantity": 10,
+                                "sku": "draft-151",
+                                "variant": {
+                                  "id": "gid://shopify/ProductVariant/168923715",
+                                  "title": "151cm"
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        "name": "#2000",
+                        "shippingAddress": null,
+                        "subtotalPriceSet": {
+                          "shopMoney": {
+                            "amount": "2000.0",
+                            "currencyCode": "CAD"
+                          }
+                        },
+                        "totalPriceSet": {
+                          "shopMoney": {
+                            "amount": "2000.0",
+                            "currencyCode": "CAD"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "node": {
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "displayFinancialStatus": "PAID",
+                        "displayFulfillmentStatus": "UNFULFILLED",
+                        "email": "bob@example.com",
+                        "id": "gid://shopify/Order/199007853",
+                        "lineItems": {
+                          "edges": []
+                        },
+                        "name": "#2006",
+                        "shippingAddress": null,
+                        "subtotalPriceSet": {
+                          "shopMoney": {
+                            "amount": "2000.0",
+                            "currencyCode": "CAD"
+                          }
+                        },
+                        "totalPriceSet": {
+                          "shopMoney": {
+                            "amount": "2000.0",
+                            "currencyCode": "CAD"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "node": {
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "displayFinancialStatus": "PAID",
+                        "displayFulfillmentStatus": "UNFULFILLED",
+                        "email": "bob@example.com",
+                        "id": "gid://shopify/Order/212949620",
+                        "lineItems": {
+                          "edges": []
+                        },
+                        "name": "#2002",
+                        "shippingAddress": null,
+                        "subtotalPriceSet": {
+                          "shopMoney": {
+                            "amount": "2000.0",
+                            "currencyCode": "CAD"
+                          }
+                        },
+                        "totalPriceSet": {
+                          "shopMoney": {
+                            "amount": "2000.0",
+                            "currencyCode": "CAD"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "node": {
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "displayFinancialStatus": "PAID",
+                        "displayFulfillmentStatus": "UNFULFILLED",
+                        "email": "bob@example.com",
+                        "id": "gid://shopify/Order/294238686",
+                        "lineItems": {
+                          "edges": []
+                        },
+                        "name": "#2009",
+                        "shippingAddress": null,
+                        "subtotalPriceSet": {
+                          "shopMoney": {
+                            "amount": "2000.0",
+                            "currencyCode": "CAD"
+                          }
+                        },
+                        "totalPriceSet": {
+                          "shopMoney": {
+                            "amount": "2000.0",
+                            "currencyCode": "CAD"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "node": {
+                        "createdAt": "2024-01-01T00:00:00Z",
+                        "displayFinancialStatus": "PAID",
+                        "displayFulfillmentStatus": "UNFULFILLED",
+                        "email": "bob@example.com",
+                        "id": "gid://shopify/Order/316002265",
+                        "lineItems": {
+                          "edges": []
+                        },
+                        "name": "#2003",
+                        "shippingAddress": null,
+                        "subtotalPriceSet": {
+                          "shopMoney": {
+                            "amount": "2000.0",
+                            "currencyCode": "CAD"
+                          }
+                        },
+                        "totalPriceSet": {
+                          "shopMoney": {
+                            "amount": "2000.0",
+                            "currencyCode": "CAD"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "scenario_title": "Retrieve specific order details",
+              "variables": null
+            },
+            {
+              "query": "query {\n  orders(first: 10, query: \"updated_at:>2019-12-01\") {\n    edges {\n      node {\n        id\n        updatedAt\n      }\n    }\n  }\n}",
+              "response": {
+                "orders": {
+                  "edges": [
+                    {
+                      "node": {
+                        "id": "gid://shopify/Order/158040885",
+                        "updatedAt": "2024-01-01T12:34:43Z"
+                      }
+                    },
+                    {
+                      "node": {
+                        "id": "gid://shopify/Order/199007853",
+                        "updatedAt": "2024-01-01T12:34:43Z"
+                      }
+                    },
+                    {
+                      "node": {
+                        "id": "gid://shopify/Order/212949620",
+                        "updatedAt": "2024-01-01T12:34:43Z"
+                      }
+                    },
+                    {
+                      "node": {
+                        "id": "gid://shopify/Order/294238686",
+                        "updatedAt": "2024-01-01T12:34:43Z"
+                      }
+                    },
+                    {
+                      "node": {
+                        "id": "gid://shopify/Order/316002265",
+                        "updatedAt": "2024-01-01T12:34:43Z"
+                      }
+                    },
+                    {
+                      "node": {
+                        "id": "gid://shopify/Order/459506686",
+                        "updatedAt": "2024-01-01T12:34:43Z"
+                      }
+                    },
+                    {
+                      "node": {
+                        "id": "gid://shopify/Order/634584900",
+                        "updatedAt": "2024-01-01T12:34:43Z"
+                      }
+                    },
+                    {
+                      "node": {
+                        "id": "gid://shopify/Order/744797037",
+                        "updatedAt": "2024-01-01T12:34:43Z"
+                      }
+                    },
+                    {
+                      "node": {
+                        "id": "gid://shopify/Order/1001810659",
+                        "updatedAt": "2024-01-01T12:34:43Z"
+                      }
+                    },
+                    {
+                      "node": {
+                        "id": "gid://shopify/Order/1021030140",
+                        "updatedAt": "2024-01-01T12:34:43Z"
+                      }
+                    }
+                  ]
+                }
+              },
+              "scenario_title": "Retrieve the first 10 orders updated after December 1, 2019",
+              "variables": null
+            },
+            {
+              "query": "query {\n  orders(first: 10, query: \"financial_status:authorized\") {\n    edges {\n      node {\n        id\n        displayFinancialStatus\n      }\n    }\n  }\n}",
+              "response": {
+                "orders": {
+                  "edges": [
+                    {
+                      "node": {
+                        "displayFinancialStatus": "AUTHORIZED",
+                        "id": "gid://shopify/Order/471861129"
+                      }
+                    },
+                    {
+                      "node": {
+                        "displayFinancialStatus": "AUTHORIZED",
+                        "id": "gid://shopify/Order/527229289"
+                      }
+                    },
+                    {
+                      "node": {
+                        "displayFinancialStatus": "AUTHORIZED",
+                        "id": "gid://shopify/Order/751082136"
+                      }
+                    },
+                    {
+                      "node": {
+                        "displayFinancialStatus": "AUTHORIZED",
+                        "id": "gid://shopify/Order/431501862"
+                      }
+                    }
+                  ]
+                }
+              },
+              "scenario_title": "Retrieve the first 10 orders with authorized payments",
+              "variables": null
+            }
+          ],
+          "inputTypesSdl": {
+            "OrderSortKeys": "enum OrderSortKeys {\n  CREATED_AT\n  CURRENT_TOTAL_PRICE\n  CUSTOMER_NAME\n  DESTINATION\n  FINANCIAL_STATUS\n  FULFILLMENT_STATUS\n  ID\n  ORDER_NUMBER\n  PO_NUMBER\n  PROCESSED_AT\n  RELEVANCE\n  TOTAL_ITEMS_QUANTITY\n  TOTAL_PRICE\n  UPDATED_AT\n}"
+          },
+          "isConnection": true,
+          "kind": "query",
+          "returnTypeName": "OrderConnection",
+          "returnTypeSdl": "type OrderConnection {\n  edges: [OrderEdge!]!\n  nodes: [Order!]!\n  pageInfo: PageInfo!\n}",
+          "userErrorsField": null
+        }
+      ]
+    }
+  ],
+  "webhooks": [],
+  "unsatisfied": []
+}
+
+Produce the LLD plan as JSON conforming to the appended schema.

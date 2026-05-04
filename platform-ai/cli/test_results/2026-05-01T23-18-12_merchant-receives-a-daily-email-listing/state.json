@@ -35,10 +35,10 @@
       807
     ]
   },
-  "checkpoint": "done",
+  "checkpoint": "ops-picker",
   "halt_reason": null,
   "version": 1,
-  "updated_at": "2026-05-01T23:20:42",
+  "updated_at": "2026-05-03T20:33:31+00:00",
   "created_at": "2026-05-01T23:18:12",
   "plan": {
     "schema_version": "1",
@@ -46,7 +46,7 @@
     "feasibility": "feasible",
     "blockedReason": null,
     "complexity": "high",
-    "dataFlow": "Once daily at the merchant-configured hour, the schedule job reads all product variant inventory levels across every location and computes which variants fall at or below the saved threshold. A new report row is created in the pending state alongside one item row per flagged variant. The system then sends a formatted email to the merchant listing each flagged variant's name, SKU, and stock quantity; on success the report is marked sent, on failure it is marked failed with the reason recorded. At any time the merchant may open the admin panel to view a live low-stock list, browse past report records and their flagged items, and update the stock threshold or daily send hour, all of which are served from the app's own routes without re-querying Shopify except for the live current-stock view.",
+    "dataFlow": "Once daily at the merchant-configured hour, the schedule job reads the saved settings, fetches all product variant inventory levels across every location, and computes which variants fall at or below the threshold. If the flagged set is non-empty, a new report row is created in pending alongside one item row per flagged variant; the system then sends a formatted email to the merchant listing each flagged variant's name, SKU, and stock quantity, and on success the report transitions to sent, on failure to failed with the reason recorded. If the flagged set is empty, a single report row is created and immediately transitioned to skipped so the merchant can see in history that the job ran without an email being sent. At any time the merchant may open the admin panel to view a live low-stock list, browse past report records and their flagged items, and update the stock threshold or daily send hour, all of which are served from the app's own routes without re-querying Shopify except for the live current-stock view.",
     "triggers": [
       {
         "kind": "schedule",
@@ -345,18 +345,25 @@
       "states": [
         "pending",
         "sent",
+        "skipped",
         "failed"
       ],
       "initialState": "pending",
       "terminalStates": [
         "sent",
+        "skipped",
         "failed"
       ],
       "transitions": [
         {
           "from": "pending",
           "to": "sent",
-          "trigger": "alert email successfully delivered"
+          "trigger": "alert email successfully delivered for a non-empty flagged list"
+        },
+        {
+          "from": "pending",
+          "to": "skipped",
+          "trigger": "no variants are at or below the threshold so no email is sent"
         },
         {
           "from": "pending",
@@ -365,9 +372,10 @@
         }
       ],
       "invariants": [
-        "A report in sent or failed state never returns to pending",
+        "A report in sent, skipped, or failed state never returns to pending",
         "Exactly one report row may exist per calendar date",
-        "A report row must reach a terminal state within the same job tick that created it"
+        "A report row must reach a terminal state within the same job tick that created it",
+        "A report in the skipped state has zero stock_report_items rows and a null sent_at"
       ]
     },
     "externalContracts": [
@@ -444,7 +452,7 @@
       "A variant has zero stock \u2014 include it unconditionally regardless of how the threshold is set, as zero is always a meaningful alert.",
       "Email delivery fails after the report and items have already been persisted \u2014 mark the report as failed with the error reason, preserving the item snapshot so the merchant can see what would have been sent via the admin history view.",
       "The merchant changes the threshold between scheduled ticks \u2014 apply the new threshold only on the next job tick; the current tick uses the value read at job start and records it implicitly through the items captured.",
-      "No variants are below the threshold on a given day \u2014 record the report as sent with a zero item count and send an email confirming all stock levels are healthy."
+      "No variants are at or below the threshold on a given day \u2014 record the report in the skipped state with a zero flagged_item_count, do not write any stock_report_items rows, and do not send any email; the admin history view shows the skipped run so the merchant has evidence the job ran."
     ]
   },
   "product_prompt": "Merchant request: Merchant receives a daily email listing low-stock variants, can view the current low-stock list anytime in the admin, and can review email history and adjust the threshold.\n\nProduct-agent intent:\n{\n  \"triggerTypes\": [\n    \"cron\",\n    \"admin\"\n  ],\n  \"resources\": [\n    \"ProductVariant\",\n    \"InventoryLevel\"\n  ],\n  \"desiredOutcome\": \"Merchant receives a daily email listing low-stock variants, can view the current low-stock list anytime in the admin, and can review email history and adjust the threshold.\",\n  \"cronHint\": \"daily at a merchant-selected time (e.g. 8am)\",\n  \"appCategory\": \"backend_admin\",\n  \"qualityBrief\": \"A good version handles variants across all locations/warehouses, formats the admin list clearly with SKU, current stock, and product name, allows threshold customization without code, and stores report records for at least 90 days. The admin page should display today's flagged variants prominently, show sent-report history below, and make the threshold setting easily accessible. Edge cases: shops with thousands of variants (paginate the list), variants with zero inventory (always include), and location-aware stock (query the correct inventory context).\"\n}",

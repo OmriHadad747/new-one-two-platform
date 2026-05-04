@@ -19,9 +19,14 @@
       "note": "Fires when a new order is created in Shopify, delivering the order payload that seeds the local order and line-item records"
     },
     {
-      "trigger_event": "an order is updated to a cancelled or refunded state",
-      "topic": "orders/updated",
-      "note": "Fires on any order mutation including cancellation and refund state changes, allowing the system to detect terminal-state transitions and adjust stored revenue and snapshots"
+      "trigger_event": "an order is cancelled",
+      "topic": "orders/cancelled",
+      "note": "Fires only on cancellation rather than every order mutation (orders/updated would deliver noise on every edit). Payload includes cancelled_at and the final order state needed to transition the local row to cancelled and recalculate the affected daily snapshot."
+    },
+    {
+      "trigger_event": "a refund is created for an order (full or partial)",
+      "topic": "refunds/create",
+      "note": "Fires for each refund creation and includes the refund amount and parent order, which the orders/updated topic does not directly expose. The handler aggregates cumulative refunds per order: if cumulative equals gross revenue the order transitions to refunded, otherwise revenue is reduced and the order stays completed."
     }
   ],
   "unsatisfied": []

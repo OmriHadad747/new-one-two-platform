@@ -154,21 +154,56 @@ WHAT YOU OWN (HLD)
      products or repeat-customer rate is the most common version of this
      bug — both must be pre-aggregated or the scaling claim is false.
 
-  6. STATE MACHINE — business states only.
-     Declare ONLY when one or more rows in a persistence contract move
-     between distinct states over their lifetime. Otherwise null.
-       - states          : list of state names in domain terms ("pending",
-                           "sent", "failed", "skipped").
-       - initialState    : the state a fresh row starts in.
+  6. STATE MACHINE — external-state observation only.
+     Declare ONLY when the system must DETECT a change in a value that
+     comes from OUTSIDE this app — typically a Shopify enum field
+     (fulfillment_status flipping from "unfulfilled" to "fulfilled",
+     financial_status reaching "paid"). The state machine encodes the
+     last-observed external value and the transitions that trigger
+     downstream action. Otherwise null.
+
+     DO NOT use stateMachine for:
+       - Application workflow states (e.g. a job queue moving through
+         pending/running/completed/failed, a transaction moving
+         pending→credited). Those are plain DB columns updated directly
+         by the handler — declare a column with `role: "status"` on the
+         relevant persistence table and describe the lifecycle in the
+         dataFlow + capability descriptions. Leave both `stateMachine`
+         AND that table's `statusField` null. The LLD reads the dataFlow
+         and capabilities to figure out the allowed values and emits the
+         right column constraints downstream.
+         (statusField is reserved exclusively for binding a column to a
+         non-null stateMachine; using it for workflow columns will fail
+         validation.)
+       - Numeric threshold comparisons (e.g. inventory > 0). Document
+         the threshold logic in the capability description; stateMachine
+         must be null.
+
+     When non-null:
+       - states          : list of state names in domain terms — these
+                           are the values the EXTERNAL source produces
+                           (e.g. "unfulfilled", "fulfilled").
+       - initialState    : the conceptual "first known" external value
+                           (typically the value the source emits when an
+                           entity is first created).
        - terminalStates  : states from which no further transition occurs.
        - transitions     : list of { from, to, trigger } in domain terms
                            (trigger is a phrase, e.g. "delivery confirmed",
-                           "send attempt failed", not an enum value).
-       - invariants      : list of rules that MUST hold (e.g. "a row in
-                           'sent' never returns to 'pending'", "exactly
-                           one row per cart token").
+                           not an enum value).
+       - invariants      : list of rules that MUST hold (e.g. "an order
+                           in 'fulfilled' never returns to 'unfulfilled'").
      Do NOT name SQL columns, UPDATE patterns, or row-locking strategies
      here. The LLD agent owns those.
+
+     REQUIRED BINDING — a stateMachine NEVER stands alone. The
+     last-observed external value must be persisted somewhere so the
+     handler can compare the new event to it. Every stateMachine
+     declaration MUST be paired with a persistence table that:
+       - declares a status column carrying the observed value, AND
+       - binds that column via `statusField`.
+     If you cannot identify a table to bind to, you do not need a
+     stateMachine — set it to null and document the change-detection
+     intent in the relevant capability description instead.
 
   7. EXTERNAL CONTRACTS — interfaces this app exposes.
      The system's own UI surfaces (widget / admin panel) call into this

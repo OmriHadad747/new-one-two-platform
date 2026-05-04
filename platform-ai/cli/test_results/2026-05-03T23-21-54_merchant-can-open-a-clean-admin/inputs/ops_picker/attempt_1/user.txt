@@ -1,0 +1,264 @@
+Merchant request: Merchant can open a clean admin dashboard to view revenue, average order value, top products, and repeat customer rate at a glance.
+
+HLD plan (your source of truth — pick ops that satisfy each
+shopify-integration capability, and a webhook topic for each
+external-event trigger):
+{
+  "schema_version": "1",
+  "archetype": "backend+admin",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "Once per hour the scheduled job fetches all non-cancelled, non-refunded orders from Shopify for the merchant's store. It computes total revenue, average order value, repeat customer rate, and top products by revenue from the full order history. The resulting metrics are atomically written into the dashboard snapshot and top product snapshot tables, replacing any prior values for that merchant. When the merchant opens the admin panel, the frontend calls the dashboard GET endpoint, which reads directly from the pre-computed snapshot rows and returns them instantly without touching Shopify.",
+  "triggers": [
+    {
+      "kind": "schedule",
+      "cadence": "once per hour",
+      "jobPurpose": "Recompute all dashboard metrics from the full order history and refresh the persisted snapshot.",
+      "perTickWork": "The job fetches all eligible orders from Shopify, computes the four key metrics, and atomically upserts the dashboard snapshot and top product snapshot rows for the merchant, replacing the previous values.",
+      "bulkFetchRule": true
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "fetch-orders",
+      "description": "Retrieve all non-cancelled, non-refunded orders for the store including customer identity and line item revenue.",
+      "kind": "read",
+      "dataNeeds": [
+        "order identifier",
+        "order total",
+        "order status",
+        "refund status",
+        "customer identifier",
+        "line item product identifier",
+        "line item revenue"
+      ],
+      "integration": "shopify-admin"
+    },
+    {
+      "id": "compute-revenue",
+      "description": "Sum net order totals across all eligible orders to produce total revenue.",
+      "kind": "compute",
+      "dataNeeds": [
+        "order total",
+        "order status",
+        "refund status"
+      ],
+      "integration": null
+    },
+    {
+      "id": "compute-aov",
+      "description": "Divide total revenue by eligible order count to produce average order value.",
+      "kind": "compute",
+      "dataNeeds": [
+        "total revenue",
+        "eligible order count"
+      ],
+      "integration": null
+    },
+    {
+      "id": "compute-top-products",
+      "description": "Rank products by total revenue contribution across all eligible orders.",
+      "kind": "compute",
+      "dataNeeds": [
+        "line item product identifier",
+        "line item revenue"
+      ],
+      "integration": null
+    },
+    {
+      "id": "compute-repeat-customer-rate",
+      "description": "Calculate the share of customers who placed more than one eligible order across the full order history.",
+      "kind": "compute",
+      "dataNeeds": [
+        "customer identifier",
+        "order identifier"
+      ],
+      "integration": null
+    },
+    {
+      "id": "read-dashboard-snapshot",
+      "description": "Read the latest pre-computed metric snapshot for the merchant to serve the admin dashboard.",
+      "kind": "read",
+      "dataNeeds": [
+        "shop domain",
+        "total revenue",
+        "average order value",
+        "repeat customer rate",
+        "eligible order count",
+        "computed at timestamp",
+        "product external id",
+        "product name",
+        "rank position",
+        "product revenue"
+      ],
+      "integration": null
+    },
+    {
+      "id": "write-dashboard-snapshot",
+      "description": "Persist the newly computed summary metrics into the dashboard snapshot row for the merchant.",
+      "kind": "write",
+      "dataNeeds": [
+        "shop domain",
+        "total revenue",
+        "average order value",
+        "repeat customer rate",
+        "eligible order count",
+        "computed at timestamp"
+      ],
+      "integration": null
+    },
+    {
+      "id": "write-top-product-snapshot",
+      "description": "Persist the ranked product list into the top product snapshot rows for the merchant, replacing any prior entries.",
+      "kind": "write",
+      "dataNeeds": [
+        "shop domain",
+        "product external id",
+        "product name",
+        "rank position",
+        "product revenue"
+      ],
+      "integration": null
+    }
+  ],
+  "persistence": [
+    {
+      "name": "dashboard_snapshot",
+      "purpose": "Stores the most recently computed summary metrics for each merchant so the admin panel can load instantly.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "shop_domain",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies which merchant installation this snapshot belongs to"
+        },
+        {
+          "name": "total_revenue",
+          "role": "money",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "average_order_value",
+          "role": "money",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "repeat_customer_rate",
+          "role": "money",
+          "nullable": false,
+          "purpose": "ratio of customers with more than one order, stored as a decimal"
+        },
+        {
+          "name": "eligible_order_count",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "computed_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per merchant installation, keyed by shop domain \u2014 upserted on each job run",
+      "statusField": null,
+      "queryPatterns": [
+        "single row lookup by shop domain to serve the admin dashboard"
+      ]
+    },
+    {
+      "name": "top_product_snapshot",
+      "purpose": "Stores the ranked list of top products by revenue for each merchant, refreshed on every job run.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "shop_domain",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies which merchant installation these product rows belong to"
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies the product in the external catalog"
+        },
+        {
+          "name": "product_name",
+          "role": "text",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "rank_position",
+          "role": "count",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_revenue",
+          "role": "money",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "computed_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per product per merchant installation, keyed by shop domain and product external identifier \u2014 fully replaced on each job run",
+      "statusField": null,
+      "queryPatterns": [
+        "all rows for a given shop domain ordered by rank position ascending"
+      ]
+    }
+  ],
+  "stateMachine": null,
+  "externalContracts": [
+    {
+      "surface": "admin",
+      "path": "/admin/dashboard",
+      "method": "GET",
+      "purpose": "Return all pre-computed dashboard metrics and the ranked top products list for display in the admin panel.",
+      "requestShape": {
+        "limit": "count"
+      },
+      "responseShape": {
+        "total_revenue": "money",
+        "average_order_value": "money",
+        "repeat_customer_rate": "text",
+        "eligible_order_count": "count",
+        "computed_at": "timestamp",
+        "top_products": "list",
+        "top_products_count": "count"
+      }
+    }
+  ],
+  "edgeCases": [
+    "An order that was later fully refunded must be excluded from all metric computations so it does not inflate revenue or order counts.",
+    "If the full order history spans multiple pages of API results, all pages must be fetched before any metric is computed to prevent understating repeat customer rate.",
+    "A customer who placed orders under multiple identifiers (guest then account) must not be double-counted as a repeat customer if they cannot be resolved to a single identity.",
+    "If the snapshot table contains no row for a merchant \u2014 such as during the window between app installation and the first completed job run \u2014 the dashboard GET must return a zeroed seed row rather than an error; this seed row must be written immediately at install time.",
+    "If the hourly job is still running when the next scheduled tick arrives, the new instance must detect the in-progress run via a job-running flag and abort rather than allowing two concurrent computations to interleave writes to the same snapshot rows.",
+    "If Shopify returns a partial or error response during order pagination, the job must abort and retain the previous snapshot rather than overwriting it with incomplete data."
+  ]
+}
+
+Produce the ops picks as JSON conforming to the appended schema.

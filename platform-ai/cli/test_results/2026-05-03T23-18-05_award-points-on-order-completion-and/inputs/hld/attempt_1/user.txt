@@ -1,0 +1,20 @@
+Merchant request: Award points on order completion and display customer balance on product and cart pages.
+
+Product-agent intent (use as context — pick the archetype, capabilities,
+and contracts from the merchant's actual needs):
+{
+  "triggerTypes": [
+    "webhook",
+    "widget"
+  ],
+  "resources": [
+    "Order",
+    "Customer"
+  ],
+  "desiredOutcome": "Award points on order completion and display customer balance on product and cart pages.",
+  "cronHint": null,
+  "appCategory": "storefront_backend_admin",
+  "qualityBrief": "A good version tracks points per customer durably, awards them only once per order (no duplicates on order updates), and displays the balance consistently across product and cart pages. Edge case: guest checkouts should not award points. The widget should load quickly and show the correct balance even for new customers (zero points). Settings should allow the merchant to adjust the earning rate without code changes."
+}
+
+Produce the HLD plan as JSON conforming to the appended schema.

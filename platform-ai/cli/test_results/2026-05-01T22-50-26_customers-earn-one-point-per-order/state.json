@@ -36,10 +36,10 @@
       632
     ]
   },
-  "checkpoint": "done",
+  "checkpoint": "ops-picker",
   "halt_reason": null,
   "version": 1,
-  "updated_at": "2026-05-01T22:52:45",
+  "updated_at": "2026-05-03T20:33:31+00:00",
   "created_at": "2026-05-01T22:50:26",
   "plan": {
     "schema_version": "1",
@@ -47,7 +47,7 @@
     "feasibility": "feasible",
     "blockedReason": null,
     "complexity": "high",
-    "dataFlow": "When an order is completed, the system reads the order to confirm it is a non-guest, completed order and retrieves the customer identifier and completion status. If no award already exists for that order, the system appends a one-point ledger entry and increments the customer's running balance and order count; duplicate deliveries for the same order are no-ops. When a customer views their cart, the widget calls the app's balance endpoint and displays the stored point total. In the admin, a merchant lists customers sorted by points balance with pagination, and may submit a manual adjustment that appends an audited ledger entry and updates the customer's balance, subject to a non-negative balance invariant.",
+    "dataFlow": "When an order is completed, the system reads the order to confirm it is a non-guest, completed order and retrieves the customer identifier and completion status. If no award already exists for that order, the system appends a one-point ledger entry and increments the customer's running balance and order count; duplicate deliveries for the same order are no-ops. When a customer views their cart, the widget calls the app's balance endpoint and displays the stored point total. In the admin, a merchant lists customers sorted by points balance with pagination, may drill into a single customer's audit ledger to see every earn and adjustment with the responsible staff and timestamp, and may submit a manual adjustment that appends an audited ledger entry and updates the customer's balance, subject to a non-negative balance invariant.",
     "triggers": [
       {
         "kind": "external-event",
@@ -143,6 +143,23 @@
           "adjusting staff identifier",
           "adjustment timestamp",
           "updated points total"
+        ],
+        "integration": null
+      },
+      {
+        "id": "read-customer-points-ledger",
+        "description": "Return a paginated, time-ordered audit log of all points transactions (order-earned awards and manual adjustments) for a single customer so the admin can see who changed what and when, satisfying the qualityBrief audit requirement.",
+        "kind": "read",
+        "dataNeeds": [
+          "customer identifier",
+          "transaction kind",
+          "points delta",
+          "order external identifier",
+          "reason",
+          "staff identifier",
+          "transaction timestamp",
+          "page number",
+          "per-page limit"
         ],
         "integration": null
       }
@@ -254,7 +271,7 @@
         "statusField": null,
         "queryPatterns": [
           "lookup by order external identifier to enforce idempotency before awarding points",
-          "all transactions for a given customer ordered by created_at descending for audit display",
+          "all transactions for a given customer ordered by created_at descending with page-based offset for the admin audit-log view",
           "all manual-adjustment transactions filtered by staff identifier for auditing"
         ]
       }
@@ -302,6 +319,23 @@
         "responseShape": {
           "customer_identifier": "identifier",
           "updated_points_total": "count"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/customers/points/ledger",
+        "method": "GET",
+        "purpose": "Returns a paginated, time-ordered audit log of points transactions (order awards and manual adjustments) for a single customer, including who made each manual adjustment and when. Powers the audit view required by the qualityBrief; without this endpoint the audit data is captured but never surfaced to merchants.",
+        "requestShape": {
+          "customer_identifier": "identifier",
+          "page": "count",
+          "per_page": "count"
+        },
+        "responseShape": {
+          "entries": "list",
+          "total_count": "count",
+          "page": "count",
+          "per_page": "count"
         }
       }
     ],

@@ -37,6 +37,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from models.adapter import input_log
 from subagents.hld_agent.agent import HLDValidationError, run_hld_agent
+from subagents.lld_agent.agent import LLDValidationError, run_lld_agent
 from subagents.ops_picker_agent.agent import (
     OpsPickerValidationError,
     run_ops_picker_agent,
@@ -381,6 +382,75 @@ def _phase_ops_picker(
     ms = int((time.monotonic() - t0) * 1000)
     _agent_line("Ops", ok=True, ms=ms, notes=_tok_note(in_tok, out_tok))
     return picks, in_tok, out_tok
+
+
+def _phase_lld(
+    plan: Dict[str, Any],
+    ops_picks: Dict[str, Any],
+    prompt: str,
+    run_dir: Path,
+) -> Tuple[Dict[str, Any], int, int]:
+    """
+    Run the LLD agent (LLD stage 2).
+
+    Reads the HLD plan + the enriched ops-picks and emits a complete
+    `LLDPlan` (database, stateMachine, httpRoutes, capabilityRecipes,
+    etc). Pydantic validation lives inside the agent; the runner also
+    enriches recipe steps with platform-runtime examples before returning.
+
+    Returns (lld_dict, in_tokens, out_tokens).
+    """
+    from cli.chat_local import (
+        _DIM,
+        _RED,
+        _RESET,
+        _agent_line,
+        _retry_line,
+        _spinner,
+        _tok_note,
+    )
+
+    def _on_attempt_failed(attempt: int, errors: List[str]) -> None:
+        first = errors[0] if errors else "validation failed"
+        more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+        _agent_line(
+            "LLD",
+            ok=False,
+            ms=None,
+            notes=f"attempt {attempt} rejected: {first}{more}",
+        )
+        for e in errors:
+            print(f"    {_DIM}• {e}{_RESET}")
+        _retry_line("LLD", notes=f"retry attempt {attempt + 1}")
+        _spinner("LLD")
+
+    _spinner("LLD")
+    t0 = time.monotonic()
+    try:
+        with input_log("lld", run_dir):
+            lld_dict, in_tok, out_tok = run_lld_agent(
+                prompt=prompt,
+                plan=plan,
+                ops_picks=ops_picks,
+                on_attempt_failed=_on_attempt_failed,
+            )
+    except LLDValidationError as err:
+        ms = int((time.monotonic() - t0) * 1000)
+        _agent_line(
+            "LLD",
+            ok=False,
+            ms=ms,
+            notes=f"failed after {err.attempts} attempt(s)  "
+            + _tok_note(err.in_tokens, err.out_tokens),
+        )
+        print(f"\n  {_RED}LLD failed after {err.attempts} attempts:{_RESET}")
+        for e in err.errors:
+            print(f"    • {e}")
+        sys.exit(1)
+
+    ms = int((time.monotonic() - t0) * 1000)
+    _agent_line("LLD", ok=True, ms=ms, notes=_tok_note(in_tok, out_tok))
+    return lld_dict, in_tok, out_tok
 
 
 def _phase_codegen(
