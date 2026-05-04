@@ -1,9 +1,9 @@
 # Chat Local — LLD Stop
 
-**Date:** 2026-05-04 14:24:47  
+**Date:** 2026-05-04 15:15:44  
 **Status:** ✅ SUCCESS  
-**Total:** 120398ms  
-**Tokens:** in=99680 out=22413 total=122093  
+**Total:** 124722ms  
+**Tokens:** in=104213 out=22931 total=127144  
 **Prompt:** Merchant defines segmentation rules in the admin, clicks Run Now, and receives a count of newly tagged customers.
 
 ## Per-agent tokens
@@ -13,7 +13,7 @@
 | hld | 15,044 | 7,482 | 22,526 |
 | hld_v | 4,060 | 3,185 | 7,245 |
 | ops_picker | 36,395 | 598 | 36,993 |
-| lld | 44,181 | 11,148 | 55,329 |
+| lld | 48,714 | 11,666 | 60,380 |
 
 ## Intent (Product Agent)
 

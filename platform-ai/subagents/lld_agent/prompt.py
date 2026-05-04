@@ -398,6 +398,39 @@ steps of the recipe that consumes them.
   edgeCases         cap-specific scenarios this recipe handles. Reference
                      the matching `database` table or external API behavior.
 
+━━━ Bind scoping rules — read this BEFORE writing any step ━━━━━━━━━━━━━
+
+Bindings are LEXICAL. A name introduced by `bindResultTo` (or by the
+step's own implicit binding like `for_each.iterationBinding`) is only
+visible from the point of declaration to the end of the enclosing list
+of steps. Specifically:
+
+  - Recipe `inputs[].name`           visible everywhere in the recipe.
+  - `bindResultTo` at top-level      visible to every later top-level
+                                       step (and their nested children).
+  - Inside `decision.ifTrue`         visible only within ifTrue. NOT
+                                       visible after the decision, NOT
+                                       visible inside ifFalse.
+  - Inside `decision.ifFalse`        same — only within ifFalse.
+  - Inside `for_each.steps`          visible only within ONE iteration;
+                                       NOT visible after the for_each.
+                                       Use `successItemsBinding` /
+                                       `failedItemsBinding` to capture
+                                       cross-iteration accumulators.
+  - Inside `try_catch.try`           visible only within try; NOT
+                                       visible inside catch (the try's
+                                       state may be partially-completed)
+                                       or after the try_catch.
+  - Inside `try_catch.catch`         visible only within catch; NOT
+                                       visible after the try_catch.
+                                       Use `errorBinding` (default
+                                       "caughtError") to reference the
+                                       caught error inside catch.
+  - Inside `sql_transaction.steps`   visible only within the transaction.
+
+When a downstream step needs a value computed inside a branch, hoist
+the compute OUT of the branch and bind it at the outer scope first.
+
 ━━━ Step kinds - the discriminated `kind` field on each step ━━━━━━━━━━━━
 
 Every step has: `kind`, `purpose` (one phrase), `bindResultTo` (variable
@@ -520,9 +553,78 @@ decision
 
 for_each
   Loop over a collection.
-  source              bound name of the collection
-  iterationBinding    variable name each element is bound to in steps
-  steps               ordered nested steps
+  source                  bound name of the collection
+  iterationBinding        variable name each element is bound to in steps
+  steps                   ordered nested steps
+  continueOnError         bool (default false). When true, codegen wraps
+                           EACH iteration in `try { ... } catch (err) { ... }`
+                           so a single failing item does NOT abort the
+                           batch. REQUIRED whenever the body contains a
+                           shopify_mutation / email_send / email_send_batch
+                           / files_upload / fetch_external — unless every
+                           such side effect is itself wrapped in a
+                           try_catch.
+  errorBinding            optional. Name the caught per-iteration error
+                           gets bound to inside the catch wrapper
+                           (default "iterationError").
+  successItemsBinding     optional. Bound name to which codegen appends
+                           each successful iteration's id; init to [].
+                           Use to count newly-tagged items / send a
+                           "X of Y succeeded" log on completion.
+  failedItemsBinding      optional. Bound name to which codegen appends
+                           `{ item, error }` for each failed iteration;
+                           init to []. Use for partial-success reporting,
+                           failure-summary logs, sql_update of a
+                           failure_reason column.
+
+try_catch
+  Try/catch primitive. Codegen translates to
+    try { <try> } catch (err) { <catch> }
+  Use this to express failure paths that must persist a failed-state
+  row, capture an error message into a column, or fall back to an
+  alternate path. Required for any side effect whose failure must be
+  recorded somewhere (e.g. flipping a workflow row to 'failed' on a
+  Shopify call throw — see R13).
+  try                 ordered steps to attempt
+  catch               ordered steps to run when try throws (use the
+                       errorBinding to read err.message into compute /
+                       sql_update bindings)
+  errorBinding        name the caught error is bound to (default
+                       "caughtError"). Inside catch, reference
+                       e.g. `${errorBinding}.message` in a compute or
+                       sql_update binding to persist the failure_reason.
+
+enqueue
+  Push a job onto the tenant's `cron_queue` for asynchronous processing.
+  Use this from an HTTP route to break the request → background-work
+  boundary: the route synchronously inserts a row + enqueues + returns
+  202; a cron recipe handles the long work without an HTTP timeout.
+  jobName             must match the suffix of a triggeredBy
+                       "cron:<jobName>" recipe declared in this plan
+  payload             { key: "$bindName" | constant } — the JSON object
+                       the cron recipe will receive as `cron.payload`.
+                       The receiving cron recipe declares matching
+                       `inputs[]` with source="cron.payload".
+  dedupKey            optional but REQUIRED whenever this recipe contains
+                       a sql_insert with `bindResultTo` BEFORE the enqueue
+                       (the canonical HTTP-route pattern). Set to
+                       "$<insertedRow>[0].id" so a retried request
+                       (double-click on Run Now, network blip on the POST)
+                       collapses into a single pending job instead of
+                       creating N parallel duplicates. The platform's
+                       enqueueJob helper deduplicates on (jobName,
+                       dedupKey) while a prior row is still pending /
+                       processing — once that row finishes, a fresh
+                       enqueue with the same dedupKey is allowed again.
+                       Webhook / cron recipes that enqueue without a
+                       preceding insert may omit dedupKey.
+
+  Pattern for "long work that returns immediately":
+    1. sql_insert    record the request (status='pending'), bindResultTo: "newRow"
+    2. enqueue       jobName + payload (run id) + dedupKey="$newRow[0].id"
+    3. response      status=202, body={record_id, status}
+  The cron recipe then processes asynchronously and updates the record
+  to running/completed/failed via the workflow stateMachine.
 
 email_send
   Single email via platform.email.send.
@@ -639,6 +741,42 @@ return
       ID values as strings, postgres.js returns BIGINT columns as
       strings, but mixing native numbers with string keys causes silent
       lookup misses.
+
+  R13. Failure-state transitions declared in stateMachine MUST be
+      implemented as concrete sql_update steps. If
+      `stateMachine.transitions[].to` includes a state whose name
+      contains "fail" / "cancel" / "error" / "reject", at least ONE
+      recipe driving that lifecycle MUST contain an `sql_update`
+      template that flips the column to that state — typically inside
+      a `try_catch.catch` arm wrapped around the failure-prone steps.
+      Putting the failure semantics only in `platformGaps` prose is
+      INSUFFICIENT and is rejected by the validator: an exception
+      mid-recipe would otherwise leave the row stuck in the prior
+      state forever. Capture `${errorBinding}.message` (or a domain-
+      specific reason) and persist it into a `failure_reason` column.
+
+  R14. Per-item side effects inside `for_each` MUST be guarded against
+      partial failure. When the body contains a shopify_mutation,
+      email_send, email_send_batch, files_upload, or fetch_external
+      step, EITHER:
+        (a) set `for_each.continueOnError: true` (codegen wraps each
+            iteration in try/catch automatically), OR
+        (b) wrap the side effect inside a `try_catch` step.
+      Also declare `failedItemsBinding` so the recipe records which
+      items failed and can summarise the partial-success outcome in a
+      sql_update / log / response on completion.
+
+  R15. Long work belongs in cron, not the HTTP request. When an HTTP
+      recipe (widget: / admin:) would synchronously do EITHER of:
+        - `shopify_query` with paginationStrategy != "single", OR
+        - `for_each` whose body contains any side-effect step
+      the recipe MUST instead use the enqueue pattern: write a pending
+      row, `enqueue` a cron job with the row id, return 202. A cron
+      recipe (triggeredBy: "cron:<jobName>") performs the long work
+      asynchronously and updates the row through the workflow
+      stateMachine. Synchronous HTTP routes must complete in <2s of
+      compute; anything beyond that exceeds Cloud Run / Shopify
+      webhook timeouts at scale.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 6. widgetTargetTemplates

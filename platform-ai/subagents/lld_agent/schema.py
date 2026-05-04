@@ -474,6 +474,76 @@ class ForEachStep(_StepBase):
     source: str = Field(min_length=1)  # bound name of collection
     iterationBinding: str = Field(min_length=1)
     steps: list["RecipeStep"] = Field(min_length=1)
+    # When true, the codegen wraps each iteration in `try { ... } catch (err) { ... }`
+    # so a single failing item does NOT abort the rest of the batch. The
+    # caught error is bound to `errorBinding` (default: "iterationError")
+    # for the caller's continue-handling logic. Use this for any for_each
+    # whose body has a side-effect step (shopify_mutation, email_send,
+    # email_send_batch, files_upload, fetch_external) — without it, one
+    # throw kills the whole loop.
+    continueOnError: bool = False
+    errorBinding: Optional[str] = None
+    # Optional bound name where successful-item ids accumulate; codegen
+    # initialises it to []. Useful for partial-success reporting.
+    successItemsBinding: Optional[str] = None
+    # Optional bound name where failed-item descriptors accumulate; codegen
+    # initialises it to []. Each entry is `{ item, error }`. Useful for
+    # the recipe's failure-summary log / response.
+    failedItemsBinding: Optional[str] = None
+
+
+class TryCatchStep(_StepBase):
+    """
+    Try/catch primitive — gives the LLD a way to express failure paths
+    that previously could only be hinted at in prose. Codegen translates
+    to `try { <try> } catch (err) { <catch> }`. The `errorBinding` (default
+    "caughtError") names the JS error so catch-body steps can reference
+    `errorBinding.message` in compute / sql_update bindings (e.g. to
+    persist a failure_reason).
+
+    Required for any side-effect that has a meaningful failure path
+    (e.g. flipping a workflow row to 'failed' on a Shopify call throw).
+    """
+
+    kind: Literal["try_catch"]
+    try_: list["RecipeStep"] = Field(alias="try", min_length=1)
+    catch: list["RecipeStep"] = Field(min_length=1)
+    errorBinding: str = "caughtError"
+
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+
+
+class EnqueueStep(_StepBase):
+    """
+    Push a row onto the tenant's `cron_queue` so a cron recipe can pick
+    it up asynchronously. The HTTP-route pattern is:
+
+        sql_insert (record the request)        ← bindResultTo: "newRow"
+        enqueue   (push job, dedupKey=$newRow[0].id)
+        response  (status=202, return the new record id)
+
+    The cron recipe handles the long work (bulk-fetch, per-item Shopify
+    mutation, etc.) without an HTTP timeout window.
+
+    `jobName` MUST match a `triggeredBy: "cron:<jobName>"` recipe — the
+    cross-validator on `LLDPlan` enforces this so enqueue calls can never
+    target a non-existent job.
+
+    `dedupKey` (optional) collapses concurrent enqueues of the same logical
+    job. While a prior row with the same (jobName, dedupKey) is still
+    pending or processing, a second enqueue is a silent no-op. Use the
+    just-inserted parent record's id to make the route idempotent under
+    client retry / double-click. The cross-validator
+    `_enqueue_after_sql_insert_requires_dedup_key` REQUIRES a dedupKey
+    whenever this recipe contains a sql_insert with `bindResultTo` before
+    the enqueue (otherwise a retried POST would create N parallel pending
+    jobs for the same logical request).
+    """
+
+    kind: Literal["enqueue"]
+    jobName: str = Field(min_length=1)
+    payload: dict[str, str] = Field(default_factory=dict)  # key → "$bind" or constant
+    dedupKey: Optional[str] = None  # "$bindName" referencing an upstream id
 
 
 class EmailSendStep(_StepBase):
@@ -555,6 +625,8 @@ RecipeStep = Annotated[
         ComputeStep,
         DecisionStep,
         ForEachStep,
+        TryCatchStep,
+        EnqueueStep,
         EmailSendStep,
         EmailSendBatchStep,
         FilesUploadStep,
@@ -570,6 +642,7 @@ RecipeStep = Annotated[
 SqlTransactionStep.model_rebuild()
 DecisionStep.model_rebuild()
 ForEachStep.model_rebuild()
+TryCatchStep.model_rebuild()
 
 
 # ── 5. capabilityRecipes — recipe + triggeredBy validation ───────────────────
@@ -632,7 +705,7 @@ class CapabilityRecipe(_StrictModel):
 
 
 def _contains_response(steps: list) -> bool:
-    """True if any step (including nested decision/for_each/transaction) is a response."""
+    """True if any step (including nested decision/for_each/transaction/try_catch) is a response."""
     for s in steps:
         if isinstance(s, ResponseStep):
             return True
@@ -646,6 +719,9 @@ def _contains_response(steps: list) -> bool:
                 return True
         elif isinstance(s, SqlTransactionStep):
             if _contains_response(list(s.steps)):
+                return True
+        elif isinstance(s, TryCatchStep):
+            if _contains_response(list(s.try_)) or _contains_response(list(s.catch)):
                 return True
     return False
 
@@ -818,20 +894,197 @@ class LLDPlan(_StrictModel):
         return self
 
     @model_validator(mode="after")
-    def _cron_recipes_match_schedule(self) -> "LLDPlan":
-        """A cronSchedule requires at least one cron:* recipe; absent cronSchedule forbids any."""
+    def _cron_recipes_match_schedule_or_enqueue(self) -> "LLDPlan":
+        """
+        Every cron:<jobName> recipe must be triggered by something — either
+        the periodic `cronSchedule`, or at least one `enqueue` step in another
+        recipe targeting that jobName. A cron recipe with neither is
+        unreachable.
+
+        Conversely: if `cronSchedule` is set, at least one cron:* recipe must
+        exist for the scheduler to dispatch to.
+        """
         triggers = {r.triggeredBy for r in self.capabilityRecipes.values()}
         cron_recipes = [t for t in triggers if t.startswith("cron:")]
-        if self.shopifyIntegration.cronSchedule is None and cron_recipes:
-            raise ValueError(
-                "capabilityRecipes contains cron:* recipe(s) "
-                f"{sorted(cron_recipes)} but shopifyIntegration.cronSchedule is null"
-            )
+        cron_job_names = {t[len("cron:") :] for t in cron_recipes}
+
+        # Schedule set but no cron recipe → orphan schedule.
         if self.shopifyIntegration.cronSchedule is not None and not cron_recipes:
             raise ValueError(
                 "shopifyIntegration.cronSchedule is set but no capabilityRecipes "
                 "entry has triggeredBy='cron:<jobName>'"
             )
+
+        # Each cron recipe must be reachable: scheduled or enqueued from
+        # somewhere. Skipped when cronSchedule is set (every cron job is
+        # then potentially scheduled — we don't try to map schedule to a
+        # specific job here; that's an LLM-level concern).
+        if self.shopifyIntegration.cronSchedule is None and cron_recipes:
+            enqueue_targets = _collect_enqueue_targets(self.capabilityRecipes)
+            unreachable = sorted(cron_job_names - enqueue_targets)
+            if unreachable:
+                raise ValueError(
+                    f"cron:<jobName> recipe(s) {unreachable} are unreachable: "
+                    "shopifyIntegration.cronSchedule is null AND no other "
+                    "recipe has an `enqueue` step targeting them"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _enqueue_targets_exist(self) -> "LLDPlan":
+        """Every `enqueue.jobName` must match a cron:<jobName> recipe."""
+        cron_job_names = {
+            r.triggeredBy[len("cron:") :]
+            for r in self.capabilityRecipes.values()
+            if r.triggeredBy.startswith("cron:")
+        }
+        for rid, recipe in self.capabilityRecipes.items():
+            for step in _collect_enqueue_steps(list(recipe.steps)):
+                if step.jobName not in cron_job_names:
+                    raise ValueError(
+                        f"recipe '{rid}' enqueue step targets jobName "
+                        f"'{step.jobName}' but no capabilityRecipes entry has "
+                        f"triggeredBy='cron:{step.jobName}'"
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _enqueue_after_sql_insert_requires_dedup_key(self) -> "LLDPlan":
+        """
+        Idempotency on retry: when a recipe inserts a row AND THEN enqueues
+        a job, the enqueue MUST carry a `dedupKey`. Otherwise a client
+        retry (double-click on "Run now", network blip on the POST) will
+        create N parallel pending jobs for the same logical request.
+
+        The rule fires when, in the same step list (or branch / loop body /
+        try arm), an `enqueue` is preceded by at least one `sql_insert`
+        with a `bindResultTo` that the enqueue could reasonably reference.
+        We don't require the dedupKey to actually equal the inserted id —
+        the model picks an appropriate id; we only require SOMETHING.
+
+        Webhook handlers + cron recipes can still enqueue without a
+        dedupKey when no upstream insert is present (e.g. a webhook that
+        just kicks off a fresh job per delivery).
+        """
+        for rid, recipe in self.capabilityRecipes.items():
+            errors = _check_enqueue_dedup(list(recipe.steps), inserted=False)
+            if errors:
+                # Surface the first violation; the rest will surface on the
+                # next attempt if the model fixes only the first.
+                raise ValueError(
+                    f"recipe '{rid}' enqueue step is preceded by a "
+                    "sql_insert with bindResultTo but has no dedupKey — "
+                    "set dedupKey to '$<insertedRow>[0].id' (or another "
+                    "stable identifier) so a retried request collapses "
+                    "into a single pending job. Without it, double-clicks "
+                    "and client retries create duplicate parallel jobs."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _http_response_subset_of_route_shape(self) -> "LLDPlan":
+        """
+        For each HTTP recipe, every reachable `response` step with status in
+        [200, 300) must have a body whose top-level keys are a SUBSET of the
+        route's responseShape keys. Catches silent contract drift between
+        httpRoutes and capabilityRecipes (typo'd field names, fields the
+        widget/admin caller would never see).
+
+        Subset (not equality) so the recipe may legitimately omit optional
+        fields. Error responses (4xx/5xx) are exempt — those typically carry
+        a `{ error: "..." }` shape that doesn't match the success shape.
+        """
+        # Build (surface, path) -> shape-keys index.
+        route_shapes: dict[tuple[str, str], set[str]] = {}
+        for r in self.httpRoutes.widget:
+            route_shapes[("widget", r.path)] = set(r.responseShape.keys())
+        for r in self.httpRoutes.admin:
+            route_shapes[("admin", r.path)] = set(r.responseShape.keys())
+
+        for rid, recipe in self.capabilityRecipes.items():
+            tb = recipe.triggeredBy
+            if not (tb.startswith("widget:") or tb.startswith("admin:")):
+                continue
+            surface, _, path = tb.partition(":")
+            shape_keys = route_shapes.get((surface, path))
+            if shape_keys is None:
+                continue  # route-coverage validator already catches this
+            for resp in _collect_response_steps(list(recipe.steps)):
+                if resp.body is None:
+                    continue
+                if not (200 <= resp.status < 300):
+                    continue
+                body_keys = set(resp.body.keys())
+                extra = body_keys - shape_keys
+                if extra:
+                    raise ValueError(
+                        f"recipe '{rid}' response (status={resp.status}) "
+                        f"body has keys {sorted(extra)} not declared in "
+                        f"httpRoutes.{surface} '{path}' responseShape "
+                        f"(declared keys: {sorted(shape_keys)})"
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _for_each_side_effect_requires_continue_on_error(self) -> "LLDPlan":
+        """
+        A `for_each` whose body contains a side-effect step (shopify_mutation,
+        email_send, email_send_batch, files_upload, fetch_external) MUST
+        either set `continueOnError: true` OR wrap the side effect in a
+        `try_catch`. Otherwise one item's failure aborts the whole batch
+        with no recovery.
+        """
+        for rid, recipe in self.capabilityRecipes.items():
+            for fe in _collect_for_each_steps(list(recipe.steps)):
+                body = list(fe.steps)
+                # If the for_each itself opts in via continueOnError, OK.
+                if fe.continueOnError:
+                    continue
+                # If every side-effect step in the body is wrapped in a
+                # try_catch, OK.
+                if not _has_unguarded_side_effect(body):
+                    continue
+                raise ValueError(
+                    f"recipe '{rid}' for_each '{fe.purpose}' contains a "
+                    "side-effect step (shopify_mutation / email_send / "
+                    "email_send_batch / files_upload / fetch_external) but "
+                    "neither sets `continueOnError: true` nor wraps the "
+                    "side effect in a `try_catch`. One item's failure would "
+                    "abort the whole batch with no recovery."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _state_machine_failure_path_implemented(self) -> "LLDPlan":
+        """
+        If `stateMachine` declares a transition into a failure state
+        (target name contains 'fail', 'cancel', 'error', or 'reject'),
+        at least one recipe driving the lifecycle MUST contain an
+        `sql_update` whose template flips the column to that state.
+        Putting failure semantics only in `platformGaps` prose silently
+        leaves orphan rows in the prior state forever.
+        """
+        sm = self.stateMachine
+        if sm is None:
+            return self
+        failure_states = {
+            t.to
+            for t in sm.transitions
+            if any(tag in t.to.lower() for tag in ("fail", "cancel", "error", "reject"))
+        }
+        if not failure_states:
+            return self
+        for fs in failure_states:
+            if not _any_recipe_writes_status(
+                self.capabilityRecipes, sm.column, fs
+            ):
+                raise ValueError(
+                    f"stateMachine declares a transition to failure state "
+                    f"'{fs}' on '{sm.table}.{sm.column}' but no recipe has "
+                    f"an sql_update template setting {sm.column}='{fs}'. "
+                    "Wrap the failure-prone steps in a try_catch and emit the "
+                    "sql_update inside the catch branch."
+                )
         return self
 
     @model_validator(mode="after")
@@ -881,11 +1134,18 @@ def _contains_email(steps: list) -> bool:
         elif isinstance(s, SqlTransactionStep):
             if _contains_email(list(s.steps)):
                 return True
+        elif isinstance(s, TryCatchStep):
+            if _contains_email(list(s.try_)) or _contains_email(list(s.catch)):
+                return True
     return False
 
 
 def _collect_email_data_keys(steps: list) -> list[list[str]]:
-    """Return a list of dataKeys lists, one per email_send step encountered."""
+    """Return a list of dataKeys lists, one per email_send step encountered.
+
+    Recurses into every nested step container (decision/for_each/transaction/
+    try_catch). Used by the emailSpec.dataKeys cross-validator.
+    """
     out: list[list[str]] = []
     for s in steps:
         if isinstance(s, EmailSendStep):
@@ -895,6 +1155,199 @@ def _collect_email_data_keys(steps: list) -> list[list[str]]:
             out.extend(_collect_email_data_keys(list(s.ifFalse)))
         elif isinstance(s, ForEachStep):
             out.extend(_collect_email_data_keys(list(s.steps)))
+        elif isinstance(s, TryCatchStep):
+            out.extend(_collect_email_data_keys(list(s.try_)))
+            out.extend(_collect_email_data_keys(list(s.catch)))
         elif isinstance(s, SqlTransactionStep):
             out.extend(_collect_email_data_keys(list(s.steps)))
     return out
+
+
+# ── Walkers used by the new LLDPlan cross-validators ────────────────────────
+
+
+_SIDE_EFFECT_KINDS = (
+    ShopifyMutationStep,
+    EmailSendStep,
+    EmailSendBatchStep,
+    FilesUploadStep,
+    FetchExternalStep,
+)
+
+
+def _collect_enqueue_steps(steps: list) -> list["EnqueueStep"]:
+    """All EnqueueStep instances in `steps`, recursing into containers."""
+    out: list[EnqueueStep] = []
+    for s in steps:
+        if isinstance(s, EnqueueStep):
+            out.append(s)
+        elif isinstance(s, DecisionStep):
+            out.extend(_collect_enqueue_steps(list(s.ifTrue)))
+            out.extend(_collect_enqueue_steps(list(s.ifFalse)))
+        elif isinstance(s, ForEachStep):
+            out.extend(_collect_enqueue_steps(list(s.steps)))
+        elif isinstance(s, SqlTransactionStep):
+            out.extend(_collect_enqueue_steps(list(s.steps)))
+        elif isinstance(s, TryCatchStep):
+            out.extend(_collect_enqueue_steps(list(s.try_)))
+            out.extend(_collect_enqueue_steps(list(s.catch)))
+    return out
+
+
+def _collect_enqueue_targets(recipes: Dict[str, "CapabilityRecipe"]) -> set[str]:
+    """Flatten every recipe's enqueue.jobName values into one set."""
+    targets: set[str] = set()
+    for r in recipes.values():
+        for step in _collect_enqueue_steps(list(r.steps)):
+            targets.add(step.jobName)
+    return targets
+
+
+def _collect_response_steps(steps: list) -> list["ResponseStep"]:
+    out: list[ResponseStep] = []
+    for s in steps:
+        if isinstance(s, ResponseStep):
+            out.append(s)
+        elif isinstance(s, DecisionStep):
+            out.extend(_collect_response_steps(list(s.ifTrue)))
+            out.extend(_collect_response_steps(list(s.ifFalse)))
+        elif isinstance(s, ForEachStep):
+            out.extend(_collect_response_steps(list(s.steps)))
+        elif isinstance(s, SqlTransactionStep):
+            out.extend(_collect_response_steps(list(s.steps)))
+        elif isinstance(s, TryCatchStep):
+            out.extend(_collect_response_steps(list(s.try_)))
+            out.extend(_collect_response_steps(list(s.catch)))
+    return out
+
+
+def _collect_for_each_steps(steps: list) -> list["ForEachStep"]:
+    out: list[ForEachStep] = []
+    for s in steps:
+        if isinstance(s, ForEachStep):
+            out.append(s)
+            out.extend(_collect_for_each_steps(list(s.steps)))
+        elif isinstance(s, DecisionStep):
+            out.extend(_collect_for_each_steps(list(s.ifTrue)))
+            out.extend(_collect_for_each_steps(list(s.ifFalse)))
+        elif isinstance(s, SqlTransactionStep):
+            out.extend(_collect_for_each_steps(list(s.steps)))
+        elif isinstance(s, TryCatchStep):
+            out.extend(_collect_for_each_steps(list(s.try_)))
+            out.extend(_collect_for_each_steps(list(s.catch)))
+    return out
+
+
+def _has_unguarded_side_effect(steps: list) -> bool:
+    """
+    True when any side-effect step appears in `steps` (or in nested
+    decision / for_each / sql_transaction containers) WITHOUT being inside
+    a try_catch's `try_` arm. A try_catch arm fully shields the body from
+    aborting the enclosing for_each, so we treat anything inside `try_` as
+    guarded.
+    """
+    for s in steps:
+        if isinstance(s, _SIDE_EFFECT_KINDS):
+            return True
+        if isinstance(s, TryCatchStep):
+            # try_ body is guarded; catch body is the recovery path. Don't
+            # recurse into try_ (its side effects don't propagate up). Do
+            # recurse into catch — a side effect there IS unguarded.
+            if _has_unguarded_side_effect(list(s.catch)):
+                return True
+        elif isinstance(s, DecisionStep):
+            if _has_unguarded_side_effect(list(s.ifTrue)) or _has_unguarded_side_effect(
+                list(s.ifFalse)
+            ):
+                return True
+        elif isinstance(s, ForEachStep):
+            # Nested for_each: its own continueOnError / try_catch is checked
+            # by the outer validator; we still propagate "has side effect" up.
+            if _has_unguarded_side_effect(list(s.steps)):
+                return True
+        elif isinstance(s, SqlTransactionStep):
+            if _has_unguarded_side_effect(list(s.steps)):
+                return True
+    return False
+
+
+def _any_recipe_writes_status(
+    recipes: Dict[str, "CapabilityRecipe"], column: str, value: str
+) -> bool:
+    """
+    True if any sql_update / sql_claim template in any recipe (recursing
+    into nested containers) writes `<column>='<value>'`. Tolerant of
+    surrounding whitespace and double-quoted column names.
+    """
+    import re as _re
+
+    # Match: <col>=<value> or <col> = '<value>', allowing quotes around col.
+    pattern = _re.compile(
+        rf"""\b{_re.escape(column)}\b\s*=\s*'{_re.escape(value)}'""",
+        _re.IGNORECASE,
+    )
+
+    def _scan(steps: list) -> bool:
+        for s in steps:
+            if isinstance(s, (SqlUpdateStep, SqlClaimStep, SqlUpsertStep)):
+                if pattern.search(s.template):
+                    return True
+            if isinstance(s, DecisionStep):
+                if _scan(list(s.ifTrue)) or _scan(list(s.ifFalse)):
+                    return True
+            elif isinstance(s, ForEachStep):
+                if _scan(list(s.steps)):
+                    return True
+            elif isinstance(s, SqlTransactionStep):
+                if _scan(list(s.steps)):
+                    return True
+            elif isinstance(s, TryCatchStep):
+                if _scan(list(s.try_)) or _scan(list(s.catch)):
+                    return True
+        return False
+
+    return any(_scan(list(r.steps)) for r in recipes.values())
+
+
+def _check_enqueue_dedup(steps: list, inserted: bool) -> bool:
+    """
+    Walk `steps` in order. Track whether a sql_insert with bindResultTo has
+    been seen at this scope (or inherited from an enclosing scope via
+    `inserted`). Return True if we encounter an `enqueue` step without
+    `dedupKey` while `inserted` is True.
+
+    Recurses into containers, propagating the `inserted` flag DOWN
+    (something inserted at the outer scope is still in scope inside the
+    branch). Branch-local inserts only count for that branch.
+    """
+    saw_insert = inserted
+    for s in steps:
+        if isinstance(s, SqlInsertStep):
+            if s.bindResultTo:
+                saw_insert = True
+            continue
+        if isinstance(s, EnqueueStep):
+            if saw_insert and not s.dedupKey:
+                return True
+            continue
+        if isinstance(s, DecisionStep):
+            if _check_enqueue_dedup(list(s.ifTrue), saw_insert):
+                return True
+            if _check_enqueue_dedup(list(s.ifFalse), saw_insert):
+                return True
+            continue
+        if isinstance(s, ForEachStep):
+            if _check_enqueue_dedup(list(s.steps), saw_insert):
+                return True
+            continue
+        if isinstance(s, SqlTransactionStep):
+            if _check_enqueue_dedup(list(s.steps), saw_insert):
+                return True
+            continue
+        if isinstance(s, TryCatchStep):
+            if _check_enqueue_dedup(list(s.try_), saw_insert):
+                return True
+            if _check_enqueue_dedup(list(s.catch), saw_insert):
+                return True
+            continue
+    return False

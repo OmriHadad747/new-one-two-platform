@@ -283,3 +283,9 @@ def _walk_steps(steps: List[Dict[str, Any]], op_surface: Dict[str, str]) -> None
             _walk_steps(step.get("steps") or [], op_surface)
         elif kind == "sql_transaction":
             _walk_steps(step.get("steps") or [], op_surface)
+        elif kind == "try_catch":
+            # Wire-format key is "try" (alias); Pydantic dump uses "try" via
+            # by_alias=True. Fall back to "try_" defensively in case the
+            # caller passed a non-aliased dump.
+            _walk_steps(step.get("try") or step.get("try_") or [], op_surface)
+            _walk_steps(step.get("catch") or [], op_surface)

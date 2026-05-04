@@ -1,0 +1,1116 @@
+```json
+{
+  "schema_version": "1",
+  "shopifyIntegration": {
+    "webhookTopics": [],
+    "cronSchedule": null,
+    "bulkFetchRequired": false
+  },
+  "database": {
+    "tables": [
+      {
+        "name": "segmentation_rules",
+        "purpose": "Stores each merchant-defined segmentation rule with its conditions, target tag, and a version counter incremented on every edit.",
+        "singleton": false,
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "name",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "conditions",
+            "sqlType": "JSONB",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "Structured representation of all conditions (spend threshold, order count threshold, country filter)"
+          },
+          {
+            "name": "target_tag",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "The Shopify customer tag this rule applies when a customer matches"
+          },
+          {
+            "name": "version",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 1",
+            "enum": null,
+            "purpose": "Monotonically incremented each time the rule is edited, used to audit which version was applied in a run"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "updated_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "enum": null,
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": null,
+        "indexes": ["updated_at"],
+        "foreignKeys": []
+      },
+      {
+        "name": "rule_runs",
+        "purpose": "Tracks every execution of a segmentation rule, recording its lifecycle state, the rule version applied, and the outcome summary.",
+        "singleton": false,
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "rule_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES segmentation_rules(id) ON DELETE CASCADE",
+            "enum": null,
+            "purpose": "The segmentation rule this run belongs to"
+          },
+          {
+            "name": "rule_version_snapshot",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "The rule version number at the moment the run was triggered, enabling audit of which logic was applied"
+          },
+          {
+            "name": "status",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT 'pending'",
+            "enum": ["pending", "running", "completed", "failed"],
+            "purpose": null
+          },
+          {
+            "name": "newly_tagged_count",
+            "sqlType": "INTEGER",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "Number of customers that were newly tagged during this run; null until the run completes"
+          },
+          {
+            "name": "failure_reason",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "Human-readable reason the run failed; null for successful runs"
+          },
+          {
+            "name": "started_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "completed_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": null,
+        "indexes": ["rule_id", "status", "started_at", "rule_id,started_at"],
+        "foreignKeys": [
+          {
+            "column": "rule_id",
+            "references": "segmentation_rules(id)",
+            "onDelete": "CASCADE"
+          }
+        ]
+      }
+    ]
+  },
+  "stateMachine": {
+    "kind": "workflow",
+    "table": "rule_runs",
+    "column": "status",
+    "states": ["pending", "running", "completed", "failed"],
+    "initialState": "pending",
+    "terminalStates": ["completed", "failed"],
+    "unknownSentinel": "null",
+    "skipWhenUnknown": false,
+    "transitions": [
+      {
+        "from": "pending",
+        "to": "running",
+        "trigger": "processing begins after run record is created",
+        "action": "sql_update status to running and record started_at"
+      },
+      {
+        "from": "running",
+        "to": "completed",
+        "trigger": "all matching customers successfully tagged and count recorded",
+        "action": "sql_update status to completed with newly_tagged_count and completed_at"
+      },
+      {
+        "from": "running",
+        "to": "failed",
+        "trigger": "an unrecoverable error occurs during customer fetch or tag application",
+        "action": "sql_update status to failed with failure_reason and completed_at"
+      }
+    ]
+  },
+  "httpRoutes": {
+    "widget": [],
+    "admin": [
+      {
+        "path": "/admin/rules",
+        "method": "GET",
+        "purpose": "Return a paginated list of all segmentation rules ordered by most recently updated first.",
+        "requestShape": {
+          "page": "number",
+          "page_size": "number"
+        },
+        "responseShape": {
+          "items": "{ id: string, name: string, conditions: object, target_tag: string, version: number, created_at: string, updated_at: string }[]",
+          "total": "number",
+          "page": "number",
+          "page_size": "number"
+        },
+        "paginationKind": "offset"
+      },
+      {
+        "path": "/admin/rules/create",
+        "method": "POST",
+        "purpose": "Create a new segmentation rule with the given name, conditions, and target tag.",
+        "requestShape": {
+          "name": "string",
+          "conditions": "{ minSpendCents?: number, minOrderCount?: number, countryCodes?: string[] }",
+          "target_tag": "string"
+        },
+        "responseShape": {
+          "rule_id": "string",
+          "version": "number"
+        },
+        "paginationKind": null
+      },
+      {
+        "path": "/admin/rules/update",
+        "method": "POST",
+        "purpose": "Overwrite an existing segmentation rule's name, conditions, or target tag and increment its version.",
+        "requestShape": {
+          "rule_id": "string",
+          "name": "string",
+          "conditions": "{ minSpendCents?: number, minOrderCount?: number, countryCodes?: string[] }",
+          "target_tag": "string"
+        },
+        "responseShape": {
+          "rule_id": "string",
+          "version": "number"
+        },
+        "paginationKind": null
+      },
+      {
+        "path": "/admin/rules/remove",
+        "method": "POST",
+        "purpose": "Delete a segmentation rule so it can no longer be run.",
+        "requestShape": {
+          "rule_id": "string"
+        },
+        "responseShape": {
+          "deleted": "boolean"
+        },
+        "paginationKind": null
+      },
+      {
+        "path": "/admin/runs/start",
+        "method": "POST",
+        "purpose": "Trigger an immediate execution of a segmentation rule; inserts a pending run record, enqueues the processing job, and returns immediately.",
+        "requestShape": {
+          "rule_id": "string"
+        },
+        "responseShape": {
+          "run_id": "string",
+          "status": "string"
+        },
+        "paginationKind": null
+      },
+      {
+        "path": "/admin/runs/status",
+        "method": "GET",
+        "purpose": "Return the current status and result summary of a specific run for polling.",
+        "requestShape": {
+          "run_id": "string"
+        },
+        "responseShape": {
+          "status": "string",
+          "newly_tagged_count": "number|null",
+          "failure_reason": "string|null",
+          "completed_at": "string|null"
+        },
+        "paginationKind": null
+      },
+      {
+        "path": "/admin/runs/list",
+        "method": "GET",
+        "purpose": "Return a paginated history of executions for a given rule ordered most recent first.",
+        "requestShape": {
+          "rule_id": "string",
+          "page": "number",
+          "page_size": "number"
+        },
+        "responseShape": {
+          "items": "{ id: string, rule_id: string, rule_version_snapshot: number, status: string, newly_tagged_count: number|null, failure_reason: string|null, started_at: string, completed_at: string|null }[]",
+          "total": "number",
+          "page": "number",
+          "page_size": "number"
+        },
+        "paginationKind": "offset"
+      }
+    ]
+  },
+  "capabilityRecipes": {
+    "list_rules": {
+      "triggeredBy": "admin:/admin/rules",
+      "description": "Return a paginated list of segmentation rules ordered by updated_at descending.",
+      "inputs": [
+        {
+          "name": "page",
+          "source": "request.query",
+          "fieldPath": "page",
+          "type": "number",
+          "nullable": false
+        },
+        {
+          "name": "pageSize",
+          "source": "request.query",
+          "fieldPath": "page_size",
+          "type": "number",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "compute",
+          "purpose": "Clamp page to minimum 1 and page_size to 1-100 range",
+          "bindResultTo": "safePage",
+          "expression": "Math.max(1, Number(page) || 1)"
+        },
+        {
+          "kind": "compute",
+          "purpose": "Compute safe page size",
+          "bindResultTo": "safePageSize",
+          "expression": "Math.min(100, Math.max(1, Number(pageSize) || 20))"
+        },
+        {
+          "kind": "compute",
+          "purpose": "Compute SQL offset",
+          "bindResultTo": "offset",
+          "expression": "(safePage - 1) * safePageSize"
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "Count total segmentation rules",
+          "bindResultTo": "countResult",
+          "template": "SELECT COUNT(*)::integer AS total FROM segmentation_rules",
+          "bindings": []
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "Fetch paginated rules ordered by updated_at descending",
+          "bindResultTo": "rules",
+          "template": "SELECT id, name, conditions, target_tag, version, created_at, updated_at FROM segmentation_rules ORDER BY updated_at DESC LIMIT ${safePageSize} OFFSET ${offset}",
+          "bindings": [
+            { "name": "safePageSize", "source": "safePageSize" },
+            { "name": "offset", "source": "offset" }
+          ]
+        },
+        {
+          "kind": "response",
+          "purpose": "Return paginated rules list",
+          "status": 200,
+          "body": {
+            "items": "$rules",
+            "total": "$countResult[0].total",
+            "page": "$safePage",
+            "page_size": "$safePageSize"
+          }
+        }
+      ],
+      "postconditions": [
+        "Response contains rules ordered by updated_at descending with correct total count and pagination metadata."
+      ],
+      "edgeCases": [
+        "If no rules exist the items array is empty and total is 0."
+      ]
+    },
+    "create_rule": {
+      "triggeredBy": "admin:/admin/rules/create",
+      "description": "Persist a new segmentation rule and return its generated id and initial version.",
+      "inputs": [
+        {
+          "name": "name",
+          "source": "request.body",
+          "fieldPath": "name",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "conditions",
+          "source": "request.body",
+          "fieldPath": "conditions",
+          "type": "object",
+          "nullable": false
+        },
+        {
+          "name": "targetTag",
+          "source": "request.body",
+          "fieldPath": "target_tag",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "Validate required fields are non-empty strings",
+          "condition": "typeof name !== 'string' || name.trim().length === 0 || typeof targetTag !== 'string' || targetTag.trim().length === 0 || typeof conditions !== 'object' || conditions === null",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "Return 400 for invalid input",
+              "status": 400,
+              "body": { "error": "name, conditions, and target_tag are required" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "Sanitize name to remove null bytes",
+          "bindResultTo": "safeName",
+          "expression": "name.replace(/\\u0000/g, \"\").trim()"
+        },
+        {
+          "kind": "compute",
+          "purpose": "Sanitize target_tag to remove null bytes",
+          "bindResultTo": "safeTag",
+          "expression": "targetTag.replace(/\\u0000/g, \"\").trim()"
+        },
+        {
+          "kind": "sql_insert",
+          "purpose": "Insert the new segmentation rule with version 1",
+          "bindResultTo": "newRule",
+          "template": "INSERT INTO segmentation_rules (name, conditions, target_tag, version, created_at, updated_at) VALUES (${safeName}, ${conditions}, ${safeTag}, 1, now(), now()) RETURNING id, version",
+          "bindings": [
+            { "name": "safeName", "source": "safeName" },
+            { "name": "conditions", "source": "conditions" },
+            { "name": "safeTag", "source": "safeTag" }
+          ]
+        },
+        {
+          "kind": "response",
+          "purpose": "Return new rule id and version",
+          "status": 200,
+          "body": {
+            "rule_id": "$newRule[0].id",
+            "version": "$newRule[0].version"
+          }
+        }
+      ],
+      "postconditions": [
+        "Exactly one row inserted into segmentation_rules with version=1.",
+        "Response contains the generated rule id and version 1."
+      ],
+      "edgeCases": [
+        "Empty name or target_tag returns 400 before any DB write.",
+        "Conditions object is stored as JSONB without validation of internal keys; the evaluate step handles missing optional keys gracefully."
+      ]
+    },
+    "update_rule": {
+      "triggeredBy": "admin:/admin/rules/update",
+      "description": "Overwrite an existing rule's fields and atomically increment its version, returning the new version.",
+      "inputs": [
+        {
+          "name": "ruleId",
+          "source": "request.body",
+          "fieldPath": "rule_id",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "name",
+          "source": "request.body",
+          "fieldPath": "name",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "conditions",
+          "source": "request.body",
+          "fieldPath": "conditions",
+          "type": "object",
+          "nullable": false
+        },
+        {
+          "name": "targetTag",
+          "source": "request.body",
+          "fieldPath": "target_tag",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "Validate required fields",
+          "condition": "typeof ruleId !== 'string' || ruleId.trim().length === 0 || typeof name !== 'string' || name.trim().length === 0 || typeof targetTag !== 'string' || targetTag.trim().length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "Return 400 for invalid input",
+              "status": 400,
+              "body": { "error": "rule_id, name, conditions, and target_tag are required" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "Sanitize name",
+          "bindResultTo": "safeName",
+          "expression": "name.replace(/\\u0000/g, \"\").trim()"
+        },
+        {
+          "kind": "compute",
+          "purpose": "Sanitize target_tag",
+          "bindResultTo": "safeTag",
+          "expression": "targetTag.replace(/\\u0000/g, \"\").trim()"
+        },
+        {
+          "kind": "sql_update",
+          "purpose": "Update rule fields and increment version atomically",
+          "bindResultTo": "updatedRule",
+          "template": "UPDATE segmentation_rules SET name = ${safeName}, conditions = ${conditions}, target_tag = ${safeTag}, version = version + 1, updated_at = now() WHERE id = ${ruleId} RETURNING id, version",
+          "bindings": [
+            { "name": "safeName", "source": "safeName" },
+            { "name": "conditions", "source": "conditions" },
+            { "name": "safeTag", "source": "safeTag" },
+            { "name": "ruleId", "source": "ruleId" }
+          ]
+        },
+        {
+          "kind": "decision",
+          "purpose": "Check rule was found",
+          "condition": "!updatedRule || updatedRule.length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "Return 404 when rule not found",
+              "status": 404,
+              "body": { "error": "rule not found" }
+            }
+          ],
+          "ifFalse": [
+            {
+              "kind": "response",
+              "purpose": "Return updated rule id and new version",
+              "status": 200,
+              "body": {
+                "rule_id": "$updatedRule[0].id",
+                "version": "$updatedRule[0].version"
+              }
+            }
+          ]
+        }
+      ],
+      "postconditions": [
+        "Rule version is incremented by exactly 1 on every successful update.",
+        "updated_at reflects the wall-clock time of the update."
+      ],
+      "edgeCases": [
+        "If ruleId does not match any row the UPDATE affects 0 rows and a 404 is returned.",
+        "Concurrent updates on the same rule each increment version independently; version is monotonically increasing."
+      ]
+    },
+    "delete_rule": {
+      "triggeredBy": "admin:/admin/rules/remove",
+      "description": "Delete a segmentation rule and cascade-delete its run history.",
+      "inputs": [
+        {
+          "name": "ruleId",
+          "source": "request.body",
+          "fieldPath": "rule_id",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "Validate rule_id present",
+          "condition": "typeof ruleId !== 'string' || ruleId.trim().length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "Return 400 for missing rule_id",
+              "status": 400,
+              "body": { "error": "rule_id is required" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "sql_update",
+          "purpose": "Delete the rule row (ON DELETE CASCADE removes associated rule_runs)",
+          "bindResultTo": "deleteResult",
+          "template": "DELETE FROM segmentation_rules WHERE id = ${ruleId} RETURNING id",
+          "bindings": [
+            { "name": "ruleId", "source": "ruleId" }
+          ]
+        },
+        {
+          "kind": "decision",
+          "purpose": "Check rule existed",
+          "condition": "!deleteResult || deleteResult.length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "Return 404 when rule not found",
+              "status": 404,
+              "body": { "error": "rule not found" }
+            }
+          ],
+          "ifFalse": [
+            {
+              "kind": "response",
+              "purpose": "Confirm deletion",
+              "status": 200,
+              "body": { "deleted": "true" }
+            }
+          ]
+        }
+      ],
+      "postconditions": [
+        "The segmentation_rules row is removed.",
+        "All associated rule_runs rows are removed via CASCADE."
+      ],
+      "edgeCases": [
+        "Deleting a rule with running runs still cascades; the running run row is deleted and will appear as gone on the next poll."
+      ]
+    },
+    "start_run": {
+      "triggeredBy": "admin:/admin/runs/start",
+      "description": "Insert a pending run record for the given rule and enqueue the async processing job; return the run id immediately.",
+      "inputs": [
+        {
+          "name": "ruleId",
+          "source": "request.body",
+          "fieldPath": "rule_id",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "Validate rule_id present",
+          "condition": "typeof ruleId !== 'string' || ruleId.trim().length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "Return 400 for missing rule_id",
+              "status": 400,
+              "body": { "error": "rule_id is required" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "Load the rule to capture current version and verify existence",
+          "bindResultTo": "rule",
+          "template": "SELECT id, version, conditions, target_tag FROM segmentation_rules WHERE id = ${ruleId}",
+          "bindings": [
+            { "name": "ruleId", "source": "ruleId" }
+          ]
+        },
+        {
+          "kind": "decision",
+          "purpose": "Return 404 when rule not found",
+          "condition": "!rule || rule.length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "Return 404",
+              "status": 404,
+              "body": { "error": "rule not found" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "sql_insert",
+          "purpose": "Insert pending run record capturing current rule version",
+          "bindResultTo": "newRun",
+          "template": "INSERT INTO rule_runs (rule_id, rule_version_snapshot, status, started_at) VALUES (${ruleId}, ${ruleVersion}, 'pending', now()) RETURNING id, status",
+          "bindings": [
+            { "name": "ruleId", "source": "ruleId" },
+            { "name": "ruleVersion", "source": "rule[0].version" }
+          ]
+        },
+        {
+          "kind": "enqueue",
+          "purpose": "Push async processing job for the new run",
+          "jobName": "process_run",
+          "payload": {
+            "runId": "$newRun[0].id",
+            "ruleId": "$ruleId"
+          }
+        },
+        {
+          "kind": "response",
+          "purpose": "Return run id and pending status immediately",
+          "status": 202,
+          "body": {
+            "run_id": "$newRun[0].id",
+            "status": "$newRun[0].status"
+          }
+        }
+      ],
+      "postconditions": [
+        "Exactly one rule_runs row exists in pending state for this trigger.",
+        "The run captures the rule version at time of creation.",
+        "The async job is enqueued before the response is returned."
+      ],
+      "edgeCases": [
+        "If the rule was deleted between the SELECT and the INSERT the FK constraint raises a DB error which surfaces as a 500; the client should refresh the rules list.",
+        "Multiple concurrent start requests for the same rule each create independent run rows."
+      ]
+    },
+    "process_run": {
+      "triggeredBy": "cron:process_run",
+      "description": "Bulk-fetch all Shopify customers, evaluate rule conditions, apply the target tag to matching customers, and record the completed or failed outcome on the run row.",
+      "inputs": [
+        {
+          "name": "runId",
+          "source": "cron.payload",
+          "fieldPath": "runId",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "ruleId",
+          "source": "cron.payload",
+          "fieldPath": "ruleId",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "sql_select",
+          "purpose": "Load run and its associated rule in one query",
+          "bindResultTo": "runRow",
+          "template": "SELECT rr.id, rr.status, rr.rule_version_snapshot, sr.conditions, sr.target_tag FROM rule_runs rr JOIN segmentation_rules sr ON sr.id = rr.rule_id WHERE rr.id = ${runId} AND rr.rule_id = ${ruleId}",
+          "bindings": [
+            { "name": "runId", "source": "runId" },
+            { "name": "ruleId", "source": "ruleId" }
+          ]
+        },
+        {
+          "kind": "decision",
+          "purpose": "Abort if run row missing or already terminal",
+          "condition": "!runRow || runRow.length === 0 || runRow[0].status === 'completed' || runRow[0].status === 'failed'",
+          "ifTrue": [
+            {
+              "kind": "log",
+              "purpose": "Log skip of already-terminal or missing run",
+              "level": "warn",
+              "fields": { "runId": "$runId" },
+              "message": "run not found or already terminal, skipping"
+            },
+            {
+              "kind": "return",
+              "purpose": "Exit without side effects"
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "sql_claim",
+          "purpose": "Atomically transition run from pending to running to prevent duplicate execution",
+          "bindResultTo": "claimedRun",
+          "template": "UPDATE rule_runs SET status = 'running' WHERE id = ${runId} AND status = 'pending' RETURNING id",
+          "bindings": [
+            { "name": "runId", "source": "runId" }
+          ],
+          "zeroRowAction": "skip"
+        },
+        {
+          "kind": "log",
+          "purpose": "Log run start",
+          "level": "info",
+          "fields": { "runId": "$runId", "ruleId": "$ruleId" },
+          "message": "rule run processing started"
+        },
+        {
+          "kind": "try_catch",
+          "purpose": "Execute bulk fetch, evaluation, and tag application; capture failures",
+          "errorBinding": "runError",
+          "try": [
+            {
+              "kind": "shopify_query",
+              "purpose": "Bulk-fetch all customers with spend, order count, country, and existing tags",
+              "op": "customers",
+              "query": "query FetchAllCustomers($cursor: String) { customers(first: 250, after: $cursor) { nodes { id numberOfOrders amountSpent { amount currencyCode } defaultAddress { countryCodeV2 } tags } pageInfo { hasNextPage endCursor } } }",
+              "variables": {
+                "cursor": "$cursor"
+              },
+              "paginationStrategy": "graphqlPaginate",
+              "connectionPath": "customers",
+              "elementBinding": "shopifyCustomer",
+              "bindResultTo": "allCustomers"
+            },
+            {
+              "kind": "compute",
+              "purpose": "Parse conditions from the run row",
+              "bindResultTo": "conditions",
+              "expression": "runRow[0].conditions"
+            },
+            {
+              "kind": "compute",
+              "purpose": "Extract target tag from run row",
+              "bindResultTo": "targetTag",
+              "expression": "runRow[0].target_tag"
+            },
+            {
+              "kind": "compute",
+              "purpose": "Filter allCustomers to those matching all conditions and not already carrying the target tag",
+              "bindResultTo": "matchingCustomers",
+              "expression": "allCustomers.filter(c => { const spendCents = Math.round(parseFloat(c.amountSpent?.amount ?? '0') * 100); const orderCount = parseInt(c.numberOfOrders ?? '0', 10); const countryCode = c.defaultAddress?.countryCodeV2 ?? null; const alreadyTagged = (c.tags ?? []).includes(targetTag); if (alreadyTagged) return false; if (conditions.minSpendCents != null && spendCents < conditions.minSpendCents) return false; if (conditions.minOrderCount != null && orderCount < conditions.minOrderCount) return false; if (conditions.countryCodes != null && conditions.countryCodes.length > 0 && !conditions.countryCodes.includes(countryCode)) return false; return true; })"
+            },
+            {
+              "kind": "compute",
+              "purpose": "Initialize success and failure accumulators",
+              "bindResultTo": "tagSuccessIds",
+              "expression": "[]"
+            },
+            {
+              "kind": "compute",
+              "purpose": "Initialize failure accumulator",
+              "bindResultTo": "tagFailures",
+              "expression": "[]"
+            },
+            {
+              "kind": "for_each",
+              "purpose": "Apply target tag to each matching customer via Shopify mutation",
+              "source": "matchingCustomers",
+              "iterationBinding": "customer",
+              "continueOnError": true,
+              "errorBinding": "iterationError",
+              "successItemsBinding": "tagSuccessIds",
+              "failedItemsBinding": "tagFailures",
+              "steps": [
+                {
+                  "kind": "compute",
+                  "purpose": "Build Shopify GID for the customer",
+                  "bindResultTo": "customerGid",
+                  "expression": "`gid://shopify/Customer/${String(customer.id).split('/').pop()}`"
+                },
+                {
+                  "kind": "shopify_mutation",
+                  "purpose": "Add the target tag to the matching customer",
+                  "op": "tagsAdd",
+                  "mutation": "mutation TagsAdd($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { node { id } userErrors { field message } } }",
+                  "variables": {
+                    "id": "$customerGid",
+                    "tags": "$targetTagArray"
+                  },
+                  "userErrorsCheck": true,
+                  "bindResultTo": "tagResult"
+                }
+              ]
+            },
+            {
+              "kind": "compute",
+              "purpose": "Count successfully tagged customers",
+              "bindResultTo": "newlyTaggedCount",
+              "expression": "tagSuccessIds.length"
+            },
+            {
+              "kind": "sql_claim",
+              "purpose": "Atomically transition run from running to completed",
+              "bindResultTo": "completedRun",
+              "template": "UPDATE rule_runs SET status = 'completed', newly_tagged_count = ${newlyTaggedCount}, completed_at = now() WHERE id = ${runId} AND status = 'running' RETURNING id",
+              "bindings": [
+                { "name": "newlyTaggedCount", "source": "newlyTaggedCount" },
+                { "name": "runId", "source": "runId" }
+              ],
+              "zeroRowAction": "throw"
+            },
+            {
+              "kind": "log",
+              "purpose": "Log successful run completion",
+              "level": "info",
+              "fields": {
+                "runId": "$runId",
+                "newlyTaggedCount": "$newlyTaggedCount",
+                "failureCount": "$tagFailures.length"
+              },
+              "message": "rule run completed"
+            }
+          ],
+          "catch": [
+            {
+              "kind": "compute",
+              "purpose": "Extract error message for persistence",
+              "bindResultTo": "failureReason",
+              "expression": "runError.message.replace(/\\u0000/g, \"\").slice(0, 2000)"
+            },
+            {
+              "kind": "sql_update",
+              "purpose": "Transition run to failed state with reason",
+              "template": "UPDATE rule_runs SET status = 'failed', failure_reason = ${failureReason}, completed_at = now() WHERE id = ${runId} AND status = 'running'",
+              "bindings": [
+                { "name": "failureReason", "source": "failureReason" },
+                { "name": "runId", "source": "runId" }
+              ]
+            },
+            {
+              "kind": "log",
+              "purpose": "Log run failure",
+              "level": "error",
+              "fields": {
+                "runId": "$runId",
+                "ruleId": "$ruleId",
+                "error": "$failureReason"
+              },
+              "message": "rule run failed"
+            }
+          ]
+        }
+      ],
+      "postconditions": [
+        "Run row is in either completed or failed terminal state after the recipe exits.",
+        "newly_tagged_count equals the number of successful tagsAdd mutations in this execution.",
+        "Customers already carrying the target tag are not counted in newly_tagged_count.",
+        "completed_at is set in both completed and failed outcomes."
+      ],
+      "edgeCases": [
+        "If graphqlPaginate throws mid-traversal the try_catch catch arm transitions the run to failed with the error message.",
+        "If the run row was already claimed by another worker (sql_claim returns 0 rows) the recipe exits silently via zeroRowAction=skip.",
+        "Partial tagging failures (individual mutation errors caught by continueOnError) do not abort the run; the successfully tagged count is still persisted and the run completes.",
+        "A customer with null amountSpent.amount is treated as 0 spend via the ?? '0' fallback.",
+        "A customer with null defaultAddress is treated as no country and fails any country filter condition."
+      ]
+    },
+    "get_run_status": {
+      "triggeredBy": "admin:/admin/runs/status",
+      "description": "Return the current status and outcome summary of a specific run for admin panel polling.",
+      "inputs": [
+        {
+          "name": "runId",
+          "source": "request.query",
+          "fieldPath": "run_id",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "Validate run_id present",
+          "condition": "typeof runId !== 'string' || runId.trim().length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "Return 400 for missing run_id",
+              "status": 400,
+              "body": { "error": "run_id is required" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "Load run status and result fields",
+          "bindResultTo": "run",
+          "template": "SELECT status, newly_tagged_count, failure_reason, completed_at FROM rule_runs WHERE id = ${runId}",
+          "bindings": [
+            { "name": "runId", "source": "runId" }
+          ]
+        },
+        {
+          "kind": "decision",
+          "purpose": "Return 404 when run not found",
+          "condition": "!run || run.length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "Return 404",
+              "status": 404,
+              "body": { "error": "run not found" }
+            }
+          ],
+          "ifFalse": [
+            {
+              "kind": "response",
+              "purpose": "Return run status and outcome",
+              "status": 200,
+              "body": {
+                "status": "$run[0].status",
+                "newly_tagged_count": "$run[0].newly_tagged_count",
+                "failure_reason": "$run[0].failure_reason",
+                "completed_at": "$run[0].completed_at"
+              }
+            }
+          ]
+        }
+      ],
+      "postconditions": [
+        "Response reflects the current database state of the run at query time."
+      ],
+      "edgeCases": [
+        "While the run is in pending or running state newly_tagged_count and completed_at are null in the response."
+      ]
+    },
+    "list_runs": {
+      "triggeredBy": "admin:/admin/runs/list",
+      "description": "Return a paginated history of rule runs for a given rule ordered most recently started first.",
+      "inputs": [
+        {
+          "name": "ruleId",
+          "source": "request.query",
+          "fieldPath": "rule_id",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "page",
+          "source": "request.query",
+          "fieldPath": "page",
+          "type": "number",
+          "nullable": false
+        },
+        {
+          "name": "pageSize",
+          "source": "request.query",
+          "fieldPath": "page_size",
+          "type": "number",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "Validate rule_id present",
+          "condition": "typeof ruleId !== 'string' || ruleId.trim().length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "Return 400 for missing rule_id",
+              "status": 400,
+              "body": { "error": "rule_id is required" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "Clamp page to minimum 1",
+          "bindResultTo": "safePage",
+          "expression": "Math.max(1, Number(page) || 1)"
+        },
+        {
+          "kind": "compute",
+          "purpose": "Clamp page_size to 1-100",
+          "bindResultTo": "safePageSize",
+          "expression": "Math.min(100, Math.max(1, Number(pageSize) || 20))"
+        },
+        {
+          "kind": "compute",
+          "purpose": "Compute SQL offset",
+          "bindResultTo": "offset",
+          "expression": "(safePage - 1) * safePageSize"
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "Count total runs for this rule",
+          "bindResultTo": "countResult",
+          "template": "SELECT COUNT(*)::integer AS total FROM rule_runs WHERE rule_id = ${ruleId}",
+          "bindings": [
+            { "name": "ruleId", "source": "ruleId" }
+          ]
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "Fetch paginated run history ordered by started_at descending",
+          "bindResultTo": "runs",
+          "template": "SELECT id, rule_id, rule_version_snapshot, status, newly_tagged_count, failure_reason, started_at, completed_at FROM rule_runs WHERE rule_id = ${ruleId} ORDER BY started_at DESC LIMIT ${safePageSize} OFFSET ${offset}",
+          "bindings": [
+            { "name": "ruleId", "source": "ruleId" },
+            { "name": "safePageSize", "source": "safePageSize" },
+            { "name": "offset", "source": "offset" }
+          ]
+        },
+        {
+          "kind": "response",
+          "purpose": "Return paginated runs list",
+          "status": 200,
+          "body": {
+            "items": "$runs",
+            "total": "$countResult[0].total",
+            "page": "$safePage",
+            "page_size": "$safePageSize"
+          }
+        }
+      ],
+      "postconditions": [
+        "Response lists runs for the given rule_id only, ordered most recent first."
+      ],
+      "edgeCases": [
+        "If the rule has no runs the items array is empty and total is 0.",
+        "If rule_id does not match any rule the query returns zero rows without a 404; the merchant sees an empty list."
+      ]
+    }
+  },
+  "widgetTargetTemplates": null,
+  "platformGaps": [
+    {
+      "gap": "Shopify provides no batch customer-tag mutation; each customer must be tagged via an individual tagsAdd call.",
+      "mitigation": "The process_run cron recipe iterates matched customers in a for_each with continueOnError=true, issuing one tagsAdd mutation per customer; partial failures are accumulated in tagFailures and the run still completes with the count of successful tags.",
+      "uxImplication": "For large customer sets the run may take several minutes; the admin panel should poll /admin/runs/status at a 3-5 second interval until status is completed or failed."
+    },
+    {
+      "gap": "No built-in mechanism to detect stalled runs whose cron worker crashed mid-execution and left the row in running state.",
+      "mitigation": "The list_runs query pattern on rule_runs by status='running' allows a recovery sweep; operators can manually mark stalled rows as failed, or a future scheduled job can query for running rows with started_at older than a threshold and update them to failed.",
+      "uxImplication": "The admin panel should display elapsed time for running runs so merchants can identify stalled jobs."
+    }
+  ],
+  "emailSpec": null,
+  "uxExpectations": {
+    "storefront": null,
+    "admin": "The admin panel should present a rules list as the primary view with a Create Rule button; each rule row shows name, target tag, version, and a Run Now button that immediately triggers execution and begins polling the run status inline, displaying a spinner then a count badge showing how many customers were newly tagged. A run history drawer per rule shows past runs with status chips (pending/running/completed/failed) and the newly_tagged_count or failure_reason for completed runs."
+  },
+  "edgeCases": [
+    "A run is enqueued but the cron worker picks it up after the rule has been deleted: the JOIN in process_run returns zero rows so the run was already CASCADE-deleted; the recipe's early decision step detects the missing row and exits silently.",
+    "Two merchants trigger the same rule concurrently: each start_run call inserts its own pending row and enqueues its own job; both run independently with separate run ids, and the second run's deduplication reads live Shopify tag state at its own fetch time, so customers tagged by the first run are excluded from the second run's count.",
+    "A rule is updated (version incremented) immediately before a pending run executes: the run captured the version snapshot at INSERT time so it always executes against the conditions that were active when Run Now was clicked, not the updated ones.",
+    "The Shopify API returns a userErrors array on a tagsAdd call: the userErrorsCheck throws inside the for_each iteration; continueOnError catches the error, appends to tagFailures, and the run continues with remaining customers, completing with a partial newly_tagged_count.",
+    "The conditions JSONB omits all optional keys (no minSpendCents, no minOrderCount, no countryCodes): the evaluate expression treats missing keys as no-constraint, so all customers not already carrying the target tag are considered matching.",
+    "A run's rule_runs row is in running state when process_run is invoked a second time (duplicate job delivery): the sql_claim at the top of the try block targets status='pending' and returns 0 rows; zeroRowAction=skip exits the recipe without duplicating side effects."
+  ]
+}
+```
