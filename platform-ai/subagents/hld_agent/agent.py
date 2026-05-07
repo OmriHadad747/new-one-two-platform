@@ -46,24 +46,35 @@ and contracts from the merchant's actual needs):
 
 Produce the HLD plan as JSON conforming to the appended schema."""
 
-_VALIDATOR_HINT_SUFFIX = """\
+# Retry template — used when the validator finds issues. The prior plan is
+# embedded in full so the model can copy unflagged sections verbatim instead
+# of regenerating them from prompt+intent (which silently drops content the
+# original generation included but the prompt doesn't mandate).
+_REVISE_TEMPLATE = """\
+Merchant request: {prompt}
 
+Product-agent intent (use as context):
+{intent_json}
 
-SEMANTIC REVIEW FEEDBACK — you already produced an HLD plan for this
-request and a reviewer flagged the issues below. Your job now is to emit a
-corrected version with MINIMAL changes:
+REVISE the prior HLD plan below to address every reviewer finding. Output
+a single JSON object conforming to the appended schema.
 
-  - Address every finding listed.
-  - Keep everything the reviewer did NOT flag exactly as it was — same
-    capability ids, same table names and column orders, same contract
-    paths, same edge-case wording, same dataFlow phrasing where unaffected.
-  - Do not refactor, rename, reorder, or reword sections that are not part
-    of a finding. Do not add new capabilities, tables, or edge cases beyond
-    what the findings require.
-  - When a finding requires renumbering (e.g. splitting one contract into
-    two), update only the affected indices and any explicit cross-references.
+PRIOR PLAN — this is what you produced previously. Sections the reviewer
+did NOT flag must be copied character-for-character into your revision.
+Do not drop, rename, reorder, or reword unflagged capabilities, tables,
+columns, contracts, edge cases, or dataFlow phrasing. Do not add new
+capabilities, tables, or edge cases beyond what a finding's fix
+explicitly requires. When renumbering is required (e.g. splitting one
+contract into two), update only the affected indices and any explicit
+cross-references.
 
-Findings:
+```json
+{prior_plan_json}
+```
+
+REVIEWER FINDINGS — apply each finding's fix to the relevant section of
+the prior plan; leave everything else untouched.
+
 {findings_text}"""
 
 
@@ -72,6 +83,7 @@ def run_hld_agent(
     intent: Dict[str, Any],
     on_attempt_failed: Optional[Callable[[int, List[str]], None]] = None,
     validator_hint: Optional[str] = None,
+    prior_plan: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], int, int]:
     """
     Run the HLD agent. Returns (plan_dict, in_tokens, out_tokens).
@@ -96,12 +108,20 @@ def run_hld_agent(
         the most recent error list so the operator can debug the prompt.
     """
     system = build_system_prompt()
-    base_user = _USER_TEMPLATE.format(
-        prompt=prompt,
-        intent_json=json.dumps(intent, indent=2),
-    )
-    if validator_hint:
-        base_user += _VALIDATOR_HINT_SUFFIX.format(findings_text=validator_hint)
+    if validator_hint and prior_plan is not None:
+        # Revise mode — embed the prior plan so unflagged sections can be
+        # copied verbatim instead of silently regenerated.
+        base_user = _REVISE_TEMPLATE.format(
+            prompt=prompt,
+            intent_json=json.dumps(intent, indent=2),
+            prior_plan_json=json.dumps(prior_plan, indent=2),
+            findings_text=validator_hint,
+        )
+    else:
+        base_user = _USER_TEMPLATE.format(
+            prompt=prompt,
+            intent_json=json.dumps(intent, indent=2),
+        )
     llm = get_llm(model=get_agent_model("hld"), max_tokens=_MAX_TOKENS, thinking_budget=_THINKING_BUDGET)
 
     total_in = 0

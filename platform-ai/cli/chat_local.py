@@ -1751,6 +1751,7 @@ def main() -> None:
                         prompt,
                         intent,
                         validator_hint=_hint,
+                        prior_plan=plan,
                         on_attempt_failed=_on_retry_attempt_failed,
                     )
                 _r_in_prev, _r_out_prev = all_tokens.get("hld", (0, 0))

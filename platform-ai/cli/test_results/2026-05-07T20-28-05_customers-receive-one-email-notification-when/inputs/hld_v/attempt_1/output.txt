@@ -1,0 +1,34 @@
+{
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "triggers[0] / edgeCases",
+      "issue": "The external-event trigger for 'inventory-level-increased' has no edge case covering duplicate webhook delivery at the trigger level. The only relevant edge case (concurrent near-simultaneous delivery) describes two webhooks arriving before any signup is notified, which is a race condition within a single restock event — it does not cover Shopify re-delivering the same webhook ID a second time minutes or hours later after signups have already been marked notified or processing. Without a deduplication anchor (e.g. a processed-webhook-id check or idempotency key stored in persistence), the LLD has no signal to suppress a re-delivered event that would attempt to re-claim already-transitioned signups, potentially flipping a 'notified' row back to 'processing' and firing a second email.",
+      "fix": "Add an edge case explicitly covering duplicate delivery of the same webhook event ID after signups have already been processed, specifying that the system must either store and check the webhook delivery ID against a seen-events log or guard the status-flip query so that only rows currently in 'pending' state are claimable, making re-delivery a safe no-op."
+    },
+    {
+      "severity": "critical",
+      "location": "capabilities[5] (send-restock-notification) / capabilities[6] (record-notification-outcome)",
+      "issue": "The 'send-restock-notification' notify capability has no paired edge case describing what happens on delivery failure (rule E1), AND no separate notify-failure edge case exists in edgeCases for this capability specifically. The existing email-provider edge cases cover hard bounce and transient errors at the outcome level, but they are written against the outcome-recording step — neither edge case names 'send-restock-notification' as the failure surface nor specifies what the capability itself does when the provider call throws (e.g. does it raise, return a failure signal, or swallow?). The LLD cannot determine whether the notify capability is responsible for catching provider exceptions and returning a structured failure signal to 'record-notification-outcome', or whether the caller orchestrates the try/catch. This is a critical gap because a swallowed exception means 'record-notification-outcome' is never called, leaving the signup row permanently stuck in 'processing'.",
+      "fix": "Add an edge case explicitly targeting 'send-restock-notification' stating that on any provider exception the capability must surface a structured failure result (not throw) so that 'record-notification-outcome' is always invoked and the signup row is never abandoned in the 'processing' state."
+    },
+    {
+      "severity": "important",
+      "location": "capabilities[2] (cancel-signup) / dataNeeds",
+      "issue": "The 'cancel-signup' capability lists 'variant_external_id' as a dataNeed alongside 'signup_id', but 'signup_id' is already a globally unique row identifier that fully addresses the row without any additional lookup fields. The widget cancel contract (POST /widget/signup/cancel) correctly omits 'variant_external_id' from its requestShape, meaning this field in dataNeeds has no caller-producible source from that surface. More importantly, including it as a required dataNeed implies the LLD should validate or use it as a lookup condition — if it does, a mismatch between the provided variant id and the one stored on the signup row could cause silent misrouting or unnecessary query complexity.",
+      "fix": "Remove 'variant_external_id' from cancel-signup's dataNeeds, leaving only 'signup_id' (and optionally 'customer_email' for ownership verification), consistent with the widget cancel contract's requestShape."
+    },
+    {
+      "severity": "important",
+      "location": "triggers[0].signalFields",
+      "issue": "The signal field 'available quantity' is declared on the external-event trigger but does not appear in any capability's dataNeeds anywhere in the plan. Per rule T2 a declared signalField with no consuming capability is a planning error — the LLD has no guidance on whether to use it as a guard condition (e.g. only proceed if quantity > 0), store it, or ignore it. Given the qualityBrief's mention of product variants with separate inventory this is likely an intentional guard value, but its absence from dataNeeds means the LLD will not wire it up.",
+      "fix": "Either add 'available quantity' to the dataNeeds of the capability that queries pending signups (or the orchestration step that decides whether to proceed), with a note that processing is skipped when quantity equals zero, or remove it from signalFields if it is not used."
+    },
+    {
+      "severity": "important",
+      "location": "externalContracts[0] (GET /widget/signup) / requestShape",
+      "issue": "The widget GET /widget/signup has 'customer_email' in its requestShape, meaning the caller must supply the email as a query parameter. For an unauthenticated storefront widget this is the only available identity signal, but transmitting a customer's email address as a plain URL query parameter (visible in server logs, browser history, and referrer headers) is a meaningful privacy exposure. The last edge case acknowledges the unauthenticated scenario but does not address the transmission vector, leaving the LLD without guidance on whether to require a POST body, a session token, or some other mechanism.",
+      "fix": "Change GET /widget/signup to a POST (with requestShape in the body) or add an explicit note in the contract's purpose that the email must be transmitted as a hashed or tokenized value, so the LLD generates the correct handler rather than a plain query-string lookup."
+    }
+  ]
+}

@@ -1,0 +1,304 @@
+{
+  "schema_version": "1",
+  "archetype": "backend+admin+storefront",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "When a customer submits the storefront widget, the system records a pending signup keyed by customer email and variant external id, deduplicating against any existing active signup for the same pair. When an inventory-level-increased event arrives, the system identifies all pending signups for the restocked variant. For each pending signup, the system atomically claims the row by flipping its status from pending to processing before dispatching the email, so concurrent duplicate webhook deliveries cannot both claim the same signup. The email is sent and the outcome is recorded as notified or failed on both the signup row and the notification attempts log. The merchant reviews signup statuses and notification outcomes from the admin panel.",
+  "triggers": [
+    {
+      "kind": "external-event",
+      "event": "a product variant returns to stock",
+      "signalFields": [
+        "variant external id"
+      ],
+      "idempotency": "if no pending signups exist for the restocked variant, treat the event as a no-op and exit without sending any emails"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "check-signup-status",
+      "description": "Look up whether a customer already has an active signup for a given variant so the widget can render the correct initial state.",
+      "kind": "read",
+      "dataNeeds": [
+        "customer email",
+        "variant external id"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "create-signup",
+      "description": "Record a new pending signup for a customer and variant, skipping the insert if an active signup already exists for that pair.",
+      "kind": "write",
+      "dataNeeds": [
+        "customer email",
+        "variant external id"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "cancel-signup",
+      "description": "Mark an existing signup as unsubscribed so the customer will not receive a notification when the variant restocks.",
+      "kind": "write",
+      "dataNeeds": [
+        "signup id",
+        "customer email"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "list-signups",
+      "description": "Return a paginated, filterable list of all signups and their statuses for the merchant admin dashboard.",
+      "kind": "read",
+      "dataNeeds": [
+        "status filter",
+        "page cursor"
+      ],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "remove-signup",
+      "description": "Allow the merchant to manually delete a signup record from the admin dashboard.",
+      "kind": "write",
+      "dataNeeds": [
+        "signup id"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "send-restock-notification",
+      "description": "Send a single back-in-stock email to the customer associated with a claimed pending signup.",
+      "kind": "notify",
+      "dataNeeds": [
+        "customer email",
+        "variant external id"
+      ],
+      "integration": "email",
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "record-notification-outcome",
+      "description": "Record whether a notification attempt succeeded or failed, updating the signup status and writing a log entry so the merchant can audit results.",
+      "kind": "write",
+      "dataNeeds": [
+        "signup id",
+        "outcome",
+        "failure reason"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    }
+  ],
+  "persistence": [
+    {
+      "name": "product_signups",
+      "purpose": "Tracks each customer's request to be notified when a specific variant returns to stock, and the current state of that request.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "customer_email",
+          "role": "text",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "variant_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies the specific variant the customer signed up to be notified about"
+        },
+        {
+          "name": "status",
+          "role": "status",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "signed_up_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per customer email and variant combination, deduplicated so a customer cannot have more than one active signup for the same variant",
+      "statusField": null,
+      "queryPatterns": [
+        "all pending signups for a given variant external id, ordered by signup time",
+        "single signup looked up by id for status updates",
+        "all signups filtered by status, ordered by signup time, supporting cursor pagination for the admin dashboard"
+      ]
+    },
+    {
+      "name": "notification_attempts",
+      "purpose": "Records every email notification attempt, its outcome, and the reason for any failure, providing the merchant with a full audit trail.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "signup_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "links this attempt to the product signup that triggered it"
+        },
+        {
+          "name": "variant_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "denormalised copy of the variant identifier from the linked signup row for efficient querying"
+        },
+        {
+          "name": "customer_email",
+          "role": "text",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "outcome",
+          "role": "status",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "failure_reason",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "attempted_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per notification attempt, with multiple rows possible per signup if retries are logged",
+      "statusField": null,
+      "queryPatterns": [
+        "all attempts for a given signup id ordered by attempt time",
+        "most recent attempt for a given signup id"
+      ]
+    }
+  ],
+  "stateMachine": null,
+  "externalContracts": [
+    {
+      "surface": "widget",
+      "path": "/widget/signup",
+      "method": "POST",
+      "purpose": "Return the current signup state for a customer and variant so the widget renders the correct initial UI on page load; the email is transmitted in the request body rather than as a query parameter to avoid exposure in server logs and browser history.",
+      "requestShape": {
+        "customer_email": "text",
+        "variant_external_id": "identifier"
+      },
+      "responseShape": {
+        "is_signed_up": "flag",
+        "status": "status"
+      }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/signup",
+      "method": "POST",
+      "purpose": "Register a customer's email to be notified when the specified variant returns to stock.",
+      "requestShape": {
+        "customer_email": "text",
+        "variant_external_id": "identifier"
+      },
+      "responseShape": {
+        "signup_id": "identifier",
+        "status": "status"
+      }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/signup/cancel",
+      "method": "POST",
+      "purpose": "Allow a customer to unsubscribe from a back-in-stock notification for a specific variant.",
+      "requestShape": {
+        "signup_id": "identifier",
+        "customer_email": "text"
+      },
+      "responseShape": {
+        "status": "status"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/signups",
+      "method": "GET",
+      "purpose": "Return a paginated, filterable list of customer signups and their current notification status for the merchant dashboard.",
+      "requestShape": {
+        "status_filter": "status",
+        "cursor": "text"
+      },
+      "responseShape": {
+        "signups": "list",
+        "next_cursor": "text",
+        "total_count": "count"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/signups/remove",
+      "method": "POST",
+      "purpose": "Allow the merchant to manually remove a signup record from the dashboard.",
+      "requestShape": {
+        "signup_id": "identifier"
+      },
+      "responseShape": {
+        "success": "flag"
+      }
+    }
+  ],
+  "edgeCases": [
+    "A customer submits the signup form for a variant they are already actively signed up for — the system deduplicates and returns the existing signup without creating a duplicate row.",
+    "A restock webhook arrives for a variant that has no pending signups — the system exits immediately without sending any emails or writing any records.",
+    "The email provider permanently rejects delivery for a signup (hard bounce or invalid address) — the signup is marked failed, the reason is recorded, and no retry is attempted so the customer is not contacted again for this restock cycle.",
+    "A restock webhook is delivered concurrently or near-simultaneously before any signups for that variant have been marked notified — each signup row must be claimed atomically (via an optimistic lock or equivalent status-flip guard) so that only one processing pass can transition a given signup out of the pending state, and the second pass finds no claimable rows.",
+    "The email provider is temporarily unreachable or returns a transient error (timeout or server-side failure) — the attempt is recorded as failed-transient, distinct from a permanent rejection, and surfaced to the merchant in the admin dashboard as requiring manual review rather than silently dropped or automatically retried indefinitely.",
+    "A customer's email is absent or empty when the widget signup-state POST is requested (unauthenticated browser with no session) — the system treats the state as not signed up and returns a response that causes the widget to render the signup form, rather than returning an error.",
+    "The same restock webhook event is re-delivered after all signups for that variant have already been transitioned out of pending — because the status-flip claim query only matches rows currently in the pending state, the re-delivery finds no claimable rows and exits as a safe no-op without re-sending any emails or corrupting already-notified signup rows.",
+    "The send-restock-notification capability encounters any provider exception (network failure, authentication error, or unexpected provider response) — the capability must catch the exception internally and surface a structured failure result to the caller rather than re-throwing, so that record-notification-outcome is always invoked and the signup row is never abandoned in the processing state."
+  ]
+}

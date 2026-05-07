@@ -1,0 +1,355 @@
+{
+  "prompt": "Customers receive one email notification when a product they signed up for returns to stock.",
+  "intent": {
+    "triggerTypes": [
+      "widget",
+      "webhook"
+    ],
+    "resources": [
+      "Product",
+      "Inventory",
+      "Customer Email"
+    ],
+    "desiredOutcome": "Customers receive one email notification when a product they signed up for returns to stock.",
+    "cronHint": null,
+    "appCategory": "storefront_backend_admin",
+    "qualityBrief": "A good version handles the happy path cleanly: customer signs up, product restocks, email goes out, record marks as notified. Edge cases to consider: duplicate signups for the same product (deduplicate or allow?), product variants with separate inventory, what happens if a product is deleted, and whether to let customers unsubscribe from emails. The admin page should be scannable at a glance \u2014 show status clearly so the merchant knows which notifications succeeded."
+  },
+  "plan": {
+    "schema_version": "1",
+    "archetype": "backend+admin+storefront",
+    "feasibility": "feasible",
+    "blockedReason": null,
+    "complexity": "high",
+    "dataFlow": "When a customer submits the storefront widget, the system records a pending signup keyed by customer email and variant external id, deduplicating against any existing active signup for the same pair. When an inventory-level-increased event arrives, the system identifies all pending signups for the restocked variant. For each pending signup, the system atomically claims the row by flipping its status from pending to processing before dispatching the email, so concurrent duplicate webhook deliveries cannot both claim the same signup. The email is sent and the outcome is recorded as notified or failed on both the signup row and the notification attempts log. The merchant reviews signup statuses and notification outcomes from the admin panel.",
+    "triggers": [
+      {
+        "kind": "external-event",
+        "event": "a product variant returns to stock",
+        "signalFields": [
+          "variant external id"
+        ],
+        "idempotency": "if no pending signups exist for the restocked variant, treat the event as a no-op and exit without sending any emails"
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "check-signup-status",
+        "description": "Look up whether a customer already has an active signup for a given variant so the widget can render the correct initial state.",
+        "kind": "read",
+        "dataNeeds": [
+          "customer email",
+          "variant external id"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "create-signup",
+        "description": "Record a new pending signup for a customer and variant, skipping the insert if an active signup already exists for that pair.",
+        "kind": "write",
+        "dataNeeds": [
+          "customer email",
+          "variant external id"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "cancel-signup",
+        "description": "Mark an existing signup as unsubscribed so the customer will not receive a notification when the variant restocks.",
+        "kind": "write",
+        "dataNeeds": [
+          "signup id",
+          "customer email"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "list-signups",
+        "description": "Return a paginated, filterable list of all signups and their statuses for the merchant admin dashboard.",
+        "kind": "read",
+        "dataNeeds": [
+          "status filter",
+          "page cursor"
+        ],
+        "integration": null,
+        "returnsList": true,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "remove-signup",
+        "description": "Allow the merchant to manually delete a signup record from the admin dashboard.",
+        "kind": "write",
+        "dataNeeds": [
+          "signup id"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "send-restock-notification",
+        "description": "Send a single back-in-stock email to the customer associated with a claimed pending signup.",
+        "kind": "notify",
+        "dataNeeds": [
+          "customer email",
+          "variant external id"
+        ],
+        "integration": "email",
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "record-notification-outcome",
+        "description": "Record whether a notification attempt succeeded or failed, updating the signup status and writing a log entry so the merchant can audit results.",
+        "kind": "write",
+        "dataNeeds": [
+          "signup id",
+          "outcome",
+          "failure reason"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": true
+      }
+    ],
+    "persistence": [
+      {
+        "name": "product_signups",
+        "purpose": "Tracks each customer's request to be notified when a specific variant returns to stock, and the current state of that request.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "customer_email",
+            "role": "text",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "variant_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "identifies the specific variant the customer signed up to be notified about"
+          },
+          {
+            "name": "status",
+            "role": "status",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "signed_up_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "updated_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per customer email and variant combination, deduplicated so a customer cannot have more than one active signup for the same variant",
+        "statusField": null,
+        "queryPatterns": [
+          "all pending signups for a given variant external id, ordered by signup time",
+          "single signup looked up by id for status updates",
+          "all signups filtered by status, ordered by signup time, supporting cursor pagination for the admin dashboard"
+        ]
+      },
+      {
+        "name": "notification_attempts",
+        "purpose": "Records every email notification attempt, its outcome, and the reason for any failure, providing the merchant with a full audit trail.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "signup_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "links this attempt to the product signup that triggered it"
+          },
+          {
+            "name": "variant_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "denormalised copy of the variant identifier from the linked signup row for efficient querying"
+          },
+          {
+            "name": "customer_email",
+            "role": "text",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "outcome",
+            "role": "status",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "failure_reason",
+            "role": "text",
+            "nullable": true,
+            "purpose": null
+          },
+          {
+            "name": "attempted_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per notification attempt, with multiple rows possible per signup if retries are logged",
+        "statusField": null,
+        "queryPatterns": [
+          "all attempts for a given signup id ordered by attempt time",
+          "most recent attempt for a given signup id"
+        ]
+      }
+    ],
+    "stateMachine": null,
+    "externalContracts": [
+      {
+        "surface": "widget",
+        "path": "/widget/signup",
+        "method": "POST",
+        "purpose": "Return the current signup state for a customer and variant so the widget renders the correct initial UI on page load; the email is transmitted in the request body rather than as a query parameter to avoid exposure in server logs and browser history.",
+        "requestShape": {
+          "customer_email": "text",
+          "variant_external_id": "identifier"
+        },
+        "responseShape": {
+          "is_signed_up": "flag",
+          "status": "status"
+        }
+      },
+      {
+        "surface": "widget",
+        "path": "/widget/signup",
+        "method": "POST",
+        "purpose": "Register a customer's email to be notified when the specified variant returns to stock.",
+        "requestShape": {
+          "customer_email": "text",
+          "variant_external_id": "identifier"
+        },
+        "responseShape": {
+          "signup_id": "identifier",
+          "status": "status"
+        }
+      },
+      {
+        "surface": "widget",
+        "path": "/widget/signup/cancel",
+        "method": "POST",
+        "purpose": "Allow a customer to unsubscribe from a back-in-stock notification for a specific variant.",
+        "requestShape": {
+          "signup_id": "identifier",
+          "customer_email": "text"
+        },
+        "responseShape": {
+          "status": "status"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/signups",
+        "method": "GET",
+        "purpose": "Return a paginated, filterable list of customer signups and their current notification status for the merchant dashboard.",
+        "requestShape": {
+          "status_filter": "status",
+          "cursor": "text"
+        },
+        "responseShape": {
+          "signups": "list",
+          "next_cursor": "text",
+          "total_count": "count"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/signups/remove",
+        "method": "POST",
+        "purpose": "Allow the merchant to manually remove a signup record from the dashboard.",
+        "requestShape": {
+          "signup_id": "identifier"
+        },
+        "responseShape": {
+          "success": "flag"
+        }
+      }
+    ],
+    "edgeCases": [
+      "A customer submits the signup form for a variant they are already actively signed up for \u2014 the system deduplicates and returns the existing signup without creating a duplicate row.",
+      "A restock webhook arrives for a variant that has no pending signups \u2014 the system exits immediately without sending any emails or writing any records.",
+      "The email provider permanently rejects delivery for a signup (hard bounce or invalid address) \u2014 the signup is marked failed, the reason is recorded, and no retry is attempted so the customer is not contacted again for this restock cycle.",
+      "A restock webhook is delivered concurrently or near-simultaneously before any signups for that variant have been marked notified \u2014 each signup row must be claimed atomically (via an optimistic lock or equivalent status-flip guard) so that only one processing pass can transition a given signup out of the pending state, and the second pass finds no claimable rows.",
+      "The email provider is temporarily unreachable or returns a transient error (timeout or server-side failure) \u2014 the attempt is recorded as failed-transient, distinct from a permanent rejection, and surfaced to the merchant in the admin dashboard as requiring manual review rather than silently dropped or automatically retried indefinitely.",
+      "A customer's email is absent or empty when the widget signup-state POST is requested (unauthenticated browser with no session) \u2014 the system treats the state as not signed up and returns a response that causes the widget to render the signup form, rather than returning an error.",
+      "The same restock webhook event is re-delivered after all signups for that variant have already been transitioned out of pending \u2014 because the status-flip claim query only matches rows currently in the pending state, the re-delivery finds no claimable rows and exits as a safe no-op without re-sending any emails or corrupting already-notified signup rows.",
+      "The send-restock-notification capability encounters any provider exception (network failure, authentication error, or unexpected provider response) \u2014 the capability must catch the exception internally and surface a structured failure result to the caller rather than re-throwing, so that record-notification-outcome is always invoked and the signup row is never abandoned in the processing state."
+    ]
+  },
+  "validation_errors": [],
+  "hld_v_findings": [
+    {
+      "severity": "critical",
+      "location": "triggers[0] / edgeCases",
+      "issue": "The external-event trigger for 'inventory-level-increased' has no edge case covering duplicate webhook delivery at the trigger level. The only relevant edge case (concurrent near-simultaneous delivery) describes two webhooks arriving before any signup is notified, which is a race condition within a single restock event \u2014 it does not cover Shopify re-delivering the same webhook ID a second time minutes or hours later after signups have already been marked notified or processing. Without a deduplication anchor (e.g. a processed-webhook-id check or idempotency key stored in persistence), the LLD has no signal to suppress a re-delivered event that would attempt to re-claim already-transitioned signups, potentially flipping a 'notified' row back to 'processing' and firing a second email.",
+      "fix": "Add an edge case explicitly covering duplicate delivery of the same webhook event ID after signups have already been processed, specifying that the system must either store and check the webhook delivery ID against a seen-events log or guard the status-flip query so that only rows currently in 'pending' state are claimable, making re-delivery a safe no-op."
+    },
+    {
+      "severity": "critical",
+      "location": "capabilities[5] (send-restock-notification) / capabilities[6] (record-notification-outcome)",
+      "issue": "The 'send-restock-notification' notify capability has no paired edge case describing what happens on delivery failure (rule E1), AND no separate notify-failure edge case exists in edgeCases for this capability specifically. The existing email-provider edge cases cover hard bounce and transient errors at the outcome level, but they are written against the outcome-recording step \u2014 neither edge case names 'send-restock-notification' as the failure surface nor specifies what the capability itself does when the provider call throws (e.g. does it raise, return a failure signal, or swallow?). The LLD cannot determine whether the notify capability is responsible for catching provider exceptions and returning a structured failure signal to 'record-notification-outcome', or whether the caller orchestrates the try/catch. This is a critical gap because a swallowed exception means 'record-notification-outcome' is never called, leaving the signup row permanently stuck in 'processing'.",
+      "fix": "Add an edge case explicitly targeting 'send-restock-notification' stating that on any provider exception the capability must surface a structured failure result (not throw) so that 'record-notification-outcome' is always invoked and the signup row is never abandoned in the 'processing' state."
+    },
+    {
+      "severity": "important",
+      "location": "capabilities[2] (cancel-signup) / dataNeeds",
+      "issue": "The 'cancel-signup' capability lists 'variant_external_id' as a dataNeed alongside 'signup_id', but 'signup_id' is already a globally unique row identifier that fully addresses the row without any additional lookup fields. The widget cancel contract (POST /widget/signup/cancel) correctly omits 'variant_external_id' from its requestShape, meaning this field in dataNeeds has no caller-producible source from that surface. More importantly, including it as a required dataNeed implies the LLD should validate or use it as a lookup condition \u2014 if it does, a mismatch between the provided variant id and the one stored on the signup row could cause silent misrouting or unnecessary query complexity.",
+      "fix": "Remove 'variant_external_id' from cancel-signup's dataNeeds, leaving only 'signup_id' (and optionally 'customer_email' for ownership verification), consistent with the widget cancel contract's requestShape."
+    },
+    {
+      "severity": "important",
+      "location": "triggers[0].signalFields",
+      "issue": "The signal field 'available quantity' is declared on the external-event trigger but does not appear in any capability's dataNeeds anywhere in the plan. Per rule T2 a declared signalField with no consuming capability is a planning error \u2014 the LLD has no guidance on whether to use it as a guard condition (e.g. only proceed if quantity > 0), store it, or ignore it. Given the qualityBrief's mention of product variants with separate inventory this is likely an intentional guard value, but its absence from dataNeeds means the LLD will not wire it up.",
+      "fix": "Either add 'available quantity' to the dataNeeds of the capability that queries pending signups (or the orchestration step that decides whether to proceed), with a note that processing is skipped when quantity equals zero, or remove it from signalFields if it is not used."
+    },
+    {
+      "severity": "important",
+      "location": "externalContracts[0] (GET /widget/signup) / requestShape",
+      "issue": "The widget GET /widget/signup has 'customer_email' in its requestShape, meaning the caller must supply the email as a query parameter. For an unauthenticated storefront widget this is the only available identity signal, but transmitting a customer's email address as a plain URL query parameter (visible in server logs, browser history, and referrer headers) is a meaningful privacy exposure. The last edge case acknowledges the unauthenticated scenario but does not address the transmission vector, leaving the LLD without guidance on whether to require a POST body, a session token, or some other mechanism.",
+      "fix": "Change GET /widget/signup to a POST (with requestShape in the body) or add an explicit note in the contract's purpose that the email must be transmitted as a hashed or tokenized value, so the LLD generates the correct handler rather than a plain query-string lookup."
+    }
+  ]
+}
