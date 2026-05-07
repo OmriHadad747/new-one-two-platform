@@ -13,7 +13,7 @@ Advantages over per-generator revision:
     only what changed, preserves working logic
   - Atomic: one LLM call rather than 3–4 parallel ones that can diverge
 
-Output: { "handler": "...", "migration": "...", "widget_js": "...", "admin_ui": "..." }
+Output: { "handler": "...", "db": "...", "widget_js": "...", "admin_ui": "..." }
 Keys widget_js and admin_ui are null when not applicable.
 """
 
@@ -58,7 +58,7 @@ def _build_user_prompt(
     plan = ctx.plan
 
     prior_handler = ctx.prior_handler_code or "(none)"
-    prior_migration = ctx.prior_migration_sql or "(none)"
+    prior_migration = ctx.prior_db_sql or "(none)"
     prior_widget = (
         ctx.prior_widget_code or "(none)"
         if is_storefront
@@ -122,7 +122,7 @@ Fix ALL of them in your revised output:
     )
     migration_label = (
         "migration.sql (READ-ONLY — do not output a revised version)"
-        if "migration" in locked_artifacts
+        if "db" in locked_artifacts
         else "migration.sql (prior — NEVER drop or recreate these tables)"
     )
 
@@ -213,7 +213,7 @@ def run_revision_agent(
     Returns
     -------
     Tuple of (artifacts_dict, input_tokens, output_tokens).
-    artifacts_dict keys match generator names: "handler", "migration", and
+    artifacts_dict keys match generator names: "handler", "db", and
     optionally "widget_js" and/or "admin_ui".
     Returns ({}, in, out) on parse failure — caller falls back to run_codegen_parallel.
     """
@@ -263,10 +263,10 @@ def run_revision_agent(
             code = re.sub(r"```\s*$", "", code.strip(), flags=re.MULTILINE)
             artifacts["handler"] = code.strip()
 
-    if "migration" not in locked_artifacts:
-        migration = parsed.get("migration")
+    if "db" not in locked_artifacts:
+        migration = parsed.get("db")
         if isinstance(migration, str) and migration.strip():
-            artifacts["migration"] = migration.strip()
+            artifacts["db"] = migration.strip()
 
     if is_storefront and "widget_js" not in locked_artifacts:
         widget = parsed.get("widget_js")

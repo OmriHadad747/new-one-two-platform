@@ -26,7 +26,7 @@ def run_explanation_agent(
     intent: Dict[str, Any],
     plan: Dict[str, Any],
     widget_js_code: str,
-    migration_sql: str,
+    db_sql: str,
 ) -> Tuple[Dict[str, Any], int, int]:
     """
     Agent 6: Generate merchant explanation + technical summary.
@@ -35,7 +35,7 @@ def run_explanation_agent(
     shopify_plan = plan.get("shopifyPlan", {})
     impl_spec = plan.get("appContracts", {})
 
-    db_tables = re.findall(r"CREATE\s+TABLE\s+(\w+)", migration_sql, re.IGNORECASE)
+    db_tables = re.findall(r"CREATE\s+TABLE\s+(\w+)", db_sql, re.IGNORECASE)
     webhook_topics = shopify_plan.get("webhookTopics", [])
     cron_schedule = shopify_plan.get("cronSchedule") or "none"
 

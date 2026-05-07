@@ -65,15 +65,15 @@ log = logging.getLogger(__name__)
 _MAX_RETRIES = 3  # total codegen attempts (1 initial + 2 retries)
 _MAX_ARCH_ATTEMPTS = 2  # architect: 1 initial + 1 retry
 
-# Findings whose `artifact == "migration"` mean the migration itself is broken
+# Findings whose `artifact == "db"` mean the migration itself is broken
 # (missing tables/columns) — unlock both so the revision agent fixes both
 # together. (The legacy validator used Q-key categories for this; the new
 # Finding shape carries a single `artifact` field that already encodes intent.)
-_MIGRATION_BROKEN_ARTIFACTS: FrozenSet[str] = frozenset({"migration"})
+_DB_BROKEN_ARTIFACTS: FrozenSet[str] = frozenset({"db"})
 
 # Artifact names that indicate a handler-side problem on a correct migration —
 # lock migration, fix the handler. `migration` is NOT in this set because a
-# migration finding is handled first by `_MIGRATION_BROKEN_ARTIFACTS` (which
+# migration finding is handled first by `_DB_BROKEN_ARTIFACTS` (which
 # unlocks both); including it here would be dead. Widget/admin-only findings
 # fall through to the default (lock both backends, fix the frontend). Plan-
 # level findings are informational today: revision can't re-run the architect,
@@ -194,7 +194,7 @@ def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
     `artifact` field).
 
     Locking policy (single field, no Q-key categories):
-    - artifact == "migration": migration itself is broken (missing table /
+    - artifact == "db": migration itself is broken (missing table /
       missing column) — unlock both so the revision can add the missing
       schema AND adjust the handler in one pass.
     - artifact == "handler": backend problem — lock migration (it's the
@@ -214,16 +214,16 @@ def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
     """
     artifacts = {i.get("artifact") for i in issues if i.get("artifact")}
 
-    if artifacts & _MIGRATION_BROKEN_ARTIFACTS:
+    if artifacts & _DB_BROKEN_ARTIFACTS:
         # Migration itself is incomplete — unlock both so the revision fixes both.
         return frozenset()
 
     if artifacts & _BACKEND_OPEN_ARTIFACTS:
         # Handler misaligns with a correct migration — lock migration, fix handler.
-        return frozenset({"migration"})
+        return frozenset({"db"})
 
     # Frontend-only misalignment — handler is ground truth, fix widget/admin_ui.
-    return frozenset({"handler", "migration"})
+    return frozenset({"handler", "db"})
 
 
 # ── Pipeline entry point ───────────────────────────────────────────────────────
@@ -273,7 +273,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
         )
         # New shape: dbMigration = {path, contents}.  Legacy: {sql}.
         prior_migration = prior_bundle.get("dbMigration") or {}
-        prior_migration_sql = (
+        prior_db_sql = (
             prior_migration.get("contents") or prior_migration.get("sql") or None
         )
         base_ctx = CodegenContext(
@@ -285,7 +285,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
             or [],
             prior_handler_code=prior_handler,
             prior_widget_code=(prior_bundle.get("widgetModule") or None),
-            prior_migration_sql=prior_migration_sql,
+            prior_db_sql=prior_db_sql,
             prior_admin_ui_code=(prior_bundle.get("adminUiModule") or None),
         )
 
@@ -491,7 +491,7 @@ def _phase_codegen(
     revision agent. Subsequent retry attempts always use individual generators.
     """
     _emit(request, "handler", "running", "Generating backend handler…")
-    _emit(request, "migration", "running", "Writing DB migration…")
+    _emit(request, "db", "running", "Writing DB migration…")
     if is_storefront:
         _emit(request, "widget_js", "running", "Generating storefront widget…")
     if is_admin_ui:
@@ -597,7 +597,7 @@ def _phase_codegen(
             )
         )
     _emit(request, "handler", "completed", "Handler complete")
-    _emit(request, "migration", "completed", "Migration complete")
+    _emit(request, "db", "completed", "Migration complete")
     if is_storefront:
         _emit(request, "widget_js", "completed", "Widget complete")
     if is_admin_ui:
@@ -646,7 +646,7 @@ def _generate_artifacts(
         revision, in_tok, out_tok = run_revision_agent(
             base_ctx, is_storefront=is_storefront, is_admin_ui=is_admin_ui
         )
-        if revision.get("handler") and revision.get("migration"):
+        if revision.get("handler") and revision.get("db"):
             log.info("revision_agent produced all artifacts")
             _emit(request, "revision", "completed", "Revision complete")
             return revision, {"revision": (in_tok, out_tok)}
@@ -703,7 +703,7 @@ def _phase_validator(
 
     Locking strategy (see _revision_locked_artifacts) — driven solely by each
     finding's `artifact` field:
-      artifact == "migration"      → unlock both (migration itself is broken).
+      artifact == "db"      → unlock both (migration itself is broken).
       artifact == "handler"        → lock migration, fix handler.
       artifact in {widget_js,
                    admin_ui}       → lock both backends, fix the frontend.
@@ -805,7 +805,7 @@ def _phase_validator(
     revision_ctx = dataclasses.replace(
         base_ctx,
         prior_handler_code=artifacts.get("handler") or base_ctx.prior_handler_code,
-        prior_migration_sql=artifacts.get("migration") or base_ctx.prior_migration_sql,
+        prior_db_sql=artifacts.get("db") or base_ctx.prior_db_sql,
         prior_widget_code=artifacts.get("widget_js") or base_ctx.prior_widget_code,
         prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
     )
@@ -815,7 +815,7 @@ def _phase_validator(
         request.jobId,
         sorted(i["question"] for i in issues),
         sorted(_LOCKED),
-        sorted({"handler", "migration", "widget_js", "admin_ui"} - _LOCKED),
+        sorted({"handler", "db", "widget_js", "admin_ui"} - _LOCKED),
     )
 
     _emit(request, "revision", "running", f"Fixing {len(issues)} semantic issue(s)…")
@@ -933,7 +933,7 @@ def _phase_explanation(
         intent=intent,
         plan=plan,
         widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
-        migration_sql=artifacts.get("migration", ""),
+        db_sql=artifacts.get("db", ""),
     )
     agent_trace.append(
         AgentTraceEntry(
@@ -1004,7 +1004,7 @@ def _publish_success(
             GeneratedFile(path="src/routes/handler.ts", contents=handler_raw)
         ]
 
-    migration_sql = artifacts.get("migration", "")
+    db_sql = artifacts.get("db", "")
     shopify_plan = plan.get("shopifyPlan", {})
     technical = explanation.get("technical", {})
     app_contracts = plan.get("appContracts") or {}
@@ -1091,7 +1091,7 @@ def _publish_success(
         ),
         dbMigration=GeneratedFile(
             path="migrations/generated.sql",
-            contents=migration_sql,
+            contents=db_sql,
         ),
         explanation=FeatureExplanation(
             merchantFacing=explanation.get("merchantFacing", ""),
@@ -1269,7 +1269,7 @@ def _build_codegen_context(
         previous_errors=previous_errors,
         prior_handler_code=base_ctx.prior_handler_code,
         prior_widget_code=base_ctx.prior_widget_code,
-        prior_migration_sql=base_ctx.prior_migration_sql,
+        prior_db_sql=base_ctx.prior_db_sql,
         prior_admin_ui_code=base_ctx.prior_admin_ui_code,
     )
 

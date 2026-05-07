@@ -14,7 +14,6 @@ LLM adapter, no anthropic SDK.
 from __future__ import annotations
 
 from subagents.handler_agent import _format_db_contracts as handler_format_db
-from subagents.migration_agent import _format_db_contracts as migration_format_db
 from subagents.admin_ui_agent import _format_column_enums
 from llm_validations.admin_ui_artifact import validate_admin_ui_artifact
 from llm_validations.arch_plan import validate_architect_plan
@@ -77,33 +76,6 @@ def test_architect_plan_rejects_singleton_with_id_column() -> None:
     assert any(
         "singleton: true but also" in e and "'id' column" in e for e in errors
     ), errors
-
-
-def test_migration_renders_singleton_pk_column() -> None:
-    plan = {
-        "appContracts": {
-            "dbContracts": [
-                {
-                    "table": "settings",
-                    "singleton": True,
-                    "columns": [
-                        {
-                            "name": "delay_minutes",
-                            "type": "INTEGER",
-                            "constraints": "NOT NULL DEFAULT 60",
-                        },
-                    ],
-                    "uniqueConstraint": None,
-                    "indexes": [],
-                }
-            ]
-        }
-    }
-    rendered = migration_format_db(plan)
-    assert (
-        "singleton  BOOLEAN  PRIMARY KEY DEFAULT true CHECK (singleton = true)"
-        in rendered
-    )
 
 
 def test_handler_render_surfaces_singleton_upsert_pattern() -> None:
@@ -225,11 +197,6 @@ def test_architect_plan_rejects_default_outside_enum() -> None:
     }
     errors = validate_architect_plan(plan, app_archetype="backend_admin")
     assert any("DEFAULT 'queued'" in e and "not in" in e for e in errors), errors
-
-
-def test_migration_render_emits_check_for_enum() -> None:
-    rendered = migration_format_db({"appContracts": {"dbContracts": _QUEUE_CONTRACTS}})
-    assert "CHECK (status IN ('pending', 'sent', 'failed'))" in rendered
 
 
 def test_handler_validator_flags_insert_with_unknown_status_literal() -> None:

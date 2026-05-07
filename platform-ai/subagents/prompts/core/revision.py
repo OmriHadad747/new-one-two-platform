@@ -65,7 +65,7 @@ WIDGET / ADMIN UI (widget_js, admin_ui)
 OUTPUT — respond with ONLY this JSON object (no markdown fences, no explanation):
 {
   "handler": "<full revised handler file bundle, wrapped in ===FILE:=== / ===END=== markers>",
-  "migration": "<incremental SQL DDL, or exactly '-- no schema changes'>",
+  "db": "<incremental SQL DDL, or exactly '-- no schema changes'>",
   "widget_js": "<revised ES module, or null>",
   "admin_ui": "<revised ES module, or null>"
 }"""

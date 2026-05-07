@@ -153,7 +153,7 @@ OUTPUT FORMAT — return JSON only:
 {
   "findings": [
     {
-      "artifact": "plan" | "handler" | "migration" | "widget_js" | "admin_ui",
+      "artifact": "plan" | "handler" | "db" | "widget_js" | "admin_ui",
       "location": "<file:symbol or plan field path or route>",
       "issue": "<one sentence: what is wrong>",
       "failure_mode": "<one sentence: how it fails at runtime>",
@@ -194,7 +194,7 @@ def _build_user_prompt(
     plan_block = "ARCHITECT PLAN\n══════════════\n\n" + json.dumps(plan, indent=2)
 
     handler = artifacts.get("handler") or "(missing)"
-    migration = artifacts.get("migration") or "(missing)"
+    migration = artifacts.get("db") or "(missing)"
 
     artifacts_lines = [
         "ARTIFACTS",

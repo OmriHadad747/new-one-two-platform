@@ -19,13 +19,13 @@ from typing import Dict
 
 from subagents.base import Generator
 from subagents.handler_agent import HandlerGenerator
-from subagents.migration_agent import MigrationGenerator
+from subagents.e_db_agent import DbGenerator
 from subagents.widget_js_agent import WidgetJsGenerator
 from subagents.admin_ui_agent import AdminUiGenerator
 
 GENERATORS: Dict[str, Generator] = {
     HandlerGenerator.name: HandlerGenerator(),
-    MigrationGenerator.name: MigrationGenerator(),
+    DbGenerator.name: DbGenerator(),
     WidgetJsGenerator.name: WidgetJsGenerator(),
     AdminUiGenerator.name: AdminUiGenerator(),
 }

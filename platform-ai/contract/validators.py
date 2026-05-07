@@ -39,7 +39,7 @@ class ProgressEvent(BaseModel):
         "product",
         "architect",
         "handler",
-        "migration",
+        "db",
         "widget_js",
         "admin_ui",
         "validation",

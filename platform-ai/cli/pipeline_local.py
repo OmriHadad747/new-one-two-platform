@@ -91,7 +91,7 @@ def _save_generated_files(
         except ParseError:
             (run_dir / "handler_bundle.ts").write_text(handler_raw)
 
-    migration = artifacts.get("migration", "")
+    migration = artifacts.get("db", "")
     if migration:
         migrations_dir = run_dir / "migrations"
         migrations_dir.mkdir(exist_ok=True)
@@ -543,7 +543,7 @@ def _phase_codegen(
 
     _CODEGEN_LABELS = {
         "handler": "Handler",
-        "migration": "Migration",
+        "db": "Migration",
         "widget_js": "Widget JS",
         "admin_ui": "Admin UI",
     }
@@ -559,7 +559,7 @@ def _phase_codegen(
         or any(
             n not in artifacts
             for n in (
-                ["handler", "migration"]
+                ["handler", "db"]
                 + (["widget_js"] if is_storefront else [])
                 + (["admin_ui"] if is_admin_ui else [])
             )
@@ -571,7 +571,7 @@ def _phase_codegen(
             generators_this_round = list(error_map.keys()) or [
                 n
                 for n in (
-                    ["handler", "migration"]
+                    ["handler", "db"]
                     + (["widget_js"] if is_storefront else [])
                     + (["admin_ui"] if is_admin_ui else [])
                 )
@@ -579,7 +579,7 @@ def _phase_codegen(
             ]
         else:
             generators_this_round = (
-                ["handler", "migration"]
+                ["handler", "db"]
                 + (["widget_js"] if is_storefront else [])
                 + (["admin_ui"] if is_admin_ui else [])
             )
@@ -867,7 +867,7 @@ def _phase_validator(
     revision_ctx = dataclasses.replace(
         base_ctx,
         prior_handler_code=artifacts.get("handler") or base_ctx.prior_handler_code,
-        prior_migration_sql=artifacts.get("migration") or base_ctx.prior_migration_sql,
+        prior_db_sql=artifacts.get("db") or base_ctx.prior_db_sql,
         prior_widget_code=artifacts.get("widget_js") or base_ctx.prior_widget_code,
         prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
     )
@@ -1118,7 +1118,7 @@ def _phase_explanation(
             intent=intent,
             plan=plan,
             widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
-            migration_sql=artifacts.get("migration", ""),
+            db_sql=artifacts.get("db", ""),
         )
     ms = int((time.monotonic() - t0) * 1000)
     _agent_line("Explanation", ok=True, ms=ms, notes=_tok_note(exp_in, exp_out))

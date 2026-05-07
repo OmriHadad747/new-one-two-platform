@@ -1949,6 +1949,7 @@ def main() -> None:
     base_ctx = CodegenContext(
         intent=intent,
         plan=plan,
+        lld=lld or {},
         platform_api_catalog=(plan.get("appContracts") or {}).get("widgetApiCatalog")
         or [],
     )

@@ -43,7 +43,7 @@ OUTPUT FORMAT — return JSON only:
 {
   "findings": [
     {
-      "artifact": "plan" | "handler" | "migration" | "widget_js" | "admin_ui",
+      "artifact": "plan" | "handler" | "db" | "widget_js" | "admin_ui",
       "location": "<plan field or handler file:symbol>",
       "issue": "<one sentence: which brief requirement is missing>",
       "failure_mode": "<one sentence: what the merchant or shopper sees as a result>",

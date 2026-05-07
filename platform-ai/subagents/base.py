@@ -60,7 +60,7 @@ class CodegenContext:
                         utils.file_bundle.
     prior_widget_code   The currently deployed widget ES module, present only on
                         revision runs for storefront apps.
-    prior_migration_sql DDL already applied to the DB, present only on revision runs.
+    prior_db_sql DDL already applied to the DB, present only on revision runs.
                         The migration agent emits only incremental DDL — never recreates
                         existing tables.
     prior_admin_ui_code The currently deployed admin UI module, present only on
@@ -77,11 +77,15 @@ class CodegenContext:
 
     intent: Dict[str, Any]
     plan: Dict[str, Any]
+    # LLD plan (output of run_lld_agent). Empty until the LLD-consuming
+    # codegens are migrated off the legacy arch plan. The e_db_agent
+    # is the first to read it; handler/widget/admin still read `plan`.
+    lld: Dict[str, Any] = field(default_factory=dict)
     platform_api_catalog: List[Dict[str, str]] = field(default_factory=list)
     previous_errors: Optional[List[str]] = None
     prior_handler_code: Optional[Any] = None  # str | List[Dict[str, str]]
     prior_widget_code: Optional[str] = None
-    prior_migration_sql: Optional[str] = None
+    prior_db_sql: Optional[str] = None  # prior DDL on revision runs (was prior_migration_sql)
     prior_admin_ui_code: Optional[str] = None
 
     # OUTPUT slot — see docstring. Written by HandlerGenerator.generate().
