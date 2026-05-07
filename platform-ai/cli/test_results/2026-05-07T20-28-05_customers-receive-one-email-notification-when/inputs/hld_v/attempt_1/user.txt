@@ -25,22 +25,23 @@ HLD PLAN
   "feasibility": "feasible",
   "blockedReason": null,
   "complexity": "high",
-  "dataFlow": "When a customer submits the storefront widget, the system records a pending signup keyed by customer email and variant external id, deduplicating against any existing active signup for the same pair. When an inventory-level-increased event arrives, the system identifies all pending signups for the restocked variant. For each pending signup, the system atomically claims the row by flipping its status from pending to processing before dispatching the email, so concurrent duplicate webhook deliveries cannot both claim the same signup. The email is sent and the outcome is recorded as notified or failed on both the signup row and the notification attempts log. The merchant reviews signup statuses and notification outcomes from the admin panel.",
+  "dataFlow": "When a customer visits a sold-out product page they submit their email via the widget, which records a pending signup keyed to that product variant; a matching widget GET lets the widget render the correct initial state on page load without a form submission. When an inventory replenishment event fires for a variant, the system fetches all pending signups for that variant and, for each, sends a restock notification email and records the outcome \u2014 marking the signup as notified on success or as failed with a reason on failure. Signups that have already been notified are skipped so a second restock event never fires a duplicate email. The merchant views every signup and its notification outcome from the admin panel, filtered by status so successes and failures are immediately scannable.",
   "triggers": [
     {
       "kind": "external-event",
-      "event": "a product variant returns to stock",
+      "event": "a product variant's inventory level rises above zero after being depleted",
       "signalFields": [
         "variant external id",
-        "available quantity"
+        "product external id",
+        "new inventory quantity"
       ],
-      "idempotency": "if no pending signups exist for the restocked variant, treat the event as a no-op and exit without sending any emails"
+      "idempotency": "if all pending signups for the variant have already been notified, treat the event as a no-op and make no external calls"
     }
   ],
   "capabilities": [
     {
-      "id": "check-signup-status",
-      "description": "Look up whether a customer already has an active signup for a given variant so the widget can render the correct initial state.",
+      "id": "check-signup-state",
+      "description": "Look up whether a customer already holds a signup for a given product variant so the widget can render the correct initial UI and duplicate submissions can be rejected.",
       "kind": "read",
       "dataNeeds": [
         "customer email",
@@ -53,12 +54,13 @@ HLD PLAN
       "usesWorkflow": false
     },
     {
-      "id": "create-signup",
-      "description": "Record a new pending signup for a customer and variant, skipping the insert if an active signup already exists for that pair.",
+      "id": "register-signup",
+      "description": "Create a pending signup record linking a customer email to a product variant, enforcing one active signup per customer-variant pair.",
       "kind": "write",
       "dataNeeds": [
         "customer email",
-        "variant external id"
+        "variant external id",
+        "product external id"
       ],
       "integration": null,
       "returnsList": false,
@@ -68,10 +70,9 @@ HLD PLAN
     },
     {
       "id": "cancel-signup",
-      "description": "Mark an existing signup as unsubscribed so the customer will not receive a notification when the variant restocks.",
+      "description": "Mark a customer's signup as unsubscribed so no future notification is sent for that variant.",
       "kind": "write",
       "dataNeeds": [
-        "signup id",
         "customer email",
         "variant external id"
       ],
@@ -79,11 +80,70 @@ HLD PLAN
       "returnsList": false,
       "touchesMoney": false,
       "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "fetch-restocked-variant-details",
+      "description": "Retrieve the product title and variant details from the external platform so the notification email can include meaningful product information.",
+      "kind": "read",
+      "dataNeeds": [
+        "variant external id",
+        "product external id"
+      ],
+      "integration": "shopify-admin",
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
       "usesWorkflow": false
     },
     {
+      "id": "identify-pending-signups",
+      "description": "Retrieve all signups in the pending state for a given product variant so the restock handler knows which customers to notify.",
+      "kind": "read",
+      "dataNeeds": [
+        "variant external id"
+      ],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "send-restock-notification",
+      "description": "Deliver a one-time back-in-stock email to a customer containing the product name and a link to purchase.",
+      "kind": "notify",
+      "dataNeeds": [
+        "customer email",
+        "product title",
+        "variant title",
+        "product url"
+      ],
+      "integration": "email",
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "record-notification-outcome",
+      "description": "Persist the result of a notification delivery attempt and advance the signup to its terminal state so the audit log is complete and the customer is never emailed again for this signup.",
+      "kind": "write",
+      "dataNeeds": [
+        "signup id",
+        "variant external id",
+        "outcome",
+        "failure reason"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
       "id": "list-signups",
-      "description": "Return a paginated, filterable list of all signups and their statuses for the merchant admin dashboard.",
+      "description": "Return a paginated, status-filtered list of signups with their notification outcomes for the merchant admin dashboard.",
       "kind": "read",
       "dataNeeds": [
         "status filter",
@@ -94,54 +154,12 @@ HLD PLAN
       "touchesMoney": false,
       "usesConfig": false,
       "usesWorkflow": false
-    },
-    {
-      "id": "remove-signup",
-      "description": "Allow the merchant to manually delete a signup record from the admin dashboard.",
-      "kind": "write",
-      "dataNeeds": [
-        "signup id"
-      ],
-      "integration": null,
-      "returnsList": false,
-      "touchesMoney": false,
-      "usesConfig": false,
-      "usesWorkflow": false
-    },
-    {
-      "id": "send-restock-notification",
-      "description": "Send a single back-in-stock email to the customer associated with a claimed pending signup.",
-      "kind": "notify",
-      "dataNeeds": [
-        "customer email",
-        "variant external id"
-      ],
-      "integration": "email",
-      "returnsList": false,
-      "touchesMoney": false,
-      "usesConfig": false,
-      "usesWorkflow": false
-    },
-    {
-      "id": "record-notification-outcome",
-      "description": "Record whether a notification attempt succeeded or failed, updating the signup status and writing a log entry so the merchant can audit results.",
-      "kind": "write",
-      "dataNeeds": [
-        "signup id",
-        "outcome",
-        "failure reason"
-      ],
-      "integration": null,
-      "returnsList": false,
-      "touchesMoney": false,
-      "usesConfig": false,
-      "usesWorkflow": true
     }
   ],
   "persistence": [
     {
       "name": "product_signups",
-      "purpose": "Tracks each customer's request to be notified when a specific variant returns to stock, and the current state of that request.",
+      "purpose": "Records each customer's request to be notified when a specific product variant returns to stock, and tracks whether the notification was delivered.",
       "columns": [
         {
           "name": "id",
@@ -150,16 +168,22 @@ HLD PLAN
           "purpose": null
         },
         {
+          "name": "variant_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies the specific product variant the customer is waiting on"
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies the parent product for display and filtering in the admin panel"
+        },
+        {
           "name": "customer_email",
           "role": "text",
           "nullable": false,
           "purpose": null
-        },
-        {
-          "name": "variant_external_id",
-          "role": "reference",
-          "nullable": false,
-          "purpose": "identifies the specific variant the customer signed up to be notified about"
         },
         {
           "name": "status",
@@ -168,29 +192,29 @@ HLD PLAN
           "purpose": null
         },
         {
-          "name": "signed_up_at",
+          "name": "created_at",
           "role": "timestamp",
           "nullable": false,
           "purpose": null
         },
         {
-          "name": "updated_at",
+          "name": "resolved_at",
           "role": "timestamp",
-          "nullable": false,
+          "nullable": true,
           "purpose": null
         }
       ],
-      "keyedBy": "one row per customer email and variant combination, deduplicated so a customer cannot have more than one active signup for the same variant",
+      "keyedBy": "one row per customer email and product variant combination, deduplicated so a customer may not hold two pending signups for the same variant",
       "statusField": null,
       "queryPatterns": [
-        "all pending signups for a given variant external id, ordered by signup time",
-        "single signup looked up by id for status updates",
-        "all signups filtered by status, ordered by signup time, supporting cursor pagination for the admin dashboard"
+        "all pending signups for a given variant external id, used when a restock event fires",
+        "all signups filtered by status and ordered by creation time, supporting cursor pagination for the admin list",
+        "single signup looked up by customer email and variant external id to support deduplication and widget state checks"
       ]
     },
     {
       "name": "notification_attempts",
-      "purpose": "Records every email notification attempt, its outcome, and the reason for any failure, providing the merchant with a full audit trail.",
+      "purpose": "Logs every email delivery attempt for a signup so the merchant can audit successes and failures and the system can prove a notification was sent exactly once.",
       "columns": [
         {
           "name": "id",
@@ -202,19 +226,13 @@ HLD PLAN
           "name": "signup_id",
           "role": "reference",
           "nullable": false,
-          "purpose": "links this attempt to the product signup that triggered it"
+          "purpose": "links this attempt to the originating signup record"
         },
         {
           "name": "variant_external_id",
           "role": "reference",
           "nullable": false,
-          "purpose": "denormalised copy of the variant identifier from the linked signup row for efficient querying"
-        },
-        {
-          "name": "customer_email",
-          "role": "text",
-          "nullable": false,
-          "purpose": null
+          "purpose": "denormalised for querying attempts by variant without joining"
         },
         {
           "name": "outcome",
@@ -235,11 +253,11 @@ HLD PLAN
           "purpose": null
         }
       ],
-      "keyedBy": "one row per notification attempt, with multiple rows possible per signup if retries are logged",
+      "keyedBy": "one row per notification delivery attempt per signup",
       "statusField": null,
       "queryPatterns": [
         "all attempts for a given signup id ordered by attempt time",
-        "most recent attempt for a given signup id"
+        "all attempts for a given variant external id to verify restock-cycle coverage"
       ]
     }
   ],
@@ -249,10 +267,10 @@ HLD PLAN
       "surface": "widget",
       "path": "/widget/signup",
       "method": "GET",
-      "purpose": "Return the current signup state for a customer and variant so the widget renders the correct initial UI on page load.",
+      "purpose": "Return whether the current customer is already signed up for back-in-stock notification for a given product variant so the widget can render the correct initial state.",
       "requestShape": {
-        "customer_email": "text",
-        "variant_external_id": "identifier"
+        "variant_external_id": "reference",
+        "customer_email": "text"
       },
       "responseShape": {
         "is_signed_up": "flag",
@@ -263,34 +281,34 @@ HLD PLAN
       "surface": "widget",
       "path": "/widget/signup",
       "method": "POST",
-      "purpose": "Register a customer's email to be notified when the specified variant returns to stock.",
+      "purpose": "Register a customer's email address to receive a one-time notification when a specific product variant is back in stock.",
       "requestShape": {
-        "customer_email": "text",
-        "variant_external_id": "identifier"
+        "variant_external_id": "reference",
+        "product_external_id": "reference",
+        "customer_email": "text"
       },
       "responseShape": {
-        "signup_id": "identifier",
-        "status": "status"
+        "success": "flag"
       }
     },
     {
       "surface": "widget",
-      "path": "/widget/signup/cancel",
+      "path": "/widget/signup/remove",
       "method": "POST",
-      "purpose": "Allow a customer to unsubscribe from a back-in-stock notification for a specific variant.",
+      "purpose": "Unsubscribe a customer from a back-in-stock notification for a specific product variant.",
       "requestShape": {
-        "signup_id": "identifier",
+        "variant_external_id": "reference",
         "customer_email": "text"
       },
       "responseShape": {
-        "status": "status"
+        "success": "flag"
       }
     },
     {
       "surface": "admin",
       "path": "/admin/signups",
       "method": "GET",
-      "purpose": "Return a paginated, filterable list of customer signups and their current notification status for the merchant dashboard.",
+      "purpose": "Return a paginated, filterable list of all back-in-stock signups and their notification outcomes for the merchant dashboard.",
       "requestShape": {
         "status_filter": "status",
         "cursor": "text"
@@ -300,26 +318,14 @@ HLD PLAN
         "next_cursor": "text",
         "total_count": "count"
       }
-    },
-    {
-      "surface": "admin",
-      "path": "/admin/signups/remove",
-      "method": "POST",
-      "purpose": "Allow the merchant to manually remove a signup record from the dashboard.",
-      "requestShape": {
-        "signup_id": "identifier"
-      },
-      "responseShape": {
-        "success": "flag"
-      }
     }
   ],
   "edgeCases": [
-    "A customer submits the signup form for a variant they are already actively signed up for \u2014 the system deduplicates and returns the existing signup without creating a duplicate row.",
-    "A restock webhook arrives for a variant that has no pending signups \u2014 the system exits immediately without sending any emails or writing any records.",
-    "The email provider permanently rejects delivery for a signup (hard bounce or invalid address) \u2014 the signup is marked failed, the reason is recorded, and no retry is attempted so the customer is not contacted again for this restock cycle.",
-    "A restock webhook is delivered concurrently or near-simultaneously before any signups for that variant have been marked notified \u2014 each signup row must be claimed atomically (via an optimistic lock or equivalent status-flip guard) so that only one processing pass can transition a given signup out of the pending state, and the second pass finds no claimable rows.",
-    "The email provider is temporarily unreachable or returns a transient error (timeout or server-side failure) \u2014 the attempt is recorded as failed-transient, distinct from a permanent rejection, and surfaced to the merchant in the admin dashboard as requiring manual review rather than silently dropped or automatically retried indefinitely.",
-    "A customer's email is absent or empty when the widget GET is requested (unauthenticated browser with no session) \u2014 the system treats the state as not signed up and returns a response that causes the widget to render the signup form, rather than returning an error."
+    "A customer submits the widget form twice for the same product variant \u2014 the second request must be a no-op that returns success without creating a duplicate signup record.",
+    "A duplicate inventory replenishment event is delivered for the same variant after notifications have already been sent \u2014 the handler must detect that no pending signups remain and exit before making any email or external API calls.",
+    "The email provider rejects delivery for a customer address \u2014 the attempt must be logged as failed with the rejection reason, the signup marked accordingly, and no retry attempted automatically so the customer is not spammed.",
+    "A customer unsubscribes between signing up and the restock event firing \u2014 the handler must check signup status before sending and skip any signup not in the pending state.",
+    "The product variant is deleted or made unavailable before the restock notification is dispatched \u2014 fetching variant details will fail, the affected signups must be marked as cancelled with the reason recorded, and no email is sent.",
+    "A restock event carries an inventory quantity that is above zero but the product is still marked as unavailable for purchase \u2014 treat the event as a no-op and do not notify customers, preserving the notification for a genuine purchasable restock."
   ]
 }

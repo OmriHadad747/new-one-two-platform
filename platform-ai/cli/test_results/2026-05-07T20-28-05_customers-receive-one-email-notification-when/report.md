@@ -1,17 +1,17 @@
 # Chat Local — HLD Stop
 
-**Date:** 2026-05-07 21:05:46  
+**Date:** 2026-05-07 21:14:25  
 **Status:** ✅ SUCCESS  
-**Total:** 97498ms  
-**Tokens:** in=59685 out=16503 total=76188  
+**Total:** 92999ms  
+**Tokens:** in=75373 out=20353 total=95726  
 **Prompt:** Customers receive one email notification when a product they signed up for returns to stock.
 
 ## Per-agent tokens
 
 | Agent | Input | Output | Total |
 |---|---:|---:|---:|
-| hld | 52,196 | 15,139 | 67,335 |
-| hld_v | 7,489 | 1,364 | 8,853 |
+| hld | 67,774 | 19,109 | 86,883 |
+| hld_v | 7,599 | 1,244 | 8,843 |
 
 ## Intent (Product Agent)
 
