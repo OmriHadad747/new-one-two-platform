@@ -647,7 +647,28 @@ TryCatchStep.model_rebuild()
 # ── 5. capabilityRecipes — recipe + triggeredBy validation ───────────────────
 
 
-_TRIGGERED_BY_RE = r"^(webhook:[a-z][a-z_0-9]*/[a-z][a-z_0-9]*|cron:[a-zA-Z_][a-zA-Z0-9_]*|widget:/.+|admin:/.+)$"
+_TRIGGERED_BY_RE = (
+    r"^("
+    r"webhook:[a-z][a-z_0-9]*/[a-z][a-z_0-9]*"
+    r"|cron:[a-zA-Z_][a-zA-Z0-9_]*"
+    r"|widget:(GET|POST|PUT|DELETE):/.+"
+    r"|admin:(GET|POST|PUT|DELETE):/.+"
+    r")$"
+)
+
+
+def _parse_http_triggered_by(tb: str) -> Optional[tuple[str, str, str]]:
+    """
+    Parse a widget/admin triggeredBy into (surface, method, path).
+    Returns None for non-http triggers (webhook/cron).
+    Caller is responsible for ensuring the string passed
+    `_triggered_by_well_formed`.
+    """
+    if not (tb.startswith("widget:") or tb.startswith("admin:")):
+        return None
+    surface, _, rest = tb.partition(":")
+    method, _, path = rest.partition(":")
+    return surface, method, path
 
 
 class CapabilityRecipe(_StrictModel):
@@ -666,8 +687,10 @@ class CapabilityRecipe(_StrictModel):
         if not re.match(_TRIGGERED_BY_RE, v):
             raise ValueError(
                 f"triggeredBy '{v}' must be one of: "
-                "'webhook:<topic>', 'cron:<jobName>', 'widget:<path>', "
-                "'admin:<path>'"
+                "'webhook:<topic>', 'cron:<jobName>', "
+                "'widget:<METHOD>:<path>', 'admin:<METHOD>:<path>' "
+                "(METHOD ∈ GET|POST|PUT|DELETE; route binding requires "
+                "the method so GET/POST on the same path can coexist)"
             )
         return v
 
@@ -861,21 +884,25 @@ class LLDPlan(_StrictModel):
 
     @model_validator(mode="after")
     def _every_route_has_recipe(self) -> "LLDPlan":
-        """Every httpRoutes.widget/admin entry must have a backing recipe."""
+        """Every httpRoutes.widget/admin entry must have a backing recipe.
+        Bound by the (surface, method, path) tuple so GET/POST at the same
+        path each get their own recipe."""
         triggers = {r.triggeredBy for r in self.capabilityRecipes.values()}
         for route in self.httpRoutes.widget:
-            key = f"widget:{route.path}"
+            key = f"widget:{route.method}:{route.path}"
             if key not in triggers:
                 raise ValueError(
-                    f"httpRoutes.widget '{route.path}' has no backing recipe "
-                    f"(expected a capabilityRecipes entry with triggeredBy='{key}')"
+                    f"httpRoutes.widget '{route.method} {route.path}' has no "
+                    f"backing recipe (expected a capabilityRecipes entry with "
+                    f"triggeredBy='{key}')"
                 )
         for route in self.httpRoutes.admin:
-            key = f"admin:{route.path}"
+            key = f"admin:{route.method}:{route.path}"
             if key not in triggers:
                 raise ValueError(
-                    f"httpRoutes.admin '{route.path}' has no backing recipe "
-                    f"(expected a capabilityRecipes entry with triggeredBy='{key}')"
+                    f"httpRoutes.admin '{route.method} {route.path}' has no "
+                    f"backing recipe (expected a capabilityRecipes entry with "
+                    f"triggeredBy='{key}')"
                 )
         return self
 
@@ -993,19 +1020,20 @@ class LLDPlan(_StrictModel):
         fields. Error responses (4xx/5xx) are exempt — those typically carry
         a `{ error: "..." }` shape that doesn't match the success shape.
         """
-        # Build (surface, path) -> shape-keys index.
-        route_shapes: dict[tuple[str, str], set[str]] = {}
+        # Build (surface, method, path) -> shape-keys index. Method is
+        # required to disambiguate GET/POST at the same path.
+        route_shapes: dict[tuple[str, str, str], set[str]] = {}
         for r in self.httpRoutes.widget:
-            route_shapes[("widget", r.path)] = set(r.responseShape.keys())
+            route_shapes[("widget", r.method, r.path)] = set(r.responseShape.keys())
         for r in self.httpRoutes.admin:
-            route_shapes[("admin", r.path)] = set(r.responseShape.keys())
+            route_shapes[("admin", r.method, r.path)] = set(r.responseShape.keys())
 
         for rid, recipe in self.capabilityRecipes.items():
-            tb = recipe.triggeredBy
-            if not (tb.startswith("widget:") or tb.startswith("admin:")):
+            parsed = _parse_http_triggered_by(recipe.triggeredBy)
+            if parsed is None:
                 continue
-            surface, _, path = tb.partition(":")
-            shape_keys = route_shapes.get((surface, path))
+            surface, method, path = parsed
+            shape_keys = route_shapes.get((surface, method, path))
             if shape_keys is None:
                 continue  # route-coverage validator already catches this
             for resp in _collect_response_steps(list(recipe.steps)):
@@ -1019,7 +1047,7 @@ class LLDPlan(_StrictModel):
                     raise ValueError(
                         f"recipe '{rid}' response (status={resp.status}) "
                         f"body has keys {sorted(extra)} not declared in "
-                        f"httpRoutes.{surface} '{path}' responseShape "
+                        f"httpRoutes.{surface} '{method} {path}' responseShape "
                         f"(declared keys: {sorted(shape_keys)})"
                     )
         return self
@@ -1162,10 +1190,10 @@ class LLDPlan(_StrictModel):
         offset_triggers: set[str] = set()
         for r in self.httpRoutes.widget:
             if r.paginationKind == "offset":
-                offset_triggers.add(f"widget:{r.path}")
+                offset_triggers.add(f"widget:{r.method}:{r.path}")
         for r in self.httpRoutes.admin:
             if r.paginationKind == "offset":
-                offset_triggers.add(f"admin:{r.path}")
+                offset_triggers.add(f"admin:{r.method}:{r.path}")
 
         if not offset_triggers:
             return self

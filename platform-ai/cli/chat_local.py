@@ -1005,9 +1005,8 @@ def _resolve_resume_target(
         "lld": "lld",
         # Add new phases here when they're introduced post-launch.
     }
-    asks_to_backfill_missing = (
-        stop_after in _MISSING_PHASE_FIELDS
-        and not state.get(_MISSING_PHASE_FIELDS[stop_after])
+    asks_to_backfill_missing = stop_after in _MISSING_PHASE_FIELDS and not state.get(
+        _MISSING_PHASE_FIELDS[stop_after]
     )
 
     if (
@@ -1677,8 +1676,8 @@ def main() -> None:
     if resume_state and resume_state.get("hld_v_findings") is not None:
         hld_v_findings = resume_state["hld_v_findings"]
     else:
-        from subagents.hld_v_agent.agent import run_hld_validator
-        from subagents.hld_agent.agent import run_hld_agent
+        from subagents.b_hld_v_agent.agent import run_hld_validator
+        from subagents.a_hld_agent.agent import run_hld_agent
 
         _spinner("HLD Check")
         _hld_v_t0 = time.monotonic()
@@ -1889,15 +1888,11 @@ def main() -> None:
     # ops_picks (just name/surface/note). Re-enrich on load so the LLD
     # always sees the full per-op detail (`load_op_details` is lru_cached
     # and idempotent — re-enriching an already-enriched op is a no-op).
-    from subagents.ops_picker_agent.agent import _enrich_with_op_details
+    from subagents.c_ops_picker_agent.agent import _enrich_with_op_details
 
     ops_picks = _enrich_with_op_details(ops_picks)
 
-    if (
-        resume_state
-        and _resumed_idx >= _phase_index("lld")
-        and resume_state.get("lld")
-    ):
+    if resume_state and _resumed_idx >= _phase_index("lld") and resume_state.get("lld"):
         lld = resume_state["lld"]
         if "lld" in (resume_state.get("all_tokens") or {}):
             saved = resume_state["all_tokens"]["lld"]

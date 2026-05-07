@@ -29,8 +29,8 @@ from pydantic import ValidationError
 
 from models.adapter import dump_output, extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
-from subagents.hld_agent.prompt import build_system_prompt
-from subagents.hld_agent.schema import HLDPlan
+from subagents.a_hld_agent.prompt import build_system_prompt
+from subagents.a_hld_agent.schema import HLDPlan
 
 _MAX_ATTEMPTS = 3
 _MAX_TOKENS = 4000
@@ -122,7 +122,11 @@ def run_hld_agent(
             prompt=prompt,
             intent_json=json.dumps(intent, indent=2),
         )
-    llm = get_llm(model=get_agent_model("hld"), max_tokens=_MAX_TOKENS, thinking_budget=_THINKING_BUDGET)
+    llm = get_llm(
+        model=get_agent_model("hld"),
+        max_tokens=_MAX_TOKENS,
+        thinking_budget=_THINKING_BUDGET,
+    )
 
     total_in = 0
     total_out = 0
@@ -145,7 +149,9 @@ def run_hld_agent(
         if result.stop_reason == "max_tokens":
             raise HLDValidationError(
                 attempt,
-                [f"output truncated at max_tokens={_MAX_TOKENS}; raise the cap or shorten the prompt"],
+                [
+                    f"output truncated at max_tokens={_MAX_TOKENS}; raise the cap or shorten the prompt"
+                ],
                 total_in,
                 total_out,
             )

@@ -27,8 +27,8 @@ from pydantic import ValidationError
 
 from models.adapter import dump_output, extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
-from subagents.hld_v_agent.prompt import build_system_prompt
-from subagents.hld_v_agent.schema import HLDVOutput
+from subagents.b_hld_v_agent.prompt import build_system_prompt
+from subagents.b_hld_v_agent.schema import HLDVOutput
 
 log = logging.getLogger(__name__)
 

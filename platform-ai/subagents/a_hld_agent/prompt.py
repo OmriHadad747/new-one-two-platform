@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-from subagents.hld_agent.schema import HLDPlan
+from subagents.a_hld_agent.schema import HLDPlan
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are a senior software architect designing a production-grade \

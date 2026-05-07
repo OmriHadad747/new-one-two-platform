@@ -36,9 +36,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from models.adapter import input_log
-from subagents.hld_agent.agent import HLDValidationError, run_hld_agent
-from subagents.lld_agent.agent import LLDValidationError, run_lld_agent
-from subagents.ops_picker_agent.agent import (
+from subagents.a_hld_agent.agent import HLDValidationError, run_hld_agent
+from subagents.d_lld_agent.agent import LLDValidationError, run_lld_agent
+from subagents.c_ops_picker_agent.agent import (
     OpsPickerValidationError,
     run_ops_picker_agent,
 )

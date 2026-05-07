@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 
-from subagents.lld_agent.schema import LLDPlan
+from subagents.d_lld_agent.schema import LLDPlan
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are a senior backend engineer producing a LOW-LEVEL DESIGN for one \
@@ -471,6 +471,9 @@ Two flavours, picked by `kind`:
                        `unknownSentinel` is always "null"; `skipWhenUnknown`
                        MUST be true (first observation never triggers;
                        only known→known transitions do).
+                       NOTE: `unknownSentinel` and `skipWhenUnknown`
+                       apply ONLY to kind="observation" — omit them
+                       (or set null/false) for kind="workflow".
 
   kind="workflow"    — internal lifecycle driven by THIS app's own writes
                        (e.g. job queue: pending→running→completed). HLD
@@ -537,6 +540,14 @@ Each entry:
                      The recipe handles the "guest later logs in" merge
                      (see R6).
   responseShape     same form.
+                     httpRoutes.requestShape and responseShape MUST be
+                     a faithful translation of the HLD's
+                     externalContracts shape for the same (surface,
+                     method, path) — same field names, same semantic
+                     kinds. Do NOT add, drop, or rename fields the HLD
+                     declared. If the HLD's shape is genuinely
+                     incomplete, surface it as a platformGap rather
+                     than silently inventing fields.
   paginationKind    null | "offset" | "cursor"
                      REQUIRED when responseShape contains a list value
                      (any value of the form "{...}[]" or ending in "[]").
@@ -546,8 +557,12 @@ Each entry:
                      list responses with paginationKind=null.
 
 A recipe in capabilityRecipes binds to each route via \
-`triggeredBy: "widget:<path>"` or `triggeredBy: "admin:<path>"`. Every \
-declared route MUST have a backing recipe.
+`triggeredBy: "widget:<METHOD>:<path>"` or \
+`triggeredBy: "admin:<METHOD>:<path>"` — METHOD must match the route's \
+method exactly so GET and POST at the same path each get their own \
+recipe (e.g. `widget:GET:/signup` for the state-check, \
+`widget:POST:/signup` for the register). Every declared route MUST have \
+a backing recipe.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -572,7 +587,11 @@ into steps of the recipe that consumes them.
 RECIPE FIELDS:
 
   triggeredBy       "webhook:<topic>" | "cron:<jobName>" |
-                     "widget:<path>" | "admin:<path>"
+                     "widget:<METHOD>:<path>" | "admin:<METHOD>:<path>"
+                     METHOD ∈ {GET, POST, PUT, DELETE} and must match
+                     the bound route's method exactly. Required for
+                     widget/admin so GET and POST at the same path can
+                     coexist as separate recipes.
   description       one sentence — what this recipe accomplishes
                      end-to-end
   inputs            [{ name, source, fieldPath, type, nullable }]

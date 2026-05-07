@@ -1,0 +1,25 @@
+```json
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "fetch-restocked-variant-details",
+      "ops": [
+        {
+          "name": "productVariant",
+          "surface": "admin",
+          "note": "Fetches the specific variant (title, availability) and its parent product (title, handle/URL) using the variant external id so the notification email has meaningful product information"
+        }
+      ]
+    }
+  ],
+  "webhooks": [
+    {
+      "trigger_event": "a product variant's inventory level rises above zero after being depleted",
+      "topic": "inventory_levels/update",
+      "note": "Fires whenever an inventory level changes for a location-variant pair, providing the new quantity so the handler can detect a transition from zero to positive stock"
+    }
+  ],
+  "unsatisfied": []
+}
+```

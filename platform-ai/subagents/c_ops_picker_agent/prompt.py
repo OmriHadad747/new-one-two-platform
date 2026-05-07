@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 
-from subagents.ops_picker_agent.schema import OpsPicks
+from subagents.c_ops_picker_agent.schema import OpsPicks
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are a Shopify GraphQL operation selector. Your only job is to pick the \
@@ -143,7 +143,9 @@ def build_system_prompt(
     """
     schema_json = json.dumps(OpsPicks.model_json_schema(), indent=2)
     return (
-        SYSTEM_PROMPT_TEMPLATE.replace("__ADMIN_OPERATION_INDEX__", admin_operation_index)
+        SYSTEM_PROMPT_TEMPLATE.replace(
+            "__ADMIN_OPERATION_INDEX__", admin_operation_index
+        )
         .replace("__STOREFRONT_OPERATION_INDEX__", storefront_operation_index)
         .replace("__WEBHOOK_TOPIC_CATALOG__", webhook_topic_catalog)
         .replace("__SCHEMA_JSON__", schema_json)

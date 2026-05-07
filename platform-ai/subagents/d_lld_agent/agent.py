@@ -36,18 +36,18 @@ from pydantic import ValidationError
 
 from models.adapter import dump_output, extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
-from subagents.lld_agent.platform_helpers_prose import (
+from subagents.d_lld_agent.platform_helpers_prose import (
     CONFIG_HELPER_CONTRACT,
     MONEY_HELPER_CONTRACT,
     PAGINATE_HELPER_CONTRACT,
     WORKFLOW_HELPER_CONTRACT,
 )
-from subagents.lld_agent.platform_runtime_examples import (
+from subagents.d_lld_agent.platform_runtime_examples import (
     example_for_step,
     paginate_snippet,
 )
-from subagents.lld_agent.prompt import build_system_prompt
-from subagents.lld_agent.schema import LLDPlan
+from subagents.d_lld_agent.prompt import build_system_prompt
+from subagents.d_lld_agent.schema import LLDPlan
 
 _MAX_ATTEMPTS = 3
 # LLD output is large — full database + httpRoutes + capabilityRecipes can
@@ -78,21 +78,25 @@ GraphQL strings inside your shopify_query / shopify_mutation steps):
 Produce the LLD plan as JSON conforming to the appended schema."""
 
 
-_VALIDATOR_HINT_SUFFIX = """\
+_REVISE_SUFFIX_TEMPLATE = """\
 
 
-SEMANTIC REVIEW FEEDBACK — you already produced an LLD plan for this
-request and a reviewer flagged the issues below. Emit a corrected version
-with MINIMAL changes:
+REVISE the previous attempt below to address every finding. Output a
+single JSON object conforming to the appended schema. Sections the
+validator did NOT flag must be copied character-for-character from the
+previous attempt — same table names and column orders, same recipe ids,
+same step ordering, same SQL templates, same GraphQL strings, same
+contract paths, same edge-case wording. Do not drop, rename, reword, or
+reorder anything outside the flagged scope. Do not add new sections
+beyond what a finding's fix explicitly requires.
 
-  - Address every finding listed.
-  - Keep everything the reviewer did NOT flag exactly as it was — same
-    table names and column orders, same recipe ids, same step ordering,
-    same SQL templates, same GraphQL strings where unaffected.
-  - Do not refactor, rename, or reorder sections that are not part of
-    a finding.
+PREVIOUS ATTEMPT:
 
-Findings:
+```json
+{prior_output}
+```
+
+FINDINGS:
 {findings_text}"""
 
 
@@ -102,6 +106,7 @@ def run_lld_agent(
     ops_picks: Dict[str, Any],
     on_attempt_failed: Optional[Callable[[int, List[str]], None]] = None,
     validator_hint: Optional[str] = None,
+    prior_plan: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], int, int]:
     """
     Run the LLD agent. Returns (lld_dict, in_tokens, out_tokens).
@@ -152,9 +157,6 @@ def run_lld_agent(
     if _hld_uses_workflow(plan):
         base_user += "\n\n" + WORKFLOW_HELPER_CONTRACT
 
-    if validator_hint:
-        base_user += _VALIDATOR_HINT_SUFFIX.format(findings_text=validator_hint)
-
     llm = get_llm(
         model=get_agent_model("lld"),
         max_tokens=_MAX_TOKENS,
@@ -164,9 +166,24 @@ def run_lld_agent(
     total_in = 0
     total_out = 0
     last_errors: List[str] = []
+    # Carry the prior attempt's raw output so the model can revise it
+    # character-for-character on retry instead of regenerating from scratch.
+    # Seeded from `prior_plan` when the caller (e.g. a future lld_v retry)
+    # passes one alongside `validator_hint`.
+    last_output: Optional[str] = (
+        json.dumps(prior_plan, indent=2) if prior_plan is not None else None
+    )
+    if validator_hint and last_output is not None:
+        last_errors = [validator_hint]
 
     for attempt in range(1, _MAX_ATTEMPTS + 1):
-        retry_suffix = _format_retry_suffix(last_errors) if last_errors else ""
+        if last_errors and last_output is not None:
+            retry_suffix = _REVISE_SUFFIX_TEMPLATE.format(
+                prior_output=last_output,
+                findings_text="\n".join(f"  - {e}" for e in last_errors),
+            )
+        else:
+            retry_suffix = ""
         result = invoke(llm, system, base_user, retry_suffix=retry_suffix)
         total_in += result.input_tokens
         total_out += result.output_tokens
@@ -174,6 +191,7 @@ def run_lld_agent(
         # Persist the raw model response next to the prompt files. No-op
         # outside an active `input_log` block.
         dump_output(result.content)
+        last_output = result.content
 
         # Truncation is a config problem (cap too low for the schema), not a
         # model error to retry against — the next attempt only adds suffix
@@ -181,7 +199,9 @@ def run_lld_agent(
         if result.stop_reason == "max_tokens":
             raise LLDValidationError(
                 attempt,
-                [f"output truncated at max_tokens={_MAX_TOKENS}; raise the cap or shorten the prompt"],
+                [
+                    f"output truncated at max_tokens={_MAX_TOKENS}; raise the cap or shorten the prompt"
+                ],
                 total_in,
                 total_out,
             )
@@ -250,15 +270,6 @@ def _format_pydantic_errors(err: ValidationError) -> List[str]:
     return out
 
 
-def _format_retry_suffix(errors: List[str]) -> str:
-    bullets = "\n".join(f"  - {e}" for e in errors)
-    return (
-        f"\n\nPREVIOUS ATTEMPT FAILED VALIDATION:\n{bullets}\n"
-        "Fix ALL listed errors in this new attempt. Emit a single JSON "
-        "object that conforms to the schema; no markdown fences, no prose.\n"
-    )
-
-
 # ── HLD signal helpers ────────────────────────────────────────────────────────
 
 
@@ -315,8 +326,9 @@ def _build_op_surface_index(ops_picks: Dict[str, Any]) -> Dict[str, str]:
 
 def _build_offset_route_index(lld_dict: Dict[str, Any]) -> set:
     """
-    Build the set of triggeredBy strings ("widget:<path>" / "admin:<path>")
-    for every route declared with paginationKind="offset".
+    Build the set of triggeredBy strings
+    ("widget:<METHOD>:<path>" / "admin:<METHOD>:<path>") for every route
+    declared with paginationKind="offset".
 
     Used to stamp the paginate_offset snippet on the recipe's sql_select
     step before per-step walking — sql_select alone can't tell whether
@@ -327,7 +339,9 @@ def _build_offset_route_index(lld_dict: Dict[str, Any]) -> set:
     for surface_name in ("widget", "admin"):
         for route in routes.get(surface_name) or []:
             if route.get("paginationKind") == "offset":
-                triggers.add(f"{surface_name}:{route.get('path')}")
+                triggers.add(
+                    f"{surface_name}:{route.get('method')}:{route.get('path')}"
+                )
     return triggers
 
 

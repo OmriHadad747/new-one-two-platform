@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 
-from subagents.hld_v_agent.schema import HLDVOutput
+from subagents.b_hld_v_agent.schema import HLDVOutput
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are a senior software architect peer-reviewing another architect's HLD \

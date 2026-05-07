@@ -35,8 +35,8 @@ from pydantic import ValidationError
 from models.adapter import dump_output, extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
 from llm_validations.shopify_ops import load_op_details
-from subagents.ops_picker_agent.prompt import build_system_prompt
-from subagents.ops_picker_agent.schema import OpsPicks
+from subagents.c_ops_picker_agent.prompt import build_system_prompt
+from subagents.c_ops_picker_agent.schema import OpsPicks
 
 _MAX_ATTEMPTS = 3
 _MAX_TOKENS = 4000
@@ -262,9 +262,7 @@ def _cross_check(
     # ── Catalog membership ─────────────────────────────────────────────
     for cap in picks.capabilities:
         for op in cap.ops:
-            catalog = (
-                admin_op_names if op.surface == "admin" else storefront_op_names
-            )
+            catalog = admin_op_names if op.surface == "admin" else storefront_op_names
             if op.name not in catalog:
                 errors.append(
                     f"capabilities[{cap.capability_id}].ops: '{op.name}' is "
@@ -301,9 +299,7 @@ def _cross_check(
 
     for cap_id in covered_ids:
         if cap_id not in declared_cap_ids:
-            errors.append(
-                f"capability_id '{cap_id}' is not declared in the HLD plan"
-            )
+            errors.append(f"capability_id '{cap_id}' is not declared in the HLD plan")
         elif cap_id not in shopify_caps_by_id:
             errors.append(
                 f"capability_id '{cap_id}' has no Shopify integration in the "
@@ -318,9 +314,7 @@ def _cross_check(
         if hld_cap is None:
             continue
         expected_surface = (
-            "admin"
-            if hld_cap.get("integration") == "shopify-admin"
-            else "storefront"
+            "admin" if hld_cap.get("integration") == "shopify-admin" else "storefront"
         )
         for op in cap.ops:
             if op.surface != expected_surface:

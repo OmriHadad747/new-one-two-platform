@@ -1,0 +1,881 @@
+```json
+{
+  "schema_version": "1",
+  "shopifyIntegration": {
+    "webhookTopics": ["inventory_levels/update"],
+    "cronSchedule": "*/10 * * * *",
+    "bulkFetchRequired": false
+  },
+  "database": {
+    "tables": [
+      {
+        "name": "product_signups",
+        "purpose": "Records each customer's request to be notified when a specific product variant returns to stock, and tracks whether the notification was delivered.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "variant_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "numeric Shopify variant ID the customer is waiting on"
+          },
+          {
+            "name": "product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "numeric Shopify product ID for admin filtering and display"
+          },
+          {
+            "name": "customer_email",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "status",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT 'pending'",
+            "enum": ["pending", "notified", "failed", "unsubscribed"],
+            "purpose": null
+          },
+          {
+            "name": "failure_reason",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "populated when status='failed' so admin dashboard surfaces reason inline"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "resolved_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "set when status transitions to notified, failed, or unsubscribed"
+          }
+        ],
+        "uniqueConstraint": {
+          "columns": ["customer_email", "variant_external_id"]
+        },
+        "indexes": [
+          "variant_external_id, status",
+          "customer_email, variant_external_id",
+          "status, created_at"
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "notification_attempts",
+        "purpose": "Logs every email delivery attempt for a signup so the merchant can audit successes and failures and the system can prove a notification was sent exactly once.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "signup_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES product_signups(id) ON DELETE CASCADE",
+            "enum": null,
+            "purpose": "links this attempt to the originating signup record"
+          },
+          {
+            "name": "variant_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "denormalised for querying attempts by variant without joining"
+          },
+          {
+            "name": "outcome",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": ["sent", "failed_permanent", "failed_transient"],
+            "purpose": null
+          },
+          {
+            "name": "failure_reason",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "attempted_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "enum": null,
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": null,
+        "indexes": [
+          "signup_id",
+          "variant_external_id"
+        ],
+        "foreignKeys": [
+          {
+            "column": "signup_id",
+            "references": "product_signups(id)",
+            "onDelete": "CASCADE"
+          }
+        ]
+      }
+    ]
+  },
+  "stateMachine": {
+    "kind": "workflow",
+    "table": "product_signups",
+    "column": "status",
+    "states": ["pending", "notified", "failed", "unsubscribed"],
+    "initialState": "pending",
+    "terminalStates": ["notified", "failed", "unsubscribed"],
+    "unknownSentinel": "null",
+    "skipWhenUnknown": false,
+    "transitions": [
+      {
+        "from": "pending",
+        "to": "notified",
+        "trigger": "restock webhook fires and email is delivered successfully",
+        "action": "sql_update status=notified, resolved_at=now()"
+      },
+      {
+        "from": "pending",
+        "to": "failed",
+        "trigger": "email delivery attempt returns a permanent or terminal-transient failure",
+        "action": "sql_update status=failed, failure_reason=<reason>, resolved_at=now()"
+      },
+      {
+        "from": "pending",
+        "to": "unsubscribed",
+        "trigger": "customer explicitly cancels signup via widget or admin",
+        "action": "sql_update status=unsubscribed, resolved_at=now()"
+      },
+      {
+        "from": "pending",
+        "to": "failed",
+        "trigger": "variant details fetch fails (variant deleted or unavailable)",
+        "action": "sql_update status=failed, failure_reason='variant unavailable', resolved_at=now()"
+      }
+    ]
+  },
+  "httpRoutes": {
+    "widget": [
+      {
+        "path": "/signup",
+        "method": "GET",
+        "purpose": "Return whether the current customer is already signed up for back-in-stock notification for a given product variant.",
+        "requestShape": {
+          "variant_external_id": "string",
+          "customer_email": "string"
+        },
+        "responseShape": {
+          "is_signed_up": "boolean",
+          "status": "string|null"
+        },
+        "paginationKind": null
+      },
+      {
+        "path": "/signup",
+        "method": "POST",
+        "purpose": "Register a customer's email address to receive a one-time notification when a specific product variant is back in stock.",
+        "requestShape": {
+          "variant_external_id": "string",
+          "product_external_id": "string",
+          "customer_email": "string"
+        },
+        "responseShape": {
+          "success": "boolean"
+        },
+        "paginationKind": null
+      },
+      {
+        "path": "/signup/remove",
+        "method": "POST",
+        "purpose": "Unsubscribe a customer from a back-in-stock notification for a specific product variant.",
+        "requestShape": {
+          "variant_external_id": "string",
+          "customer_email": "string"
+        },
+        "responseShape": {
+          "success": "boolean"
+        },
+        "paginationKind": null
+      }
+    ],
+    "admin": [
+      {
+        "path": "/signups",
+        "method": "GET",
+        "purpose": "Return a paginated, filterable list of all back-in-stock signups and their notification outcomes for the merchant dashboard.",
+        "requestShape": {
+          "status_filter": "string|null",
+          "page": "number",
+          "page_size": "number"
+        },
+        "responseShape": {
+          "items": "{ id: string, variant_external_id: string, product_external_id: string, customer_email: string, status: string, failure_reason: string|null, created_at: string, resolved_at: string|null }[]",
+          "total": "number",
+          "page": "number",
+          "page_size": "number"
+        },
+        "paginationKind": "offset"
+      }
+    ]
+  },
+  "capabilityRecipes": {
+    "widget-get-signup-state": {
+      "triggeredBy": "widget:GET:/signup",
+      "description": "Return whether a customer already holds an active signup for a given product variant so the widget renders the correct initial state.",
+      "inputs": [
+        {
+          "name": "variantExternalId",
+          "source": "request.query",
+          "fieldPath": "variant_external_id",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "customerEmail",
+          "source": "request.query",
+          "fieldPath": "customer_email",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "reject request if either required query param is missing",
+          "condition": "!variantExternalId || !customerEmail",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "return 400 for missing params",
+              "status": 400,
+              "body": { "error": "variant_external_id and customer_email are required" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "look up existing signup for this customer-variant pair",
+          "template": "SELECT id, status FROM product_signups WHERE customer_email = ${customerEmail} AND variant_external_id = ${variantExternalId} LIMIT 1",
+          "bindings": [
+            { "name": "customerEmail", "source": "customerEmail" },
+            { "name": "variantExternalId", "source": "variantExternalId" }
+          ],
+          "bindResultTo": "existing"
+        },
+        {
+          "kind": "compute",
+          "purpose": "determine signup state from query result",
+          "expression": "existing.length > 0 ? { is_signed_up: existing[0].status === 'pending', status: existing[0].status } : { is_signed_up: false, status: null }",
+          "bindResultTo": "signupState"
+        },
+        {
+          "kind": "response",
+          "purpose": "return signup state to widget",
+          "status": 200,
+          "body": {
+            "is_signed_up": "$signupState.is_signed_up",
+            "status": "$signupState.status"
+          }
+        }
+      ],
+      "postconditions": [
+        "response always contains is_signed_up boolean and status string or null"
+      ],
+      "edgeCases": [
+        "Customer has no signup for this variant — is_signed_up=false, status=null.",
+        "Customer has a notified or unsubscribed signup — is_signed_up=false with the actual terminal status returned so the widget can show appropriate messaging."
+      ]
+    },
+    "widget-register-signup": {
+      "triggeredBy": "widget:POST:/signup",
+      "description": "Create a pending signup record linking a customer email to a product variant, enforcing one active signup per customer-variant pair.",
+      "inputs": [
+        {
+          "name": "variantExternalId",
+          "source": "request.body",
+          "fieldPath": "variant_external_id",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "productExternalId",
+          "source": "request.body",
+          "fieldPath": "product_external_id",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "customerEmail",
+          "source": "request.body",
+          "fieldPath": "customer_email",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "reject request if required fields are missing",
+          "condition": "!variantExternalId || !productExternalId || !customerEmail",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "return 400 for missing fields",
+              "status": 400,
+              "body": { "error": "variant_external_id, product_external_id, and customer_email are required" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "sanitize email to remove null bytes",
+          "expression": "customerEmail.replace(/\\u0000/g, '')",
+          "bindResultTo": "cleanEmail"
+        },
+        {
+          "kind": "sql_upsert",
+          "purpose": "insert signup or do nothing if a row already exists for this customer-variant pair, returning the row",
+          "template": "INSERT INTO product_signups (variant_external_id, product_external_id, customer_email, status) VALUES (${variantExternalId}, ${productExternalId}, ${cleanEmail}, 'pending') ON CONFLICT (customer_email, variant_external_id) DO NOTHING RETURNING id, status",
+          "bindings": [
+            { "name": "variantExternalId", "source": "variantExternalId" },
+            { "name": "productExternalId", "source": "productExternalId" },
+            { "name": "cleanEmail", "source": "cleanEmail" }
+          ],
+          "bindResultTo": "upsertResult"
+        },
+        {
+          "kind": "log",
+          "purpose": "record signup registration outcome for observability",
+          "level": "info",
+          "fields": {
+            "variant_external_id": "$variantExternalId",
+            "customer_email": "$cleanEmail",
+            "inserted": "$upsertResult.length > 0 ? 'true' : 'false (duplicate)'"
+          },
+          "message": "back-in-stock signup registered"
+        },
+        {
+          "kind": "response",
+          "purpose": "return success regardless of whether row was newly inserted or was a duplicate",
+          "status": 200,
+          "body": { "success": "true" }
+        }
+      ],
+      "postconditions": [
+        "at most one pending signup row exists per customer_email + variant_external_id pair",
+        "duplicate submissions return success without creating a second row"
+      ],
+      "edgeCases": [
+        "Customer submits form twice for same variant — ON CONFLICT DO NOTHING returns zero rows; response is still success=true.",
+        "Customer previously unsubscribed for this variant — the existing terminal row is left untouched; a new pending signup cannot be created until the old row is removed; the widget should reflect the existing status."
+      ]
+    },
+    "widget-cancel-signup": {
+      "triggeredBy": "widget:POST:/signup/remove",
+      "description": "Mark a customer's pending signup as unsubscribed so no future notification is sent for that variant.",
+      "inputs": [
+        {
+          "name": "variantExternalId",
+          "source": "request.body",
+          "fieldPath": "variant_external_id",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "customerEmail",
+          "source": "request.body",
+          "fieldPath": "customer_email",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "reject request if required fields are missing",
+          "condition": "!variantExternalId || !customerEmail",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "return 400 for missing fields",
+              "status": 400,
+              "body": { "error": "variant_external_id and customer_email are required" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "claim the unsubscribe transition atomically using workflow helper",
+          "expression": "await workflow.claim('product_signups', null, { from: 'pending', to: 'unsubscribed', extraWhere: sql`AND customer_email = ${customerEmail} AND variant_external_id = ${variantExternalId}`, statusColumn: 'status' })",
+          "bindResultTo": "claimed"
+        },
+        {
+          "kind": "decision",
+          "purpose": "skip if no pending signup was found for this customer-variant pair",
+          "condition": "claimed === null",
+          "ifTrue": [
+            {
+              "kind": "log",
+              "purpose": "record that no pending signup was found to cancel",
+              "level": "info",
+              "fields": {
+                "variant_external_id": "$variantExternalId",
+                "customer_email": "$customerEmail"
+              },
+              "message": "unsubscribe: no pending signup found, treating as no-op"
+            },
+            {
+              "kind": "response",
+              "purpose": "return success — idempotent unsubscribe",
+              "status": 200,
+              "body": { "success": "true" }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "sql_update",
+          "purpose": "stamp resolved_at on the now-unsubscribed signup",
+          "template": "UPDATE product_signups SET resolved_at = now() WHERE id = ${signupId}",
+          "bindings": [
+            { "name": "signupId", "source": "claimed.id" }
+          ]
+        },
+        {
+          "kind": "log",
+          "purpose": "record successful unsubscribe",
+          "level": "info",
+          "fields": {
+            "signup_id": "$claimed.id",
+            "variant_external_id": "$variantExternalId"
+          },
+          "message": "customer unsubscribed from back-in-stock notification"
+        },
+        {
+          "kind": "response",
+          "purpose": "return success to widget",
+          "status": 200,
+          "body": { "success": "true" }
+        }
+      ],
+      "postconditions": [
+        "signup row status is 'unsubscribed' with resolved_at set after successful call",
+        "idempotent: calling remove when no pending signup exists returns success"
+      ],
+      "edgeCases": [
+        "Customer unsubscribes after the signup was already notified or failed — claim returns null because status != pending; treated as a no-op success.",
+        "Concurrent unsubscribe calls for the same signup — workflow.claim is atomic; exactly one succeeds and the other gets null."
+      ]
+    },
+    "admin-list-signups": {
+      "triggeredBy": "admin:GET:/signups",
+      "description": "Return a paginated, status-filtered list of all back-in-stock signups and their notification outcomes for the merchant dashboard.",
+      "inputs": [
+        {
+          "name": "statusFilter",
+          "source": "request.query",
+          "fieldPath": "status_filter",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "page",
+          "source": "request.query",
+          "fieldPath": "page",
+          "type": "number",
+          "nullable": false
+        },
+        {
+          "name": "pageSize",
+          "source": "request.query",
+          "fieldPath": "page_size",
+          "type": "number",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "sql_select",
+          "purpose": "fetch signups filtered by status when provided, ordered by created_at desc",
+          "template": "SELECT id, variant_external_id, product_external_id, customer_email, status, failure_reason, created_at, resolved_at FROM product_signups WHERE (${statusFilter}::text IS NULL OR status = ${statusFilter}) ORDER BY created_at DESC",
+          "bindings": [
+            { "name": "statusFilter", "source": "statusFilter" }
+          ],
+          "bindResultTo": "rows"
+        },
+        {
+          "kind": "response",
+          "purpose": "return paginated signup list",
+          "status": 200,
+          "body": {
+            "items": "$rows.items",
+            "total": "$rows.total",
+            "page": "$rows.page",
+            "page_size": "$rows.page_size"
+          }
+        }
+      ],
+      "postconditions": [
+        "response always contains items array, total count, page, and page_size",
+        "when status_filter is null all signups across all statuses are returned"
+      ],
+      "edgeCases": [
+        "status_filter value not in the enum set — no rows match; returns empty items array with total=0.",
+        "page exceeds total pages — paginate helper returns empty items array."
+      ]
+    },
+    "handle-inventory-update": {
+      "triggeredBy": "webhook:inventory_levels/update",
+      "description": "When inventory for a variant rises above zero, fetch pending signups for that variant, retrieve variant details from Shopify, and send a one-time restock notification email to each pending customer, recording the outcome and advancing each signup to its terminal state.",
+      "inputs": [
+        {
+          "name": "variantIdRaw",
+          "source": "webhook.payload",
+          "fieldPath": "variant_id",
+          "type": "number",
+          "nullable": true
+        },
+        {
+          "name": "inventoryQuantity",
+          "source": "webhook.payload",
+          "fieldPath": "available",
+          "type": "number",
+          "nullable": true
+        }
+      ],
+      "steps": [
+        {
+          "kind": "compute",
+          "purpose": "null-defend variant id and inventory quantity from webhook payload (R3)",
+          "expression": "{ variantId: variantIdRaw ?? null, qty: inventoryQuantity ?? null }",
+          "bindResultTo": "payload"
+        },
+        {
+          "kind": "decision",
+          "purpose": "exit if variant id is missing or inventory is not above zero",
+          "condition": "payload.variantId === null || payload.qty === null || payload.qty <= 0",
+          "ifTrue": [
+            {
+              "kind": "log",
+              "purpose": "record skip reason for ops visibility",
+              "level": "info",
+              "fields": {
+                "variant_id": "$payload.variantId",
+                "qty": "$payload.qty"
+              },
+              "message": "inventory_levels/update: skipping — variant missing or qty not positive"
+            },
+            {
+              "kind": "return",
+              "purpose": "exit early — not a positive-stock restock event"
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "fetch all pending signups for this variant to determine whether any notifications need to be sent",
+          "template": "SELECT id, customer_email, status FROM product_signups WHERE variant_external_id = ${variantId} AND status = 'pending'",
+          "bindings": [
+            { "name": "variantId", "source": "payload.variantId" }
+          ],
+          "bindResultTo": "pendingSignups"
+        },
+        {
+          "kind": "decision",
+          "purpose": "exit early when no pending signups exist for this variant",
+          "condition": "pendingSignups.length === 0",
+          "ifTrue": [
+            {
+              "kind": "log",
+              "purpose": "record no-op for duplicate or already-processed restock event",
+              "level": "info",
+              "fields": { "variant_id": "$payload.variantId" },
+              "message": "inventory_levels/update: no pending signups — skipping"
+            },
+            {
+              "kind": "return",
+              "purpose": "exit — all signups already terminal"
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "build Shopify GID for the product variant (R10)",
+          "expression": "`gid://shopify/ProductVariant/${payload.variantId}`",
+          "bindResultTo": "variantGid"
+        },
+        {
+          "kind": "try_catch",
+          "purpose": "fetch variant details from Shopify; on failure mark all pending signups as failed with reason 'variant unavailable'",
+          "errorBinding": "variantFetchError",
+          "try": [
+            {
+              "kind": "shopify_query",
+              "purpose": "retrieve variant title, availableForSale, and parent product title and handle for the notification email",
+              "op": "productVariant",
+              "query": "query GetRestockedVariant($id: ID!) { productVariant(id: $id) { id title availableForSale product { id title handle } } }",
+              "variables": { "id": "$variantGid" },
+              "paginationStrategy": "single",
+              "bindResultTo": "variantData"
+            },
+            {
+              "kind": "decision",
+              "purpose": "treat event as no-op if variant is not available for sale",
+              "condition": "variantData.productVariant === null || variantData.productVariant.availableForSale === false",
+              "ifTrue": [
+                {
+                  "kind": "log",
+                  "purpose": "record unavailable-for-sale skip",
+                  "level": "info",
+                  "fields": { "variant_id": "$payload.variantId" },
+                  "message": "inventory_levels/update: variant not availableForSale — skipping notifications"
+                },
+                {
+                  "kind": "return",
+                  "purpose": "exit — variant not purchasable, preserve signups for genuine restock"
+                }
+              ],
+              "ifFalse": []
+            }
+          ],
+          "catch": [
+            {
+              "kind": "for_each",
+              "purpose": "mark every pending signup as failed because variant details could not be fetched",
+              "source": "pendingSignups",
+              "iterationBinding": "signup",
+              "continueOnError": true,
+              "steps": [
+                {
+                  "kind": "sql_update",
+                  "purpose": "advance signup to failed with variant-unavailable reason",
+                  "template": "UPDATE product_signups SET status = 'failed', failure_reason = ${reason}, resolved_at = now() WHERE id = ${signupId} AND status = 'pending'",
+                  "bindings": [
+                    { "name": "signupId", "source": "signup.id" },
+                    { "name": "reason", "source": "variantFetchError.message" }
+                  ]
+                },
+                {
+                  "kind": "sql_insert",
+                  "purpose": "log notification attempt as failed_permanent for variant-unavailable signups",
+                  "template": "INSERT INTO notification_attempts (signup_id, variant_external_id, outcome, failure_reason) VALUES (${signupId}, ${variantId}, 'failed_permanent', ${reason})",
+                  "bindings": [
+                    { "name": "signupId", "source": "signup.id" },
+                    { "name": "variantId", "source": "payload.variantId" },
+                    { "name": "reason", "source": "variantFetchError.message" }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "log",
+              "purpose": "record variant fetch failure for ops alerting",
+              "level": "error",
+              "fields": {
+                "variant_id": "$payload.variantId",
+                "reason": "$variantFetchError.message"
+              },
+              "message": "inventory_levels/update: variant fetch failed — all signups marked failed"
+            },
+            {
+              "kind": "return",
+              "purpose": "exit after marking all signups failed"
+            }
+          ]
+        },
+        {
+          "kind": "compute",
+          "purpose": "build the storefront product URL from the product handle",
+          "expression": "`https://${process.env.SHOP_DOMAIN}/products/${variantData.productVariant.product.handle}`",
+          "bindResultTo": "productUrl"
+        },
+        {
+          "kind": "for_each",
+          "purpose": "for each pending signup, atomically claim it then send the notification email and record the outcome",
+          "source": "pendingSignups",
+          "iterationBinding": "signup",
+          "continueOnError": true,
+          "errorBinding": "iterationError",
+          "failedItemsBinding": "failedItems",
+          "successItemsBinding": "successItems",
+          "steps": [
+            {
+              "kind": "sql_claim",
+              "purpose": "atomically transition this signup from pending to notified, ensuring only one concurrent restock wave sends an email (R1)",
+              "template": "UPDATE product_signups SET status = 'notified', resolved_at = now() WHERE id = ${signupId} AND status = 'pending' RETURNING id, customer_email",
+              "bindings": [
+                { "name": "signupId", "source": "signup.id" }
+              ],
+              "bindResultTo": "claimedSignup",
+              "zeroRowAction": "skip"
+            },
+            {
+              "kind": "try_catch",
+              "purpose": "send notification email and record attempt; on failure revert signup to failed with reason",
+              "errorBinding": "emailError",
+              "try": [
+                {
+                  "kind": "email_send",
+                  "purpose": "deliver the back-in-stock notification to the customer",
+                  "to": "claimedSignup[0].customer_email",
+                  "dataKeys": ["productTitle", "variantTitle", "productUrl"],
+                  "onQuotaExceeded": "log_and_skip",
+                  "onSoftFailure": "abort_recipe"
+                },
+                {
+                  "kind": "sql_insert",
+                  "purpose": "log successful notification attempt",
+                  "template": "INSERT INTO notification_attempts (signup_id, variant_external_id, outcome) VALUES (${signupId}, ${variantId}, 'sent')",
+                  "bindings": [
+                    { "name": "signupId", "source": "claimedSignup[0].id" },
+                    { "name": "variantId", "source": "payload.variantId" }
+                  ]
+                }
+              ],
+              "catch": [
+                {
+                  "kind": "sql_update",
+                  "purpose": "revert signup to failed state and record the email delivery failure reason (R4)",
+                  "template": "UPDATE product_signups SET status = 'failed', failure_reason = ${reason}, resolved_at = now() WHERE id = ${signupId}",
+                  "bindings": [
+                    { "name": "signupId", "source": "claimedSignup[0].id" },
+                    { "name": "reason", "source": "emailError.message" }
+                  ]
+                },
+                {
+                  "kind": "sql_insert",
+                  "purpose": "log failed notification attempt with failure reason",
+                  "template": "INSERT INTO notification_attempts (signup_id, variant_external_id, outcome, failure_reason) VALUES (${signupId}, ${variantId}, 'failed_permanent', ${reason})",
+                  "bindings": [
+                    { "name": "signupId", "source": "claimedSignup[0].id" },
+                    { "name": "variantId", "source": "payload.variantId" },
+                    { "name": "reason", "source": "emailError.message" }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "log",
+          "purpose": "summarise restock notification run outcome",
+          "level": "info",
+          "fields": {
+            "variant_id": "$payload.variantId",
+            "total": "$pendingSignups.length",
+            "succeeded": "$successItems.length",
+            "failed": "$failedItems.length"
+          },
+          "message": "inventory_levels/update: restock notifications complete"
+        }
+      ],
+      "postconditions": [
+        "every signup that was pending at handler start is now in status notified, failed, or unsubscribed — never left in pending after a completed run",
+        "every notification attempt (success or failure) has a corresponding row in notification_attempts",
+        "no signup is emailed more than once: the sql_claim atomic update from pending prevents duplicate sends"
+      ],
+      "edgeCases": [
+        "Duplicate webhook delivery after all signups already notified — pendingSignups.length === 0 short-circuits before any Shopify or email call.",
+        "Customer unsubscribes between webhook receipt and the for_each iteration reaching their row — sql_claim finds status != pending, returns zero rows, zeroRowAction=skip skips email send.",
+        "Concurrent second webhook delivery while first is mid-loop — sql_claim is atomic; the second delivery finds rows already claimed (status != pending) and skips them.",
+        "Variant deleted before handler runs — shopify_query returns productVariant=null; all pending signups are marked failed with reason via try_catch catch arm.",
+        "Variant available field is false despite positive inventory — decision step inside try_catch returns early, preserving signups as pending for a genuine purchasable restock.",
+        "Email provider permanent bounce — email_send throws, try_catch catch arm sets status=failed with the rejection reason and logs the failed_permanent attempt."
+      ]
+    },
+    "sweep-product-signups": {
+      "triggeredBy": "cron:sweep_product_signups",
+      "description": "Sweep any product_signups rows stuck in a transitional state to prevent permanent stuck rows from blocking future notifications.",
+      "inputs": [],
+      "steps": [
+        {
+          "kind": "compute",
+          "purpose": "sweep stale running rows in product_signups back to failed",
+          "expression": "await workflow.sweepStale('product_signups')",
+          "bindResultTo": "swept"
+        },
+        {
+          "kind": "log",
+          "purpose": "record sweep results for ops observability",
+          "level": "info",
+          "fields": { "swept_count": "$swept.length" },
+          "message": "sweep_product_signups: stale rows swept"
+        }
+      ],
+      "postconditions": [
+        "no product_signups row remains stuck in a transitional state longer than the workflow TTL"
+      ],
+      "edgeCases": [
+        "No stale rows exist at sweep time — workflow.sweepStale returns empty array; log records swept_count=0."
+      ]
+    }
+  },
+  "widgetTargetTemplates": ["product"],
+  "platformGaps": [
+    {
+      "gap": "No batch email mutation exists for multiple recipients in a single Shopify or platform call, so per-signup email delivery inside the for_each loop requires one platform.email.send call per customer.",
+      "mitigation": "Each signup iteration calls platform.email.send individually inside a try_catch; continueOnError=true on the for_each ensures a single send failure does not abort the remaining recipients.",
+      "uxImplication": "Partial-success outcomes (some customers notified, some failed) are possible; the admin dashboard must display per-signup status so the merchant can identify and manually address failed deliveries."
+    },
+    {
+      "gap": "The inventory_levels/update webhook fires for every inventory adjustment (including decrements and transfers), not exclusively for zero-to-positive transitions.",
+      "mitigation": "The recipe checks payload.available > 0 in a decision step and exits early when the quantity is not positive, ensuring decrements and same-level adjustments are treated as no-ops.",
+      "uxImplication": null
+    },
+    {
+      "gap": "Shopify does not provide a storefront customer access token in webhook payloads, so the widget GET route cannot rely on a Shopify-issued identity token; it falls back to a caller-supplied customer_email query parameter.",
+      "mitigation": "The widget GET and POST routes accept customer_email directly in the request; the app trusts the value as supplied by the widget which reads it from the logged-in customer context via host.context.",
+      "uxImplication": "Widget must pre-fill customer_email from the logged-in customer context before making API calls; for guests the email field must be shown as a manual input."
+    }
+  ],
+  "emailSpec": {
+    "type": "transactional",
+    "purpose": "Notify a customer that a product variant they signed up for is back in stock and prompt them to purchase before it sells out again.",
+    "dataKeys": ["productTitle", "variantTitle", "productUrl"],
+    "starterContent": {
+      "subject": "{{productTitle}} is back in stock!",
+      "body": "<p>Great news! <strong>{{productTitle}} — {{variantTitle}}</strong> is back in stock and available to purchase now.</p><p><a href=\"{{productUrl}}\">Shop now before it sells out →</a></p><p>You're receiving this email because you signed up for a back-in-stock alert. You will not receive further notifications for this item.</p>"
+    }
+  },
+  "uxExpectations": {
+    "storefront": "Widget should appear on sold-out product pages as a compact inline form — one email input field and a single 'Notify me' button. For logged-in customers, pre-fill the email field from host.context and allow one-click submission. Once signed up, replace the form with a confirmation message and an 'Unsubscribe' link. After the variant is restocked, the widget should revert to the standard add-to-cart UI.",
+    "admin": "Dashboard should lead with a status-tab navigation (All / Pending / Notified / Failed / Unsubscribed) so the merchant can immediately scan delivery health. Each row should show the customer email, product variant, signup date, and resolution date. Failed rows should surface the failure_reason inline so the merchant can act without drilling into a detail view. A summary count at the top of each tab gives at-a-glance volume."
+  },
+  "edgeCases": [
+    "A restock webhook fires while a previous delivery wave for the same variant is still in progress — the sql_claim atomic UPDATE WHERE status='pending' ensures each signup is claimed by exactly one wave; the second concurrent webhook finds no unclaimed rows and exits cleanly.",
+    "A customer holds a terminal signup row (notified, failed, or unsubscribed) and attempts to sign up again for the same variant — the ON CONFLICT DO NOTHING insert returns zero rows and the response returns success=true; the merchant should consider a UI flow to allow re-subscription after deletion of the terminal row if desired.",
+    "The notification_attempts table accumulates a failed_permanent row while the product_signups row is simultaneously updated to failed — both writes happen inside the same try_catch catch arm per iteration, but they are not wrapped in a sql_transaction; a crash between the two writes would leave the signup row in notified state with no attempt log, which the sweep cron would later correct.",
+    "product_signups.failure_reason is stored inline on the signup row and also in notification_attempts.failure_reason — these two values are written from the same emailError.message source in the same catch arm, so they will always agree; the denormalisation is intentional for fast admin display without a JOIN.",
+    "A customer uses two different email addresses to sign up for the same variant — each address creates a distinct signup row (the unique constraint is on customer_email + variant_external_id), and both receive independent notification emails on restock.",
+    "The SHOP_DOMAIN environment variable used to construct the product URL is missing at runtime — the compute step would produce a malformed URL; this must be validated at app startup and surfaced as a configuration error rather than silently emitting broken links in notification emails."
+  ]
+}
+```
