@@ -1725,15 +1725,34 @@ def main() -> None:
             )
             _retry_line("HLD", f"retrying with {len(_retryable)} finding(s)")
             _spinner("HLD")
-            try:
-                plan, _r_in, _r_out = run_hld_agent(
-                    prompt,
-                    intent,
-                    validator_hint=_hint,
-                    on_attempt_failed=lambda a, e: _retry_line(
-                        "HLD", f"attempt {a+1} invalid"
-                    ),
+
+            def _on_retry_attempt_failed(attempt: int, errors: List[str]) -> None:
+                """Surface validation errors from the validator-hint retry,
+                same shape as the first-pass callback in pipeline_local."""
+                first = errors[0] if errors else "validation failed"
+                more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+                _agent_line(
+                    "HLD",
+                    ok=False,
+                    ms=None,
+                    notes=f"attempt {attempt} rejected: {first}{more}",
                 )
+                for _e in errors:
+                    print(f"    {_DIM}• {_e}{_RESET}")
+                _retry_line("HLD", notes=f"retry attempt {attempt + 1}")
+                _spinner("HLD")
+
+            try:
+                # Wrap in input_log so every retry attempt's prompts + raw
+                # model output land in inputs/hld/attempt_N — without this,
+                # a 3-attempt validator-hint retry leaves no post-mortem trail.
+                with input_log("hld", run_dir):
+                    plan, _r_in, _r_out = run_hld_agent(
+                        prompt,
+                        intent,
+                        validator_hint=_hint,
+                        on_attempt_failed=_on_retry_attempt_failed,
+                    )
                 _r_in_prev, _r_out_prev = all_tokens.get("hld", (0, 0))
                 all_tokens["hld"] = (_r_in_prev + _r_in, _r_out_prev + _r_out)
                 product_prompt = ""

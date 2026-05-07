@@ -1,0 +1,5 @@
+
+
+PREVIOUS ATTEMPT FAILED VALIDATION:
+  - <root>: Value error, capability 'check-existing-subscription' description or dataNeeds imply a multi-state lifecycle ('Determine whether a given email address already holds a pending or notified subscription for a specific product variant.', dataNeeds=['customer email', 'product variant identifier']) but usesWorkflow is false; set usesWorkflow=true when a capability claims, runs, and finalises a row through a status lifecycle
+Fix ALL listed errors in this new attempt. Emit a single JSON object that conforms to the schema; no markdown fences, no prose.

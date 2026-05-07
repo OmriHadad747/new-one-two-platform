@@ -63,20 +63,31 @@ def run_hld_validator(
         intent_json=json.dumps(intent, indent=2),
         plan_json=json.dumps(plan, indent=2),
     )
-    llm = get_llm(model=get_agent_model("hld_v"), max_tokens=_MAX_OUTPUT_TOKENS, thinking_budget=_THINKING_BUDGET)
+    llm = get_llm(
+        model=get_agent_model("hld_v"),
+        max_tokens=_MAX_OUTPUT_TOKENS,
+        thinking_budget=_THINKING_BUDGET,
+    )
 
     in_tok = 0
     out_tok = 0
 
+    response = invoke(llm, system, user)
+    in_tok = response.input_tokens
+    out_tok = response.output_tokens
+    dump_output(response.content)
+
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError(
+            f"hld_v: output truncated at max_tokens={_MAX_OUTPUT_TOKENS}; "
+            "raise the cap or shorten the prompt"
+        )
+
     try:
-        response = invoke(llm, system, user)
-        in_tok = response.input_tokens
-        out_tok = response.output_tokens
-        dump_output(response.content)
         raw_json = extract_json(response.content)
         output = HLDVOutput.model_validate_json(raw_json)
-    except (ValidationError, json.JSONDecodeError, Exception) as exc:
-        log.warning("hld_v: failed to get/parse response (%s) — fail-open", exc)
+    except (ValidationError, json.JSONDecodeError) as exc:
+        log.warning("hld_v: failed to parse response (%s) — fail-open", exc)
         return [], in_tok, out_tok
 
     findings = [f.model_dump(mode="json") for f in output.findings]

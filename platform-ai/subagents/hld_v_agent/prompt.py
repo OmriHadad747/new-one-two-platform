@@ -33,6 +33,11 @@ delivery. Missing = no idempotency signal for LLD.
 8. notify capabilities — at least one edge case covering delivery failure. \
 Missing = no failure-path signal for LLD.
 9. dataFlow — must reach the outbound action when notify capabilities exist.
+10. capability flags (returnsList, touchesMoney, usesConfig, usesWorkflow) — \
+must match the capability's actual semantics in BOTH directions: set when the \
+capability does that thing (e.g. computes a reward value → touchesMoney even \
+without the word "money"), unset when it does not. Wrong flags steer the LLD \
+to the wrong helper contracts (pagination, money, config, workflow).
 
 SEVERITY:
   critical  — unbuildable, data corruption, double side-effect, broken core flow.

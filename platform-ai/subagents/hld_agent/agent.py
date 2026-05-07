@@ -119,6 +119,17 @@ def run_hld_agent(
         # No-op outside an active `input_log` block.
         dump_output(result.content)
 
+        # Truncation is a config problem (cap too low for the schema), not a
+        # model error to retry against — the next attempt only adds suffix
+        # bytes and shrinks the output budget further. Fail loudly.
+        if result.stop_reason == "max_tokens":
+            raise HLDValidationError(
+                attempt,
+                [f"output truncated at max_tokens={_MAX_TOKENS}; raise the cap or shorten the prompt"],
+                total_in,
+                total_out,
+            )
+
         try:
             raw_json = extract_json(result.content)
         except Exception as err:

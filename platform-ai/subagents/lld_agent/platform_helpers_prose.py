@@ -20,7 +20,6 @@ Source-of-truth split:
 
 from __future__ import annotations
 
-
 WORKFLOW_HELPER_CONTRACT = """\
 Workflow lifecycle helper — use for every multi-state row lifecycle
 (pending → running → completed/failed, draft → submitted →

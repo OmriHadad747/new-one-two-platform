@@ -27,7 +27,7 @@ def run_product_agent(prompt: str) -> Tuple[Dict[str, Any], int, int]:
     Agent 1: Parse merchant prompt into a product feature specification.
     Returns (intent_dict, input_tokens, output_tokens).
     """
-    llm = get_llm(model=get_agent_model("product"), max_tokens=512)
+    llm = get_llm(model=get_agent_model("product"), max_tokens=1500)
     result = invoke(llm, PRODUCT_BASE, f"Merchant request: {prompt}")
     raw = extract_json(result.content)
     return json.loads(raw), result.input_tokens, result.output_tokens

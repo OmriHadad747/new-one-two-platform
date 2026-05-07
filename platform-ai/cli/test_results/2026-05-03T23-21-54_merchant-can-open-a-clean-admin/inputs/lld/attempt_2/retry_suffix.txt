@@ -1,5 +1,0 @@
-
-
-PREVIOUS ATTEMPT FAILED VALIDATION:
-  - <root>: Invalid JSON: EOF while parsing a list at line 90 column 11
-Fix ALL listed errors in this new attempt. Emit a single JSON object that conforms to the schema; no markdown fences, no prose.

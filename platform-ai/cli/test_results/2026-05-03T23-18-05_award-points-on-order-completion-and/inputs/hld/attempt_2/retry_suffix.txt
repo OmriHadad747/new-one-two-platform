@@ -1,5 +1,0 @@
-
-
-PREVIOUS ATTEMPT FAILED VALIDATION:
-  - <root>: Value error, stateMachine is declared but no persistence table has a statusField; bind the state machine to at least one table
-Fix ALL listed errors in this new attempt. Emit a single JSON object that conforms to the schema; no markdown fences, no prose.

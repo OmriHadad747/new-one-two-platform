@@ -1,0 +1,326 @@
+```json
+{
+  "schema_version": "1",
+  "archetype": "backend+admin+storefront",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "A customer on an out-of-stock product page clicks the widget button, submits their email, and the backend checks for a duplicate subscription before recording a new pending alert against that product variant, storing a snapshot of the product and variant titles at opt-in time. From the admin panel the merchant browses products that have pending subscribers, optionally fires a test email to themselves, then triggers a bulk notification run for a chosen product; the backend opens a notification run record, sends emails to all pending subscribers for that variant, marks each subscription notified, and closes the run with a recipient count. Subsequent widget opt-ins for the same email and variant are rejected as duplicates, and customers who have already been notified are excluded from future runs for the same variant.",
+  "triggers": [
+    {
+      "kind": "inbound-request"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "check-existing-subscription",
+      "description": "Determine whether a given email address already holds a pending or notified subscription for a specific product variant.",
+      "kind": "read",
+      "dataNeeds": ["customer email", "product variant identifier"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "fetch-product-variant-details",
+      "description": "Retrieve the display title of a product and its variant so the subscription record can be stored with a human-readable snapshot even if the product is later deleted.",
+      "kind": "read",
+      "dataNeeds": ["product identifier", "product variant identifier"],
+      "integration": "shopify-admin",
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "create-subscription",
+      "description": "Record a new pending back-in-stock alert for a customer email and product variant.",
+      "kind": "write",
+      "dataNeeds": ["customer email", "product identifier", "product variant identifier", "product title snapshot", "variant title snapshot"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "remove-subscription",
+      "description": "Mark an existing subscription as unsubscribed so the customer no longer receives alerts for that variant.",
+      "kind": "write",
+      "dataNeeds": ["subscription identifier"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "list-products-with-pending-subscribers",
+      "description": "Produce an aggregated list of product variants that have at least one pending subscriber, with counts, for the merchant's admin overview.",
+      "kind": "read",
+      "dataNeeds": ["product identifier", "product title snapshot", "variant title snapshot", "pending subscriber count"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "list-subscriptions",
+      "description": "Return a browseable, filterable history of all subscriptions across all products for the merchant's admin panel.",
+      "kind": "read",
+      "dataNeeds": ["customer email", "product title snapshot", "variant title snapshot", "subscription status", "subscription creation date", "notification date"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "open-notification-run",
+      "description": "Create a new notification run record in the running state before emails are dispatched, to track the send lifecycle.",
+      "kind": "write",
+      "dataNeeds": ["product identifier", "product title snapshot", "variant title snapshot"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "send-notification-emails",
+      "description": "Dispatch back-in-stock alert emails to all pending subscribers for a given product variant.",
+      "kind": "notify",
+      "dataNeeds": ["recipient email list", "product title snapshot", "variant title snapshot", "notification sender name"],
+      "integration": "email",
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "mark-subscriptions-notified",
+      "description": "Flip each dispatched subscription from pending to notified and record the notification timestamp.",
+      "kind": "write",
+      "dataNeeds": ["subscription identifier list", "notification timestamp"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "close-notification-run",
+      "description": "Finalise a notification run record with its outcome and the count of recipients reached.",
+      "kind": "write",
+      "dataNeeds": ["notification run identifier", "outcome", "recipient count"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "list-notification-runs",
+      "description": "Return a history of all bulk notification runs for the merchant to audit past sends.",
+      "kind": "read",
+      "dataNeeds": ["product title snapshot", "variant title snapshot", "run outcome", "recipient count", "run triggered date"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "send-test-email",
+      "description": "Dispatch a single preview alert email to the merchant's configured test address so they can verify formatting before a bulk send.",
+      "kind": "notify",
+      "dataNeeds": ["test recipient email", "product title snapshot", "variant title snapshot", "notification sender name"],
+      "integration": "email",
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "read-settings",
+      "description": "Retrieve the merchant's current notification configuration for display in the admin settings panel.",
+      "kind": "read",
+      "dataNeeds": ["sender name", "test recipient email", "email subject template"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "save-settings",
+      "description": "Persist the merchant's notification configuration changes.",
+      "kind": "write",
+      "dataNeeds": ["sender name", "test recipient email", "email subject template"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": true,
+      "usesWorkflow": false
+    }
+  ],
+  "persistence": [
+    {
+      "name": "subscriptions",
+      "purpose": "Records each customer opt-in for a back-in-stock alert against a specific product variant.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "customer_email", "role": "text", "nullable": false, "purpose": "Email address the alert will be sent to" },
+        { "name": "product_external_id", "role": "reference", "nullable": false, "purpose": "Identifier of the product in the external catalogue" },
+        { "name": "variant_external_id", "role": "reference", "nullable": false, "purpose": "Identifier of the specific product variant in the external catalogue" },
+        { "name": "product_title_snapshot", "role": "text", "nullable": false, "purpose": "Product display name captured at opt-in time for display after deletion" },
+        { "name": "variant_title_snapshot", "role": "text", "nullable": false, "purpose": "Variant display name captured at opt-in time for display after deletion" },
+        { "name": "status", "role": "status", "nullable": false, "purpose": "Lifecycle state: pending, notified, or unsubscribed" },
+        { "name": "created_at", "role": "timestamp", "nullable": false },
+        { "name": "notified_at", "role": "timestamp", "nullable": true, "purpose": "Timestamp when the alert email was successfully dispatched" }
+      ],
+      "keyedBy": "one row per unique combination of customer email and product variant",
+      "statusField": null,
+      "queryPatterns": [
+        "all pending subscriptions for a given product variant, used when preparing a bulk send",
+        "lookup by customer email and variant identifier to detect duplicates on opt-in",
+        "all subscriptions ordered by creation date descending for the admin history view",
+        "subscriptions grouped by variant with count of pending rows for the admin overview"
+      ]
+    },
+    {
+      "name": "notification_runs",
+      "purpose": "Tracks each merchant-triggered bulk notification send for a product variant, including its outcome and recipient count.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "product_external_id", "role": "reference", "nullable": false, "purpose": "Identifier of the product for which notifications were sent" },
+        { "name": "variant_external_id", "role": "reference", "nullable": false, "purpose": "Identifier of the specific variant targeted by this run" },
+        { "name": "product_title_snapshot", "role": "text", "nullable": false, "purpose": "Product display name at the time the run was triggered" },
+        { "name": "variant_title_snapshot", "role": "text", "nullable": false, "purpose": "Variant display name at the time the run was triggered" },
+        { "name": "status", "role": "status", "nullable": false, "purpose": "Run lifecycle: running, completed, or failed" },
+        { "name": "recipient_count", "role": "count", "nullable": true, "purpose": "Number of subscribers emailed in this run, populated on completion" },
+        { "name": "triggered_at", "role": "timestamp", "nullable": false },
+        { "name": "completed_at", "role": "timestamp", "nullable": true }
+      ],
+      "keyedBy": "one row per merchant-initiated notification run, keyed by its own generated identifier",
+      "statusField": null,
+      "queryPatterns": [
+        "most recent runs first for the admin audit history",
+        "runs filtered by product variant for narrowed audit view",
+        "runs currently in the running state to detect stuck jobs"
+      ]
+    },
+    {
+      "name": "app_settings",
+      "purpose": "Stores the single-row merchant configuration for notification behaviour, including sender identity and email template preferences.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false, "purpose": "Single-row sentinel — always the only row" },
+        { "name": "sender_name", "role": "text", "nullable": false, "purpose": "Display name shown in the From field of outgoing alert emails" },
+        { "name": "test_recipient_email", "role": "text", "nullable": false, "purpose": "Merchant email address used when sending test notifications" },
+        { "name": "email_subject_template", "role": "text", "nullable": false, "purpose": "Configurable subject line template for alert emails" },
+        { "name": "updated_at", "role": "timestamp", "nullable": false }
+      ],
+      "keyedBy": "single row representing the merchant's global notification settings",
+      "statusField": null,
+      "queryPatterns": [
+        "full row fetch on every outbound email send to resolve sender identity and subject",
+        "full row fetch on admin settings page load"
+      ]
+    }
+  ],
+  "stateMachine": null,
+  "externalContracts": [
+    {
+      "surface": "widget",
+      "path": "/widget/subscription/status",
+      "method": "GET",
+      "purpose": "Returns whether the given email is already subscribed for a product variant so the widget renders the correct initial state on page load.",
+      "requestShape": { "customer_email": "text", "variant_id": "identifier" },
+      "responseShape": { "subscribed": "flag", "status": "status" }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/subscribe",
+      "method": "POST",
+      "purpose": "Opts a customer in to back-in-stock alerts for a specific product variant.",
+      "requestShape": { "customer_email": "text", "product_id": "identifier", "variant_id": "identifier" },
+      "responseShape": { "success": "flag", "already_subscribed": "flag" }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/unsubscribe",
+      "method": "POST",
+      "purpose": "Marks a customer's subscription as unsubscribed for a specific product variant.",
+      "requestShape": { "customer_email": "text", "variant_id": "identifier" },
+      "responseShape": { "success": "flag" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/products/pending",
+      "method": "GET",
+      "purpose": "Returns all product variants that have at least one pending subscriber, with counts, for the merchant overview.",
+      "requestShape": {},
+      "responseShape": { "products": "list" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/subscriptions",
+      "method": "GET",
+      "purpose": "Returns a pageable, filterable list of all subscriptions across all products for merchant review.",
+      "requestShape": { "status_filter": "status", "page": "count", "page_size": "count" },
+      "responseShape": { "subscriptions": "list", "total_count": "count" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/notifications/send",
+      "method": "POST",
+      "purpose": "Triggers a bulk notification run sending alert emails to all pending subscribers for the specified product variant.",
+      "requestShape": { "product_id": "identifier", "variant_id": "identifier" },
+      "responseShape": { "run_id": "identifier", "recipient_count": "count", "status": "status" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/notifications/test",
+      "method": "POST",
+      "purpose": "Sends a single preview alert email to the merchant's configured test address for the given product variant.",
+      "requestShape": { "product_id": "identifier", "variant_id": "identifier" },
+      "responseShape": { "success": "flag", "recipient": "text" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/notifications/runs",
+      "method": "GET",
+      "purpose": "Returns a pageable history of all past notification runs for merchant auditing.",
+      "requestShape": { "page": "count", "page_size": "count" },
+      "responseShape": { "runs": "list", "total_count": "count" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/settings",
+      "method": "GET",
+      "purpose": "Returns the merchant's current notification settings for display in the admin configuration panel.",
+      "requestShape": {},
+      "responseShape": { "sender_name": "text", "test_recipient_email": "text", "email_subject_template": "text" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/settings",
+      "method": "POST",
+      "purpose": "Persists updated notification settings submitted by the merchant.",
+      "requestShape": { "sender_name": "text", "test_recipient_email": "text", "email_subject_template": "text" },
+      "responseShape": { "success": "flag" }
+    }
+  ],
+  "edgeCases": [
+    "A customer submits the opt-in form twice for the same email and variant before the first request completes — the second write must be rejected as a duplicate rather than creating two pending records.",
+    "The merchant triggers a bulk send for a variant while a previous send run for the same variant is still in the running state — the second trigger must be blocked until the first run reaches a terminal state to prevent double-notifications.",
+    "A product or variant is deleted from the catalogue after subscriptions have been collected — the stored title snapshots must be used for display and email copy; the send must proceed using the snapshot data rather than failing on a missing product lookup.",
+    "A customer who was already notified for a variant is re-imported or opts in again after the product goes out of stock a second time — the system must allow a fresh pending subscription for a variant the customer was previously notified on rather than treating it as a duplicate of the earlier notified row.",
+    "A customer submits an unsubscribe request while a bulk notification run for their variant is in progress — the in-flight send should still complete for already-collected recipients, but the unsubscribed customer must be excluded if their email has not yet been dispatched.",
+    "The bulk send partially fails mid-run leaving some subscribers notified and others still pending — the run must be closed as failed with the partial recipient count recorded, leaving un-notified subscriptions in pending state so the merchant can re-trigger."
+  ]
+}
+```

@@ -1,5 +1,0 @@
-
-
-PREVIOUS ATTEMPT FAILED VALIDATION:
-  - <root>: Value error, tables ['dashboard_snapshot'] declare a statusField but stateMachine is null; statusField is only valid when a state machine governs the column
-Fix ALL listed errors in this new attempt. Emit a single JSON object that conforms to the schema; no markdown fences, no prose.

@@ -1,0 +1,295 @@
+{
+  "schema_version": "1",
+  "archetype": "backend+admin+storefront",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "A customer clicks the storefront widget on an out-of-stock product page; the widget checks whether that email is already registered for that product variant and, if not, records a new pending subscription. When the merchant opens the admin panel they see a list of products with waiting subscribers; they select a variant, optionally send a test email, then confirm the bulk notification dispatch. The system sends an email to every pending subscriber for that variant, records the dispatch run, and marks each subscriber as notified so subsequent sends for the same variant produce no duplicate emails. A customer who later clicks the unsubscribe link is marked cancelled and receives no further notifications.",
+  "triggers": [
+    {
+      "kind": "inbound-request"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "create-subscription",
+      "description": "Record a new opt-in alert registration for a customer email and product variant.",
+      "kind": "write",
+      "dataNeeds": ["customer email", "product variant identifier", "product identifier"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "verify-no-duplicate-subscription",
+      "description": "Determine whether a customer email is already registered for alerts on a specific product variant.",
+      "kind": "read",
+      "dataNeeds": ["customer email", "product variant identifier"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "fetch-product-variant-status",
+      "description": "Retrieve current inventory availability for a product variant to confirm it is still out of stock before accepting a subscription.",
+      "kind": "read",
+      "dataNeeds": ["product variant identifier"],
+      "integration": "shopify-admin",
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "list-products-with-pending-subscribers",
+      "description": "Return all product variants that currently have at least one subscriber awaiting notification, for display in the admin overview.",
+      "kind": "read",
+      "dataNeeds": ["product variant identifier", "product title", "variant title", "pending subscriber count"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "list-subscriptions-for-variant",
+      "description": "Retrieve all subscription records for a specific product variant so the merchant can review subscriber history.",
+      "kind": "read",
+      "dataNeeds": ["product variant identifier", "customer email", "subscription status", "subscription created date"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "dispatch-notifications",
+      "description": "Send back-in-stock alert emails to all pending subscribers for a given product variant.",
+      "kind": "notify",
+      "dataNeeds": ["customer email", "product title", "variant title", "product page URL", "email sender name", "email subject template", "email body template"],
+      "integration": "email",
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "record-dispatch-run",
+      "description": "Persist a notification dispatch event and mark all notified subscriptions as completed to prevent re-sending.",
+      "kind": "write",
+      "dataNeeds": ["product variant identifier", "recipient count", "dispatch outcome"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "cancel-subscription",
+      "description": "Mark a subscription as unsubscribed so the customer receives no further notifications.",
+      "kind": "write",
+      "dataNeeds": ["subscription identifier"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "send-test-notification",
+      "description": "Send a single preview notification email to the merchant to verify template rendering before a bulk dispatch.",
+      "kind": "notify",
+      "dataNeeds": ["merchant email address", "product title", "variant title", "email sender name", "email subject template", "email body template"],
+      "integration": "email",
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "read-app-settings",
+      "description": "Fetch the merchant-configured sender name, email subject template, and email body template.",
+      "kind": "read",
+      "dataNeeds": ["email sender name", "email subject template", "email body template"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "save-app-settings",
+      "description": "Persist the merchant's chosen sender name and email template configuration.",
+      "kind": "write",
+      "dataNeeds": ["email sender name", "email subject template", "email body template"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "fetch-product-details-for-notification",
+      "description": "Retrieve the product title, variant title, and storefront URL needed to populate notification emails.",
+      "kind": "read",
+      "dataNeeds": ["product identifier", "product variant identifier", "product title", "variant title", "product page URL"],
+      "integration": "shopify-admin",
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    }
+  ],
+  "persistence": [
+    {
+      "name": "subscriptions",
+      "purpose": "Records each customer opt-in for a product variant, tracking its lifecycle from pending through notified or unsubscribed.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "customer_email", "role": "text", "nullable": false },
+        { "name": "product_external_id", "role": "reference", "nullable": false, "purpose": "identifies the parent product in the external catalogue" },
+        { "name": "variant_external_id", "role": "reference", "nullable": false, "purpose": "identifies the specific out-of-stock product variant the customer subscribed to" },
+        { "name": "status", "role": "status", "nullable": false },
+        { "name": "created_at", "role": "timestamp", "nullable": false },
+        { "name": "notified_at", "role": "timestamp", "nullable": true },
+        { "name": "cancelled_at", "role": "timestamp", "nullable": true }
+      ],
+      "keyedBy": "one row per unique combination of customer email and product variant external identifier",
+      "statusField": null,
+      "queryPatterns": [
+        "all pending subscriptions for a given product variant, for bulk dispatch",
+        "single row by customer email and variant identifier, for duplicate check",
+        "all rows for a given variant ordered by created date, for admin history view",
+        "count of pending rows grouped by variant identifier, for admin overview"
+      ]
+    },
+    {
+      "name": "notification_runs",
+      "purpose": "Logs each merchant-triggered bulk dispatch event for a product variant to support audit history and double-send prevention.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "variant_external_id", "role": "reference", "nullable": false, "purpose": "identifies the product variant for which notifications were dispatched" },
+        { "name": "recipient_count", "role": "count", "nullable": false },
+        { "name": "dispatched_at", "role": "timestamp", "nullable": false },
+        { "name": "outcome", "role": "status", "nullable": false }
+      ],
+      "keyedBy": "one row per dispatch event, keyed by its own surrogate identifier",
+      "statusField": null,
+      "queryPatterns": [
+        "most recent dispatch run for a given product variant, to warn merchant before re-sending",
+        "all runs ordered by dispatch date descending, for admin audit log"
+      ]
+    },
+    {
+      "name": "app_settings",
+      "purpose": "Stores the single-row merchant configuration for email sender identity and notification template content.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false },
+        { "name": "sender_name", "role": "text", "nullable": false },
+        { "name": "email_subject_template", "role": "text", "nullable": false },
+        { "name": "email_body_template", "role": "text", "nullable": false },
+        { "name": "updated_at", "role": "timestamp", "nullable": false }
+      ],
+      "keyedBy": "single row for the entire app installation",
+      "statusField": null,
+      "queryPatterns": [
+        "full row fetch on every notification dispatch and settings page load"
+      ]
+    }
+  ],
+  "stateMachine": null,
+  "externalContracts": [
+    {
+      "surface": "widget",
+      "path": "/widget/subscriptions/status",
+      "method": "GET",
+      "purpose": "Check whether the current visitor email is already subscribed for a specific product variant, so the widget renders the correct initial state.",
+      "requestShape": { "customer_email": "text", "variant_id": "identifier" },
+      "responseShape": { "is_subscribed": "flag", "status": "status" }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/subscriptions/create",
+      "method": "POST",
+      "purpose": "Register a customer opt-in alert for an out-of-stock product variant.",
+      "requestShape": { "customer_email": "text", "variant_id": "identifier", "product_id": "identifier" },
+      "responseShape": { "success": "flag", "message": "text" }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/subscriptions/remove",
+      "method": "POST",
+      "purpose": "Cancel an existing subscription at the customer's request.",
+      "requestShape": { "subscription_id": "identifier" },
+      "responseShape": { "success": "flag" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/products/pending",
+      "method": "GET",
+      "purpose": "List all product variants that have pending subscribers, with subscriber counts, for the merchant overview dashboard.",
+      "requestShape": {},
+      "responseShape": { "products": "list" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/subscriptions",
+      "method": "GET",
+      "purpose": "Retrieve subscription history for a specific product variant, filterable by status.",
+      "requestShape": { "variant_id": "identifier", "status": "status" },
+      "responseShape": { "subscriptions": "list", "total": "count" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/notifications/send",
+      "method": "POST",
+      "purpose": "Trigger bulk back-in-stock notification emails for all pending subscribers of a product variant.",
+      "requestShape": { "variant_id": "identifier" },
+      "responseShape": { "dispatched_count": "count", "run_id": "identifier" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/notifications/test",
+      "method": "POST",
+      "purpose": "Send a single preview notification email to the merchant to verify the template before bulk dispatch.",
+      "requestShape": { "variant_id": "identifier", "recipient_email": "text" },
+      "responseShape": { "success": "flag" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/notifications/runs",
+      "method": "GET",
+      "purpose": "Return the dispatch history for a product variant so the merchant can confirm whether notifications have already been sent.",
+      "requestShape": { "variant_id": "identifier" },
+      "responseShape": { "runs": "list" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/settings",
+      "method": "GET",
+      "purpose": "Retrieve the current email sender name and notification template configuration.",
+      "requestShape": {},
+      "responseShape": { "settings": "object" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/settings",
+      "method": "POST",
+      "purpose": "Save updated sender name and email template content chosen by the merchant.",
+      "requestShape": { "sender_name": "text", "email_subject_template": "text", "email_body_template": "text" },
+      "responseShape": { "success": "flag" }
+    }
+  ],
+  "edgeCases": [
+    "A customer attempts to subscribe with an email that is already pending for the same variant — the request is treated as a no-op and the widget confirms the existing subscription without creating a duplicate.",
+    "The merchant triggers bulk notifications for a variant that was already dispatched within the past 24 hours — the system surfaces the prior run details and requires an explicit second confirmation before proceeding.",
+    "A product or variant has been deleted from the store by the time the merchant attempts to dispatch — the system skips the send, marks affected subscriptions with an expired outcome, and reports the count to the merchant.",
+    "A subscription record has no associated email address or the address fails basic format validation — the record is rejected at creation time and never enters the pending state.",
+    "The merchant initiates a test email before saving any template configuration — the system blocks the send and directs the merchant to complete settings first.",
+    "An unsubscribe request arrives for an identifier that does not exist or is already cancelled — the request is accepted silently without error to prevent enumeration of valid subscription identifiers."
+  ]
+}

@@ -1,0 +1,20 @@
+Merchant request: Customers opt in to back-in-stock alerts via a storefront button, and the merchant reviews and triggers notifications from an admin panel.
+
+Product-agent intent (use as context — pick the archetype, capabilities,
+and contracts from the merchant's actual needs):
+{
+  "triggerTypes": [
+    "widget",
+    "admin"
+  ],
+  "resources": [
+    "Product",
+    "Inventory"
+  ],
+  "desiredOutcome": "Customers opt in to back-in-stock alerts via a storefront button, and the merchant reviews and triggers notifications from an admin panel.",
+  "cronHint": null,
+  "appCategory": "storefront_backend_admin",
+  "qualityBrief": "A solid version captures email, prevents duplicates, shows subscription history clearly, and lets the merchant send test emails before bulk notifications. Key edge cases: handle deleted products gracefully, respect unsubscribe requests, show which products have pending subscribers, and confirm sends to avoid accidental double-notifications. The storefront widget should be lightweight and non-intrusive on mobile."
+}
+
+Produce the HLD plan as JSON conforming to the appended schema.

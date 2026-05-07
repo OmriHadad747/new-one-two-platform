@@ -49,6 +49,9 @@ class LLMResponse:
     # on the server side; they are exposed here so callers can log hit ratios.
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    # Anthropic stop reason: "end_turn", "max_tokens", "stop_sequence", "tool_use".
+    # Callers that produce structured output should treat "max_tokens" as truncation.
+    stop_reason: Optional[str] = None
 
 
 # ── Input tracing ─────────────────────────────────────────────────────────────
@@ -429,6 +432,7 @@ def invoke(
 
     usage = getattr(response, "usage_metadata", None) or {}
     cache_read, cache_create = _extract_cache_metrics(usage)
+    stop_reason = (getattr(response, "response_metadata", None) or {}).get("stop_reason")
     return LLMResponse(
         content=_extract_text_content(response.content),
         input_tokens=usage.get("input_tokens", 0) if usage else 0,
@@ -436,6 +440,7 @@ def invoke(
         latency_ms=latency_ms,
         cache_read_tokens=cache_read,
         cache_creation_tokens=cache_create,
+        stop_reason=stop_reason,
     )
 
 
@@ -460,6 +465,7 @@ def invoke_conversation(
 
     usage = getattr(response, "usage_metadata", None) or {}
     cache_read, cache_create = _extract_cache_metrics(usage)
+    stop_reason = (getattr(response, "response_metadata", None) or {}).get("stop_reason")
     return LLMResponse(
         content=_extract_text_content(response.content),
         input_tokens=usage.get("input_tokens", 0) if usage else 0,
@@ -467,6 +473,7 @@ def invoke_conversation(
         latency_ms=latency_ms,
         cache_read_tokens=cache_read,
         cache_creation_tokens=cache_create,
+        stop_reason=stop_reason,
     )
 
 
