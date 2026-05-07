@@ -179,6 +179,7 @@ def run_ops_picker_agent(
             continue
 
         enriched = _enrich_with_op_details(picks.model_dump(mode="json"))
+        enriched = _enrich_with_webhook_payloads(enriched)
         return enriched, total_in, total_out
 
     raise OpsPickerValidationError(_MAX_ATTEMPTS, last_errors, total_in, total_out)
@@ -209,6 +210,50 @@ def _enrich_with_op_details(picks: Dict[str, Any]) -> Dict[str, Any]:
             detail = detail_by_surface.get(op["surface"], {}).get(op["name"])
             if detail:
                 op.update(detail)
+
+    return picks
+
+
+def _enrich_with_webhook_payloads(picks: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    For every picked webhook, merge the topic's actual payload schema +
+    description onto the pick in place. Loaded from the committed
+    catalog (`catalogs/shopify_webhooks/<version>/topics.json`).
+
+    Adds onto each entry in `picks["webhooks"]`:
+      description     : Shopify's one-line trigger description
+      payloadFields   : list of { name, type, nullable, format?, items_type? }
+                         exactly mirroring what the topic delivers on the wire
+      access_scopes   : OAuth scopes required to subscribe
+      related_resource: GraphQL type name for the underlying resource
+      deprecated      : true if Shopify has marked the topic deprecated
+
+    Picks whose topic isn't in the catalog (stale or upstream rename) keep
+    only the LLM-emitted fields — the LLD will note a fields=[] webhook and
+    can fall back to the HLD's signalFields with a `platformGaps` entry.
+    """
+    from catalogs.shopify_webhooks import load_catalog
+
+    try:
+        catalog = load_catalog()
+    except FileNotFoundError:
+        return picks
+
+    by_topic: Dict[str, Dict[str, Any]] = catalog.get("topics", {})
+    for hook in picks.get("webhooks") or []:
+        rec = by_topic.get(hook.get("topic"))
+        if not rec:
+            continue
+        if "description" in rec:
+            hook["description"] = rec["description"]
+        if "fields" in rec:
+            hook["payloadFields"] = rec["fields"]
+        if "access_scopes" in rec:
+            hook["access_scopes"] = rec["access_scopes"]
+        if "related_resource" in rec:
+            hook["related_resource"] = rec["related_resource"]
+        if rec.get("deprecated") is True:
+            hook["deprecated"] = True
 
     return picks
 

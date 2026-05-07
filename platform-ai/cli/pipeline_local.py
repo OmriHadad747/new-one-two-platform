@@ -206,6 +206,43 @@ def _save_revision_trace(
     return path
 
 
+def _filter_summary_to_allowed_topics(summary_md: str, allowed: frozenset[str]) -> str:
+    """
+    Strip topic blocks from the catalog summary whose topic names are not in
+    the allowed set (e.g. platform-owned topics like `app/uninstalled` that
+    appear in the upstream catalog but generated handlers must not pick).
+
+    The summary's per-topic format (set in catalogs/scripts/refresh_shopify_
+    webhook_catalog.py::_render_summary) is a 2-line block:
+
+        - **<topic>**[ [DEPRECATED]] — <description>
+          fields: <field list>
+
+    We match on the bullet's `**<topic>**` header. Section headings (`### …`),
+    blank lines, and intro prose are preserved verbatim; only excluded topic
+    blocks are dropped. If a section ends up with no topics after filtering,
+    the heading + blank tail is left in place — harmless noise.
+    """
+    out_lines: list[str] = []
+    i = 0
+    lines = summary_md.split("\n")
+    while i < len(lines):
+        line = lines[i]
+        # Topic block opener: starts with "- **<topic>**"
+        if line.lstrip().startswith("- **"):
+            try:
+                topic = line.split("**", 2)[1]
+            except IndexError:
+                topic = ""
+            if topic and topic not in allowed:
+                # Skip this 2-line block (header + fields).
+                i += 2
+                continue
+        out_lines.append(line)
+        i += 1
+    return "\n".join(out_lines)
+
+
 # ── Phase runners ─────────────────────────────────────────────────────────────
 
 
@@ -320,6 +357,7 @@ def _phase_ops_picker(
         _spinner,
         _tok_note,
     )
+    from catalogs.shopify_webhooks import load_summary_md
     from llm_validations.shopify_ops import get_op_names, load_summary
     from subagents.prompts.topics.webhook import WEBHOOK_TOPICS
 
@@ -327,14 +365,15 @@ def _phase_ops_picker(
     storefront_idx = load_summary("storefront")
     admin_names = get_op_names("admin")
     storefront_names = get_op_names("storefront")
-    # Render WEBHOOK_TOPICS as a flat catalog. The frozenset has 194
-    # entries, sorted; one topic per line is the clearest form for the
-    # picker (no resource-prefix folding — we want each literal verbatim
-    # next to the model's eyes, since the contract is to copy them
-    # verbatim).
-    topic_catalog = "## Shopify webhook topics\n\n" + "\n".join(
-        f"  {t}" for t in sorted(WEBHOOK_TOPICS)
-    )
+    # Inject the rich webhook catalog: topic name + description + the actual
+    # payload fields each topic delivers. The picker can now match the HLD
+    # trigger's signalFields against what Shopify really sends, instead of
+    # picking from a flat list of names. Platform-owned topics are filtered
+    # out via _PLATFORM_OWNED_EXCLUSIONS (see subagents.prompts.topics.webhook),
+    # so the LLM never sees app/uninstalled, customers/data_request, etc.
+    full_summary = load_summary_md()
+    allowed = WEBHOOK_TOPICS
+    topic_catalog = _filter_summary_to_allowed_topics(full_summary, allowed)
 
     def _on_attempt_failed(attempt: int, errors: List[str]) -> None:
         first = errors[0] if errors else "validation failed"

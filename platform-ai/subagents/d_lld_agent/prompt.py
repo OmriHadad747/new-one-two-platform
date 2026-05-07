@@ -302,6 +302,21 @@ The user message contains:
                                         Shopify's docs, with variables
                                         and sample responses
 
+                  And each picked webhook topic enriched by:
+                    description      : Shopify's one-line trigger
+                                        description (when the topic
+                                        actually fires)
+                    payloadFields    : list of {name, type, nullable,
+                                        format?, items_type?} — the
+                                        EXACT fields the topic delivers
+                                        on the wire (sourced from the
+                                        committed webhook catalog)
+                    access_scopes    : OAuth scopes required
+                    related_resource : GraphQL type name for the
+                                        underlying resource
+                    deprecated       : true if Shopify has marked the
+                                        topic deprecated
+
 When you need to nest into a referenced object/interface/union/enum that \
 no example covers, call the `lookup_type(type_name)` tool — it returns \
 the SDL for one type. Use it sparingly; the per-op `returnTypeSdl` + \
@@ -310,6 +325,26 @@ examples cover the common case.
 The ops-picker has already validated that every picked op name exists in \
 the catalog and matches the HLD capability's integration surface. Trust \
 the picks; do not second-guess op selection.
+
+WEBHOOK PAYLOAD vs HLD signalFields. The HLD's trigger.signalFields \
+expresses semantic INTENT (what the system needs to read) in domain \
+terms. The picked topic's `payloadFields` is GROUND TRUTH for what \
+Shopify actually delivers. When they conflict, payloadFields wins:
+
+  - Webhook recipe `inputs[]` MUST come from `payloadFields` only — not
+    from HLD signalFields. Use the field NAMES from payloadFields
+    (e.g. `inventory_item_id`, not `variant_id`) and the appropriate
+    types.
+  - If the HLD's signalFields names a value the topic does NOT deliver
+    (e.g. HLD claims `variant_id` but `inventory_levels/update` only
+    carries `inventory_item_id`), your recipe must DERIVE the missing
+    value: typically a Shopify `shopify_query` step that resolves the
+    actual delivered id to the desired entity (e.g. inventoryItem(id)
+    → variant) before any side effect runs.
+  - When such a derivation is required, add an entry to `platformGaps`
+    naming the gap ("inventory_levels/update does not carry variant id;
+    resolved via Shopify productVariant query") and the mitigation
+    (the resolution step) so the merchant-facing summary is honest.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -83,6 +83,24 @@ WHAT YOU OWN
      label only — copy the HLD trigger's `event` if you can, but
      paraphrasing it does not break correctness; the position does.
 
+     Match topic by description first, fields second. Each catalog
+     entry shows the topic name, a one-line description of what
+     triggers it, AND the actual payload fields it delivers. Pick the
+     topic whose DESCRIPTION matches the HLD trigger's `event`, then
+     verify the topic's payload fields can carry every name the HLD
+     listed in `signalFields`. If the description fits but the payload
+     does NOT carry one of the HLD's claimed signalFields, the topic
+     is still the right pick — the LLD will resolve the missing field
+     via a Shopify lookup downstream. Do NOT swap to a different topic
+     just because one signalField name isn't a literal payload key
+     (e.g. `inventory_levels/update` carries `inventory_item_id` and
+     does not carry `variant_id` directly — that's expected; pick it
+     anyway).
+     If NO topic's description matches the HLD trigger's event, emit
+     the trigger in `unsatisfied[]` (using the matching capability id
+     when one exists, otherwise the trigger's `event` text) with a
+     one-sentence reason. Do NOT invent a topic.
+
   3. NOTES
      For each picked op, write one phrase on what part of the
      capability it satisfies. The next stage uses this to bind the op

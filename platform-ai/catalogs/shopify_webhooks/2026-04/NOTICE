@@ -1,0 +1,9 @@
+Shopify webhook payload schemas in this directory are derived from
+https://github.com/gadget-inc/shopify-webhook-schemas
+pinned at commit ac21e6a9677fa004a64263ea18c45312ba13d88c.
+
+License: MIT. Original copyright Gadget Inc. Schemas are inferred by
+scraping Shopify's example payloads and anonymized real payloads;
+corrections welcome upstream. Re-run
+  python platform-ai/catalogs/scripts/refresh_shopify_webhook_catalog.py 2026-04
+to refresh.

@@ -333,7 +333,7 @@ GraphQL strings inside your shopify_query / shopify_mutation steps):
         {
           "name": "productVariant",
           "surface": "admin",
-          "note": "Fetches the specific variant (title, availability) and its parent product (title, handle/URL) using the variant external id so the notification email has meaningful product information",
+          "note": "fetch variant title and parent product title by variant GID so the notification email contains meaningful product information",
           "args": [
             {
               "name": "id",
@@ -451,7 +451,41 @@ GraphQL strings inside your shopify_query / shopify_mutation steps):
     {
       "trigger_event": "a product variant's inventory level rises above zero after being depleted",
       "topic": "inventory_levels/update",
-      "note": "Fires whenever an inventory level changes for a location-variant pair, providing the new quantity so the handler can detect a transition from zero to positive stock"
+      "note": "fires on every inventory level change and delivers available quantity plus inventory_item_id; handler filters for transitions from zero to positive and resolves variant_id via a subsequent admin lookup",
+      "description": "Occurs whenever an inventory level is updated.",
+      "payloadFields": [
+        {
+          "format": "uri",
+          "name": "admin_graphql_api_id",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "available",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "name": "inventory_item_id",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "name": "location_id",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "format": "date-time",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "string"
+        }
+      ],
+      "access_scopes": [
+        "inventory"
+      ],
+      "related_resource": "InventoryLevel"
     }
   ],
   "unsatisfied": []
