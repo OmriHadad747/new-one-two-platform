@@ -22,7 +22,7 @@ import { makeIdempotent, validateMigrationSql } from "./sql-validator.js";
 // `generatorAuthoredNames` is treated as LLM output — it MUST pass
 // validateMigrationSql + be rewritten through makeIdempotent before
 // running. Migrations shipped by handler-template (e.g.
-// 0001_processed_webhooks.sql) are hand-written by us and skip the
+// 0001_template_baseline.sql) are hand-written by us and skip the
 // gate; they're trusted by construction.
 
 // Per-app schema format: `tenant_<tenantIdHex>_app_<first16OfAppIdHex>`.

@@ -36,7 +36,16 @@ from pydantic import ValidationError
 
 from models.adapter import dump_output, extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
-from subagents.lld_agent.platform_runtime_examples import example_for_step
+from subagents.lld_agent.platform_helpers_prose import (
+    CONFIG_HELPER_CONTRACT,
+    MONEY_HELPER_CONTRACT,
+    PAGINATE_HELPER_CONTRACT,
+    WORKFLOW_HELPER_CONTRACT,
+)
+from subagents.lld_agent.platform_runtime_examples import (
+    example_for_step,
+    paginate_snippet,
+)
 from subagents.lld_agent.prompt import build_system_prompt
 from subagents.lld_agent.schema import LLDPlan
 
@@ -130,8 +139,22 @@ def run_lld_agent(
         hld_json=json.dumps(plan, indent=2),
         ops_picks_json=json.dumps(ops_picks, indent=2),
     )
+
+    if _hld_has_list_capability(plan):
+        base_user += "\n\n" + PAGINATE_HELPER_CONTRACT
+
+    if _hld_has_money_capability(plan):
+        base_user += "\n\n" + MONEY_HELPER_CONTRACT
+
+    if _hld_uses_config(plan):
+        base_user += "\n\n" + CONFIG_HELPER_CONTRACT
+
+    if _hld_uses_workflow(plan):
+        base_user += "\n\n" + WORKFLOW_HELPER_CONTRACT
+
     if validator_hint:
         base_user += _VALIDATOR_HINT_SUFFIX.format(findings_text=validator_hint)
+
     llm = get_llm(
         model=get_agent_model("lld"),
         max_tokens=_MAX_TOKENS,
@@ -225,6 +248,41 @@ def _format_retry_suffix(errors: List[str]) -> str:
     )
 
 
+# ── HLD signal helpers ────────────────────────────────────────────────────────
+
+
+def _hld_has_list_capability(plan: Dict[str, Any]) -> bool:
+    """True when the HLD declares any capability with returnsList=true."""
+    for cap in plan.get("capabilities") or []:
+        if cap.get("returnsList") is True:
+            return True
+    return False
+
+
+def _hld_has_money_capability(plan: Dict[str, Any]) -> bool:
+    """True when the HLD declares any capability with touchesMoney=true."""
+    for cap in plan.get("capabilities") or []:
+        if cap.get("touchesMoney") is True:
+            return True
+    return False
+
+
+def _hld_uses_config(plan: Dict[str, Any]) -> bool:
+    """True when the HLD declares any capability with usesConfig=true."""
+    for cap in plan.get("capabilities") or []:
+        if cap.get("usesConfig") is True:
+            return True
+    return False
+
+
+def _hld_uses_workflow(plan: Dict[str, Any]) -> bool:
+    """True when the HLD declares any capability with usesWorkflow=true."""
+    for cap in plan.get("capabilities") or []:
+        if cap.get("usesWorkflow") is True:
+            return True
+    return False
+
+
 # ── Runtime-example enrichment ────────────────────────────────────────────────
 
 
@@ -244,22 +302,84 @@ def _build_op_surface_index(ops_picks: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
+def _build_offset_route_index(lld_dict: Dict[str, Any]) -> set:
+    """
+    Build the set of triggeredBy strings ("widget:<path>" / "admin:<path>")
+    for every route declared with paginationKind="offset".
+
+    Used to stamp the paginate_offset snippet on the recipe's sql_select
+    step before per-step walking — sql_select alone can't tell whether
+    its enclosing route is paginated, so this needs route context.
+    """
+    triggers: set = set()
+    routes = lld_dict.get("httpRoutes") or {}
+    for surface_name in ("widget", "admin"):
+        for route in routes.get(surface_name) or []:
+            if route.get("paginationKind") == "offset":
+                triggers.add(f"{surface_name}:{route.get('path')}")
+    return triggers
+
+
+def _stamp_paginate_on_sql_select(steps: List[Dict[str, Any]]) -> bool:
+    """
+    Find the recipe's sql_select step and stamp the paginate_offset
+    snippet onto it. Returns True after the first hit so we don't stamp
+    twice (the LLD validator already guarantees exactly one sql_select
+    in offset routes; this is belt-and-braces).
+    """
+    for step in steps:
+        kind = step.get("kind")
+        if kind == "sql_select":
+            step["example"] = paginate_snippet()
+            return True
+        if kind == "decision":
+            if _stamp_paginate_on_sql_select(step.get("ifTrue") or []):
+                return True
+            if _stamp_paginate_on_sql_select(step.get("ifFalse") or []):
+                return True
+        elif kind == "for_each":
+            if _stamp_paginate_on_sql_select(step.get("steps") or []):
+                return True
+        elif kind == "sql_transaction":
+            if _stamp_paginate_on_sql_select(step.get("steps") or []):
+                return True
+        elif kind == "try_catch":
+            if _stamp_paginate_on_sql_select(step.get("try") or step.get("try_") or []):
+                return True
+            if _stamp_paginate_on_sql_select(step.get("catch") or []):
+                return True
+    return False
+
+
 def _enrich_with_runtime_examples(
     lld_dict: Dict[str, Any], ops_picks: Dict[str, Any]
 ) -> None:
     """
     Walk every step in every recipe and stamp `step["example"]` with the
     matching working-TS snippet from `platform_runtime_examples`. Steps
-    that need no example (sql/compute/control-flow/log/response/fetch)
-    are left untouched.
+    that need no example (control-flow / log / response / fetch /
+    generic sql_*) are left untouched.
+
+    Two-pass:
+      1. For recipes triggered by an offset-paginated route, stamp the
+         paginate_offset snippet onto the recipe's sql_select step.
+         (sql_select alone can't see paginationKind — needs route ctx.)
+      2. Walk every step (incl. nested containers) and apply the
+         per-step `example_for_step` dispatch — which covers shopify_*,
+         email_*, files_*, enqueue, and compute (money/config).
 
     Walks into nested step containers (decision.ifTrue/ifFalse,
-    for_each.steps, sql_transaction.steps) so deeply-nested external
-    calls also receive their snippet.
+    for_each.steps, sql_transaction.steps, try_catch.try/catch) so
+    deeply-nested calls also receive their snippet.
     """
     op_surface = _build_op_surface_index(ops_picks)
+    offset_triggers = _build_offset_route_index(lld_dict)
+
     for recipe in (lld_dict.get("capabilityRecipes") or {}).values():
-        _walk_steps(recipe.get("steps") or [], op_surface)
+        steps = recipe.get("steps") or []
+        if recipe.get("triggeredBy") in offset_triggers:
+            _stamp_paginate_on_sql_select(steps)
+        _walk_steps(steps, op_surface)
 
 
 def _walk_steps(steps: List[Dict[str, Any]], op_surface: Dict[str, str]) -> None:

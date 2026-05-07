@@ -77,8 +77,8 @@ const FORBIDDEN_PATTERNS: ReadonlyArray<{ pattern: RegExp; reason: string }> = [
   // Postgres schema; RLS is gone. Generator migrations MUST NOT emit
   // ENABLE RLS or CREATE POLICY — those are carry-over from the legacy
   // row-level model. The template's baseline migration
-  // (0001_processed_webhooks.sql) ships processed_webhooks + cron_queue
-  // and bypasses the validator so its own DDL is unaffected.
+  // (0001_template_baseline.sql) ships processed_webhooks + cron_queue
+  // + app_config and bypasses the validator so its own DDL is unaffected.
   {
     pattern: /\bENABLE\s+ROW\s+LEVEL\s+SECURITY\b/i,
     reason: "ENABLE ROW LEVEL SECURITY (schema isolation replaces RLS)",

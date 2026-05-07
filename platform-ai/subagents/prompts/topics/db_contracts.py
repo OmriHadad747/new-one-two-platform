@@ -91,27 +91,11 @@ dbContracts: Authoritative typed table definitions. The migration generator prod
         "enum": ["pending", "sent", "failed"] }
     The DEFAULT literal MUST be in the enum list.
 
-  TABLE-LEVEL FLAGS:
-  - singleton: true   — set when this table holds exactly one configuration
-    row (e.g. abandonment settings, notification thresholds, app-wide toggles).
-    A singleton table has NO `id UUID` column and NO uniqueConstraint; the
-    migration generator emits a `singleton BOOLEAN PRIMARY KEY DEFAULT true
-    CHECK (singleton = true)` column instead, which makes the row unique by
-    construction. Handler reads use `WHERE singleton = true` and writes use
-    `INSERT … ON CONFLICT (singleton) DO UPDATE` — both spelled out for the
-    handler from the rendered contract. Use this ONLY when the admin UI
-    actively manages the row (you also declared adminApiCatalog read+write
-    routes); otherwise per the rule above, drop the table entirely.
-
-    Singleton table shape (use this exact pattern — do NOT add an id column):
-      {
-        "table": "<settings_table_name>",
-        "singleton": true,
-        "columns": [
-          { "name": "<setting_field>", "type": "<TYPE>", "constraints": "NOT NULL DEFAULT <value>" },
-          { "name": "updated_at", "type": "TIMESTAMPTZ", "constraints": "NOT NULL DEFAULT now()" }
-        ],
-        "uniqueConstraint": null,
-        "indexes": []
-      }\
+  APP-WIDE CONFIGURATION:
+  Settings, thresholds, toggles, TTLs, and choices that the merchant
+  tunes from an admin page live in the platform-owned `app_config` table
+  accessed via the `config` helper from `../lib/config.js`. Do NOT
+  declare per-feature config tables — `app_config` is template-managed
+  and the helper handles read/write/upsert. Treat any "exactly one row"
+  table you'd be tempted to declare as a config keyset instead.\
 """

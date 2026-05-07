@@ -8,7 +8,7 @@ import { logger } from "@platform-back/logger";
 // Source 1: handler-template — the hand-written reference handler that
 //   ships with platform-back. Copied verbatim (Dockerfile, package.json,
 //   server.ts, middleware/, lib/, the three trust-domain route files,
-//   migrations/0001_processed_webhooks.sql, etc.).
+//   migrations/0001_template_baseline.sql, etc.).
 //
 // Source 2: generator-emitted files — slotted in on top of the template.
 //   Most commonly: replacement bodies for routes/admin.ts / webhook.ts /

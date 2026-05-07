@@ -70,9 +70,7 @@ will name one. Trust the contract.
 
 Same rule for `id UUID PRIMARY KEY`: emit it only when the dbContracts
 row for this table declares an `id UUID` column with PRIMARY KEY in
-its constraints. Singleton tables (`singleton: true`) declare a
-`singleton BOOLEAN PRIMARY KEY DEFAULT true CHECK (singleton = true)`
-column instead and have NO `id` column.
+its constraints.
 
 Indexes are supported and encouraged when the contract calls for them:
 CREATE INDEX <idx_name> ON <table_name> (<column(s)>);

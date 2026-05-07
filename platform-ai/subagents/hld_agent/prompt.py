@@ -70,6 +70,44 @@ WHAT YOU OWN (HLD)
        - integration   : which third-party surface owns the data, if any
                          ("shopify-admin", "shopify-storefront", "email",
                          null for purely internal compute).
+       - returnsList   : true when this capability shows the merchant or
+                         customer multiple records they can browse, sort,
+                         filter, or paginate (e.g. "list rule runs",
+                         "view subscriber history", "browse rewards").
+                         Set to true even when the typical row count is
+                         small — the signal drives downstream pagination
+                         decisions. False for single-record fetches,
+                         writes, computes, and notifications. Default: false.
+       - touchesMoney  : true when this capability reads, writes, or
+                         computes monetary values — order totals, line
+                         item prices, refund amounts, tax, discount,
+                         fee, payout, etc. Set to true whenever the
+                         capability's description or dataNeeds mentions
+                         price / amount / total / cost / fee / charge /
+                         refund / discount / tax / payment. False for
+                         non-money capabilities (email opt-in, tag
+                         management, segmentation rules, etc.).
+                         Default: false.
+       - usesConfig    : true when this capability reads or writes a
+                         merchant-tunable setting — a rate, threshold,
+                         toggle, TTL, a choice the merchant adjusts
+                         from an admin page, etc.
+                         Set to true even on read-only consumers of the
+                         setting (a webhook recipe that reads the
+                         configured threshold also has usesConfig=true).
+                         False for capabilities that operate on
+                         per-row state, not app-wide knobs.
+                         Default: false.
+       - usesWorkflow  : true when this capability claims, runs, and
+                         finalises a row through a status lifecycle —
+                         pending → running → completed/failed (job
+                         queue), draft → submitted → approved/rejected
+                         (approval flow), or any custom state set the
+                         merchant observes. Set to true on the
+                         capability that OWNS the lifecycle (writes the
+                         status transitions), not on read-only consumers
+                         of the same row.
+                         Default: false.
      If the system needs to read order data and email the customer, that is
      two capabilities ("read order details", "send email"), not one. The
      LLD agent decides which specific endpoint/op satisfies each capability.

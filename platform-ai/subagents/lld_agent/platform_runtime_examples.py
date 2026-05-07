@@ -19,17 +19,24 @@ Bucket selection rules (kept here so the runner is dumb):
                      PLUS "shopify_storefront" instead when surface="storefront"
   shopify_mutation   → "shopify_mutation"
   enqueue            → "enqueue"
+  compute            → "compute_money"   when expression uses `money.*`
+                     → "compute_config"  when expression uses `config.*`
+                     (otherwise no snippet)
+  sql_select         → "paginate_offset" when the recipe's route has
+                     paginationKind="offset" (stamped on the recipe's
+                     sql_select before per-step walking)
+                     (otherwise no snippet)
 
-`sql_*`, `compute`, `decision`, `for_each`, `sql_transaction`, `try_catch`,
-`log`, `response`, `return`, `fetch_external` get NO snippet — they are
-either control-flow or use idioms straightforward enough that a tiny
-dispatch line in the codegen prompt is enough.
+`decision`, `for_each`, `sql_transaction`, `try_catch`, `log`, `response`,
+`return`, `fetch_external`, and the remaining `sql_*` kinds get NO
+snippet — they are control-flow or use idioms straightforward enough
+that a tiny dispatch line in the codegen prompt is enough.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
-
 
 # ── Snippet bank — keys are stable; values are working TS examples ──────────
 
@@ -59,7 +66,6 @@ try {
   throw err;
 }
 """,
-
     "email_send_batch": """\
 import { platform, QuotaExceeded } from "../lib/platform.js";
 
@@ -75,7 +81,6 @@ for (const item of batch.items) {
   // item.status === 500 → send_failed for THIS item
 }
 """,
-
     # ── Platform files service ─────────────────────────────────────────────
     "files_upload_small": """\
 import { platform, PayloadTooLarge, QuotaExceeded } from "../lib/platform.js";
@@ -102,7 +107,6 @@ try {
   throw err;
 }
 """,
-
     "files_upload_large": """\
 import { platform, PayloadTooLarge, QuotaExceeded } from "../lib/platform.js";
 
@@ -125,7 +129,6 @@ try {
 const link = await platform.files.signReadUrl({ fileId: f.fileId, expiresInSec: 3600 });
 // link = { url, expiresAt }
 """,
-
     # ── Shopify GraphQL — single query ─────────────────────────────────────
     "shopify_graphql": """\
 import { shopifyClientFor, ShopifyRateLimitError } from "../lib/shopify.js";
@@ -150,7 +153,6 @@ if (!data.order) return; // deleted / not visible
 // Money — Shopify returns decimal strings; persist as integer minor units.
 const amountCents = Math.round(parseFloat(data.order.totalPriceSet.shopMoney.amount) * 100);
 """,
-
     # ── Shopify GraphQL — paginated read ───────────────────────────────────
     "shopify_graphql_paginate": """\
 import { shopifyClientFor } from "../lib/shopify.js";
@@ -176,7 +178,6 @@ for await (const nodes of shopify.graphqlPaginate(
   }
 }
 """,
-
     # ── Shopify GraphQL — bulk export ──────────────────────────────────────
     "shopify_bulk_query": """\
 import { shopifyClientFor } from "../lib/shopify.js";
@@ -205,7 +206,6 @@ for await (const node of shopify.bulkQuery(
 // Per-call timeout override:
 //   shopify.bulkQuery(query, { maxPollMs: 30 * 60_000 })  // 30 min
 """,
-
     # ── Shopify GraphQL — mutation (always check userErrors) ───────────────
     "shopify_mutation": """\
 import { shopifyClientFor } from "../lib/shopify.js";
@@ -232,7 +232,6 @@ if (result.tagsAdd.userErrors.length > 0) {
   );
 }
 """,
-
     # ── Cron enqueue (HTTP route → background job) ──────────────────────────
     "enqueue": """\
 import { enqueueJob } from "../lib/cron-enqueue.js";
@@ -263,7 +262,100 @@ await enqueueJob("process_run", { run_id: insertedRunId }, { dedupKey: insertedR
 //   2. await enqueueJob("process_run", { run_id: runId }, { dedupKey: runId })
 //   3. res.status(202).json({ run_id: runId, status: "pending" })
 """,
+    # ── Platform workflow helper (stamped on compute steps using workflow.*) ─
+    "compute_workflow": """\
+import { workflow } from "../lib/workflow.js";
 
+// One-shot lifecycle: atomic claim → run callback → mark complete (or
+// persist failure_reason and re-throw on callback error). Returns
+// `null` immediately when the row is already claimed / in the wrong
+// state / missing — callback NEVER runs in that case.
+const result = await workflow.attempt<RuleRun, void>(
+  "rule_runs",
+  runId,
+  { from: "pending" },
+  async (row) => {
+    // Side effects here. If this throws, helper persists status='failed'
+    // with err.message (truncated) and re-throws so the cron-runner sees it.
+    await processRow(row);
+  },
+);
+if (!result) return; // someone else claimed it
+
+// Primitives for non-canonical flows (multi-step, branching terminals):
+const claimed = await workflow.claim<Approval>(
+  "approvals",
+  approvalId,
+  { from: "draft", to: "submitted" },
+);
+if (!claimed) return;
+// … do work …
+await workflow.complete("approvals", approvalId, { to: "approved" });
+// or:
+await workflow.fail("approvals", approvalId, "policy violation: …");
+
+// Stale sweeper — call from a low-frequency cron tick (every ~10 min):
+const swept = await workflow.sweepStale("rule_runs", { ttlMinutes: 30 });
+console.log(JSON.stringify({ event: "sweep", count: swept.count }));
+""",
+    # ── Platform money helper (stamped on compute steps using money.*) ─────
+    "compute_money": """\
+import { money } from "../lib/money.js";
+
+// Currency-aware conversion. Correct for every Shopify currency including
+// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).
+//
+// Decimal-string from Shopify -> integer minor units (BIGINT in DB):
+const totalCents = money.toMinorUnits(
+  payload.totalPriceSet.shopMoney.amount,
+  payload.totalPriceSet.shopMoney.currencyCode,
+);
+
+// Aggregate amounts you've already converted to integer minor units:
+const grand = money.sum([itemA, itemB, itemC]);
+
+// Take a percentage (tax / fee / discount):
+const tax = money.percentage(grand, 8.5);
+
+// Format for display (no symbol, currency-correct decimal count):
+const display = money.format(totalCents, "USD"); // "9.99"
+""",
+    # ── Platform config helper (stamped on compute steps using config.*) ────
+    "compute_config": """\
+import { config } from "../lib/config.js";
+
+// Reads always supply a default — never assume a key is set on first run.
+const rate: number = await config.get("points_per_dollar", 1);
+const enabled: boolean = await config.get("notifications_enabled", false);
+
+// Writes (typical admin "save settings" route):
+await config.set("points_per_dollar", req.body.rate);
+
+// Read multiple keys for a settings-page pre-fill:
+const subset = await config.getMany(["points_per_dollar", "alert_thresholds"]);
+
+// Read every key (admin "list all settings" page):
+const all = await config.getAll();
+""",
+    # ── Platform paginate helper (stamped on sql_select in offset routes) ──
+    "paginate_offset": """\
+import { paginate } from "../lib/paginate.js";
+import { sql } from "../lib/db.js";
+
+// The bare SELECT from the LLD's sql_select step (no LIMIT, no OFFSET,
+// no COUNT(*)) is wrapped at codegen time. The helper handles input
+// clamping (page>=1, page_size in [1,100]), the COUNT subquery, and
+// the response shape.
+const rows = await paginate(
+  sql,
+  sql`<your bare SELECT from the sql_select step, ORDER BY required>`,
+  { page: req.body.page, page_size: req.body.page_size },
+);
+res.json(rows); // { items, total, page, page_size }
+
+// Per-route maxPageSize override (when sql_select.purpose hints "max N"):
+//   await paginate(sql, sql`...`, { page, page_size }, { maxPageSize: 1000 });
+""",
     # ── Shopify Storefront API ─────────────────────────────────────────────
     "shopify_storefront": """\
 import { shopifyClientFor } from "../lib/shopify.js";
@@ -287,14 +379,25 @@ const data = await shopify.storefront<{
 # ── Public API ──────────────────────────────────────────────────────────────
 
 
+_MONEY_EXPR_RE = re.compile(r"\bmoney\.[a-zA-Z]+\s*\(")
+_CONFIG_EXPR_RE = re.compile(r"\bconfig\.[a-zA-Z]+\s*\(")
+_WORKFLOW_EXPR_RE = re.compile(r"\bworkflow\.[a-zA-Z]+\s*\(")
+
+
 def example_for_step(step: Dict[str, Any]) -> Optional[str]:
     """
     Return the working-TS snippet for one step, or None if the step kind
-    needs no example (sql/compute/control-flow/log/response/fetch).
+    needs no example (control-flow / log / response / fetch / generic
+    sql_*).
 
     The runner calls this on every step in every recipe (including nested
-    steps inside decision/for_each/sql_transaction) and writes the result
-    onto the step dict in place under the key `example`.
+    steps inside decision/for_each/sql_transaction/try_catch) and writes
+    the result onto the step dict in place under the key `example`.
+
+    `sql_select` paginate snippets are NOT chosen here — they require
+    route context (paginationKind) that lives outside the step. The
+    runner stamps `paginate_offset` separately, before walking, when the
+    recipe's route is offset-paginated.
     """
     kind = step.get("kind")
     if kind == "email_send":
@@ -327,4 +430,19 @@ def example_for_step(step: Dict[str, Any]) -> Optional[str]:
         return _EXAMPLES["shopify_mutation"]
     if kind == "enqueue":
         return _EXAMPLES["enqueue"]
+    if kind == "compute":
+        expr = step.get("expression") or ""
+        if _WORKFLOW_EXPR_RE.search(expr):
+            return _EXAMPLES["compute_workflow"]
+        if _MONEY_EXPR_RE.search(expr):
+            return _EXAMPLES["compute_money"]
+        if _CONFIG_EXPR_RE.search(expr):
+            return _EXAMPLES["compute_config"]
+        return None
     return None
+
+
+def paginate_snippet() -> str:
+    """Return the offset-paginate snippet — stamped by the runner on the
+    sql_select step of a recipe whose route has paginationKind='offset'."""
+    return _EXAMPLES["paginate_offset"]

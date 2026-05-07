@@ -175,16 +175,16 @@ because it was an implementation detail).
   tables[]
     name              snake_case domain noun (e.g. "abandoned_cart_emails")
                        Match the HLD's persistence name when one exists.
+                       MUST NOT match a template-owned name
+                       (`processed_webhooks`, `cron_queue`, `app_config`).
+                       App-wide configuration (rates, thresholds, toggles,
+                       TTLs, etc.) lives in the template-owned `app_config`
+                       table accessed via the platfrom`config` helper — the
+                       config helper contract is appended to your user
+                       message when the HLD declares a config-using
+                       capability. Do NOT declare per-feature config
+                       tables.
     purpose           one sentence
-    singleton         true ONLY for config tables with exactly one row.
-                       When true, NO `id` column, NO uniqueConstraint.
-                       The migration generator emits:
-                         singleton BOOLEAN PRIMARY KEY DEFAULT true
-                                   CHECK (singleton = true)
-                       Handler reads use `WHERE singleton = true`; writes
-                       use `INSERT ... ON CONFLICT (singleton) DO UPDATE`.
-                       Use only when the admin UI actively manages the row
-                       (matching admin route exists in httpRoutes.admin).
     columns[]
       name            snake_case
       sqlType         exact PostgreSQL type:
@@ -342,17 +342,13 @@ Each entry:
                        guestToken: "string|null"   (client-minted UUID,
                                                      replayed on every call)
                      The recipe handles the "guest later logs in" merge.
-  responseShape     same form. Lists MUST be paginated:
-                       items:       "{...}[]"
-                       total:       "number"
-                       page:        "number"
-                       page_size:   "number"
-                     Or cursor-based when the underlying query is
-                     keyset-paginated. Non-paginated list responses are
-                     rejected by validation.
+  responseShape     same form.
   paginationKind    null | "offset" | "cursor"
-                     Set when the response carries a list. Drives the
-                     SQL recipe's LIMIT/OFFSET vs cursor WHERE clause.
+                     REQUIRED when responseShape contains a list value
+                     (any value of the form "{...}[]" or ending in "[]").
+                     When set, the helper contract is appended to your
+                     user message. Validator rejects list responses with
+                     paginationKind=null.
 
 A recipe in capabilityRecipes binds to each route via
 `triggeredBy: "widget:<path>"` or `triggeredBy: "admin:<path>"`. Every
@@ -537,9 +533,6 @@ sql_transaction
 compute
   expression          one TS expression. Use bound names from earlier steps
                        and recipe inputs.
-                       For money: ALWAYS
-                         `Math.round(parseFloat(<src>) * 100)`  (2-decimal
-                                                                  currencies)
                        For string safety from external sources:
                          `<src>.replace(/\\u0000/g, "")`
                        For optional payload fields:
@@ -584,7 +577,7 @@ try_catch
   row, capture an error message into a column, or fall back to an
   alternate path. Required for any side effect whose failure must be
   recorded somewhere (e.g. flipping a workflow row to 'failed' on a
-  Shopify call throw — see R13).
+  Shopify call throw — see R4).
   try                 ordered steps to attempt
   catch               ordered steps to run when try throws (use the
                        errorBinding to read err.message into compute /
@@ -695,20 +688,26 @@ return
       the payload via `?.` and `??` in compute/sql_* bindings. Guests
       and deleted entities mean payload fields can be missing or null.
 
-  R4. Every recipe operating on a stateMachine-tracked row includes the
-      prior state in its sql_claim WHERE clause. A null prevState NEVER
-      counts as a transition (skipWhenUnknown=true).
+  R4. stateMachine.kind="observation" recipes:
+      - Every claim's sql_claim WHERE clause includes the prior state.
+        A null prevState NEVER counts as a transition
+        (skipWhenUnknown=true).
+      - Every transition into a failure state (target name contains
+        "fail" / "cancel" / "error" / "reject") MUST be a concrete
+        sql_update inside a try_catch.catch arm wrapped around the
+        failure-prone work. Capture `${errorBinding}.message` (or a
+        domain-specific reason) into a `failure_reason` column.
+        Validator rejects plans missing this — leaving the sql_update
+        implicit silently pins rows in the prior state forever.
+      For stateMachine.kind="workflow", see the workflow helper
+      contract injected into your user message when applicable.
 
-  R5. Money is integer cents in BIGINT. Every compute step that derives
-      money uses `Math.round(parseFloat(<src>) * 100)`. Every sql_* step
-      that writes money binds an integer.
-
-  R6. Cron recipes operating on N items with bulkFetchRequired=true:
+  R5. Cron recipes operating on N items with bulkFetchRequired=true:
       ALL Shopify reads happen in a SINGLE shopify_query step with
       paginationStrategy="graphqlPaginate" or "bulkQuery" BEFORE the
       for_each step; per-item reads inside the loop are forbidden.
 
-  R7. Widget POST recipes that persist per-shopper state must:
+  R6. Widget POST recipes that persist per-shopper state must:
       - Read both customerId and guestToken from request.body (declared
         in inputs).
       - Include a sql_transaction step that handles the merge case when
@@ -716,19 +715,19 @@ return
         DELETE leftover guest rows).
       - Persist using customerId when present, else guestToken.
 
-  R8. Cron job names referenced in `triggeredBy: "cron:<jobName>"` form
+  R7. Cron job names referenced in `triggeredBy: "cron:<jobName>"` form
       the keys of the codegen-emitted `jobs: Record<string, JobFn>` map.
       Use "main" only when there is one undifferentiated tick.
 
-  R9. Logs include enough context to reconstruct timelines: at minimum
+  R8. Logs include enough context to reconstruct timelines: at minimum
       requestId (when in a route) or jobName (when in cron), plus the
       record id being acted on.
 
-  R10. NEVER write a recipe step that calls Shopify per-item inside a
+  R9. NEVER write a recipe step that calls Shopify per-item inside a
       cron loop. NEVER write a fetch_external for a Shopify or platform
       URL. NEVER write a setInterval / setTimeout step.
 
-  R11. Whenever a Shopify ID is passed into an `ID!`-typed GraphQL
+  R10. Whenever a Shopify ID is passed into an `ID!`-typed GraphQL
       argument, format as `gid://shopify/<Type>/${rawId}`. The DB stores
       the raw numeric BIGINT; the GID form is built in a `compute` step
       and bound into the `variables` map of the shopify_query /
@@ -736,26 +735,13 @@ return
       response, parse the trailing segment of the GID before storing
       (e.g. `Number(gid.split('/').pop())`).
 
-  R12. When joining bulk-fetched Shopify nodes to DB rows in a for_each,
+  R11. When joining bulk-fetched Shopify nodes to DB rows in a for_each,
       normalize Map keys with `String()` on BOTH sides — Shopify returns
       ID values as strings, postgres.js returns BIGINT columns as
       strings, but mixing native numbers with string keys causes silent
       lookup misses.
 
-  R13. Failure-state transitions declared in stateMachine MUST be
-      implemented as concrete sql_update steps. If
-      `stateMachine.transitions[].to` includes a state whose name
-      contains "fail" / "cancel" / "error" / "reject", at least ONE
-      recipe driving that lifecycle MUST contain an `sql_update`
-      template that flips the column to that state — typically inside
-      a `try_catch.catch` arm wrapped around the failure-prone steps.
-      Putting the failure semantics only in `platformGaps` prose is
-      INSUFFICIENT and is rejected by the validator: an exception
-      mid-recipe would otherwise leave the row stuck in the prior
-      state forever. Capture `${errorBinding}.message` (or a domain-
-      specific reason) and persist it into a `failure_reason` column.
-
-  R14. Per-item side effects inside `for_each` MUST be guarded against
+  R12. Per-item side effects inside `for_each` MUST be guarded against
       partial failure. When the body contains a shopify_mutation,
       email_send, email_send_batch, files_upload, or fetch_external
       step, EITHER:
@@ -766,7 +752,7 @@ return
       items failed and can summarise the partial-success outcome in a
       sql_update / log / response on completion.
 
-  R15. Long work belongs in cron, not the HTTP request. When an HTTP
+  R13. Long work belongs in cron, not the HTTP request. When an HTTP
       recipe (widget: / admin:) would synchronously do EITHER of:
         - `shopify_query` with paginationStrategy != "single", OR
         - `for_each` whose body contains any side-effect step

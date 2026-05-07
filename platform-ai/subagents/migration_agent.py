@@ -125,18 +125,8 @@ def _format_db_contracts(plan: Dict[str, Any]) -> str:
         columns = contract.get("columns") or []
         unique = contract.get("uniqueConstraint")
         indexes = contract.get("indexes") or []
-        is_singleton = bool(contract.get("singleton"))
 
         parts.append(f"\nTable: {table}")
-        if is_singleton:
-            # Singleton config tables: one row, ever. The `singleton` boolean
-            # PK pins the row by construction so handler upserts can target
-            # ON CONFLICT (singleton) instead of inventing a fake conflict
-            # target. The architect contract guarantees no `id` column was
-            # declared for singletons.
-            parts.append(
-                "  singleton  BOOLEAN  PRIMARY KEY DEFAULT true CHECK (singleton = true)"
-            )
         for col in columns:
             constraints = col.get("constraints", "") or ""
             enum_values = col.get("enum")

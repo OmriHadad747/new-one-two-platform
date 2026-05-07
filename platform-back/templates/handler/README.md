@@ -21,7 +21,8 @@ src/
   migrate.ts                      Pre-deploy migration runner
 
 migrations/
-  0001_processed_webhooks.sql     Baseline; every handler ships with this
+  0001_template_baseline.sql      Baseline; every handler ships with this
+                                  (processed_webhooks, cron_queue, app_config)
 ```
 
 ## Locked guarantees this template enforces

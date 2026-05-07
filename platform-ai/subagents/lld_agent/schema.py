@@ -158,33 +158,32 @@ class ForeignKey(_StrictModel):
     onDelete: Literal["CASCADE", "SET NULL", "RESTRICT"]
 
 
+_TEMPLATE_OWNED_TABLES: frozenset[str] = frozenset(
+    {
+        "processed_webhooks",
+        "cron_queue",
+        "app_config",
+    }
+)
+
+
 class Table(_StrictModel):
     name: str = Field(min_length=1)
     purpose: str
-    singleton: bool = False
     columns: list[Column] = Field(min_length=1)
     uniqueConstraint: Optional[UniqueConstraint] = None
     indexes: list[str] = Field(default_factory=list)
     foreignKeys: list[ForeignKey] = Field(default_factory=list)
 
-    @model_validator(mode="after")
-    def _singleton_shape(self) -> "Table":
-        # Singleton tables: no `id` column, no uniqueConstraint (the
-        # generator emits the singleton BOOLEAN PK by construction).
-        if not self.singleton:
-            return self
-        if any(c.name == "id" for c in self.columns):
+    @field_validator("name")
+    @classmethod
+    def _name_not_template_owned(cls, v: str) -> str:
+        if v in _TEMPLATE_OWNED_TABLES:
             raise ValueError(
-                f"singleton table '{self.name}' must NOT declare an `id` "
-                "column — the migration generator emits "
-                "`singleton BOOLEAN PRIMARY KEY` by construction"
+                f"table name '{v}' is template-owned (managed by the "
+                "platform handler template); the LLD must not redeclare it"
             )
-        if self.uniqueConstraint is not None:
-            raise ValueError(
-                f"singleton table '{self.name}' must NOT declare a "
-                "uniqueConstraint — the singleton PK enforces uniqueness"
-            )
-        return self
+        return v
 
     @model_validator(mode="after")
     def _fk_columns_exist(self) -> "Table":
@@ -1055,17 +1054,61 @@ class LLDPlan(_StrictModel):
         return self
 
     @model_validator(mode="after")
+    def _workflow_state_machine_has_sweeper(self) -> "LLDPlan":
+        """
+        For stateMachine.kind="workflow", at least one cron recipe MUST
+        invoke `workflow.sweepStale` against the workflow table.
+        Without it, rows that crash mid-execution stay in 'running'
+        forever — silent state corruption.
+
+        Detection: scan every cron-triggered recipe's compute steps for
+        an expression matching `workflow\\.sweepStale\\(['"]<table>['"]`.
+        Tolerant of whitespace and either quote style.
+        """
+        sm = self.stateMachine
+        if sm is None or sm.kind != "workflow":
+            return self
+
+        import re
+
+        sweep_re = re.compile(
+            r"workflow\s*\.\s*sweepStale\s*\(\s*['\"]" + re.escape(sm.table) + r"['\"]"
+        )
+
+        for recipe in self.capabilityRecipes.values():
+            if not recipe.triggeredBy.startswith("cron:"):
+                continue
+            for step in _collect_compute_calls(list(recipe.steps)):
+                if sweep_re.search(step):
+                    return self
+
+        raise ValueError(
+            f"stateMachine.kind='workflow' on '{sm.table}' requires a "
+            f"cron recipe with a compute step calling "
+            f"`workflow.sweepStale('{sm.table}')` — without it, rows that "
+            "crash mid-execution stay 'running' forever. Add a "
+            "triggeredBy='cron:sweep_<table>' recipe with a single "
+            "compute step running the sweeper (cadence: every 10 min)."
+        )
+
+    @model_validator(mode="after")
     def _state_machine_failure_path_implemented(self) -> "LLDPlan":
         """
-        If `stateMachine` declares a transition into a failure state
-        (target name contains 'fail', 'cancel', 'error', or 'reject'),
-        at least one recipe driving the lifecycle MUST contain an
-        `sql_update` whose template flips the column to that state.
-        Putting failure semantics only in `platformGaps` prose silently
-        leaves orphan rows in the prior state forever.
+        If `stateMachine.kind="observation"` declares a transition into a
+        failure state (target name contains 'fail', 'cancel', 'error',
+        or 'reject'), at least one recipe driving the lifecycle MUST
+        contain an `sql_update` whose template flips the column to that
+        state. Putting failure semantics only in `platformGaps` prose
+        silently leaves orphan rows in the prior state forever.
+
+        Skipped for `kind="workflow"` — those rows transition through
+        the platform `workflow` helper, whose `attempt`/`fail` paths
+        guarantee the failure write structurally.
         """
         sm = self.stateMachine
         if sm is None:
+            return self
+        if sm.kind != "observation":
             return self
         failure_states = {
             t.to
@@ -1085,6 +1128,58 @@ class LLDPlan(_StrictModel):
                     "Wrap the failure-prone steps in a try_catch and emit the "
                     "sql_update inside the catch branch."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _list_response_requires_pagination_kind(self) -> "LLDPlan":
+        """
+        Any HTTP route whose responseShape contains a list value
+        (TS-ish "[]" suffix) MUST declare paginationKind. Catches the
+        "I returned a bare array" pattern where pagination was forgotten.
+        """
+        for surface_name, routes in (
+            ("widget", self.httpRoutes.widget),
+            ("admin", self.httpRoutes.admin),
+        ):
+            for route in routes:
+                has_list = any(v.rstrip().endswith("[]") for v in route.responseShape.values())
+                if has_list and route.paginationKind is None:
+                    raise ValueError(
+                        f"httpRoutes.{surface_name} '{route.path}' responseShape "
+                        "contains a list value but paginationKind is null; "
+                        "set paginationKind to 'offset' or 'cursor'"
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _offset_pagination_no_count_query(self) -> "LLDPlan":
+        """
+        When a route has paginationKind='offset', its backing recipe must NOT
+        contain a sql_select with COUNT(*). The paginate() helper handles
+        counting; a manual COUNT query is redundant and contradicts the
+        paginate helper contract injected for paginated routes.
+        """
+        offset_triggers: set[str] = set()
+        for r in self.httpRoutes.widget:
+            if r.paginationKind == "offset":
+                offset_triggers.add(f"widget:{r.path}")
+        for r in self.httpRoutes.admin:
+            if r.paginationKind == "offset":
+                offset_triggers.add(f"admin:{r.path}")
+
+        if not offset_triggers:
+            return self
+
+        for rid, recipe in self.capabilityRecipes.items():
+            if recipe.triggeredBy not in offset_triggers:
+                continue
+            for step in _collect_sql_select_steps(list(recipe.steps)):
+                if "COUNT(*)" in step.template.upper():
+                    raise ValueError(
+                        f"recipe '{rid}' (paginationKind='offset') contains a "
+                        "sql_select with COUNT(*) — remove it; the paginate() "
+                        "helper from ../lib/paginate.js handles counting automatically"
+                    )
         return self
 
     @model_validator(mode="after")
@@ -1119,6 +1214,44 @@ class LLDPlan(_StrictModel):
                         "which are not declared in emailSpec.dataKeys"
                     )
         return self
+
+
+def _collect_compute_calls(steps: list) -> list[str]:
+    """All ComputeStep expressions in `steps`, recursing into containers."""
+    out: list[str] = []
+    for s in steps:
+        if isinstance(s, ComputeStep):
+            out.append(s.expression)
+        elif isinstance(s, DecisionStep):
+            out.extend(_collect_compute_calls(list(s.ifTrue)))
+            out.extend(_collect_compute_calls(list(s.ifFalse)))
+        elif isinstance(s, ForEachStep):
+            out.extend(_collect_compute_calls(list(s.steps)))
+        elif isinstance(s, SqlTransactionStep):
+            out.extend(_collect_compute_calls(list(s.steps)))
+        elif isinstance(s, TryCatchStep):
+            out.extend(_collect_compute_calls(list(s.try_)))
+            out.extend(_collect_compute_calls(list(s.catch)))
+    return out
+
+
+def _collect_sql_select_steps(steps: list) -> list["SqlSelectStep"]:
+    """All SqlSelectStep instances in `steps`, recursing into containers."""
+    out: list[SqlSelectStep] = []
+    for s in steps:
+        if isinstance(s, SqlSelectStep):
+            out.append(s)
+        elif isinstance(s, DecisionStep):
+            out.extend(_collect_sql_select_steps(list(s.ifTrue)))
+            out.extend(_collect_sql_select_steps(list(s.ifFalse)))
+        elif isinstance(s, ForEachStep):
+            out.extend(_collect_sql_select_steps(list(s.steps)))
+        elif isinstance(s, SqlTransactionStep):
+            out.extend(_collect_sql_select_steps(list(s.steps)))
+        elif isinstance(s, TryCatchStep):
+            out.extend(_collect_sql_select_steps(list(s.try_)))
+            out.extend(_collect_sql_select_steps(list(s.catch)))
+    return out
 
 
 def _contains_email(steps: list) -> bool:

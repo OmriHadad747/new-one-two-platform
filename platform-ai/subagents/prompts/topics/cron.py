@@ -42,7 +42,7 @@ ARCHITECT = (
     "\n    MUST NOT describe per-item Shopify reads inside the loop. Every piece of"
     "\n    Shopify data the loop needs must come from the single bulk pre-fetch declared"
     "\n    in cronBatching; the loop body may only consult that pre-fetched data, the"
-    "\n    DB, and local logic. If a \"re-verify before acting\" step sounds needed,"
+    '\n    DB, and local logic. If a "re-verify before acting" step sounds needed,'
     "\n    include the required field (e.g. completedAt / status) in the bulk pre-fetch"
     "\n    instead of re-querying per item."
 )
@@ -97,6 +97,4 @@ LOGGING — include the job name in every log line from inside a job:
 
 The runner wraps your job invocation with a surrounding log context
 (row id, attempt number, duration) — you don't need to log those.
-""".replace(
-    "%TEMPLATE_TABLES_HANDLER%", _TEMPLATE_TABLES_HANDLER
-)
+""".replace("%TEMPLATE_TABLES_HANDLER%", _TEMPLATE_TABLES_HANDLER)
