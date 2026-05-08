@@ -1,0 +1,89 @@
+Feature: Customers receive one email notification when a product they signed up for returns to stock.
+Trigger types: widget, webhook
+
+Quality brief — what makes a good version of this app:
+A good version handles the happy path cleanly: customer signs up, product restocks, email goes out, record marks as notified. Edge cases to consider: duplicate signups for the same product (deduplicate or allow?), product variants with separate inventory, what happens if a product is deleted, and whether to let customers unsubscribe from emails. The admin page should be scannable at a glance — show status clearly so the merchant knows which notifications succeeded.
+
+UX expectations for this widget:
+Widget renders on the product page as a compact 'Notify me when available' form pre-filled with the customer's email if logged in; after submission it immediately switches to a confirmation state showing 'You're on the list' with an unsubscribe link. No page reload required.
+
+Platform API catalog — the ONLY paths the widget may call via host.call().
+Use EXACTLY the requestShape shown when building the host.call() body.
+Expect EXACTLY the responseShape shown when reading the result.
+  GET /signup
+    send:    host.call('/signup', {'variant_external_id': 'string', 'customer_email': 'string'})
+    receive: {'is_signed_up': 'boolean', 'status': 'string|null'}
+  POST /signup
+    send:    host.call('/signup', {'variant_external_id': 'string', 'product_external_id': 'string', 'customer_email': 'string'})
+    receive: {'success': 'boolean'}
+  POST /signup/remove
+    send:    host.call('/signup/remove', {'variant_external_id': 'string', 'customer_email': 'string'})
+    receive: {'success': 'boolean'}
+
+## Shopify Ajax API endpoints (host.storefront paths)
+
+Each entry shows the relative path you pass to `host.storefront(path)`, the method, what triggers it, and the fields the response actually carries. The widget's ONLY public Shopify channel is these endpoints — paths NOT listed here are not supported by `host.storefront`.
+
+### cart
+
+- **GET /cart.js** — Get the current cart as JSON.
+  response: { token, note, attributes, original_total_price, total_price, total_discount, total_weight, item_count, items, requires_shipping, currency, items_subtotal_price, cart_level_discount_applications }
+  items[]: { id, key, title, product_title, variant_title, quantity, price, line_price, original_line_price, total_discount, discounts, sku, vendor, product_id, variant_id, handle, url, image, properties, requires_shipping }
+
+- **POST /cart/add.js** — Add one or multiple variants to the cart.
+  body: items*
+  response: { items }
+
+- **POST /cart/update.js** — Update line-item quantities, the cart's note, attributes, or apply a discount.
+  body: updates, note, attributes, discount
+  response: { (complete cart object) }
+
+- **POST /cart/change.js** — Change one existing line item's quantity, properties, or selling plan.
+  body: id, line, quantity*, properties, selling_plan
+  response: { (complete cart object) }
+
+- **POST /cart/clear.js** — Set all line-item quantities to zero (empty the cart).
+  response: { token, note, attributes, total_price, total_weight, item_count, items, requires_shipping }
+
+- **POST /cart/prepare_shipping_rates.json** — Initiate async shipping-rate calculation for an address. Poll cart.async_shipping_rates afterwards.
+  query: shipping_address[zip]*, shipping_address[country]*, shipping_address[province]*
+  response: { (null body) }
+
+- **GET /cart/async_shipping_rates.json** — Poll for the result of a previously-initiated shipping-rate calculation.
+  query: shipping_address[zip]*, shipping_address[country]*, shipping_address[province]*
+  response: { shipping_rates }
+  shipping_rates[]: { name, presentment_name, code, price, source, delivery_date, delivery_range, delivery_days, phone_required }
+
+- **GET /cart/shipping_rates.json** — Synchronous (throttled) estimate of shipping rates for an address. Prefer prepare/async pair for production.
+  query: shipping_address[zip]*, shipping_address[country]*, shipping_address[province]*
+  response: { shipping_rates }
+  shipping_rates[]: { name, price, delivery_date, source }
+
+### product
+
+- **GET /products/{handle}.js** — Fetch a single product by handle as JSON. Up to 250 variants returned.
+  path: handle
+  response: { id, title, handle, description, published_at, created_at, vendor, type, tags, price, price_min, price_max, available, price_varies, compare_at_price, compare_at_price_min, compare_at_price_max, compare_at_price_varies, variants, images, featured_image, options, url, requires_selling_plan, selling_plan_groups }
+  variants[]: { id, title, option1, option2, option3, options, price, compare_at_price, weight, available, sku, inventory_management, requires_shipping, taxable, barcode, requires_selling_plan, selling_plan_allocations }
+  options[]: { name, position }
+
+### recommendations
+
+- **GET /recommendations/products.json** — Fetch products recommended for a given product (related or complementary).
+  query: product_id*, limit, intent
+  response: { intent, products }
+
+### search
+
+- **GET /search/suggest.json** — Predictive (type-ahead) search across products, collections, pages, articles.
+  query: q*, resources[type], resources[limit], resources[limit_scope], resources[options][unavailable_products], resources[options][fields]
+  response: { resources }
+  resources: { results }
+  resources.results: { queries, products, collections, pages, articles }
+
+
+Backend limitations the widget UX must reflect:
+  - The inventory_levels/update webhook payload does not carry variant_id; it only carries inventory_item_id.: Each restock webhook incurs one extra Shopify Admin API call to resolve the variant; this is within Admin API rate limits but adds one round-trip latency before notifications begin.
+  - No Shopify batch email mutation exists; each customer notification is an individual platform.email.send call.: For high-volume restock events with many signups, notification delivery takes O(n) email API calls; the merchant's admin dashboard may show partial success states while the loop is still running.
+
+Generate the widget ES module. Output ONLY raw JavaScript.

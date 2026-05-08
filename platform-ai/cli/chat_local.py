@@ -1260,11 +1260,17 @@ def _save_artifacts_md(
     hld_v_findings: Optional[List] = None,
 ) -> Path:
     _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
-    # Always persist the canonical HLD output as a sibling file. The report
-    # only links to it, never re-inlines the JSON, so plan and report stay
-    # in sync via a single source of truth.
+    # Always persist the canonical HLD output as a sibling file.
     if plan:
         _save_hld_json(run_dir, prompt, intent or {}, plan, [], "", hld_v_findings)
+    # Skip writing report.md — the run dir already has hld.json / lld.json /
+    # ops_picks.json / state.json plus the per-generator artifact files
+    # (handler bundle, db.sql, storefront.js, admin_ui.js). state.json carries
+    # all token + retry info. The Markdown report duplicated this content and
+    # has been retired. The function still runs the side-effects above so
+    # callers stay valid.
+    return run_dir
+    # ── Dead code below kept for reference; no longer reached. ────────────
     path = run_dir / "report.md"
 
     lines = _md_pipeline_header(stop_label, prompt, total_ms, all_tokens or {})

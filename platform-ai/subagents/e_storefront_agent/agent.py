@@ -104,24 +104,26 @@ def _sanitize_dom_access(code: str) -> str:
 
 def _widget_catalog_from_lld(lld: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Build the widget's platformApiCatalog from `lld.externalContracts` filtered
-    to surface=="widget". Preserves path / method / requestShape / responseShape
-    in the shape the validator + worked example expect.
+    Build the widget's platformApiCatalog from `lld.httpRoutes.widget[]`.
+    The LLD splits routes by surface (`httpRoutes.widget` and
+    `httpRoutes.admin`), unlike the HLD's flat `externalContracts[]` with
+    a `surface` field. Preserves path / method / requestShape /
+    responseShape in the shape the validator + worked example expect.
 
     Returns [] when the LLD is missing (legacy plan still in ctx.plan) or
     when the archetype is non-storefront — both cases are handled by the
     empty-catalog fallback in the prompt.
     """
-    contracts = (lld or {}).get("externalContracts") or []
+    routes = ((lld or {}).get("httpRoutes") or {}).get("widget") or []
     return [
         {
-            "path": c.get("path", ""),
-            "method": (c.get("method") or "POST").upper(),
-            "requestShape": c.get("requestShape") or {},
-            "responseShape": c.get("responseShape") or {},
+            "path": r.get("path", ""),
+            "method": (r.get("method") or "POST").upper(),
+            "requestShape": r.get("requestShape") or {},
+            "responseShape": r.get("responseShape") or {},
         }
-        for c in contracts
-        if isinstance(c, dict) and c.get("surface") == "widget"
+        for r in routes
+        if isinstance(r, dict)
     ]
 
 

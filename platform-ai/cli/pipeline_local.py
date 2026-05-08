@@ -119,7 +119,7 @@ def _save_generated_files(
 
     if is_storefront and artifacts.get("storefront"):
         prelude = _prelude(contracts.get("widgetApiCatalog") or []) if plan else ""
-        (run_dir / "widget.js").write_text(prelude + artifacts["storefront"])
+        (run_dir / "storefront.js").write_text(prelude + artifacts["storefront"])
 
     if is_admin_ui and artifacts.get("admin_ui"):
         prelude = _prelude(contracts.get("adminApiCatalog") or []) if plan else ""
