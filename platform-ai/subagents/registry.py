@@ -24,8 +24,8 @@ from subagents.widget_js_agent import WidgetJsGenerator
 from subagents.admin_ui_agent import AdminUiGenerator
 
 GENERATORS: Dict[str, Generator] = {
-    HandlerGenerator.name: HandlerGenerator(),
     DbGenerator.name: DbGenerator(),
-    WidgetJsGenerator.name: WidgetJsGenerator(),
-    AdminUiGenerator.name: AdminUiGenerator(),
+    # HandlerGenerator.name: HandlerGenerator(),
+    # WidgetJsGenerator.name: WidgetJsGenerator(),
+    # AdminUiGenerator.name: AdminUiGenerator(),
 }

@@ -1265,6 +1265,7 @@ def _build_codegen_context(
     return CodegenContext(
         intent=base_ctx.intent,
         plan=base_ctx.plan,
+        lld=base_ctx.lld,
         platform_api_catalog=base_ctx.platform_api_catalog,
         previous_errors=previous_errors,
         prior_handler_code=base_ctx.prior_handler_code,

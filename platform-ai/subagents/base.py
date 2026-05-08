@@ -213,7 +213,7 @@ class Generator(ABC):
         opt out via supports_thinking=False. The gate is deterministic, not
         a self-reported architect label.
         """
-        from models.adapter import get_llm, invoke
+        from models.adapter import dump_output, get_llm, invoke
         from models.agent_models import get_agent_model
 
         thinking_budget = (
@@ -231,4 +231,8 @@ class Generator(ABC):
         result = invoke(
             llm, self.system_prompt(), self.user_prompt(ctx), retry_suffix=retry_suffix
         )
+        # Persist the raw response next to the prompt files so each codegen
+        # attempt's output is post-mortem-able (same convention as the
+        # upstream agents). No-op outside an active `input_log` block.
+        dump_output(result.content)
         return self.parse(result.content), result.input_tokens, result.output_tokens

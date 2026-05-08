@@ -1,0 +1,11 @@
+Feature: Customers receive one email notification when a product they signed up for returns to stock.
+Triggers: widget, webhook
+
+LLD database.tables: empty — this feature requires no new tables.
+
+Generate the PostgreSQL DDL migration for this feature.
+Plain CREATE TABLE / CREATE INDEX against unqualified names.
+Add COMMENT ON TABLE / COMMENT ON COLUMN where the LLD supplies a `purpose`.
+No tenant_id, no RLS, no CREATE POLICY — see the isolation
+model in the system prompt.
+Output ONLY raw SQL (no markdown fences).

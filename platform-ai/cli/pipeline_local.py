@@ -93,9 +93,9 @@ def _save_generated_files(
 
     migration = artifacts.get("db", "")
     if migration:
-        migrations_dir = run_dir / "migrations"
-        migrations_dir.mkdir(exist_ok=True)
-        (migrations_dir / "generated.sql").write_text(migration)
+        # Save alongside hld.json / lld.json / ops_picks.json — single
+        # top-level artifact per generator, no subdirectory.
+        (run_dir / "db.sql").write_text(migration)
 
     contracts = ((plan or {}).get("appContracts") or {}) if plan else {}
 

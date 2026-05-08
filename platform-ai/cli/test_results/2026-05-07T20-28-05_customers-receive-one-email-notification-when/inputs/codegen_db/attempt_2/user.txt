@@ -1,0 +1,53 @@
+Feature: Customers receive one email notification when a product they signed up for returns to stock.
+Triggers: widget, webhook
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LLD database.tables — authoritative column definitions (implement exactly):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Table: product_signups
+  purpose: Records each customer's request to be notified when a specific product variant returns to stock, and tracks whether the notification was delivered.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  variant_external_id  BIGINT  NOT NULL   -- Shopify numeric variant ID the customer is waiting on
+  product_external_id  BIGINT  NOT NULL   -- Shopify numeric product ID for admin display and filtering
+  customer_email  TEXT  NOT NULL
+  status  TEXT  NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'notified', 'failed', 'unsubscribed'))
+  failure_reason  TEXT  NULL   -- populated when status is failed so the admin dashboard surfaces the reason inline
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  resolved_at  TIMESTAMPTZ  NULL   -- set when the signup reaches a terminal state (notified, failed, unsubscribed)
+  UNIQUE (customer_email, variant_external_id)
+  Indexes:
+    - variant_external_id, status
+    - status, created_at
+    - customer_email, variant_external_id
+
+Table: notification_attempts
+  purpose: Logs every email delivery attempt for a signup so the merchant can audit successes and failures and the system can prove a notification was sent at most once.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  signup_id  UUID  NOT NULL REFERENCES product_signups(id) ON DELETE CASCADE   -- links this attempt to the originating signup record
+  variant_external_id  BIGINT  NOT NULL   -- denormalised for querying attempts by variant without joining
+  outcome  TEXT  NOT NULL CHECK (outcome IN ('sent', 'failed_permanent', 'failed_transient'))
+  failure_reason  TEXT  NULL
+  attempted_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  Indexes:
+    - signup_id
+    - variant_external_id
+
+Table: restock_processing_locks
+  purpose: Provides a per-variant advisory lock row so concurrent inventory_levels/update deliveries for the same variant do not double-send notifications; the row is claimed atomically and released when processing completes.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  variant_external_id  BIGINT  NOT NULL   -- the variant being processed; one lock row per variant
+  status  TEXT  NOT NULL DEFAULT 'completed' CHECK (status IN ('processing', 'completed'))
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  completed_at  TIMESTAMPTZ  NULL
+  UNIQUE (variant_external_id)
+  Indexes:
+    - variant_external_id, status
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Generate the PostgreSQL DDL migration for this feature.
+Plain CREATE TABLE / CREATE INDEX against unqualified names.
+Add COMMENT ON TABLE / COMMENT ON COLUMN where the LLD supplies a `purpose`.
+No tenant_id, no RLS, no CREATE POLICY — see the isolation
+model in the system prompt.
+Output ONLY raw SQL (no markdown fences).

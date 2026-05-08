@@ -444,6 +444,67 @@ def _format_slot(slot: Dict[str, Any], frame: str) -> str:
     return f"  {label} {icon}  {timing}  {notes}".rstrip()
 
 
+def _spinner_group(labels: List[str]) -> None:
+    """Start a multi-line animated spinner group — one row per label."""
+    _stop_spinner()
+    _stop_spinner_group()
+
+    slots: List[Dict[str, Any]] = [
+        {
+            "name": name,
+            "status": "running",
+            "start": time.monotonic(),
+            "ms": None,
+            "notes": "",
+            "icon": None,
+        }
+        for name in labels
+    ]
+
+    if not _USE_COLOR:
+        # Non-TTY: print one static start line per slot; per-agent
+        # _agent_line calls will print their completion lines beneath.
+        for s in slots:
+            print(f"  {s['name']:<14} …", flush=True)
+        _group_state["active"] = True
+        _group_state["slots"] = slots
+        return
+
+    # Reserve (N slot rows + _BOTTOM_MARGIN) and position the cursor at
+    # the top of the slot block.
+    _reserve_below(len(slots))
+
+    # Prime each row once so cursor save/restore has real lines to land on.
+    for _ in slots:
+        sys.stdout.write("\n")
+    sys.stdout.write(f"\033[{len(slots)}A")
+    sys.stdout.flush()
+
+    stop = threading.Event()
+
+    def _loop() -> None:
+        for frame in itertools.cycle(_SPIN_FRAMES):
+            if stop.is_set():
+                return
+            with _group_state["lock"]:
+                sys.stdout.write("\033[s")  # save cursor
+                for i, slot in enumerate(_group_state["slots"]):
+                    sys.stdout.write("\r\033[K")
+                    sys.stdout.write(_format_slot(slot, frame))
+                    if i < len(_group_state["slots"]) - 1:
+                        sys.stdout.write("\n")
+                sys.stdout.write("\033[u")  # restore cursor
+                sys.stdout.flush()
+            time.sleep(0.08)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    _group_state["active"] = True
+    _group_state["slots"] = slots
+    _group_state["stop"] = stop
+    _group_state["thread"] = t
+
+
 def _finish_slot(name: str, ok: bool, ms: Optional[int], notes: str = "") -> None:
     """Called by _agent_line when a group is active."""
     if not _group_state.get("active"):
@@ -1399,7 +1460,7 @@ def _build_bundle(
         },
         "dbMigration": {
             "path": "migrations/generated.sql",
-            "contents": artifacts.get("migration", ""),
+            "contents": artifacts.get("db", ""),
         },
         "explanation": {
             "merchantFacing": explanation.get("merchantFacing", ""),
