@@ -244,6 +244,16 @@ Every widget MUST satisfy these (the validator + a real shopper both
 care):
 
   - State-check on mount before rendering a form (see LIFECYCLE).
+    On state-check error (network / 5xx / timeout), FALL OPEN to the
+    default state (form, or "not active") so the shopper can still
+    proceed. Never block the widget on a failed GET. Backend dedup
+    catches repeats on submit.
+  - If the catalog's GET state-check requires a value the widget
+    DOESN'T have at mount (typically the customer's email — only
+    knowable after the shopper types it), SKIP the GET and render
+    the form directly. The POST endpoint must dedupe server-side.
+    Do not delay the state-check until input blur — that's a worse
+    UX than rendering the form immediately.
   - Disable the submit button + show pending text on click; re-enable
     on error. Prevents double-submit from a fast double-click.
   - Status messages live in a `<p aria-live="polite">` (or similar)
@@ -263,20 +273,36 @@ care):
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WORKED EXAMPLE — back-in-stock signup widget (full lifecycle)
+WORKED EXAMPLE — custom-engraving request widget (full lifecycle)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Catalog:
+This example is illustrative — adapt the patterns to YOUR catalog. Do
+NOT copy paths or field names; use what the actual platformApiCatalog
+(injected above your prompt) says. The example exercises:
+  - identity flow (customerId + guestToken with migration cleanup)
+  - product context from `host.storefront('/products/{handle}.js')`
+  - hide-the-widget when the product is not eligible
+  - state-check via paired GET, fail-open to the form on error
+  - multi-input form (text + select + email) with validation,
+    aria-invalid, focus-on-error
+  - submit-disable + "Saving…" + inline error path
+  - multi-state UI: form → confirmed
+  - textContent for every runtime value (no innerHTML interpolation)
+  - scoped CSS via `.app-<slug>-*` injected through container
 
-  GET  /signup/state
-    send:    host.call('/signup/state', { variant_external_id, customerId, guestToken })
-    receive: { is_signed_up, status }
-  POST /signup
-    send:    host.call('/signup', { customer_email, variant_external_id, customerId, guestToken })
-    receive: { signup_id, status }
+Catalog (hypothetical):
+
+  GET  /engraving/state
+    send:    host.call('/engraving/state', { product_handle, customerId, guestToken })
+    receive: { already_requested }
+  POST /engraving/request
+    send:    host.call('/engraving/request',
+                       { product_handle, engraved_name, font_style,
+                         customer_email, customerId, guestToken })
+    receive: { request_id, status }
 
   export function mount(container, host) {
-    const SLUG = "back-in-stock";
+    const SLUG = "engraving";
     const KEY = `${SLUG}.guestToken`;
     const customerId = host.context.customerId;
     let guestToken = localStorage.getItem(KEY);
@@ -286,106 +312,208 @@ Catalog:
         String(Date.now()) + Math.random().toString(36).slice(2);
       localStorage.setItem(KEY, guestToken);
     }
-    const variantId = new URLSearchParams(location.search).get("variant");
+
+    // Product handle from the page URL.
+    const productHandle =
+      (location.pathname.match(/\\/products\\/([^/?]+)/) || [])[1];
+    if (!productHandle) return;  // not on a product page
 
     // Scoped styles (theme-safe class prefix).
     const style = document.createElement("style");
     style.textContent = `
-      .app-${SLUG}-root { font: inherit; }
-      .app-${SLUG}-form { display: flex; gap: 8px; flex-wrap: wrap; }
-      .app-${SLUG}-input { flex: 1 1 200px; padding: 8px; }
-      .app-${SLUG}-button { padding: 8px 16px; cursor: pointer; }
-      .app-${SLUG}-button[disabled] { opacity: 0.6; cursor: wait; }
+      .app-${SLUG}-root { font: inherit; padding: 12px 0; }
+      .app-${SLUG}-title { font-size: 0.95em; font-weight: 600; margin: 0 0 8px 0; }
+      .app-${SLUG}-form { display: flex; flex-direction: column; gap: 8px; }
+      .app-${SLUG}-row { display: flex; gap: 8px; flex-wrap: wrap; }
+      .app-${SLUG}-input, .app-${SLUG}-select {
+        padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px;
+        font: inherit; outline: none; flex: 1 1 200px;
+      }
+      .app-${SLUG}-input[aria-invalid="true"] { border-color: #b00020; }
+      .app-${SLUG}-button {
+        padding: 9px 18px; background: #222; color: #fff; border: none;
+        border-radius: 4px; cursor: pointer; align-self: flex-start; font: inherit;
+      }
+      .app-${SLUG}-button[disabled] { opacity: 0.55; cursor: wait; }
+      .app-${SLUG}-status { font-size: 0.85em; min-height: 1.2em; margin: 4px 0 0 0; }
       .app-${SLUG}-status[data-tone="error"] { color: #b00020; }
     `;
     container.appendChild(style);
 
-    // Step 1: render the loading placeholder (no synchronous network yet).
     const root = document.createElement("div");
     root.className = `app-${SLUG}-root`;
-    root.innerHTML =
-      `<p class="app-${SLUG}-status" aria-live="polite">Loading…</p>`;
     container.appendChild(root);
 
-    const renderConfirmed = () => {
-      root.innerHTML =
-        `<p class="app-${SLUG}-status" aria-live="polite">` +
-        `You're on the list — we'll email you when it's back.</p>`;
-    };
+    function statusEl(text, tone) {
+      const p = document.createElement("p");
+      p.className = `app-${SLUG}-status`;
+      p.setAttribute("aria-live", "polite");
+      if (tone) p.dataset.tone = tone;
+      p.textContent = text;
+      return p;
+    }
 
-    const renderError = (msg) => {
-      const status = root.querySelector(`.app-${SLUG}-status`);
-      if (status) {
-        status.dataset.tone = "error";
-        status.textContent = msg;
-      }
-    };
+    function renderConfirmed(productTitle) {
+      root.innerHTML = "";  // clearing only — no value interpolation
+      const title = document.createElement("p");
+      title.className = `app-${SLUG}-title`;
+      title.textContent = "Engraving request received";
+      const detail = statusEl(
+        `We'll review your engraving for ${productTitle} and email you within 1 business day.`,
+      );
+      root.appendChild(title);
+      root.appendChild(detail);
+    }
 
-    const renderForm = () => {
-      root.innerHTML = `
-        <form class="app-${SLUG}-form" novalidate>
-          <label class="app-${SLUG}-label" for="${SLUG}-email">Email address</label>
-          <input id="${SLUG}-email" class="app-${SLUG}-input"
-                 name="customer_email" type="email"
-                 placeholder="you@example.com" required />
-          <button class="app-${SLUG}-button" type="submit">Notify me</button>
-          <p class="app-${SLUG}-status" aria-live="polite"></p>
-        </form>
-      `;
-      const form = root.querySelector("form");
-      const button = root.querySelector("button");
-      const status = root.querySelector(`.app-${SLUG}-status`);
+    function renderForm(productTitle) {
+      root.innerHTML = "";
 
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
+      const title = document.createElement("p");
+      title.className = `app-${SLUG}-title`;
+      title.textContent = `Request engraving for ${productTitle}`;
+      root.appendChild(title);
+
+      const form = document.createElement("form");
+      form.className = `app-${SLUG}-form`;
+      form.setAttribute("novalidate", "");
+
+      const nameInput = document.createElement("input");
+      nameInput.className = `app-${SLUG}-input`;
+      nameInput.type = "text";
+      nameInput.name = "engraved_name";
+      nameInput.required = true;
+      nameInput.maxLength = 30;
+      nameInput.placeholder = "Engraved name (max 30 chars)";
+      nameInput.setAttribute("aria-label", "Engraved name");
+
+      const fontSelect = document.createElement("select");
+      fontSelect.className = `app-${SLUG}-select`;
+      fontSelect.name = "font_style";
+      fontSelect.setAttribute("aria-label", "Font style");
+      [
+        ["script", "Script"],
+        ["serif", "Serif"],
+        ["sans", "Sans serif"],
+      ].forEach(([value, label]) => {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = label;
+        fontSelect.appendChild(opt);
+      });
+
+      const row = document.createElement("div");
+      row.className = `app-${SLUG}-row`;
+      row.appendChild(nameInput);
+      row.appendChild(fontSelect);
+
+      const emailInput = document.createElement("input");
+      emailInput.className = `app-${SLUG}-input`;
+      emailInput.type = "email";
+      emailInput.name = "customer_email";
+      emailInput.required = true;
+      emailInput.placeholder = "you@example.com";
+      emailInput.setAttribute("autocomplete", "email");
+      emailInput.setAttribute("aria-label", "Email address");
+
+      const button = document.createElement("button");
+      button.className = `app-${SLUG}-button`;
+      button.type = "submit";
+      button.textContent = "Request engraving";
+
+      const status = statusEl("");
+
+      form.appendChild(row);
+      form.appendChild(emailInput);
+      form.appendChild(button);
+      form.appendChild(status);
+      root.appendChild(form);
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
         const data = host.getFormData(form);
-        if (!data.customer_email) return;
+        const name = (data.engraved_name || "").trim();
+        const email = (data.customer_email || "").trim();
+        const emailRe = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+
+        if (!name) {
+          nameInput.setAttribute("aria-invalid", "true");
+          status.dataset.tone = "error";
+          status.textContent = "Please enter the name to engrave.";
+          nameInput.focus();
+          return;
+        }
+        if (!emailRe.test(email)) {
+          emailInput.setAttribute("aria-invalid", "true");
+          status.dataset.tone = "error";
+          status.textContent = "Please enter a valid email address.";
+          emailInput.focus();
+          return;
+        }
+        nameInput.removeAttribute("aria-invalid");
+        emailInput.removeAttribute("aria-invalid");
+
         button.disabled = true;
         button.textContent = "Saving…";
         status.dataset.tone = "";
         status.textContent = "";
+
         try {
-          await host.call("/signup", {
-            customer_email: data.customer_email,
-            variant_external_id: variantId,
+          await host.call("/engraving/request", {
+            product_handle: productHandle,
+            engraved_name: name,
+            font_style: data.font_style,
+            customer_email: email,
             customerId,
             guestToken,
           });
           if (customerId && guestToken) localStorage.removeItem(KEY);
-          renderConfirmed();
-        } catch (err) {
+          renderConfirmed(productTitle);
+        } catch (_) {
           button.disabled = false;
-          button.textContent = "Notify me";
+          button.textContent = "Request engraving";
           status.dataset.tone = "error";
           status.textContent = "Something went wrong. Please try again.";
         }
       });
-    };
+    }
 
-    // Step 2: state-check, then branch.
-    host.call("/signup/state", { variant_external_id: variantId, customerId, guestToken })
-      .then((result) => {
-        if (result && result.is_signed_up) renderConfirmed();
-        else renderForm();
-      })
-      .catch(() => {
-        // Fail open to the form — the shopper can still sign up.
-        renderForm();
-      });
+    async function init() {
+      root.appendChild(statusEl("Loading…"));
+
+      // Pull product info from the Ajax catalog. Use it to (a) decide
+      // whether the widget applies (only engravable products) and (b)
+      // personalise the form copy.
+      let product = null;
+      try {
+        product = await host.storefront(`/products/${productHandle}.js`);
+      } catch (_) { /* non-fatal */ }
+
+      const tags = (product && Array.isArray(product.tags)) ? product.tags : [];
+      if (product && !tags.includes("engravable")) {
+        container.innerHTML = "";  // collapse the App Block region
+        return;
+      }
+      const productTitle = (product && product.title) || "this product";
+
+      // State-check via paired GET. Fail open to the form so a backend
+      // hiccup never blocks the shopper — backend dedup catches repeats.
+      try {
+        const state = await host.call("/engraving/state", {
+          product_handle: productHandle,
+          customerId,
+          guestToken,
+        });
+        if (state && state.already_requested) {
+          renderConfirmed(productTitle);
+          return;
+        }
+      } catch (_) { /* fail open */ }
+
+      renderForm(productTitle);
+    }
+
+    init();
   }
-
-What this example demonstrates:
-  - Lifecycle: LOADING placeholder → state check → CONFIRMED or FORM.
-  - Submit handling: button disabled + "Saving…" text, re-enabled on
-    error, replaced with CONFIRMED on success.
-  - aria-live="polite" on the status element so screen readers
-    announce the outcome.
-  - CSS scoped via `.app-back-in-stock-*` class prefix; styles
-    injected through `container.appendChild(style)`, never document.head.
-  - Identity migration: guestToken cleared from localStorage on the
-    first successful signed-in submit.
-  - Error path renders inline; no alert(), no console.error as UX.
-  - State-check failure falls open to the form (degraded UX > broken).
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -430,6 +558,40 @@ Identity:
 Silent data loss:
   - <form> with explicit submit (type="submit" / submit listener /
     .submit()) but no host.call() to persist what was collected.
+
+XSS-prone DOM construction:
+  - innerHTML assignment whose value contains a `${runtime}` interpolation
+    of any non-static value (form input, server response, error message,
+    URL param, product title, etc.). Use createElement + textContent or
+    setAttribute. The ONLY safe innerHTML uses are clearing (`= ""`) and
+    static template literals with no interpolations.
+
+Dead code:
+  - Variables declared but never read.
+  - host.call / host.storefront whose response is not used.
+    If you don't read the result, don't make the call.
+  - Empty `if`/`else` blocks. Comment-only blocks (a body
+    containing only `// will do X later`). Either implement the body
+    now or remove the conditional.
+
+String composition (parse-error class):
+  - Two adjacent `"…"` literals with no `+` between them. JS does NOT
+    implicitly concatenate adjacent string literals; the file fails
+    to parse and the App Block silently breaks.
+  - When inserting a runtime value into display text, use a SINGLE
+    template literal: `` `Notify me when "${variantLabel}" is back` ``,
+    NOT `"Notify me when " + ` `"` ` + variantLabel + ` `"` ` + " is back"`.
+    For complex composition, build with `createElement` + `textContent`
+    on multiple <span> children.
+
+Variant-picker polling (theme-fragile):
+  - Do NOT attach `document.addEventListener("click", …)` with a
+    `setTimeout` to detect when the shopper picks a different variant.
+    Themes vary; the click-then-poll heuristic is brittle and
+    re-renders the form mid-typing. Snapshot `variantId` ONCE at mount
+    from `location.search` and render for that variant. If the theme
+    navigates to a new variant URL, the App Block re-mounts the widget
+    naturally — no manual change-detection needed.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
