@@ -1,0 +1,318 @@
+{
+  "_note": "Hand-curated from Shopify's official Ajax API docs (https://shopify.dev/docs/api/ajax). The Ajax API is theme-only and not version-pinned — these endpoints are stable across API versions. Refresh by hand if Shopify changes the docs (rare).",
+  "endpoints": [
+    {
+      "id": "product.get",
+      "category": "product",
+      "method": "GET",
+      "path": "/products/{handle}.js",
+      "purpose": "Fetch a single product by handle as JSON. Up to 250 variants returned.",
+      "path_params": [
+        {"name": "handle", "type": "string", "description": "the product's URL handle, e.g. 'nike-air-max'"}
+      ],
+      "query_params": [],
+      "body_params": null,
+      "response_top_fields": [
+        {"name": "id", "type": "number"},
+        {"name": "title", "type": "string"},
+        {"name": "handle", "type": "string"},
+        {"name": "description", "type": "string"},
+        {"name": "published_at", "type": "string", "format": "ISO 8601"},
+        {"name": "created_at", "type": "string", "format": "ISO 8601"},
+        {"name": "vendor", "type": "string"},
+        {"name": "type", "type": "string"},
+        {"name": "tags", "type": "array<string>"},
+        {"name": "price", "type": "number", "description": "in minor units (cents)"},
+        {"name": "price_min", "type": "number"},
+        {"name": "price_max", "type": "number"},
+        {"name": "available", "type": "boolean", "description": "true when ANY variant is available"},
+        {"name": "price_varies", "type": "boolean"},
+        {"name": "compare_at_price", "type": "number|null"},
+        {"name": "compare_at_price_min", "type": "number"},
+        {"name": "compare_at_price_max", "type": "number"},
+        {"name": "compare_at_price_varies", "type": "boolean"},
+        {"name": "variants", "type": "array<object>"},
+        {"name": "images", "type": "array<string>", "description": "image URLs"},
+        {"name": "featured_image", "type": "string"},
+        {"name": "options", "type": "array<object>"},
+        {"name": "url", "type": "string"},
+        {"name": "requires_selling_plan", "type": "boolean"},
+        {"name": "selling_plan_groups", "type": "array<object>"}
+      ],
+      "nested_shapes": {
+        "variants[]": [
+          {"name": "id", "type": "number"},
+          {"name": "title", "type": "string"},
+          {"name": "option1", "type": "string|null"},
+          {"name": "option2", "type": "string|null"},
+          {"name": "option3", "type": "string|null"},
+          {"name": "options", "type": "array<string>"},
+          {"name": "price", "type": "number"},
+          {"name": "compare_at_price", "type": "number|null"},
+          {"name": "weight", "type": "number"},
+          {"name": "available", "type": "boolean", "description": "stock availability for THIS variant"},
+          {"name": "sku", "type": "string"},
+          {"name": "inventory_management", "type": "string|null"},
+          {"name": "requires_shipping", "type": "boolean"},
+          {"name": "taxable", "type": "boolean"},
+          {"name": "barcode", "type": "string"},
+          {"name": "requires_selling_plan", "type": "boolean"},
+          {"name": "selling_plan_allocations", "type": "array<object>"}
+        ],
+        "options[]": [
+          {"name": "name", "type": "string"},
+          {"name": "position", "type": "number"}
+        ]
+      }
+    },
+    {
+      "id": "cart.get",
+      "category": "cart",
+      "method": "GET",
+      "path": "/cart.js",
+      "purpose": "Get the current cart as JSON.",
+      "path_params": [],
+      "query_params": [],
+      "body_params": null,
+      "response_top_fields": [
+        {"name": "token", "type": "string", "description": "the cart's unique token"},
+        {"name": "note", "type": "string|null"},
+        {"name": "attributes", "type": "object", "description": "merchant-defined key-value attributes"},
+        {"name": "original_total_price", "type": "number"},
+        {"name": "total_price", "type": "number", "description": "in minor units"},
+        {"name": "total_discount", "type": "number"},
+        {"name": "total_weight", "type": "number"},
+        {"name": "item_count", "type": "number"},
+        {"name": "items", "type": "array<object>"},
+        {"name": "requires_shipping", "type": "boolean"},
+        {"name": "currency", "type": "string", "description": "ISO 4217, e.g. 'USD'"},
+        {"name": "items_subtotal_price", "type": "number"},
+        {"name": "cart_level_discount_applications", "type": "array<object>"}
+      ],
+      "nested_shapes": {
+        "items[]": [
+          {"name": "id", "type": "number", "description": "variant id"},
+          {"name": "key", "type": "string", "description": "stable line-item key for change.js"},
+          {"name": "title", "type": "string"},
+          {"name": "product_title", "type": "string"},
+          {"name": "variant_title", "type": "string|null"},
+          {"name": "quantity", "type": "number"},
+          {"name": "price", "type": "number"},
+          {"name": "line_price", "type": "number"},
+          {"name": "original_line_price", "type": "number"},
+          {"name": "total_discount", "type": "number"},
+          {"name": "discounts", "type": "array<object>"},
+          {"name": "sku", "type": "string"},
+          {"name": "vendor", "type": "string"},
+          {"name": "product_id", "type": "number"},
+          {"name": "variant_id", "type": "number"},
+          {"name": "handle", "type": "string"},
+          {"name": "url", "type": "string"},
+          {"name": "image", "type": "string|null"},
+          {"name": "properties", "type": "object|null"},
+          {"name": "requires_shipping", "type": "boolean"}
+        ]
+      }
+    },
+    {
+      "id": "cart.add",
+      "category": "cart",
+      "method": "POST",
+      "path": "/cart/add.js",
+      "purpose": "Add one or multiple variants to the cart.",
+      "path_params": [],
+      "query_params": [],
+      "body_params": [
+        {"name": "items", "type": "array<object>", "required": true, "description": "each item: { id (variant id, number), quantity (number), properties (object, optional), selling_plan (number, optional) }"}
+      ],
+      "response_top_fields": [
+        {"name": "items", "type": "array<object>", "description": "the line items just added (same shape as cart.items[])"}
+      ],
+      "nested_shapes": {}
+    },
+    {
+      "id": "cart.update",
+      "category": "cart",
+      "method": "POST",
+      "path": "/cart/update.js",
+      "purpose": "Update line-item quantities, the cart's note, attributes, or apply a discount.",
+      "path_params": [],
+      "query_params": [],
+      "body_params": [
+        {"name": "updates", "type": "object|array", "required": false, "description": "{ <variant_id>: <quantity> } OR an array of quantities in line order"},
+        {"name": "note", "type": "string", "required": false},
+        {"name": "attributes", "type": "object", "required": false, "description": "merchant-defined key-value pairs"},
+        {"name": "discount", "type": "string", "required": false, "description": "comma-separated discount codes"}
+      ],
+      "response_top_fields": [
+        {"name": "(complete cart object)", "type": "object", "description": "same shape as GET /cart.js"}
+      ],
+      "nested_shapes": {}
+    },
+    {
+      "id": "cart.change",
+      "category": "cart",
+      "method": "POST",
+      "path": "/cart/change.js",
+      "purpose": "Change one existing line item's quantity, properties, or selling plan.",
+      "path_params": [],
+      "query_params": [],
+      "body_params": [
+        {"name": "id", "type": "number|string", "required": false, "description": "variant id OR line item key (one of id/line is required)"},
+        {"name": "line", "type": "number", "required": false, "description": "1-based index position in items[] (alternative to id)"},
+        {"name": "quantity", "type": "number", "required": true},
+        {"name": "properties", "type": "object", "required": false},
+        {"name": "selling_plan", "type": "number|null", "required": false}
+      ],
+      "response_top_fields": [
+        {"name": "(complete cart object)", "type": "object", "description": "same shape as GET /cart.js"}
+      ],
+      "nested_shapes": {}
+    },
+    {
+      "id": "cart.clear",
+      "category": "cart",
+      "method": "POST",
+      "path": "/cart/clear.js",
+      "purpose": "Set all line-item quantities to zero (empty the cart).",
+      "path_params": [],
+      "query_params": [],
+      "body_params": [],
+      "response_top_fields": [
+        {"name": "token", "type": "string"},
+        {"name": "note", "type": "string|null"},
+        {"name": "attributes", "type": "object"},
+        {"name": "total_price", "type": "number"},
+        {"name": "total_weight", "type": "number"},
+        {"name": "item_count", "type": "number"},
+        {"name": "items", "type": "array<object>", "description": "empty after clear"},
+        {"name": "requires_shipping", "type": "boolean"}
+      ],
+      "nested_shapes": {}
+    },
+    {
+      "id": "cart.prepare_shipping_rates",
+      "category": "cart",
+      "method": "POST",
+      "path": "/cart/prepare_shipping_rates.json",
+      "purpose": "Initiate async shipping-rate calculation for an address. Poll cart.async_shipping_rates afterwards.",
+      "path_params": [],
+      "query_params": [
+        {"name": "shipping_address[zip]", "type": "string", "required": true},
+        {"name": "shipping_address[country]", "type": "string", "required": true},
+        {"name": "shipping_address[province]", "type": "string", "required": true}
+      ],
+      "body_params": [],
+      "response_top_fields": [
+        {"name": "(null body)", "type": "null", "description": "starts the calculation; no fields"}
+      ],
+      "nested_shapes": {}
+    },
+    {
+      "id": "cart.async_shipping_rates",
+      "category": "cart",
+      "method": "GET",
+      "path": "/cart/async_shipping_rates.json",
+      "purpose": "Poll for the result of a previously-initiated shipping-rate calculation.",
+      "path_params": [],
+      "query_params": [
+        {"name": "shipping_address[zip]", "type": "string", "required": true},
+        {"name": "shipping_address[country]", "type": "string", "required": true},
+        {"name": "shipping_address[province]", "type": "string", "required": true}
+      ],
+      "body_params": null,
+      "response_top_fields": [
+        {"name": "shipping_rates", "type": "array<object>|null", "description": "null while still calculating; an array once ready"}
+      ],
+      "nested_shapes": {
+        "shipping_rates[]": [
+          {"name": "name", "type": "string"},
+          {"name": "presentment_name", "type": "string"},
+          {"name": "code", "type": "string"},
+          {"name": "price", "type": "string", "description": "decimal string in shop currency"},
+          {"name": "source", "type": "string"},
+          {"name": "delivery_date", "type": "string|null"},
+          {"name": "delivery_range", "type": "array<string>|null"},
+          {"name": "delivery_days", "type": "array<number>"},
+          {"name": "phone_required", "type": "boolean"}
+        ]
+      }
+    },
+    {
+      "id": "cart.shipping_rates",
+      "category": "cart",
+      "method": "GET",
+      "path": "/cart/shipping_rates.json",
+      "purpose": "Synchronous (throttled) estimate of shipping rates for an address. Prefer prepare/async pair for production.",
+      "path_params": [],
+      "query_params": [
+        {"name": "shipping_address[zip]", "type": "string", "required": true},
+        {"name": "shipping_address[country]", "type": "string", "required": true},
+        {"name": "shipping_address[province]", "type": "string", "required": true}
+      ],
+      "body_params": null,
+      "response_top_fields": [
+        {"name": "shipping_rates", "type": "array<object>"}
+      ],
+      "nested_shapes": {
+        "shipping_rates[]": [
+          {"name": "name", "type": "string"},
+          {"name": "price", "type": "string"},
+          {"name": "delivery_date", "type": "string|null"},
+          {"name": "source", "type": "string"}
+        ]
+      }
+    },
+    {
+      "id": "recommendations.products",
+      "category": "recommendations",
+      "method": "GET",
+      "path": "/recommendations/products.json",
+      "purpose": "Fetch products recommended for a given product (related or complementary).",
+      "path_params": [],
+      "query_params": [
+        {"name": "product_id", "type": "number", "required": true, "description": "the source product to recommend FROM"},
+        {"name": "limit", "type": "number", "required": false, "description": "1-10; default 10"},
+        {"name": "intent", "type": "string", "required": false, "description": "'related' (default) or 'complementary'"}
+      ],
+      "body_params": null,
+      "response_top_fields": [
+        {"name": "intent", "type": "string", "description": "the strategy actually used"},
+        {"name": "products", "type": "array<object>", "description": "each item has the full product shape (see product.get response)"}
+      ],
+      "nested_shapes": {}
+    },
+    {
+      "id": "search.predictive",
+      "category": "search",
+      "method": "GET",
+      "path": "/search/suggest.json",
+      "purpose": "Predictive (type-ahead) search across products, collections, pages, articles.",
+      "path_params": [],
+      "query_params": [
+        {"name": "q", "type": "string", "required": true, "description": "the partial query"},
+        {"name": "resources[type]", "type": "string", "required": false, "description": "comma-separated subset of: product, page, article, collection, query. Default 'query,product,collection,page'"},
+        {"name": "resources[limit]", "type": "number", "required": false, "description": "1-10; default 10"},
+        {"name": "resources[limit_scope]", "type": "string", "required": false, "description": "'all' (cap total) or 'each' (cap per type). Default 'all'"},
+        {"name": "resources[options][unavailable_products]", "type": "string", "required": false, "description": "'show', 'hide', or 'last' (default 'last')"},
+        {"name": "resources[options][fields]", "type": "string", "required": false, "description": "comma-separated subset of: author, body, product_type, tag, title, variants.barcode, variants.sku, variants.title, vendor"}
+      ],
+      "body_params": null,
+      "response_top_fields": [
+        {"name": "resources", "type": "object", "description": "wraps the results"}
+      ],
+      "nested_shapes": {
+        "resources": [
+          {"name": "results", "type": "object"}
+        ],
+        "resources.results": [
+          {"name": "queries", "type": "array<object>"},
+          {"name": "products", "type": "array<object>"},
+          {"name": "collections", "type": "array<object>"},
+          {"name": "pages", "type": "array<object>"},
+          {"name": "articles", "type": "array<object>"}
+        ]
+      }
+    }
+  ]
+}

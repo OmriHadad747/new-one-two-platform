@@ -25,7 +25,7 @@ from subagents.prompts.core.explanation import EXPLANATION_BASE, EXPLANATION_USE
 def run_explanation_agent(
     intent: Dict[str, Any],
     plan: Dict[str, Any],
-    widget_js_code: str,
+    storefront_code: str,
     db_sql: str,
 ) -> Tuple[Dict[str, Any], int, int]:
     """
@@ -41,7 +41,7 @@ def run_explanation_agent(
 
     widget_summary = (
         "custom storefront widget (AI-generated ES module)"
-        if widget_js_code and widget_js_code.strip()
+        if storefront_code and storefront_code.strip()
         else "none (backend-only app)"
     )
 

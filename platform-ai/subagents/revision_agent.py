@@ -13,7 +13,7 @@ Advantages over per-generator revision:
     only what changed, preserves working logic
   - Atomic: one LLM call rather than 3–4 parallel ones that can diverge
 
-Output: { "handler": "...", "db": "...", "widget_js": "...", "admin_ui": "..." }
+Output: { "handler": "...", "db": "...", "storefront": "...", "admin_ui": "..." }
 Keys widget_js and admin_ui are null when not applicable.
 """
 
@@ -60,7 +60,7 @@ def _build_user_prompt(
     prior_handler = ctx.prior_handler_code or "(none)"
     prior_migration = ctx.prior_db_sql or "(none)"
     prior_widget = (
-        ctx.prior_widget_code or "(none)"
+        ctx.prior_storefront_code or "(none)"
         if is_storefront
         else "(not applicable — backend app)"
     )
@@ -214,7 +214,7 @@ def run_revision_agent(
     -------
     Tuple of (artifacts_dict, input_tokens, output_tokens).
     artifacts_dict keys match generator names: "handler", "db", and
-    optionally "widget_js" and/or "admin_ui".
+    optionally "storefront" and/or "admin_ui".
     Returns ({}, in, out) on parse failure — caller falls back to run_codegen_parallel.
     """
     log.info(
@@ -268,14 +268,14 @@ def run_revision_agent(
         if isinstance(migration, str) and migration.strip():
             artifacts["db"] = migration.strip()
 
-    if is_storefront and "widget_js" not in locked_artifacts:
-        widget = parsed.get("widget_js")
+    if is_storefront and "storefront" not in locked_artifacts:
+        widget = parsed.get("storefront")
         if isinstance(widget, str) and widget.strip():
             code = re.sub(
                 r"^```(?:javascript|js)?\s*", "", widget.strip(), flags=re.MULTILINE
             )
             code = re.sub(r"```\s*$", "", code.strip(), flags=re.MULTILINE)
-            artifacts["widget_js"] = code.strip()
+            artifacts["storefront"] = code.strip()
 
     if is_admin_ui and "admin_ui" not in locked_artifacts:
         admin = parsed.get("admin_ui")

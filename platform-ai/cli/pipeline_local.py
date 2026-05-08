@@ -117,9 +117,9 @@ def _save_generated_files(
         )
         return f"window.__PLATFORM_CATALOG__ = {encoded};\n"
 
-    if is_storefront and artifacts.get("widget_js"):
+    if is_storefront and artifacts.get("storefront"):
         prelude = _prelude(contracts.get("widgetApiCatalog") or []) if plan else ""
-        (run_dir / "widget.js").write_text(prelude + artifacts["widget_js"])
+        (run_dir / "widget.js").write_text(prelude + artifacts["storefront"])
 
     if is_admin_ui and artifacts.get("admin_ui"):
         prelude = _prelude(contracts.get("adminApiCatalog") or []) if plan else ""
@@ -544,7 +544,7 @@ def _phase_codegen(
     _CODEGEN_LABELS = {
         "handler": "Handler",
         "db": "Migration",
-        "widget_js": "Widget JS",
+        "storefront": "Widget JS",
         "admin_ui": "Admin UI",
     }
 
@@ -560,7 +560,7 @@ def _phase_codegen(
             n not in artifacts
             for n in (
                 ["handler", "db"]
-                + (["widget_js"] if is_storefront else [])
+                + (["storefront"] if is_storefront else [])
                 + (["admin_ui"] if is_admin_ui else [])
             )
         )
@@ -572,7 +572,7 @@ def _phase_codegen(
                 n
                 for n in (
                     ["handler", "db"]
-                    + (["widget_js"] if is_storefront else [])
+                    + (["storefront"] if is_storefront else [])
                     + (["admin_ui"] if is_admin_ui else [])
                 )
                 if n not in artifacts
@@ -580,7 +580,7 @@ def _phase_codegen(
         else:
             generators_this_round = (
                 ["handler", "db"]
-                + (["widget_js"] if is_storefront else [])
+                + (["storefront"] if is_storefront else [])
                 + (["admin_ui"] if is_admin_ui else [])
             )
         # After the first iteration we don't want this resume-mode label
@@ -868,7 +868,7 @@ def _phase_validator(
         base_ctx,
         prior_handler_code=artifacts.get("handler") or base_ctx.prior_handler_code,
         prior_db_sql=artifacts.get("db") or base_ctx.prior_db_sql,
-        prior_widget_code=artifacts.get("widget_js") or base_ctx.prior_widget_code,
+        prior_storefront_code=artifacts.get("storefront") or base_ctx.prior_storefront_code,
         prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
     )
     _LOCKED = _revision_locked_artifacts(issues)
@@ -1117,7 +1117,7 @@ def _phase_explanation(
         explanation, exp_in, exp_out = run_explanation_agent(
             intent=intent,
             plan=plan,
-            widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
+            storefront_code=artifacts.get("storefront", "") if is_storefront else "",
             db_sql=artifacts.get("db", ""),
         )
     ms = int((time.monotonic() - t0) * 1000)

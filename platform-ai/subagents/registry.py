@@ -20,12 +20,12 @@ from typing import Dict
 from subagents.base import Generator
 from subagents.handler_agent import HandlerGenerator
 from subagents.e_db_agent import DbGenerator
-from subagents.widget_js_agent import WidgetJsGenerator
+from subagents.e_storefront_agent import StorefrontGenerator
 from subagents.admin_ui_agent import AdminUiGenerator
 
 GENERATORS: Dict[str, Generator] = {
     DbGenerator.name: DbGenerator(),
+    StorefrontGenerator.name: StorefrontGenerator(),
     # HandlerGenerator.name: HandlerGenerator(),
-    # WidgetJsGenerator.name: WidgetJsGenerator(),
     # AdminUiGenerator.name: AdminUiGenerator(),
 }

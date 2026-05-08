@@ -45,7 +45,7 @@ ADMIN_SURFACE: Surface = {
 WIDGET_SURFACE: Surface = {
     "validator": validate_widget_handler_contract,
     "client_label": "widget",
-    "ui_artifact_key": "widget_js",
+    "ui_artifact_key": "storefront",
     "call_fn": "host.call",
     "mount_param": "host",
     "router": "widgetRouter",

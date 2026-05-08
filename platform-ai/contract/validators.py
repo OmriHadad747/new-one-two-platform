@@ -40,7 +40,7 @@ class ProgressEvent(BaseModel):
         "architect",
         "handler",
         "db",
-        "widget_js",
+        "storefront",
         "admin_ui",
         "validation",
         "validator",

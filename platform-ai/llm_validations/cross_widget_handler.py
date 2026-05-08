@@ -59,7 +59,7 @@ _WIDGET_ROUTE_RE = re.compile(
 
 
 def validate_widget_handler_contract(
-    widget_js: str,
+    storefront: str,
     handler_code: str,
     platform_api_catalog: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, List[str]]:
@@ -85,14 +85,14 @@ def validate_widget_handler_contract(
       - the route body opens with a brace pattern this scanner can't
         bound (rare; falls back to "no fields found" → no false flag).
     """
-    if not widget_js or not handler_code:
+    if not storefront or not handler_code:
         return {}
 
     errors: Dict[str, List[str]] = {}
     method_map = build_method_map(platform_api_catalog)
     route_bodies = extract_route_bodies(handler_code, _WIDGET_ROUTE_RE)
 
-    for m in _WIDGET_CALL_RE.finditer(widget_js):
+    for m in _WIDGET_CALL_RE.finditer(storefront):
         path = m.group(1)
         body_block = m.group(2)
 
@@ -118,7 +118,7 @@ def validate_widget_handler_contract(
                 f"`{slot_label}` — collected data is silently discarded"
             )
             errors.setdefault("handler", []).append(msg)
-            errors.setdefault("widget_js", []).append(msg)
+            errors.setdefault("storefront", []).append(msg)
             continue
 
         missing = sent_fields - handler_fields
@@ -130,6 +130,6 @@ def validate_widget_handler_contract(
                 f"sides to the widgetApiCatalog requestShape."
             )
             errors.setdefault("handler", []).append(msg)
-            errors.setdefault("widget_js", []).append(msg)
+            errors.setdefault("storefront", []).append(msg)
 
     return errors

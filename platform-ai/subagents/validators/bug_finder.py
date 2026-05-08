@@ -63,7 +63,7 @@ OUTPUT FORMAT — return JSON only:
 {
   "findings": [
     {
-      "artifact": "plan" | "handler" | "db" | "widget_js" | "admin_ui",
+      "artifact": "plan" | "handler" | "db" | "storefront" | "admin_ui",
       "location": "<file:symbol or route or job>",
       "issue": "<one sentence: what is wrong>",
       "failure_mode": "<one sentence: how it fails at runtime>",
@@ -103,7 +103,7 @@ def _build_user_prompt(
     ]
 
     if is_storefront:
-        widget = artifacts.get("widget_js") or "(missing)"
+        widget = artifacts.get("storefront") or "(missing)"
         artifacts_lines.extend(["", "── widget.js ──", widget])
 
     if is_admin_ui:

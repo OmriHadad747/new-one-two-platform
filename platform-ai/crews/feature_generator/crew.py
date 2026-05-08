@@ -199,7 +199,7 @@ def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
       schema AND adjust the handler in one pass.
     - artifact == "handler": backend problem — lock migration (it's the
       schema ground truth), fix the handler.
-    - artifact in {"widget_js", "admin_ui"}: frontend misalignment — handler
+    - artifact in {"storefront", "admin_ui"}: frontend misalignment — handler
       and migration are the contract; fix the frontend, keep them locked.
 
     Plan-level findings never reach this function — `_phase_validator`
@@ -284,7 +284,7 @@ def run_feature_generation(request: GenerationRequest) -> None:
             )
             or [],
             prior_handler_code=prior_handler,
-            prior_widget_code=(prior_bundle.get("widgetModule") or None),
+            prior_storefront_code=(prior_bundle.get("widgetModule") or None),
             prior_db_sql=prior_db_sql,
             prior_admin_ui_code=(prior_bundle.get("adminUiModule") or None),
         )
@@ -493,7 +493,7 @@ def _phase_codegen(
     _emit(request, "handler", "running", "Generating backend handler…")
     _emit(request, "db", "running", "Writing DB migration…")
     if is_storefront:
-        _emit(request, "widget_js", "running", "Generating storefront widget…")
+        _emit(request, "storefront", "running", "Generating storefront widget…")
     if is_admin_ui:
         _emit(request, "admin_ui", "running", "Generating admin panel…")
 
@@ -599,7 +599,7 @@ def _phase_codegen(
     _emit(request, "handler", "completed", "Handler complete")
     _emit(request, "db", "completed", "Migration complete")
     if is_storefront:
-        _emit(request, "widget_js", "completed", "Widget complete")
+        _emit(request, "storefront", "completed", "Widget complete")
     if is_admin_ui:
         _emit(request, "admin_ui", "completed", "Admin UI complete")
     _emit(request, "validation", "completed", "All artifacts validated")
@@ -806,7 +806,7 @@ def _phase_validator(
         base_ctx,
         prior_handler_code=artifacts.get("handler") or base_ctx.prior_handler_code,
         prior_db_sql=artifacts.get("db") or base_ctx.prior_db_sql,
-        prior_widget_code=artifacts.get("widget_js") or base_ctx.prior_widget_code,
+        prior_storefront_code=artifacts.get("storefront") or base_ctx.prior_storefront_code,
         prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
     )
     _LOCKED = _revision_locked_artifacts(issues)
@@ -815,7 +815,7 @@ def _phase_validator(
         request.jobId,
         sorted(i["question"] for i in issues),
         sorted(_LOCKED),
-        sorted({"handler", "db", "widget_js", "admin_ui"} - _LOCKED),
+        sorted({"handler", "db", "storefront", "admin_ui"} - _LOCKED),
     )
 
     _emit(request, "revision", "running", f"Fixing {len(issues)} semantic issue(s)…")
@@ -932,7 +932,7 @@ def _phase_explanation(
     explanation, exp_in, exp_out = run_explanation_agent(
         intent=intent,
         plan=plan,
-        widget_js_code=artifacts.get("widget_js", "") if is_storefront else "",
+        storefront_code=artifacts.get("storefront", "") if is_storefront else "",
         db_sql=artifacts.get("db", ""),
     )
     agent_trace.append(
@@ -1075,7 +1075,7 @@ def _publish_success(
     )
 
     bundle = Bundle(
-        widgetModule=artifacts.get("widget_js") if is_storefront else None,
+        widgetModule=artifacts.get("storefront") if is_storefront else None,
         adminUiModule=artifacts.get("admin_ui") if is_admin_ui else None,
         widgetTargetTemplates=(
             (app_contracts.get("widgetTargetTemplates") or None)
@@ -1181,7 +1181,7 @@ def _plan_codegen_batch(
     """
     to_run: List[Generator] = []
     for name, gen in GENERATORS.items():
-        if name == "widget_js" and not is_storefront:
+        if name == "storefront" and not is_storefront:
             continue
         if name == "admin_ui" and not is_admin_ui:
             continue
@@ -1201,7 +1201,7 @@ def _plan_codegen_batch(
         coupled_pairs.append(
             (
                 "handler",
-                "widget_js",
+                "storefront",
                 "Re-generating to stay in sync with the handler. "
                 "Ensure every host.call() field name exactly matches the widgetApiCatalog requestShape.",
             )
@@ -1269,7 +1269,7 @@ def _build_codegen_context(
         platform_api_catalog=base_ctx.platform_api_catalog,
         previous_errors=previous_errors,
         prior_handler_code=base_ctx.prior_handler_code,
-        prior_widget_code=base_ctx.prior_widget_code,
+        prior_storefront_code=base_ctx.prior_storefront_code,
         prior_db_sql=base_ctx.prior_db_sql,
         prior_admin_ui_code=base_ctx.prior_admin_ui_code,
     )
@@ -1404,7 +1404,7 @@ def validate_artifacts(
     """
     error_map: Dict[str, List[str]] = {}
     for name, gen in GENERATORS.items():
-        if name == "widget_js" and not is_storefront:
+        if name == "storefront" and not is_storefront:
             continue
         if name == "admin_ui" and not is_admin_ui:
             continue
@@ -1419,7 +1419,7 @@ def validate_artifacts(
     plan_contracts = (ctx.plan or {}).get("appContracts") or {}
     if is_storefront:
         for gen_name, errs in validate_widget_handler_contract(
-            artifacts.get("widget_js", ""),
+            artifacts.get("storefront", ""),
             artifacts.get("handler", ""),
             plan_contracts.get("widgetApiCatalog") or [],
         ).items():

@@ -1320,12 +1320,12 @@ def _save_artifacts_md(
         lines += _email_metadata_md_lines(handler_email_metadata)
     if artifacts.get("migration"):
         lines += ["### migration.sql", "", "```sql", artifacts["migration"], "```", ""]
-    if is_storefront and artifacts.get("widget_js"):
+    if is_storefront and artifacts.get("storefront"):
         lines += [
             "### widget.js",
             "",
             "```javascript",
-            artifacts["widget_js"],
+            artifacts["storefront"],
             "```",
             "",
         ]
@@ -1446,7 +1446,7 @@ def _build_bundle(
     handler_files = parse_file_bundle(handler_raw) if handler_raw else []
 
     return {
-        "widgetModule": artifacts.get("widget_js") if is_storefront else None,
+        "widgetModule": artifacts.get("storefront") if is_storefront else None,
         "adminUiModule": artifacts.get("admin_ui") if is_admin_ui else None,
         "widgetTargetTemplates": (
             (app_contracts.get("widgetTargetTemplates") or None)
@@ -2344,7 +2344,7 @@ def main() -> None:
     for key, label in [
         ("handler", "handler.js"),
         ("migration", "migration.sql"),
-        ("widget_js", "widget.js"),
+        ("storefront", "widget.js"),
         ("admin_ui", "admin_ui.js"),
     ]:
         code = artifacts.get(key, "")

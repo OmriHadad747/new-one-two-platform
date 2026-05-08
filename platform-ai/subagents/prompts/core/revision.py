@@ -66,6 +66,6 @@ OUTPUT — respond with ONLY this JSON object (no markdown fences, no explanatio
 {
   "handler": "<full revised handler file bundle, wrapped in ===FILE:=== / ===END=== markers>",
   "db": "<incremental SQL DDL, or exactly '-- no schema changes'>",
-  "widget_js": "<revised ES module, or null>",
+  "storefront": "<revised ES module, or null>",
   "admin_ui": "<revised ES module, or null>"
 }"""

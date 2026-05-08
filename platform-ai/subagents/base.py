@@ -58,7 +58,7 @@ class CodegenContext:
                         platform-back era). _format_prior_handler in handler_agent.py
                         handles both; typed as Any to avoid a circular dep on
                         utils.file_bundle.
-    prior_widget_code   The currently deployed widget ES module, present only on
+    prior_storefront_code   The currently deployed widget ES module, present only on
                         revision runs for storefront apps.
     prior_db_sql DDL already applied to the DB, present only on revision runs.
                         The migration agent emits only incremental DDL — never recreates
@@ -84,7 +84,7 @@ class CodegenContext:
     platform_api_catalog: List[Dict[str, str]] = field(default_factory=list)
     previous_errors: Optional[List[str]] = None
     prior_handler_code: Optional[Any] = None  # str | List[Dict[str, str]]
-    prior_widget_code: Optional[str] = None
+    prior_storefront_code: Optional[str] = None  # prior widget JS on revision runs (was prior_storefront_code)
     prior_db_sql: Optional[str] = None  # prior DDL on revision runs (was prior_migration_sql)
     prior_admin_ui_code: Optional[str] = None
 

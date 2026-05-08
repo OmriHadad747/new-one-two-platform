@@ -1,0 +1,16 @@
+Shopify Ajax API endpoint catalog — hand-curated from Shopify's official
+documentation at https://shopify.dev/docs/api/ajax (2026-05).
+
+Unlike Admin/Storefront GraphQL (which Shopify exposes via introspection)
+or webhook payloads (which Gadget Inc. publishes JSON Schemas for), the
+Ajax API has no machine-readable schema. The endpoint set, parameter
+shapes, and response field lists in this catalog are transcribed from
+the human-readable docs at:
+
+  https://shopify.dev/docs/api/ajax/reference/cart
+  https://shopify.dev/docs/api/ajax/reference/product
+  https://shopify.dev/docs/api/ajax/reference/product-recommendations
+  https://shopify.dev/docs/api/ajax/reference/predictive-search
+
+The Ajax API is theme-only and not API-version-pinned. Refresh by hand
+when Shopify updates the docs (rarely needed).
