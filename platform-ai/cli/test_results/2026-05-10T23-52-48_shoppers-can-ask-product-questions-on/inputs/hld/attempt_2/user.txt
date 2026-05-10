@@ -1,0 +1,278 @@
+Merchant request: Shoppers can ask product questions on the storefront, merchants review and answer them in the admin, and answered Q&A becomes publicly visible on product pages.
+
+Product-agent intent (use as context):
+{
+  "triggerTypes": [
+    "widget",
+    "admin"
+  ],
+  "resources": [
+    "Product",
+    "Question",
+    "Answer"
+  ],
+  "desiredOutcome": "Shoppers can ask product questions on the storefront, merchants review and answer them in the admin, and answered Q&A becomes publicly visible on product pages.",
+  "cronHint": null,
+  "appCategory": "storefront_backend_admin",
+  "qualityBrief": "A good version handles question storage, admin review workflow, and display without overwhelming the product page. Edge cases: long questions or answers should wrap cleanly, duplicate questions should not be prevented (let the merchant decide), and unpublished questions must never leak to the storefront. The admin list should be sortable by date or product and searchable so merchants can find questions quickly. Avoid email notifications unless explicitly requested \u2014 keep scope tight."
+}
+
+REVISE the prior HLD plan below to address every reviewer finding. Output
+a single JSON object conforming to the appended schema.
+
+PRIOR PLAN — this is what you produced previously. Sections the reviewer
+did NOT flag must be copied character-for-character into your revision.
+Do not drop, rename, reorder, or reword unflagged capabilities, tables,
+columns, contracts, edge cases, or dataFlow phrasing. Do not add new
+capabilities, tables, or edge cases beyond what a finding's fix
+explicitly requires. When renumbering is required (e.g. splitting one
+contract into two), update only the affected indices and any explicit
+cross-references.
+
+```json
+{
+  "schema_version": "1",
+  "archetype": "backend+admin+storefront",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "A shopper submits a question for a product from the storefront widget; the question is stored with a pending status and is not visible publicly. The merchant opens the admin questions list, locates the question by filtering or searching, and submits an answer along with a decision to publish or reject. When the question is marked published it becomes visible on the product page; rejected questions remain stored but invisible. The storefront widget fetches only published questions for the current product on page load and renders them without requiring any shopper action.",
+  "triggers": [],
+  "capabilities": [
+    {
+      "id": "submit-question",
+      "description": "Store a new shopper question for a product with pending status so it enters the merchant review queue.",
+      "kind": "write",
+      "dataNeeds": [
+        "product external id",
+        "shopper display name",
+        "question text"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "list-questions-admin",
+      "description": "Return a paginated, filterable, searchable list of questions for the merchant admin panel.",
+      "kind": "read",
+      "dataNeeds": [
+        "status filter",
+        "product external id filter",
+        "search text",
+        "sort preference",
+        "page cursor"
+      ],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "record-answer",
+      "description": "Persist the merchant's answer text against a question and transition the question to answered status.",
+      "kind": "write",
+      "dataNeeds": [
+        "question id",
+        "answer text"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "update-question-status",
+      "description": "Transition a question to a merchant-chosen status \u2014 published, unpublished, or rejected \u2014 enforcing that only answered questions may be published.",
+      "kind": "write",
+      "dataNeeds": [
+        "question id",
+        "target status"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "list-published-questions",
+      "description": "Return all published questions and answers for a product so the storefront widget can render the public Q&A section.",
+      "kind": "read",
+      "dataNeeds": [
+        "product external id"
+      ],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    }
+  ],
+  "persistence": [
+    {
+      "name": "product_questions",
+      "purpose": "Stores every shopper-submitted question, its merchant answer, and the current review and visibility status.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies the product this question belongs to"
+        },
+        {
+          "name": "shopper_display_name",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "question_text",
+          "role": "text",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "answer_text",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "status",
+          "role": "status",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "answered_at",
+          "role": "timestamp",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "published_at",
+          "role": "timestamp",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per shopper-submitted question, keyed by its internal identifier",
+      "statusField": null,
+      "queryPatterns": [
+        "all questions for a given product where status is published, ordered by creation time, for storefront display",
+        "all questions filtered by status and optionally by product, ordered by creation time or product, supporting cursor pagination and full-text search on question and answer text, for admin list",
+        "single question looked up by id when recording an answer or updating status"
+      ]
+    }
+  ],
+  "stateMachine": null,
+  "externalContracts": [
+    {
+      "surface": "widget",
+      "path": "/widget/questions",
+      "method": "GET",
+      "purpose": "Return all published questions and answers for a given product so the storefront can render the Q&A section on page load.",
+      "requestShape": {
+        "product_external_id": "identifier"
+      },
+      "responseShape": {
+        "questions": "list"
+      }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/questions/submit",
+      "method": "POST",
+      "purpose": "Accept a new question from a shopper for a specific product and store it as pending.",
+      "requestShape": {
+        "product_external_id": "identifier",
+        "shopper_display_name": "text",
+        "question_text": "text"
+      },
+      "responseShape": {
+        "question_id": "identifier",
+        "status": "status"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions",
+      "method": "GET",
+      "purpose": "Return a paginated, filterable, and searchable list of questions so the merchant can review and manage them.",
+      "requestShape": {
+        "status_filter": "status",
+        "product_external_id": "identifier",
+        "search_text": "text",
+        "sort_by": "text",
+        "cursor": "text"
+      },
+      "responseShape": {
+        "questions": "list",
+        "next_cursor": "text",
+        "total_count": "count"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions/answer",
+      "method": "POST",
+      "purpose": "Accept the merchant's answer text for a question and transition the question to answered status.",
+      "requestShape": {
+        "question_id": "identifier",
+        "answer_text": "text"
+      },
+      "responseShape": {
+        "question_id": "identifier",
+        "status": "status"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions/status",
+      "method": "PUT",
+      "purpose": "Update the visibility status of a question so the merchant can publish, unpublish, or reject it.",
+      "requestShape": {
+        "question_id": "identifier",
+        "target_status": "status"
+      },
+      "responseShape": {
+        "question_id": "identifier",
+        "status": "status"
+      }
+    }
+  ],
+  "edgeCases": [
+    "A merchant attempts to publish a question that has no answer text \u2014 the status transition must be rejected and the question must remain in its current status.",
+    "A shopper submits a question with no display name \u2014 the question is stored with a null display name and the storefront renders a generic attribution label rather than failing.",
+    "The storefront requests published questions for a product that has none \u2014 the response returns an empty list and the widget renders a prompt to be the first to ask.",
+    "A merchant publishes a question and then edits or retracts the answer \u2014 the question must be returned to answered status and removed from public display until republished.",
+    "Two admin users concurrently update the status of the same question \u2014 the last write wins, and both users receive the current status in their response so their UI reflects the actual state.",
+    "A shopper submits a question for a product that the merchant has since removed from the catalogue \u2014 the question is stored normally against the product external id; the merchant can reject it during review."
+  ]
+}
+```
+
+REVIEWER FINDINGS — apply each finding's fix to the relevant section of
+the prior plan; leave everything else untouched.
+
+- [important] externalContracts[0] (GET /widget/questions): X2: The GET /widget/questions route has `"questions": "list"` in its responseShape but exposes no `count` and no cursor or page parameter in its requestShape. The capability 'list-published-questions' description says 'Return all published questions and answers for a product' with no pagination guard, meaning a product with hundreds of Q&A entries forces the widget to download the full set on every page load, which is unusable at scale and contradicts the qualityBrief's 'without overwhelming the product page' requirement. Fix: Add a `limit` (count) and `cursor` (text) parameter to the requestShape, and add `next_cursor` (text) and `total_count` (count) to the responseShape; update the 'list-published-questions' capability's dataNeeds to include 'page cursor' and 'limit' accordingly.
+- [important] capabilities[2] (record-answer) and capabilities[3] (update-question-status): C4b: Both 'record-answer' and 'update-question-status' are triggered by the same actor (the merchant via admin UI) and write to the same lifecycle column (`status` on `product_questions`). 'record-answer' transitions to `answered` and 'update-question-status' transitions to `published`, `unpublished`, or `rejected` — all terminal or re-entrant states on the same column driven by the same surface. Having two separate capabilities for these transitions creates a race risk: a merchant could call `update-question-status` with `published` concurrently with `record-answer`, allowing a partially-answered question to reach `published` status without the answered-gate check if the two capabilities execute independently with no shared transaction boundary, which the LLD has no signal to prevent. Fix: Merge 'record-answer' and 'update-question-status' into a single 'answer-and-publish-question' capability with `dataNeeds: [question id, answer text, target status]`, enforcing the answered-before-published rule atomically inside one write path; or, if kept separate, add an explicit edge case stating that `update-question-status` must acquire a row-level lock and re-validate the `answer_text IS NOT NULL` constraint before allowing `published`.
+- [important] edgeCases: E1: The plan includes a notify surface implied by the qualityBrief's explicit mention of 'avoid email notifications unless explicitly requested' — confirming the plan's authors considered and excluded notifications — but the 'record-answer' and 'update-question-status' capabilities have no edge case covering what happens if the status-write itself partially fails (e.g. DB write succeeds but the response to the admin client is lost), leaving the merchant's UI out of sync with the stored state. More critically, there is no edge case for the concurrent-write scenario on `record-answer` specifically: if two merchants submit an answer for the same question simultaneously, the last write wins but no locking or conflict-detection signal is given to the LLD. The existing concurrency edge case covers `update-question-status` only (`"Two admin users concurrently update the status"`), leaving `record-answer` unguarded. Fix: Add an edge case: 'Two merchants concurrently submit answers for the same question — the last write wins; the response must return the persisted answer text and status so the losing client's UI is corrected without a page reload.'
+- [minor] persistence[0].queryPatterns: P1: The queryPatterns entry `"single question looked up by id when recording an answer or updating status"` implies a point-lookup by `id`, but no column in `product_questions` is explicitly marked with a unique index or primary-key role beyond the generic `"role": "identifier"` declaration. The LLD must know whether `id` is the primary key (index implied) or a secondary unique column requiring an explicit UNIQUE index; without this, the generated DDL may omit the index and make point-lookups a full-table scan. Fix: Set `keyedBy` to explicitly state 'primary key on id column' (or rename to clarify it is the surrogate primary key), so the LLD generates the correct DDL constraint and index without guessing.

@@ -4,17 +4,21 @@ Storefront Generator system prompt — always-on core.
 Carries the full widget contract: mount(container, host) signature, the
 host.* API surface (call / context / getFormData / storefront), DOM
 scoping rules with explicit allow/forbid lists, customer-identity flow
-with the literal localStorage guest-token snippet, an end-to-end
-WORKED EXAMPLE, and the consolidated FORBIDDEN PATTERNS list.
+with the literal localStorage guest-token snippet, the LIVE-TICK
+contract for recurring-update widgets, and the consolidated FORBIDDEN
+PATTERNS list.
 
 The user message (built by agent.py) renders the LLD's
 `externalContracts` filtered to `surface=="widget"` as the platformApiCatalog,
 plus uxExpectations.storefront, platformGaps[].uxImplication, the
-intent's qualityBrief, and (on revision runs) the prior widget source.
+intent's qualityBrief, (on revision runs) the prior widget source, and
+one or more shape-matched WORKED EXAMPLES picked by the
+`widget_shapes.py` dispatcher.
 
-The prompt has no JIT injection — host.storefront docs are inlined
-unconditionally because it's the only client-side capability today, and
-gating it on a flag adds fragility without saving meaningful tokens.
+Examples teach the NON-TRIVIAL patterns only — basic DOM construction,
+event listeners, regex, try/catch are NOT repeated because the model
+already knows them. The system prompt carries the rules; the user
+message carries shape-specific snippets.
 """
 
 STOREFRONT_BASE = """You are generating a Shopify storefront widget as a \
@@ -153,6 +157,9 @@ ALLOWED `document.*` (page-level needs only):
   document.querySelector / getElementById / querySelectorAll
     (reading the merchant's existing page — theme integration,
     existing form detection)
+  Mutating elements RETURNED by querySelector (e.g. setting
+    textContent on the Add-to-Cart button) is a breach of the
+    "stay in container" rule and follows ESCAPE HATCHES below.
 
 FORBIDDEN `document.*` (leak outside container or mutate page-wide state):
   document.body.*           injects nodes into the merchant's page
@@ -273,247 +280,68 @@ care):
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WORKED EXAMPLE — custom-engraving request widget (full lifecycle)
+WORKED EXAMPLES — appended to your user message
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-This example is illustrative — adapt the patterns to YOUR catalog. Do
-NOT copy paths or field names; use what the actual platformApiCatalog
-(injected above your prompt) says. The example exercises:
-  - identity flow (customerId + guestToken with migration cleanup)
-  - product context from `host.storefront('/products/{handle}.js')`
-  - hide-the-widget when the product is not eligible
-  - state-check via paired GET, fail-open to the form on error
-  - multi-input form (text + select + email) with validation,
-    aria-invalid, focus-on-error
-  - submit-disable + "Saving…" + inline error path
-  - multi-state UI: form → confirmed
-  - textContent for every runtime value (no innerHTML interpolation)
-  - scoped CSS via `.app-<slug>-*` injected through container
+The user message below includes one or more worked examples chosen
+by the dispatcher to match this widget's shape (form-persist with
+state-check, form-persist no state-check, form-persist + list view,
+stateless display, modal overlay, cart-aware, page template,
+mutate-page-DOM, or live-tick).
 
-Catalog (hypothetical):
+Snippet philosophy: examples teach the NON-TRIVIAL pattern only —
+basic DOM construction, event listeners, regex, try/catch around
+await are NOT repeated. The "anchor" example
+(form_persist_state_check) is longer because it doubles as the
+composition reference; new shapes are focused snippets that build
+on the conventions it establishes.
 
-  GET  /engraving/state
-    send:    host.call('/engraving/state', { product_handle, customerId, guestToken })
-    receive: { already_requested }
-  POST /engraving/request
-    send:    host.call('/engraving/request',
-                       { product_handle, engraved_name, font_style,
-                         customer_email, customerId, guestToken })
-    receive: { request_id, status }
+Use examples to anchor your composition. Adapt paths, field names,
+and SLUG to the actual platformApiCatalog — never copy paths
+verbatim.
 
-  export function mount(container, host) {
-    const SLUG = "engraving";
-    const KEY = `${SLUG}.guestToken`;
-    const customerId = host.context.customerId;
-    let guestToken = localStorage.getItem(KEY);
-    if (!customerId && !guestToken) {
-      guestToken =
-        (crypto.randomUUID && crypto.randomUUID()) ||
-        String(Date.now()) + Math.random().toString(36).slice(2);
-      localStorage.setItem(KEY, guestToken);
-    }
 
-    // Product handle from the page URL.
-    const productHandle =
-      (location.pathname.match(/\\/products\\/([^/?]+)/) || [])[1];
-    if (!productHandle) return;  // not on a product page
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ESCAPE HATCHES — when you must breach the bans
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // Scoped styles (theme-safe class prefix).
-    const style = document.createElement("style");
-    style.textContent = `
-      .app-${SLUG}-root { font: inherit; padding: 12px 0; }
-      .app-${SLUG}-title { font-size: 0.95em; font-weight: 600; margin: 0 0 8px 0; }
-      .app-${SLUG}-form { display: flex; flex-direction: column; gap: 8px; }
-      .app-${SLUG}-row { display: flex; gap: 8px; flex-wrap: wrap; }
-      .app-${SLUG}-input, .app-${SLUG}-select {
-        padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px;
-        font: inherit; outline: none; flex: 1 1 200px;
-      }
-      .app-${SLUG}-input[aria-invalid="true"] { border-color: #b00020; }
-      .app-${SLUG}-button {
-        padding: 9px 18px; background: #222; color: #fff; border: none;
-        border-radius: 4px; cursor: pointer; align-self: flex-start; font: inherit;
-      }
-      .app-${SLUG}-button[disabled] { opacity: 0.55; cursor: wait; }
-      .app-${SLUG}-status { font-size: 0.85em; min-height: 1.2em; margin: 4px 0 0 0; }
-      .app-${SLUG}-status[data-tone="error"] { color: #b00020; }
-    `;
-    container.appendChild(style);
+Some widget shapes legitimately need to: run a recurring timer
+(countdowns, polling), mutate page-root style (modal scroll lock),
+mutate elements outside `container` (replacing native theme
+buttons), or react to user actions outside `container` (variant
+picks, cart updates, navigation back/forward). These breach the
+bans below — and that's allowed when the worked example for your
+shape demonstrates the breach.
 
-    const root = document.createElement("div");
-    root.className = `app-${SLUG}-root`;
-    container.appendChild(root);
+Three rules apply to every breach. The worked examples show how
+they look in code; you follow the same shape.
 
-    function statusEl(text, tone) {
-      const p = document.createElement("p");
-      p.className = `app-${SLUG}-status`;
-      p.setAttribute("aria-live", "polite");
-      if (tone) p.dataset.tone = tone;
-      p.textContent = text;
-      return p;
-    }
+  1. CAPTURE-BEFORE-MUTATE. Before changing any state outside
+     `container` (page-root style, theme element textContent),
+     read and stash the original value so you can restore it.
+     Mutation without capture is forbidden.
 
-    function renderConfirmed(productTitle) {
-      root.innerHTML = "";  // clearing only — no value interpolation
-      const title = document.createElement("p");
-      title.className = `app-${SLUG}-title`;
-      title.textContent = "Engraving request received";
-      const detail = statusEl(
-        `We'll review your engraving for ${productTitle} and email you within 1 business day.`,
-      );
-      root.appendChild(title);
-      root.appendChild(detail);
-    }
+  2. RESTORE-ON-CLEANUP. Every path that ends the breach (modal
+     close via ESC / backdrop / button / programmatic, tick stop,
+     widget unmount) must restore what it captured. A path that
+     fails to restore leaves the merchant's page in a broken
+     state — worse than not breaching in the first place.
 
-    function renderForm(productTitle) {
-      root.innerHTML = "";
+  3. IDEMPOTENT ON REMOUNT. The runtime can call mount() twice in
+     quick succession (e.g. a re-render). Mark mutations with a
+     data-attribute or a property on `container` so the second
+     mount detects "someone already did this" and bails out.
+     Capture timer handles on `container.__app<...>Handle` so a
+     re-mount can clear them.
 
-      const title = document.createElement("p");
-      title.className = `app-${SLUG}-title`;
-      title.textContent = `Request engraving for ${productTitle}`;
-      root.appendChild(title);
-
-      const form = document.createElement("form");
-      form.className = `app-${SLUG}-form`;
-      form.setAttribute("novalidate", "");
-
-      const nameInput = document.createElement("input");
-      nameInput.className = `app-${SLUG}-input`;
-      nameInput.type = "text";
-      nameInput.name = "engraved_name";
-      nameInput.required = true;
-      nameInput.maxLength = 30;
-      nameInput.placeholder = "Engraved name (max 30 chars)";
-      nameInput.setAttribute("aria-label", "Engraved name");
-
-      const fontSelect = document.createElement("select");
-      fontSelect.className = `app-${SLUG}-select`;
-      fontSelect.name = "font_style";
-      fontSelect.setAttribute("aria-label", "Font style");
-      [
-        ["script", "Script"],
-        ["serif", "Serif"],
-        ["sans", "Sans serif"],
-      ].forEach(([value, label]) => {
-        const opt = document.createElement("option");
-        opt.value = value;
-        opt.textContent = label;
-        fontSelect.appendChild(opt);
-      });
-
-      const row = document.createElement("div");
-      row.className = `app-${SLUG}-row`;
-      row.appendChild(nameInput);
-      row.appendChild(fontSelect);
-
-      const emailInput = document.createElement("input");
-      emailInput.className = `app-${SLUG}-input`;
-      emailInput.type = "email";
-      emailInput.name = "customer_email";
-      emailInput.required = true;
-      emailInput.placeholder = "you@example.com";
-      emailInput.setAttribute("autocomplete", "email");
-      emailInput.setAttribute("aria-label", "Email address");
-
-      const button = document.createElement("button");
-      button.className = `app-${SLUG}-button`;
-      button.type = "submit";
-      button.textContent = "Request engraving";
-
-      const status = statusEl("");
-
-      form.appendChild(row);
-      form.appendChild(emailInput);
-      form.appendChild(button);
-      form.appendChild(status);
-      root.appendChild(form);
-
-      form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const data = host.getFormData(form);
-        const name = (data.engraved_name || "").trim();
-        const email = (data.customer_email || "").trim();
-        const emailRe = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
-
-        if (!name) {
-          nameInput.setAttribute("aria-invalid", "true");
-          status.dataset.tone = "error";
-          status.textContent = "Please enter the name to engrave.";
-          nameInput.focus();
-          return;
-        }
-        if (!emailRe.test(email)) {
-          emailInput.setAttribute("aria-invalid", "true");
-          status.dataset.tone = "error";
-          status.textContent = "Please enter a valid email address.";
-          emailInput.focus();
-          return;
-        }
-        nameInput.removeAttribute("aria-invalid");
-        emailInput.removeAttribute("aria-invalid");
-
-        button.disabled = true;
-        button.textContent = "Saving…";
-        status.dataset.tone = "";
-        status.textContent = "";
-
-        try {
-          await host.call("/engraving/request", {
-            product_handle: productHandle,
-            engraved_name: name,
-            font_style: data.font_style,
-            customer_email: email,
-            customerId,
-            guestToken,
-          });
-          if (customerId && guestToken) localStorage.removeItem(KEY);
-          renderConfirmed(productTitle);
-        } catch (_) {
-          button.disabled = false;
-          button.textContent = "Request engraving";
-          status.dataset.tone = "error";
-          status.textContent = "Something went wrong. Please try again.";
-        }
-      });
-    }
-
-    async function init() {
-      root.appendChild(statusEl("Loading…"));
-
-      // Pull product info from the Ajax catalog. Use it to (a) decide
-      // whether the widget applies (only engravable products) and (b)
-      // personalise the form copy.
-      let product = null;
-      try {
-        product = await host.storefront(`/products/${productHandle}.js`);
-      } catch (_) { /* non-fatal */ }
-
-      const tags = (product && Array.isArray(product.tags)) ? product.tags : [];
-      if (product && !tags.includes("engravable")) {
-        container.innerHTML = "";  // collapse the App Block region
-        return;
-      }
-      const productTitle = (product && product.title) || "this product";
-
-      // State-check via paired GET. Fail open to the form so a backend
-      // hiccup never blocks the shopper — backend dedup catches repeats.
-      try {
-        const state = await host.call("/engraving/state", {
-          product_handle: productHandle,
-          customerId,
-          guestToken,
-        });
-        if (state && state.already_requested) {
-          renderConfirmed(productTitle);
-          return;
-        }
-      } catch (_) { /* fail open */ }
-
-      renderForm(productTitle);
-    }
-
-    init();
-  }
+For external state changes (variant picks, cart updates, URL
+changes back/forward), prefer standard browser events:
+`input`/`change` on form elements, `popstate` on the window,
+`visibilitychange` on document. NEVER poll with setInterval-just-
+to-check, NEVER depend on theme-specific custom events
+(`cart:updated`, `variant:changed`, etc.) — those vary across
+themes and break silently. If the platform exposes a structured
+event in future, the runtime will surface it.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -534,20 +362,27 @@ Module shape:
 DOM (outside the container or mutating page-wide state):
   - document.body.*
   - document.head.*
-  - document.documentElement.*
+  - document.documentElement.*       → see ESCAPE HATCHES (some
+                                       worked examples breach this
+                                       legitimately under the
+                                       capture-restore-mark contract)
   - document.cookie
   - document.title
   - document.write / open / close
   - document.execCommand
+  - Mutating elements returned by document.querySelector that live
+    outside `container` → see ESCAPE HATCHES.
 
 Cross-frame:
   - window.parent / window.top / window.opener / window.frames
 
 Timers / dynamic code:
-  - setInterval                     → event-driven only
-  - eval(...) / new Function(...)
-  - setTimeout with computed or > 500ms delay → only literal short
-    debounce (≤500ms) is allowed
+  - setInterval                     → see ESCAPE HATCHES (allowed
+                                      under capture-restore-mark)
+  - setTimeout with delay > 500ms   → see ESCAPE HATCHES. Literal
+                                      short debounce (≤500ms) is
+                                      always allowed.
+  - eval(...) / new Function(...)   → never
 
 Identity:
   - Hardcoded tenant_id / shop domain literals
@@ -584,14 +419,18 @@ String composition (parse-error class):
     For complex composition, build with `createElement` + `textContent`
     on multiple <span> children.
 
-Variant-picker polling (theme-fragile):
+Polling for external state:
   - Do NOT attach `document.addEventListener("click", …)` with a
-    `setTimeout` to detect when the shopper picks a different variant.
-    Themes vary; the click-then-poll heuristic is brittle and
-    re-renders the form mid-typing. Snapshot `variantId` ONCE at mount
-    from `location.search` and render for that variant. If the theme
-    navigates to a new variant URL, the App Block re-mounts the widget
-    naturally — no manual change-detection needed.
+    `setTimeout` to "detect" when the shopper picks a different
+    variant or updates the cart. Click-then-poll heuristics are
+    brittle and re-render the form mid-typing.
+  - Do NOT depend on theme-specific custom events
+    (`cart:updated`, `variant:changed`, etc.) — those vary across
+    themes and break silently.
+  - Use standard browser events instead: `change` on form inputs,
+    `popstate` on window, `visibilitychange` on document. See
+    ESCAPE HATCHES for the principle and the relevant worked
+    example for the code.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

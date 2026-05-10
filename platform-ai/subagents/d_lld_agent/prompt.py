@@ -1290,6 +1290,24 @@ null when no recipe has an email_send / email_send_batch step.
                    generic. null for non-storefront archetypes.
   admin           one or two sentences — what the merchant dashboard
                    should prioritize. null for non-admin archetypes.
+  widgetShapes    storefront archetypes only — list of architectural
+                   patterns this widget composes. Pick EVERY pattern
+                   that applies (most widgets are 1–3 patterns); the
+                   storefront codegen uses this list to attach matching
+                   worked examples. Empty list for non-storefront
+                   archetypes. Closed enum:
+
+__WIDGET_SHAPES_SECTION__
+
+                   Composition examples:
+                     Cart Drawer       ["cart_aware", "modal_overlay"]
+                     Quick View        ["modal_overlay",
+                                        "stateless_display"]
+                     FAQ page          ["page_template"]
+                     Back-in-stock     ["form_persist_state_check"]
+                     Countdown timer   ["stateless_display", "live_tick"]
+                     Currency switcher ["mutate_page_dom",
+                                        "stateless_display"]
 
 Both feed the widget / admin codegens directly — they'll use these to \
 shape layout, empty states, and interaction patterns. Be specific:
@@ -1394,8 +1412,16 @@ __SCHEMA_JSON__
 def build_system_prompt() -> str:
     """
     Render the LLD agent's system prompt with the live `LLDPlan` JSON schema
-    appended. The Pydantic model is the single source of truth — bumping
-    `LLDPlan` automatically updates what the agent sees.
+    appended and the widget-shapes enum interpolated. Both the Pydantic
+    model and the storefront agent's `widget_shapes` registry are single
+    sources of truth — bumping either automatically updates what the
+    agent sees.
     """
+    from subagents.e_storefront_agent.widget_shapes import widget_shapes_section
+
     schema_json = json.dumps(LLDPlan.model_json_schema(), indent=2)
-    return SYSTEM_PROMPT_TEMPLATE.replace("__SCHEMA_JSON__", schema_json)
+    return (
+        SYSTEM_PROMPT_TEMPLATE
+        .replace("__SCHEMA_JSON__", schema_json)
+        .replace("__WIDGET_SHAPES_SECTION__", widget_shapes_section())
+    )

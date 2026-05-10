@@ -1,0 +1,508 @@
+{
+  "run_ts": "2026-05-11T00-00-55",
+  "run_slug": "merchant-sees-a-clean-admin-dashboard",
+  "prompt": "Merchant sees a clean admin dashboard with revenue, AOV, top products, and repeat customer rate updated on page load.",
+  "intent": {
+    "triggerTypes": [
+      "admin"
+    ],
+    "resources": [
+      "Order",
+      "Product"
+    ],
+    "desiredOutcome": "Merchant sees a clean admin dashboard with revenue, AOV, top products, and repeat customer rate updated on page load.",
+    "cronHint": null,
+    "appCategory": "backend_admin",
+    "qualityBrief": "A good version calculates metrics accurately from order history (filtering by date range), displays charts that are readable at a glance, and loads quickly even with thousands of orders. Pay attention to repeat customers \u2014 this requires matching customers across multiple orders, not just counting unique email addresses in one period. Handle edge cases like orders with no customer email and zero-revenue orders gracefully."
+  },
+  "archetype": "backend_admin",
+  "is_storefront": false,
+  "is_admin_ui": true,
+  "save_to_db": false,
+  "db": {},
+  "all_tokens": {
+    "hld": [
+      27706,
+      10163
+    ],
+    "hld_v": [
+      9404,
+      977
+    ]
+  },
+  "checkpoint": "done",
+  "halt_reason": null,
+  "version": 1,
+  "updated_at": "2026-05-11T00:03:29",
+  "created_at": "2026-05-11T00:00:55",
+  "plan": {
+    "schema_version": "1",
+    "archetype": "backend+admin",
+    "feasibility": "feasible",
+    "blockedReason": null,
+    "complexity": "high",
+    "dataFlow": "Once daily during a low-traffic window, a scheduled job opens a snapshot run log row marked in-progress, then bulk-fetches all orders from Shopify, upserts per-day revenue and order-count rows into the daily order metrics snapshot, upserts per-day per-product sales rows into the daily product metrics snapshot, and upserts per-customer lifetime order counts into the customer order summary table. On successful completion the run log row is closed with status completed and the orders-processed count. If the bulk-fetch or any upsert fails, the run log row is closed with status failed and the failure reason recorded; the admin dashboard's data-freshness indicator reads the most recent snapshot run log row so the merchant can observe staleness without any data being corrupted. When the merchant opens the admin dashboard, a single GET request reads the requested date range and optional top-products limit override from the query params, aggregates pre-computed daily rows for revenue and AOV, ranks products by pre-computed period revenue for top-products, and derives repeat customer rate by counting customers whose first recorded order predates the selected period and who also appear within it \u2014 all reads hit snapshot tables, never the source API. The merchant can adjust the default date range from the settings page, which is persisted and used as the pre-selected range on next load.",
+    "triggers": [
+      {
+        "kind": "schedule",
+        "cadence": "once daily during a low-traffic window",
+        "jobPurpose": "Rebuild all metric snapshot tables from the complete order history so the admin dashboard can serve any date range instantly.",
+        "perTickWork": "Bulk-fetch all orders from Shopify, then upsert daily order metric rows, daily product metric rows, and per-customer order summary rows, replacing stale values for any day that has changed.",
+        "bulkFetchRule": true
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "bulk-fetch-orders",
+        "description": "Retrieve all orders from Shopify in bulk so the snapshot job has raw material without making per-order API calls.",
+        "kind": "read",
+        "dataNeeds": [
+          "order external id",
+          "order placed date",
+          "order revenue",
+          "order items with product external id and product title and quantity and item revenue",
+          "customer external id",
+          "customer email"
+        ],
+        "integration": "shopify-admin",
+        "returnsList": true,
+        "touchesMoney": true,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "upsert-daily-order-metrics",
+        "description": "Compute and persist per-day order count and revenue totals from the bulk-fetched order set, replacing any previously stored values for affected days.",
+        "kind": "write",
+        "dataNeeds": [
+          "order placed date",
+          "order revenue"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": true,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "upsert-daily-product-metrics",
+        "description": "Compute and persist per-product per-day units sold and revenue from the bulk-fetched order set, replacing any previously stored values for affected days.",
+        "kind": "write",
+        "dataNeeds": [
+          "order placed date",
+          "product external id",
+          "product title",
+          "quantity sold",
+          "item revenue"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": true,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "upsert-customer-order-summary",
+        "description": "Compute and persist per-customer lifetime order count, first order date, and last order date from the bulk-fetched order set, replacing any previously stored values.",
+        "kind": "write",
+        "dataNeeds": [
+          "customer external id",
+          "customer email",
+          "order placed date"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "open-snapshot-run",
+        "description": "Insert a new snapshot run log row with status in-progress so the concurrency guard and failure-detection path have a record of the run from the moment it starts.",
+        "kind": "write",
+        "dataNeeds": [
+          "started at timestamp"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "close-snapshot-run",
+        "description": "Update the in-progress snapshot run log row to completed or failed, recording the number of orders processed and any failure reason.",
+        "kind": "write",
+        "dataNeeds": [
+          "run identifier",
+          "outcome",
+          "orders processed count",
+          "failure reason"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": true
+      },
+      {
+        "id": "compute-dashboard-metrics",
+        "description": "Aggregate pre-computed daily snapshot rows for a requested date range to produce total revenue, AOV, top products ranked by revenue, unique customer count, and repeat customer rate.",
+        "kind": "compute",
+        "dataNeeds": [
+          "date range start",
+          "date range end",
+          "top products limit"
+        ],
+        "integration": null,
+        "returnsList": true,
+        "touchesMoney": true,
+        "usesConfig": true,
+        "usesWorkflow": false
+      },
+      {
+        "id": "read-dashboard-settings",
+        "description": "Retrieve the merchant's saved dashboard preferences to pre-populate the date range selector and top-products limit on page load.",
+        "kind": "read",
+        "dataNeeds": [],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": true,
+        "usesWorkflow": false
+      },
+      {
+        "id": "save-dashboard-settings",
+        "description": "Persist the merchant's chosen default date range and top-products display limit.",
+        "kind": "write",
+        "dataNeeds": [
+          "default date range days",
+          "top products limit"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": true,
+        "usesWorkflow": false
+      }
+    ],
+    "persistence": [
+      {
+        "name": "daily_order_metrics",
+        "purpose": "Stores pre-aggregated order count and revenue totals per calendar day so revenue and AOV can be served for any date range without scanning raw order data.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "metric_date",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "order_count",
+            "role": "count",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "revenue_total",
+            "role": "money",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "refreshed_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per calendar day, deduplicated by metric date",
+        "statusField": null,
+        "queryPatterns": [
+          "all rows where metric date falls within a requested date range, summed for totals",
+          "single row looked up by metric date during upsert"
+        ]
+      },
+      {
+        "name": "daily_product_metrics",
+        "purpose": "Stores pre-aggregated units sold and revenue per product per calendar day so top-products ranking can be served for any date range without scanning raw order data.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "metric_date",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "product_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "identifies the product whose sales are summarised for this day"
+          },
+          {
+            "name": "product_title",
+            "role": "text",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "units_sold",
+            "role": "count",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "revenue_total",
+            "role": "money",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "refreshed_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per product per calendar day, deduplicated by the combination of metric date and product external id",
+        "statusField": null,
+        "queryPatterns": [
+          "all rows where metric date falls within a requested date range, grouped by product and summed, ordered by revenue descending, limited to top-N",
+          "rows for a specific product external id and metric date during upsert"
+        ]
+      },
+      {
+        "name": "customer_order_summary",
+        "purpose": "Stores the lifetime order count and first order date per customer so repeat customer rate can be computed for any date range by identifying customers with prior purchase history.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "customer_external_id",
+            "role": "reference",
+            "nullable": true,
+            "purpose": "identifies the customer; nullable to capture orders placed without an account"
+          },
+          {
+            "name": "customer_email",
+            "role": "text",
+            "nullable": true,
+            "purpose": "used as the fallback identity key when no customer account identifier is present"
+          },
+          {
+            "name": "lifetime_order_count",
+            "role": "count",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "first_order_date",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "last_order_date",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "refreshed_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per unique customer, deduplicated by customer external id when present and by customer email otherwise",
+        "statusField": null,
+        "queryPatterns": [
+          "all rows where last order date falls within a requested date range, to count unique customers active in the period",
+          "subset of above where first order date is before the period start, to count repeat customers",
+          "single row looked up by customer external id or customer email during upsert"
+        ]
+      },
+      {
+        "name": "snapshot_run_log",
+        "purpose": "Tracks each scheduled snapshot rebuild attempt and its outcome so the merchant or operator can diagnose gaps in metric freshness.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "started_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "completed_at",
+            "role": "timestamp",
+            "nullable": true,
+            "purpose": null
+          },
+          {
+            "name": "status",
+            "role": "status",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "orders_processed",
+            "role": "count",
+            "nullable": true,
+            "purpose": null
+          },
+          {
+            "name": "failure_reason",
+            "role": "text",
+            "nullable": true,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per scheduled job execution, keyed by started at timestamp",
+        "statusField": null,
+        "queryPatterns": [
+          "most recent row to check when the last successful rebuild occurred",
+          "rows filtered by status to surface failed runs"
+        ]
+      },
+      {
+        "name": "dashboard_settings",
+        "purpose": "Stores the merchant's dashboard display preferences, including default date range and top-products limit.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "default_date_range_days",
+            "role": "count",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "top_products_limit",
+            "role": "count",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "updated_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "single row representing the only configuration record for this merchant",
+        "statusField": null,
+        "queryPatterns": [
+          "full row read on every dashboard and settings page load"
+        ]
+      }
+    ],
+    "stateMachine": null,
+    "externalContracts": [
+      {
+        "surface": "admin",
+        "path": "/admin/dashboard",
+        "method": "GET",
+        "purpose": "Return pre-aggregated revenue, AOV, top products, and repeat customer rate for the requested date range.",
+        "requestShape": {
+          "date_range_start": "timestamp",
+          "date_range_end": "timestamp",
+          "top_products_limit": "count"
+        },
+        "responseShape": {
+          "total_revenue": "money",
+          "average_order_value": "money",
+          "order_count": "count",
+          "top_products": "list",
+          "repeat_customer_rate": "count",
+          "unique_customer_count": "count",
+          "repeat_customer_count": "count"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/settings",
+        "method": "GET",
+        "purpose": "Return the merchant's saved dashboard configuration, including the default date range.",
+        "requestShape": {},
+        "responseShape": {
+          "default_date_range_days": "count",
+          "top_products_limit": "count"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/settings",
+        "method": "POST",
+        "purpose": "Save the merchant's dashboard configuration preferences.",
+        "requestShape": {
+          "default_date_range_days": "count",
+          "top_products_limit": "count"
+        },
+        "responseShape": {
+          "success": "flag"
+        }
+      }
+    ],
+    "edgeCases": [
+      "An order has no customer identifier and no email address \u2014 the order's revenue is still counted in daily order metrics and product metrics, but the order is excluded entirely from customer order summary to avoid polluting repeat-customer calculations with ungroupable anonymous records.",
+      "A zero-revenue order (fully discounted or free) is included in order count and AOV calculations with a revenue value of zero \u2014 dividing total revenue by order count must guard against a zero-order denominator on days with no orders.",
+      "The scheduled snapshot job fails mid-run after partially upserting some days \u2014 on the next run the job must reprocess all days rather than resuming from the failure point, so no day is left with a stale partial value.",
+      "The merchant requests a date range for which no snapshot rows exist yet because the first job has not run \u2014 the dashboard must return zeroed metrics with a clear data-freshness indicator rather than an error.",
+      "A product is deleted from the store after its metrics were snapshotted \u2014 the product title stored in the daily product metrics row is used as the display label, so deletion does not break historical top-products ranking.",
+      "Two concurrent snapshot job executions are triggered \u2014 the second run must detect an in-progress run log entry and exit without processing, ensuring exactly one rebuild runs at a time."
+    ]
+  },
+  "product_prompt": "Merchant request: Merchant sees a clean admin dashboard with revenue, AOV, top products, and repeat customer rate updated on page load.\n\nProduct-agent intent:\n{\n  \"triggerTypes\": [\n    \"admin\"\n  ],\n  \"resources\": [\n    \"Order\",\n    \"Product\"\n  ],\n  \"desiredOutcome\": \"Merchant sees a clean admin dashboard with revenue, AOV, top products, and repeat customer rate updated on page load.\",\n  \"cronHint\": null,\n  \"appCategory\": \"backend_admin\",\n  \"qualityBrief\": \"A good version calculates metrics accurately from order history (filtering by date range), displays charts that are readable at a glance, and loads quickly even with thousands of orders. Pay attention to repeat customers \\u2014 this requires matching customers across multiple orders, not just counting unique email addresses in one period. Handle edge cases like orders with no customer email and zero-revenue orders gracefully.\"\n}",
+  "hld_v_findings": [
+    {
+      "severity": "important",
+      "location": "externalContracts[0] (GET /admin/dashboard)",
+      "issue": "X2: The responseShape for GET /admin/dashboard declares `\"top_products\": \"list\"` but the route exposes no `limit`, `cursor`, or `page` parameter in its requestShape \u2014 only `date_range_start` and `date_range_end`. The top-products list length is controlled by the merchant's saved setting (default top_products_limit) but there is no way for the caller to override it at request time, and no pagination cursor is present, making the list endpoint unusable if the merchant wants to explore beyond the stored default or if the default is large.",
+      "fix": "Add `top_products_limit` (kind: count) to the requestShape of GET /admin/dashboard as an optional override, or add a cursor/page parameter and document the maximum page size, so the list surface is fully navigable."
+    },
+    {
+      "severity": "important",
+      "location": "capabilities[4] (record-snapshot-run-outcome) / persistence[3] (snapshot_run_log)",
+      "issue": "C3: The capability `record-snapshot-run-outcome` is described as recording whether the job completed or failed, meaning the capability itself assigns the outcome value \u2014 yet `\"dataNeeds\": [\"run identifier\", \"outcome\", \"orders processed count\", \"failure reason\"]` lists `outcome` as a dataNeed. Because the snapshot job is the only actor that calls this capability and it supplies the outcome value directly (success or failure), `outcome` is a caller-supplied field and is correctly present; however `run identifier` is a server-side identifier generated when the run row is first inserted (per `snapshot_run_log.id` keyed by `started_at`). The LLD has no signal about whether the capability creates a new row (INSERT) or closes an existing in-progress row (UPDATE) \u2014 these are two distinct write paths and bundling both into one capability conflates an initial-state insert with a terminal-state update, hiding the in-progress \u2192 completed/failed transition that the concurrent-run edge case depends on.",
+      "fix": "Split into two capabilities: `open-snapshot-run` (INSERT a row with status=in_progress, dataNeeds: started_at) and `close-snapshot-run` (UPDATE the row to completed or failed, dataNeeds: run identifier, outcome, orders processed count, failure reason) so the LLD can generate the correct INSERT vs UPDATE paths and the concurrency guard has a clear in-progress row to detect."
+    },
+    {
+      "severity": "important",
+      "location": "dataFlow",
+      "issue": "D1: The dataFlow narrative describes the scheduled job bulk-fetching orders and upserting snapshot rows, then describes the dashboard read path, but never mentions what happens after `record-snapshot-run-outcome` writes a failure \u2014 there is no description of alerting, retry scheduling, or even that the merchant can observe the failure through the dashboard. The edgeCase covering mid-run failure says 'the next run reprocesses all days' but the dataFlow gives the LLD no signal about how failure surfaces to the operator, leaving the failure-path requirements entirely implicit.",
+      "fix": "Extend the dataFlow narrative with a sentence describing what happens on job failure: e.g. the snapshot_run_log row is written with status=failed and failure_reason, and the admin dashboard's data-freshness indicator reads the most recent snapshot_run_log row to surface staleness \u2014 giving the LLD a concrete end-to-end path for the failure branch."
+    },
+    {
+      "severity": "minor",
+      "location": "capabilities[5] (compute-dashboard-metrics)",
+      "issue": "C5: The capability `compute-dashboard-metrics` has `\"returnsList\": false` but its description states it produces `\"top products ranked by revenue\"` \u2014 a ranked list of products that the merchant browses. Top-products is a list result that the LLD would need to paginate or limit, yet returnsList=false signals to the LLD that no list-handling helper contract is needed, which conflicts with the top_products list in the GET /admin/dashboard responseShape.",
+      "fix": "Set `returnsList: true` on `compute-dashboard-metrics` so the LLD applies the correct list-handling and limiting logic for the top-products output."
+    }
+  ]
+}

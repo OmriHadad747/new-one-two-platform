@@ -1,0 +1,258 @@
+MERCHANT REQUEST
+Shoppers can ask product questions on the storefront, merchants review and answer them in the admin, and answered Q&A becomes publicly visible on product pages.
+
+INTENT
+{
+  "triggerTypes": [
+    "widget",
+    "admin"
+  ],
+  "resources": [
+    "Product",
+    "Question",
+    "Answer"
+  ],
+  "desiredOutcome": "Shoppers can ask product questions on the storefront, merchants review and answer them in the admin, and answered Q&A becomes publicly visible on product pages.",
+  "cronHint": null,
+  "appCategory": "storefront_backend_admin",
+  "qualityBrief": "A good version handles question storage, admin review workflow, and display without overwhelming the product page. Edge cases: long questions or answers should wrap cleanly, duplicate questions should not be prevented (let the merchant decide), and unpublished questions must never leak to the storefront. The admin list should be sortable by date or product and searchable so merchants can find questions quickly. Avoid email notifications unless explicitly requested \u2014 keep scope tight."
+}
+
+HLD PLAN
+{
+  "schema_version": "1",
+  "archetype": "backend+admin+storefront",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "A shopper submits a question for a product from the storefront widget; the question is stored with a pending status and is not visible publicly. The merchant opens the admin questions list, locates the question by filtering or searching, and submits an answer along with a decision to publish or reject. When the question is marked published it becomes visible on the product page; rejected questions remain stored but invisible. The storefront widget fetches only published questions for the current product on page load and renders them without requiring any shopper action.",
+  "triggers": [],
+  "capabilities": [
+    {
+      "id": "submit-question",
+      "description": "Store a new shopper question for a product with pending status so it enters the merchant review queue.",
+      "kind": "write",
+      "dataNeeds": [
+        "product external id",
+        "shopper display name",
+        "question text"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "list-questions-admin",
+      "description": "Return a paginated, filterable, searchable list of questions for the merchant admin panel.",
+      "kind": "read",
+      "dataNeeds": [
+        "status filter",
+        "product external id filter",
+        "search text",
+        "sort preference",
+        "page cursor"
+      ],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "record-answer",
+      "description": "Persist the merchant's answer text against a question and transition the question to answered status.",
+      "kind": "write",
+      "dataNeeds": [
+        "question id",
+        "answer text"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "update-question-status",
+      "description": "Transition a question to a merchant-chosen status \u2014 published, unpublished, or rejected \u2014 enforcing that only answered questions may be published.",
+      "kind": "write",
+      "dataNeeds": [
+        "question id",
+        "target status"
+      ],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "list-published-questions",
+      "description": "Return all published questions and answers for a product so the storefront widget can render the public Q&A section.",
+      "kind": "read",
+      "dataNeeds": [
+        "product external id"
+      ],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    }
+  ],
+  "persistence": [
+    {
+      "name": "product_questions",
+      "purpose": "Stores every shopper-submitted question, its merchant answer, and the current review and visibility status.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "identifies the product this question belongs to"
+        },
+        {
+          "name": "shopper_display_name",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "question_text",
+          "role": "text",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "answer_text",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "status",
+          "role": "status",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "answered_at",
+          "role": "timestamp",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "published_at",
+          "role": "timestamp",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedBy": "one row per shopper-submitted question, keyed by its internal identifier",
+      "statusField": null,
+      "queryPatterns": [
+        "all questions for a given product where status is published, ordered by creation time, for storefront display",
+        "all questions filtered by status and optionally by product, ordered by creation time or product, supporting cursor pagination and full-text search on question and answer text, for admin list",
+        "single question looked up by id when recording an answer or updating status"
+      ]
+    }
+  ],
+  "stateMachine": null,
+  "externalContracts": [
+    {
+      "surface": "widget",
+      "path": "/widget/questions",
+      "method": "GET",
+      "purpose": "Return all published questions and answers for a given product so the storefront can render the Q&A section on page load.",
+      "requestShape": {
+        "product_external_id": "identifier"
+      },
+      "responseShape": {
+        "questions": "list"
+      }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/questions/submit",
+      "method": "POST",
+      "purpose": "Accept a new question from a shopper for a specific product and store it as pending.",
+      "requestShape": {
+        "product_external_id": "identifier",
+        "shopper_display_name": "text",
+        "question_text": "text"
+      },
+      "responseShape": {
+        "question_id": "identifier",
+        "status": "status"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions",
+      "method": "GET",
+      "purpose": "Return a paginated, filterable, and searchable list of questions so the merchant can review and manage them.",
+      "requestShape": {
+        "status_filter": "status",
+        "product_external_id": "identifier",
+        "search_text": "text",
+        "sort_by": "text",
+        "cursor": "text"
+      },
+      "responseShape": {
+        "questions": "list",
+        "next_cursor": "text",
+        "total_count": "count"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions/answer",
+      "method": "POST",
+      "purpose": "Accept the merchant's answer text for a question and transition the question to answered status.",
+      "requestShape": {
+        "question_id": "identifier",
+        "answer_text": "text"
+      },
+      "responseShape": {
+        "question_id": "identifier",
+        "status": "status"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions/status",
+      "method": "PUT",
+      "purpose": "Update the visibility status of a question so the merchant can publish, unpublish, or reject it.",
+      "requestShape": {
+        "question_id": "identifier",
+        "target_status": "status"
+      },
+      "responseShape": {
+        "question_id": "identifier",
+        "status": "status"
+      }
+    }
+  ],
+  "edgeCases": [
+    "A merchant attempts to publish a question that has no answer text \u2014 the status transition must be rejected and the question must remain in its current status.",
+    "A shopper submits a question with no display name \u2014 the question is stored with a null display name and the storefront renders a generic attribution label rather than failing.",
+    "The storefront requests published questions for a product that has none \u2014 the response returns an empty list and the widget renders a prompt to be the first to ask.",
+    "A merchant publishes a question and then edits or retracts the answer \u2014 the question must be returned to answered status and removed from public display until republished.",
+    "Two admin users concurrently update the status of the same question \u2014 the last write wins, and both users receive the current status in their response so their UI reflects the actual state.",
+    "A shopper submits a question for a product that the merchant has since removed from the catalogue \u2014 the question is stored normally against the product external id; the merchant can reject it during review."
+  ]
+}

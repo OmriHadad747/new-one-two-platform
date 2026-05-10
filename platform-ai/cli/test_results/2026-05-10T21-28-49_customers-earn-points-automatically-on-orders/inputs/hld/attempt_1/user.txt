@@ -1,0 +1,21 @@
+Merchant request: Customers earn points automatically on orders and receive automatic discounts at checkout when points reach a configurable threshold.
+
+Product-agent intent (use as context — pick the archetype, capabilities,
+and contracts from the merchant's actual needs):
+{
+  "triggerTypes": [
+    "webhook",
+    "cron",
+    "admin"
+  ],
+  "resources": [
+    "Order",
+    "Customer"
+  ],
+  "desiredOutcome": "Customers earn points automatically on orders and receive automatic discounts at checkout when points reach a configurable threshold.",
+  "cronHint": null,
+  "appCategory": "storefront_backend_admin",
+  "qualityBrief": "A good version handles the order webhook to award points accurately, stores balances durably per customer, and applies discounts correctly at checkout without double-applying or losing points. Edge cases: guests at checkout (no points), simultaneous orders affecting balance, ensuring discount math is clear. Admin UX should make threshold and earning rate obvious and easy to change. Avoid complexity \u2014 keep it one earning rule and one redemption rule."
+}
+
+Produce the HLD plan as JSON conforming to the appended schema.

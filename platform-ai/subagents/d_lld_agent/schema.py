@@ -778,6 +778,24 @@ class PlatformGap(_StrictModel):
 class UxExpectations(_StrictModel):
     storefront: Optional[str] = None
     admin: Optional[str] = None
+    widgetShapes: List[str] = Field(default_factory=list)
+
+    @field_validator("widgetShapes")
+    @classmethod
+    def _check_widget_shapes(cls, v: List[str]) -> List[str]:
+        """Reject any shape name not present in the storefront agent's
+        registry. The registry is the single source of truth — adding a
+        new shape there makes it valid here automatically."""
+        from subagents.e_storefront_agent.widget_shapes import is_known_shape
+
+        bad = [name for name in v if not is_known_shape(name)]
+        if bad:
+            raise ValueError(
+                f"unknown widgetShapes: {sorted(set(bad))}. "
+                "Allowed values come from "
+                "subagents.e_storefront_agent.widget_shapes.WIDGET_SHAPES."
+            )
+        return v
 
 
 # ── 6. widgetTargetTemplates ─────────────────────────────────────────────────

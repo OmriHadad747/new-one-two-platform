@@ -28,6 +28,7 @@ from typing import Any, Dict, List
 from llm_validations.widget_artifact import validate_widget_artifact
 from subagents.base import CodegenContext, Generator
 from subagents.e_storefront_agent.prompt import STOREFRONT_BASE
+from subagents.e_storefront_agent.widget_shapes import examples_for_widget
 
 
 class StorefrontGenerator(Generator):
@@ -49,17 +50,26 @@ class StorefrontGenerator(Generator):
         catalog_block = _format_catalog(catalog)
         prior_block = _format_prior_storefront(ctx.prior_storefront_code)
         ajax_block = load_ajax_summary()
+        examples_block = _format_examples(ctx.lld, ctx.intent)
 
+        # Message ordered by cache stability (most stable first), so a
+        # future cache_control breakpoint between sections lets retries
+        # of the same widget reuse the prefix:
+        #   1. ajax_block       — universal Shopify Ajax catalog
+        #   2. examples_block   — shape-matched examples (stable per app)
+        #   3. catalog + LLD    — per-app
+        #   4. tail             — volatile request line
         return (
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
+            f"{ajax_block}\n"
+            f"{examples_block}"
             f"{quality_brief}"
             f"{ux_expectations}"
             "Platform API catalog — the ONLY paths the widget may call via host.call().\n"
             "Use EXACTLY the requestShape shown when building the host.call() body.\n"
             "Expect EXACTLY the responseShape shown when reading the result.\n"
             f"{catalog_block}\n\n"
-            f"{ajax_block}\n"
             f"{ux_implications}"
             f"{prior_block}"
             "Generate the widget ES module. Output ONLY raw JavaScript."
@@ -128,6 +138,27 @@ def _widget_catalog_from_lld(lld: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 # ── Prompt-section builders ──────────────────────────────────────────────────
+
+
+def _format_examples(lld: Dict[str, Any], intent: Dict[str, Any]) -> str:
+    """Append shape-matched worked examples picked by the widget_shapes
+    dispatcher. Empty string when no shape matches (e.g. legacy LLDs
+    with no widgetShapes and no recognisable route shape)."""
+    bodies = examples_for_widget(lld or {}, intent or {})
+    if not bodies:
+        return ""
+    sep = "━" * 60
+    parts = [
+        "",
+        sep,
+        "WORKED EXAMPLES — shape-matched by widget_shapes dispatcher",
+        sep,
+        "",
+    ]
+    for body in bodies:
+        parts.append(body.rstrip())
+        parts.append("")
+    return "\n".join(parts) + "\n"
 
 
 def _format_quality_brief(intent: Dict[str, Any]) -> str:

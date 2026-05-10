@@ -1,0 +1,21 @@
+Merchant request: Shoppers can ask product questions on the storefront, merchants review and answer them in the admin, and answered Q&A becomes publicly visible on product pages.
+
+Product-agent intent (use as context — pick the archetype, capabilities,
+and contracts from the merchant's actual needs):
+{
+  "triggerTypes": [
+    "widget",
+    "admin"
+  ],
+  "resources": [
+    "Product",
+    "Question",
+    "Answer"
+  ],
+  "desiredOutcome": "Shoppers can ask product questions on the storefront, merchants review and answer them in the admin, and answered Q&A becomes publicly visible on product pages.",
+  "cronHint": null,
+  "appCategory": "storefront_backend_admin",
+  "qualityBrief": "A good version handles question storage, admin review workflow, and display without overwhelming the product page. Edge cases: long questions or answers should wrap cleanly, duplicate questions should not be prevented (let the merchant decide), and unpublished questions must never leak to the storefront. The admin list should be sortable by date or product and searchable so merchants can find questions quickly. Avoid email notifications unless explicitly requested \u2014 keep scope tight."
+}
+
+Produce the HLD plan as JSON conforming to the appended schema.
