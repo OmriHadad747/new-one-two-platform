@@ -1,0 +1,8 @@
+```json
+{
+  "schema_version": "1",
+  "capabilities": [],
+  "webhooks": [],
+  "unsatisfied": []
+}
+```

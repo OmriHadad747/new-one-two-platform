@@ -110,8 +110,8 @@ For each route:
   - purpose      : one sentence in business terms.
   - requestShape : keys + semantic kinds, e.g. {"email": "text",
                    "quantity": "count"}. Allowed kinds: identifier |
-                   reference | timestamp | money | status | flag |
-                   text | count | list | object. NO TS types.
+                   reference | timestamp | money | ratio | status |
+                   flag | text | count | list | object. NO TS types.
   - responseShape: same form. Use `list` for collections of records,
                    `object` for a single structured record.
 
@@ -119,6 +119,16 @@ WIDGET GET/POST PAIRING. For every widget POST that creates a \
 customer-scoped record (a signup, a vote, a subscription), declare a \
 matching widget GET so the widget can check current state on page load \
 and render the correct initial UI without requiring a form submission.
+
+LIST GETS ARE PAGINATED. Every GET externalContract whose responseShape \
+declares a `list` value MUST also expose a pagination cursor in its \
+requestShape — `cursor` (text) is the canonical key. Pair it with a \
+`next_cursor` (text) and a `total_count` (count) in responseShape so the \
+caller can advance through pages and render counts. This applies to \
+widget GETs too: even when "the list is naturally small" it must be \
+paginable, because nothing else in the stack prevents unbounded growth. \
+A list endpoint without a cursor is rejected at schema validation; the \
+worked example below shows the canonical shape.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -135,7 +145,11 @@ For each table, declare:
   - columns      : list of { name, role, nullable, purpose }.
                    `role` is semantic only:
                      identifier | reference | timestamp | money |
-                     status | flag | text | count.
+                     ratio | status | flag | text | count.
+                   Use `ratio` for fractional values bounded between 0
+                   and 1 (a rate, a percentage stored as a fraction, a
+                   conversion proportion). `money` is for currency
+                   amounts only; `count` is for whole-number integers.
                    `purpose` is required for `reference` columns;
                    optional otherwise.
                    Do NOT specify SQL types, constraints, defaults,
@@ -545,5 +559,5 @@ def build_system_prompt() -> str:
     appended. The Pydantic model is the single source of truth — bumping
     `HLDPlan` automatically updates what the agent sees.
     """
-    schema_json = json.dumps(HLDPlan.model_json_schema(), indent=2)
+    schema_json = json.dumps(HLDPlan.model_json_schema())
     return SYSTEM_PROMPT_TEMPLATE.replace("__SCHEMA_JSON__", schema_json)

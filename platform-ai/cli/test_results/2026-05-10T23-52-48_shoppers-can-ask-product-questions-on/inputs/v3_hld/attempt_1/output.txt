@@ -1,0 +1,140 @@
+{
+  "schema_version": "1",
+  "archetype": "backend+admin+storefront",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "A shopper submits a question for a product via the storefront widget; the question is stored with a pending status and the product name is denormalized at submission time for admin display. The merchant reviews pending questions in the admin panel, either submitting an answer — which marks the question as answered and makes it publicly visible — or dismissing it to remove it from the review queue permanently. The storefront widget loads only answered questions for the relevant product on page render, so pending and dismissed questions can never be surfaced to shoppers. The admin list is filterable by status and product, sortable by date or product, and searchable by question text.",
+  "triggers": [],
+  "externalContracts": [
+    {
+      "surface": "widget",
+      "path": "/widget/questions",
+      "method": "GET",
+      "purpose": "Return all publicly answered Q&A pairs for a given product so the widget can render them on page load.",
+      "requestShape": {"product_id": "reference"},
+      "responseShape": {"questions": "list"}
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/questions",
+      "method": "POST",
+      "purpose": "Accept a new question from a shopper for a specific product and store it for merchant review.",
+      "requestShape": {"product_id": "reference", "product_name": "text", "question_text": "text"},
+      "responseShape": {"question_id": "identifier", "status": "status"}
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions",
+      "method": "GET",
+      "purpose": "Return a paginated, filterable, sortable, and searchable list of questions for merchant review.",
+      "requestShape": {"status_filter": "status", "product_id": "reference", "search": "text", "sort_by": "text", "cursor": "text"},
+      "responseShape": {"questions": "list", "next_cursor": "text", "total_count": "count"}
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions/answer",
+      "method": "POST",
+      "purpose": "Record a merchant answer for a pending question and publish the Q&A pair to the storefront.",
+      "requestShape": {"question_id": "identifier", "answer_text": "text"},
+      "responseShape": {"question_id": "identifier", "status": "status"}
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions/dismiss",
+      "method": "POST",
+      "purpose": "Dismiss a question so it is removed from the pending review queue and never shown on the storefront.",
+      "requestShape": {"question_id": "identifier"},
+      "responseShape": {"question_id": "identifier", "status": "status"}
+    }
+  ],
+  "persistence": [
+    {
+      "name": "product_questions",
+      "purpose": "Stores every shopper question, its review status, and the merchant answer when one has been provided.",
+      "columns": [
+        {"name": "id", "role": "identifier", "nullable": false, "purpose": null},
+        {"name": "product_external_id", "role": "reference", "nullable": false, "purpose": "identifies the product this question belongs to"},
+        {"name": "product_name", "role": "text", "nullable": false, "purpose": "denormalized product title captured at submission time for admin display without requiring a live product lookup"},
+        {"name": "question_text", "role": "text", "nullable": false, "purpose": null},
+        {"name": "answer_text", "role": "text", "nullable": true, "purpose": null},
+        {"name": "status", "role": "status", "nullable": false, "purpose": null},
+        {"name": "answered_at", "role": "timestamp", "nullable": true, "purpose": null},
+        {"name": "created_at", "role": "timestamp", "nullable": false, "purpose": null}
+      ],
+      "keyedBy": "one row per shopper question submission; no deduplication enforced — the merchant decides how to handle similar questions",
+      "statusField": null,
+      "queryPatterns": [
+        "answered questions for a given product ordered by creation time, for storefront widget display",
+        "all questions filtered by status and optionally by product, searchable by question text, sortable by creation date or product name, with cursor pagination for admin list",
+        "single question looked up by id when recording an answer or dismissal"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "submit-question",
+      "description": "Store a new shopper question for a product with a pending status so it enters the merchant review queue.",
+      "kind": "write",
+      "dataNeeds": ["product external id", "product name", "question text"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "list-public-questions",
+      "description": "Fetch all answered questions and their answers for a given product for display in the storefront widget.",
+      "kind": "read",
+      "dataNeeds": ["product external id"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "list-admin-questions",
+      "description": "Fetch a paginated, filterable, sortable, and searchable list of questions for the merchant admin review panel.",
+      "kind": "read",
+      "dataNeeds": ["status filter", "product external id", "search text", "sort preference", "page cursor"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "answer-question",
+      "description": "Record a merchant-supplied answer against a pending question and transition it to answered so it becomes publicly visible.",
+      "kind": "write",
+      "dataNeeds": ["question id", "answer text"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "dismiss-question",
+      "description": "Transition a pending question to dismissed so it is permanently removed from the review queue and never surfaced on the storefront.",
+      "kind": "write",
+      "dataNeeds": ["question id"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    }
+  ],
+  "stateMachine": null,
+  "edgeCases": [
+    "The storefront questions endpoint must return only answered questions regardless of any query parameter manipulation — pending and dismissed questions must never appear in the public response.",
+    "A merchant attempts to answer a question that is already answered or dismissed — the operation must be rejected with a clear status conflict so the merchant is not silently overwriting existing data.",
+    "A product is removed from the store while it still has pending questions — the questions remain reviewable in the admin using the denormalized product name, and the merchant can still answer or dismiss them.",
+    "A shopper submits an extremely long question text — the system stores it without truncation and relies on the widget's display layer to wrap the content cleanly.",
+    "Answering a question fails partway through — the answer text and the status transition must succeed or fail together so a question is never left in a partially answered state.",
+    "The admin search query matches no questions — the system returns an empty list and a zero total count without error, so the merchant sees a clear empty state rather than a failure."
+  ]
+}

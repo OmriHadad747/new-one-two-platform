@@ -1,0 +1,206 @@
+Merchant request: Customers earn points automatically on orders and receive automatic discounts at checkout when points reach a configurable threshold.
+
+HLD plan (schema-agnostic, integration-agnostic — your domain spine):
+{"schema_version": "1", "archetype": "backend+admin+storefront", "feasibility": "feasible", "blockedReason": null, "complexity": "high", "dataFlow": "When an order is paid, the system checks whether points have already been awarded for that order; if not, it computes the points earned based on the configured earning rate, credits the customer's balance ledger, and appends a transaction record. When a customer loads the storefront widget, their current balance and redemption eligibility are returned so the widget can render correctly without a form submission. When an eligible customer requests to redeem, the system debits the required threshold of points from their balance, records the redemption, and creates a single-use discount code in Shopify that the customer can apply at checkout. The merchant adjusts the earning rate, redemption threshold, and discount value from the admin settings page, which are persisted and immediately used by all subsequent awards and redemptions.", "triggers": [{"kind": "external-event", "event": "an order is paid", "signalFields": ["order external id", "customer external id", "order subtotal"], "idempotency": "if a points transaction row already exists for the order external id, treat the event as a no-op and make no balance or ledger changes"}], "capabilities": [{"id": "read-program-settings", "description": "Fetch the current earning rate, redemption threshold, and discount value so they can be used in award and redemption calculations.", "kind": "read", "dataNeeds": [], "integration": null, "returnsList": false, "touchesMoney": true, "usesConfig": true, "usesWorkflow": false}, {"id": "update-program-settings", "description": "Persist the merchant's updated earning rate, redemption threshold, and discount value.", "kind": "write", "dataNeeds": ["earning rate", "redemption threshold", "discount value"], "integration": null, "returnsList": false, "touchesMoney": true, "usesConfig": true, "usesWorkflow": false}, {"id": "compute-points-earned", "description": "Calculate the whole number of points a customer earns for a given order subtotal using the configured earning rate.", "kind": "compute", "dataNeeds": ["order subtotal", "earning rate"], "integration": null, "returnsList": false, "touchesMoney": true, "usesConfig": true, "usesWorkflow": false}, {"id": "credit-customer-balance", "description": "Upsert the customer's point balance row and append an earning transaction to the ledger for a paid order.", "kind": "write", "dataNeeds": ["customer external id", "order external id", "points to credit"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false}, {"id": "get-customer-balance", "description": "Fetch a customer's current point balance and assess whether they meet the redemption threshold.", "kind": "read", "dataNeeds": ["customer external id", "redemption threshold"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": true, "usesWorkflow": false}, {"id": "list-customer-balances", "description": "Return a paginated list of all customer point balances for the merchant admin dashboard.", "kind": "read", "dataNeeds": ["page cursor"], "integration": null, "returnsList": true, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false}, {"id": "initiate-redemption", "description": "Debit the redemption threshold of points from the customer's balance and insert a pending redemption record.", "kind": "write", "dataNeeds": ["customer external id", "redemption threshold", "discount value"], "integration": null, "returnsList": false, "touchesMoney": true, "usesConfig": true, "usesWorkflow": false}, {"id": "record-points-transaction", "description": "Write one immutable row to the points ledger recording a debit or compensating credit tied to a redemption, so every balance change has an auditable proof record.", "kind": "write", "dataNeeds": ["customer external id", "points delta", "transaction type", "balance after", "source redemption id"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false}, {"id": "create-discount-code", "description": "Create a single-use discount code in Shopify for the redeeming customer and return its code string.", "kind": "write", "dataNeeds": ["customer external id", "discount value"], "integration": "shopify-admin", "returnsList": false, "touchesMoney": true, "usesConfig": false, "usesWorkflow": false}, {"id": "record-redemption-outcome", "description": "Mark a redemption record as completed with the issued discount code external id, or failed with a reason, so the ledger remains consistent.", "kind": "write", "dataNeeds": ["redemption id", "outcome", "discount code external id", "failure reason"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": true}], "persistence": [{"name": "program_settings", "purpose": "Stores the single merchant-configured rule set governing how points are earned and redeemed.", "columns": [{"name": "id", "role": "identifier", "nullable": false, "purpose": null}, {"name": "earning_rate", "role": "ratio", "nullable": false, "purpose": "fraction of order subtotal awarded as points, e.g. 0.01 means 1 point per dollar"}, {"name": "redemption_threshold", "role": "count", "nullable": false, "purpose": "minimum point balance required before a customer may redeem"}, {"name": "discount_value", "role": "money", "nullable": false, "purpose": "fixed monetary discount issued when a customer redeems"}, {"name": "updated_at", "role": "timestamp", "nullable": false, "purpose": null}], "keyedBy": "single row representing the only configuration record for this merchant", "statusField": null, "queryPatterns": ["single-row fetch on every award and redemption operation"]}, {"name": "customer_point_balances", "purpose": "Maintains the running point balance and lifetime totals for every customer who has earned points.", "columns": [{"name": "id", "role": "identifier", "nullable": false, "purpose": null}, {"name": "customer_external_id", "role": "reference", "nullable": false, "purpose": "identifies the customer whose balance this row represents"}, {"name": "current_balance", "role": "count", "nullable": false, "purpose": null}, {"name": "lifetime_earned", "role": "count", "nullable": false, "purpose": null}, {"name": "lifetime_redeemed", "role": "count", "nullable": false, "purpose": null}, {"name": "updated_at", "role": "timestamp", "nullable": false, "purpose": null}], "keyedBy": "one row per customer, deduplicated by customer external id", "statusField": null, "queryPatterns": ["single row looked up by customer external id on award and redemption", "all rows ordered by current balance descending for admin list, supporting cursor pagination"]}, {"name": "point_transactions", "purpose": "Immutable ledger recording every points credit and debit with its source, enabling idempotency checks and audit history.", "columns": [{"name": "id", "role": "identifier", "nullable": false, "purpose": null}, {"name": "customer_external_id", "role": "reference", "nullable": false, "purpose": "identifies the customer whose balance was affected"}, {"name": "order_external_id", "role": "reference", "nullable": true, "purpose": "identifies the paid order that triggered an earning transaction; null for redemption debits"}, {"name": "transaction_type", "role": "status", "nullable": false, "purpose": "earned or redeemed"}, {"name": "points_delta", "role": "count", "nullable": false, "purpose": null}, {"name": "balance_after", "role": "count", "nullable": false, "purpose": null}, {"name": "created_at", "role": "timestamp", "nullable": false, "purpose": null}], "keyedBy": "one row per discrete earning or redemption event; earning rows are deduplicated by order external id", "statusField": null, "queryPatterns": ["lookup by order external id to enforce idempotency on duplicate order-paid events", "all transactions for a given customer ordered by creation time"]}, {"name": "redemptions", "purpose": "Tracks every discount code issued to a customer and its current state so double-application and concurrent redemptions can be prevented.", "columns": [{"name": "id", "role": "identifier", "nullable": false, "purpose": null}, {"name": "customer_external_id", "role": "reference", "nullable": false, "purpose": "identifies the customer who requested the discount"}, {"name": "discount_code_external_id", "role": "reference", "nullable": true, "purpose": "identifies the discount code created in the external platform"}, {"name": "points_debited", "role": "count", "nullable": false, "purpose": null}, {"name": "discount_value", "role": "money", "nullable": false, "purpose": null}, {"name": "status", "role": "status", "nullable": false, "purpose": null}, {"name": "failure_reason", "role": "text", "nullable": true, "purpose": null}, {"name": "created_at", "role": "timestamp", "nullable": false, "purpose": null}], "keyedBy": "one row per redemption attempt, each uniquely identified by its own id", "statusField": null, "queryPatterns": ["lookup of any pending or completed redemption for a customer to detect concurrent redemption attempts", "single row lookup by id when recording outcome"]}], "stateMachine": null, "externalContracts": [{"surface": "admin", "path": "/admin/settings", "method": "GET", "purpose": "Return the current points program configuration so the merchant can review earning rate, redemption threshold, and discount value.", "requestShape": {}, "responseShape": {"settings": "object"}}, {"surface": "admin", "path": "/admin/settings", "method": "POST", "purpose": "Save updated points program configuration including earning rate, redemption threshold, and discount value.", "requestShape": {"earning_rate": "ratio", "redemption_threshold": "count", "discount_value": "money"}, "responseShape": {"settings": "object"}}, {"surface": "admin", "path": "/admin/customer-balances", "method": "GET", "purpose": "Return a paginated list of all customer point balances for merchant visibility and auditing.", "requestShape": {"cursor": "text"}, "responseShape": {"balances": "list", "next_cursor": "text", "total_count": "count"}}, {"surface": "widget", "path": "/widget/points-balance", "method": "GET", "purpose": "Return the authenticated customer's current point balance and whether they are eligible to redeem a discount; customer identity is resolved from the authenticated storefront session token and an empty ineligible response is returned if identity cannot be resolved.", "requestShape": {}, "responseShape": {"current_balance": "count", "redemption_eligible": "flag", "redemption_threshold": "count", "discount_value": "money"}}, {"surface": "widget", "path": "/widget/redeem", "method": "POST", "purpose": "Debit the customer's points by the redemption threshold and issue a single-use discount code for use at checkout; customer identity is derived exclusively from the authenticated storefront session token and the request is rejected if identity cannot be resolved.", "requestShape": {}, "responseShape": {"discount_code": "text", "points_debited": "count", "remaining_balance": "count"}}], "edgeCases": ["Duplicate order-paid webhook for the same order \u2014 the system detects an existing earning transaction for that order external id and exits before any balance write or ledger append occurs.", "Two orders paid near-simultaneously for the same customer \u2014 balance updates must be applied with a row-level lock or optimistic concurrency so neither credit is lost and the final balance equals the sum of both awards.", "Customer attempts to redeem while their balance is exactly at threshold but a concurrent redemption request is already in progress \u2014 the second request must detect the pending redemption and be rejected before any balance debit occurs.", "Guest checkout with no customer identity \u2014 the event carries no customer external id, so no points are awarded and no error is raised; the gap is visible in the transaction ledger absence.", "Shopify rejects the discount code creation after the balance has already been debited \u2014 the redemption is marked failed, the debited points are restored to the customer's balance, and a compensating transaction is appended to the ledger.", "Merchant raises the redemption threshold after customers have already accumulated balances below the new threshold \u2014 existing balances are preserved unchanged and customers simply must earn additional points before their next redemption."]}
+
+Ops-picker output (Shopify GraphQL ops + webhook topics, with each op
+enriched with its signature, return-type SDL, input types, and real
+example queries from Shopify's docs — use these to write the actual
+GraphQL strings inside your shopify_query / shopify_mutation steps):
+{"schema_version": "1", "capabilities": [{"capability_id": "create-discount-code", "ops": [{"name": "customerByIdentifier", "surface": "admin", "note": "Resolve the customer's GID from the stored customer external id so the discount can be scoped to that customer as a usage restriction", "args": [{"name": "identifier", "required": true, "type": "CustomerIdentifierInput!"}], "examples": [], "inputTypesSdl": {"CustomerIdentifierInput": "input CustomerIdentifierInput {\n  id: ID\n  customId: UniqueMetafieldValueInput\n  emailAddress: String\n  phoneNumber: String\n}", "UniqueMetafieldValueInput": "input UniqueMetafieldValueInput {\n  namespace: String\n  key: String!\n  value: String!\n}"}, "isConnection": false, "kind": "query", "returnTypeName": "Customer", "returnTypeSdl": "type Customer implements CommentEventSubject & HasEvents & HasMetafieldDefinitions & HasMetafields & HasStoreCreditAccounts & LegacyInteroperability & Node {\n  addresses(first: Int): [MailingAddress!]!\n  addressesV2(first: Int, after: String, last: Int, before: String, reverse: Boolean): MailingAddressConnection!\n  amountSpent: MoneyV2!\n  canDelete: Boolean!\n  companyContactProfiles: [CompanyContact!]!\n  createdAt: DateTime!\n  dataSaleOptOut: Boolean!\n  defaultAddress: MailingAddress\n  defaultEmailAddress: CustomerEmailAddress\n  defaultPhoneNumber: CustomerPhoneNumber\n  displayName: String!\n  email: String\n  emailMarketingConsent: CustomerEmailMarketingConsentState\n  events(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: EventSortKeys, query: String): EventConnection!\n  firstName: String\n  hasTimelineComment: Boolean!\n  id: ID!\n  image: Image!\n  lastName: String\n  lastOrder: Order\n  legacyResourceId: UnsignedInt64!\n  lifetimeDuration: String!\n  locale: String!\n  market: Market\n  mergeable: CustomerMergeable!\n  metafield(namespace: String, key: String!): Metafield\n  metafieldDefinitions(namespace: String, pinnedStatus: MetafieldDefinitionPinnedStatus, first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: MetafieldDefinitionSortKeys, query: String): MetafieldDefinitionConnection!\n  metafields(namespace: String, keys: [String!], first: Int, after: String, last: Int, before: String, reverse: Boolean): MetafieldConnection!\n  multipassIdentifier: String\n  note: String\n  numberOfOrders: UnsignedInt64!\n  orders(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: OrderSortKeys, query: String): OrderConnection!\n  paymentMethods(showRevoked: Boolean, first: Int, after: String, last: Int, before: String, reverse: Boolean): CustomerPaymentMethodConnection!\n  phone: String\n  productSubscriberStatus: CustomerProductSubscriberStatus!\n  smsMarketingConsent: CustomerSmsMarketingConsentState\n  state: CustomerState!\n  statistics: CustomerStatistics!\n  storeCreditAccounts(first: Int, after: String, last: Int, before: String, query: String): StoreCreditAccountConnection!\n  subscriptionContracts(first: Int, after: String, last: Int, before: String, reverse: Boolean): SubscriptionContractConnection!\n  tags: [String!]!\n  taxExempt: Boolean!\n  taxExemptions: [TaxExemption!]!\n  unsubscribeUrl: URL!\n  updatedAt: DateTime!\n  validEmailAddress: Boolean!\n  verifiedEmail: Boolean!\n}", "userErrorsField": null}, {"name": "discountCodeBasicCreate", "surface": "admin", "note": "Create the single-use fixed-amount discount code in Shopify and return the resulting code string and discount node GID", "args": [{"name": "basicCodeDiscount", "required": true, "type": "DiscountCodeBasicInput!"}], "examples": [{"query": "mutation CreateSegmentDiscountCode($basicCodeDiscount: DiscountCodeBasicInput!) {\n  discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {\n    codeDiscountNode {\n      id\n      codeDiscount {\n        ... on DiscountCodeBasic {\n          title\n          codes(first: 10) {\n            nodes {\n              code\n            }\n          }\n          context {\n            ... on DiscountCustomerSegments {\n              segments {\n                id\n              }\n            }\n          }\n          customerGets {\n            value {\n              ... on DiscountAmount {\n                amount {\n                  amount\n                  currencyCode\n                }\n                appliesOnEachItem\n              }\n            }\n          }\n        }\n      }\n    }\n    userErrors {\n      field\n      message\n    }\n  }\n}", "response": {"discountCodeBasicCreate": {"codeDiscountNode": {"codeDiscount": {"codes": {"nodes": [{"code": "VIP20OFF"}]}, "context": {"segments": [{"id": "gid://shopify/Segment/210588551"}]}, "customerGets": {"value": {"amount": {"amount": "20.0", "currencyCode": "USD"}, "appliesOnEachItem": false}}, "title": "$20 off for VIP customers"}, "id": "gid://shopify/DiscountCodeNode/1057856653"}, "userErrors": []}}, "scenario_title": "Create a discount code with a customer segment", "variables": {"basicCodeDiscount": {"appliesOncePerCustomer": true, "code": "VIP20OFF", "context": {"customerSegments": {"add": ["gid://shopify/Segment/210588551"]}}, "customerGets": {"items": {"all": true}, "value": {"discountAmount": {"amount": "20.00", "appliesOnEachItem": false}}}, "endsAt": null, "startsAt": "2025-07-24T16:16:22-04:00", "title": "$20 off for VIP customers"}}}, {"query": "mutation CreateDiscountCode($basicCodeDiscount: DiscountCodeBasicInput!) {\n  discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {\n    codeDiscountNode {\n      id\n      codeDiscount {\n        ... on DiscountCodeBasic {\n          title\n          startsAt\n          endsAt\n          customerSelection {\n            ... on DiscountCustomers {\n              customers {\n                id\n              }\n            }\n          }\n          customerGets {\n            value {\n              ... on DiscountPercentage {\n                percentage\n              }\n            }\n          }\n        }\n      }\n    }\n    userErrors {\n      field\n      message\n    }\n  }\n}", "response": {"discountCodeBasicCreate": {"codeDiscountNode": {"codeDiscount": {"customerGets": {"value": {"percentage": 0.1}}, "customerSelection": {"customers": [{"id": "gid://shopify/Customer/624407574"}]}, "endsAt": "2025-12-31T23:59:59Z", "startsAt": "2025-01-01T00:00:00Z", "title": "10% off selected items"}, "id": "gid://shopify/DiscountCodeNode/1057856652"}, "userErrors": []}}, "scenario_title": "Create a percentage off discount code with a minimum purchase requirement", "variables": {"basicCodeDiscount": {"appliesOncePerCustomer": true, "code": "10FORYOU", "customerGets": {"items": {"all": true}, "value": {"percentage": 0.1}}, "customerSelection": {"customers": {"add": ["gid://shopify/Customer/624407574"]}}, "endsAt": "2025-12-31T23:59:59Z", "minimumRequirement": {"subtotal": {"greaterThanOrEqualToSubtotal": "50.0"}}, "startsAt": "2025-01-01T00:00:00Z", "title": "10% off selected items", "usageLimit": 100}}}, {"query": "mutation CreateSummerDiscount($input: DiscountCodeBasicInput!) {\n  discountCodeBasicCreate(basicCodeDiscount: $input) {\n    codeDiscountNode {\n      id\n      codeDiscount {\n        ... on DiscountCodeBasic {\n          title\n          codes(first: 10) {\n            nodes {\n              code\n            }\n          }\n          startsAt\n          endsAt\n        }\n      }\n    }\n    userErrors {\n      field\n      message\n    }\n  }\n}", "response": {"discountCodeBasicCreate": {"codeDiscountNode": {"codeDiscount": {"codes": {"nodes": [{"code": "BUYNOW20"}]}, "endsAt": "2024-09-21T00:00:00Z", "startsAt": "2024-06-21T00:00:00Z", "title": "Limited time discount off all items"}, "id": "gid://shopify/DiscountCodeNode/1057856654"}, "userErrors": []}}, "scenario_title": "Create an amount off discount code with an end date", "variables": {"input": {"appliesOncePerCustomer": true, "code": "BUYNOW20", "customerGets": {"items": {"all": true}, "value": {"discountAmount": {"amount": 20, "appliesOnEachItem": false}}}, "customerSelection": {"all": true}, "endsAt": "2024-09-21T00:00:00Z", "startsAt": "2024-06-21T00:00:00Z", "title": "Limited time discount off all items"}}}], "inputTypesSdl": {"DateTime": "scalar DateTime", "Decimal": "scalar Decimal", "DiscountAmountInput": "input DiscountAmountInput {\n  amount: Decimal\n  appliesOnEachItem: Boolean\n}", "DiscountBuyerSelection": "enum DiscountBuyerSelection {\n  ALL\n}", "DiscountCodeBasicInput": "input DiscountCodeBasicInput {\n  combinesWith: DiscountCombinesWithInput\n  title: String\n  startsAt: DateTime\n  endsAt: DateTime\n  appliesOncePerCustomer: Boolean\n  code: String\n  usageLimit: Int\n  context: DiscountContextInput\n  tags: [String!]\n  minimumRequirement: DiscountMinimumRequirementInput\n  customerGets: DiscountCustomerGetsInput\n  recurringCycleLimit: Int\n}", "DiscountCollectionsInput": "input DiscountCollectionsInput {\n  add: [ID!]\n  remove: [ID!]\n}", "DiscountCombinesWithInput": "input DiscountCombinesWithInput {\n  productDiscounts: Boolean\n  orderDiscounts: Boolean\n  shippingDiscounts: Boolean\n}", "DiscountContextInput": "input DiscountContextInput {\n  all: DiscountBuyerSelection\n  customers: DiscountCustomersInput\n  customerSegments: DiscountCustomerSegmentsInput\n}", "DiscountCustomerGetsInput": "input DiscountCustomerGetsInput {\n  value: DiscountCustomerGetsValueInput\n  items: DiscountItemsInput\n  appliesOnOneTimePurchase: Boolean\n  appliesOnSubscription: Boolean\n}", "DiscountCustomerGetsValueInput": "input DiscountCustomerGetsValueInput {\n  discountOnQuantity: DiscountOnQuantityInput\n  percentage: Float\n  discountAmount: DiscountAmountInput\n}", "DiscountCustomerSegmentsInput": "input DiscountCustomerSegmentsInput {\n  add: [ID!]\n  remove: [ID!]\n}", "DiscountCustomersInput": "input DiscountCustomersInput {\n  add: [ID!]\n  remove: [ID!]\n}", "DiscountEffectInput": "input DiscountEffectInput {\n  percentage: Float\n  amount: Decimal\n}", "DiscountItemsInput": "input DiscountItemsInput {\n  products: DiscountProductsInput\n  collections: DiscountCollectionsInput\n  all: Boolean\n}", "DiscountMinimumQuantityInput": "input DiscountMinimumQuantityInput {\n  greaterThanOrEqualToQuantity: UnsignedInt64\n}", "DiscountMinimumRequirementInput": "input DiscountMinimumRequirementInput {\n  quantity: DiscountMinimumQuantityInput\n  subtotal: DiscountMinimumSubtotalInput\n}", "DiscountMinimumSubtotalInput": "input DiscountMinimumSubtotalInput {\n  greaterThanOrEqualToSubtotal: Decimal\n}", "DiscountOnQuantityInput": "input DiscountOnQuantityInput {\n  quantity: UnsignedInt64\n  effect: DiscountEffectInput\n}", "DiscountProductsInput": "input DiscountProductsInput {\n  productsToAdd: [ID!]\n  productsToRemove: [ID!]\n  productVariantsToAdd: [ID!]\n  productVariantsToRemove: [ID!]\n}", "UnsignedInt64": "scalar UnsignedInt64"}, "isConnection": false, "kind": "mutation", "returnTypeName": "DiscountCodeBasicCreatePayload", "returnTypeSdl": "type DiscountCodeBasicCreatePayload {\n  codeDiscountNode: DiscountCodeNode\n  userErrors: [DiscountUserError!]!\n}", "userErrorsField": "userErrors"}]}], "webhooks": [{"trigger_event": "an order is paid", "topic": "orders/paid", "note": "Delivers order id, customer object, and subtotal fields needed to award points; idempotency check runs against the order external id carried in this payload", "description": "Occurs whenever an order is paid.", "payloadFields": [{"format": "uri", "name": "admin_graphql_api_id", "nullable": false, "type": "string"}, {"name": "app_id", "nullable": true, "type": "integer"}, {"name": "billing_address", "nullable": false, "type": "object"}, {"format": "ipv4", "name": "browser_ip", "nullable": true, "type": "string"}, {"name": "buyer_accepts_marketing", "nullable": false, "type": "boolean"}, {"name": "cancel_reason", "nullable": true, "type": "string"}, {"format": "date-time", "name": "cancelled_at", "nullable": true, "type": "string"}, {"name": "cart_token", "nullable": true, "type": "string"}, {"name": "checkout_token", "nullable": true, "type": "string"}, {"name": "client_details", "nullable": true, "type": "object"}, {"format": "date-time", "name": "closed_at", "nullable": true, "type": "string"}, {"name": "company", "nullable": true, "type": "object"}, {"name": "confirmation_number", "nullable": true, "type": "string"}, {"name": "confirmed", "nullable": false, "type": "boolean"}, {"format": "email", "name": "contact_email", "nullable": false, "type": "string"}, {"format": "date-time", "name": "created_at", "nullable": false, "type": "string"}, {"name": "currency", "nullable": false, "type": "string"}, {"name": "current_shipping_price_set", "nullable": false, "type": "object"}, {"name": "current_subtotal_price", "nullable": false, "type": "string"}, {"name": "current_subtotal_price_set", "nullable": false, "type": "object"}, {"name": "current_total_additional_fees_set", "nullable": true, "type": "object"}, {"name": "current_total_discounts", "nullable": false, "type": "string"}, {"name": "current_total_discounts_set", "nullable": false, "type": "object"}, {"name": "current_total_duties_set", "nullable": true, "type": "object"}, {"name": "current_total_price", "nullable": false, "type": "string"}, {"name": "current_total_price_set", "nullable": false, "type": "object"}, {"name": "current_total_tax", "nullable": false, "type": "string"}, {"name": "current_total_tax_set", "nullable": false, "type": "object"}, {"name": "customer", "nullable": false, "type": "object"}, {"name": "customer_locale", "nullable": true, "type": "string"}, {"name": "device_id", "nullable": true, "type": "string"}, {"items_type": "object", "name": "discount_applications", "nullable": false, "type": "array"}, {"items_type": "object", "name": "discount_codes", "nullable": false, "type": "array"}, {"name": "duties_included", "nullable": false, "type": "boolean"}, {"format": "email", "name": "email", "nullable": false, "type": "string"}, {"name": "estimated_taxes", "nullable": false, "type": "boolean"}, {"name": "financial_status", "nullable": false, "type": "string"}, {"name": "fulfillment_status", "nullable": true, "type": "string"}, {"items_type": "object", "name": "fulfillments", "nullable": false, "type": "array"}, {"name": "id", "nullable": false, "type": "integer"}, {"name": "landing_site", "nullable": true, "type": "string"}, {"format": "uri", "name": "landing_site_ref", "nullable": true, "type": "string"}, {"name": "line_item_groups", "nullable": false, "type": "array"}, {"items_type": "object", "name": "line_items", "nullable": false, "type": "array"}, {"name": "location_id", "nullable": true, "type": "integer"}, {"name": "merchant_business_entity_id", "nullable": false, "type": "string"}, {"name": "merchant_of_record_app_id", "nullable": true, "type": "integer"}, {"name": "name", "nullable": false, "type": "string"}, {"name": "note", "nullable": true, "type": "string"}, {"items_type": "object", "name": "note_attributes", "nullable": false, "type": "array"}, {"name": "number", "nullable": false, "type": "integer"}, {"name": "order_number", "nullable": false, "type": "integer"}, {"format": "uri", "name": "order_status_url", "nullable": false, "type": "string"}, {"name": "original_total_additional_fees_set", "nullable": true, "type": "object"}, {"name": "original_total_duties_set", "nullable": true, "type": "object"}, {"items_type": "string", "name": "payment_gateway_names", "nullable": false, "type": "array"}, {"name": "payment_terms", "nullable": true, "type": "string"}, {"name": "phone", "nullable": true, "type": "string"}, {"name": "po_number", "nullable": true, "type": "string"}, {"name": "presentment_currency", "nullable": false, "type": "string"}, {"format": "date-time", "name": "processed_at", "nullable": false, "type": "string"}, {"name": "reference", "nullable": true, "type": "string"}, {"name": "referring_site", "nullable": true, "type": "string"}, {"name": "refunds", "nullable": false, "type": "array"}, {"name": "returns", "nullable": false, "type": "array"}, {"name": "shipping_address", "nullable": false, "type": "object"}, {"items_type": "object", "name": "shipping_lines", "nullable": false, "type": "array"}, {"name": "source_identifier", "nullable": true, "type": "string"}, {"name": "source_name", "nullable": false, "type": "string"}, {"format": "uri", "name": "source_url", "nullable": true, "type": "string"}, {"name": "subtotal_price", "nullable": false, "type": "string"}, {"name": "subtotal_price_set", "nullable": false, "type": "object"}, {"name": "tags", "nullable": false, "type": "string"}, {"name": "tax_exempt", "nullable": false, "type": "boolean"}, {"items_type": "object", "name": "tax_lines", "nullable": false, "type": "array"}, {"name": "taxes_included", "nullable": false, "type": "boolean"}, {"name": "test", "nullable": false, "type": "boolean"}, {"name": "token", "nullable": false, "type": "string"}, {"name": "total_cash_rounding_payment_adjustment_set", "nullable": false, "type": "object"}, {"name": "total_cash_rounding_refund_adjustment_set", "nullable": false, "type": "object"}, {"name": "total_discounts", "nullable": false, "type": "string"}, {"name": "total_discounts_set", "nullable": false, "type": "object"}, {"name": "total_line_items_price", "nullable": false, "type": "string"}, {"name": "total_line_items_price_set", "nullable": false, "type": "object"}, {"name": "total_outstanding", "nullable": false, "type": "string"}, {"name": "total_price", "nullable": false, "type": "string"}, {"name": "total_price_set", "nullable": false, "type": "object"}, {"name": "total_shipping_price_set", "nullable": false, "type": "object"}, {"name": "total_tax", "nullable": false, "type": "string"}, {"name": "total_tax_set", "nullable": false, "type": "object"}, {"name": "total_tip_received", "nullable": false, "type": "string"}, {"name": "total_weight", "nullable": false, "type": "integer"}, {"format": "date-time", "name": "updated_at", "nullable": false, "type": "string"}, {"name": "user_id", "nullable": true, "type": "integer"}], "access_scopes": ["orders", "marketplace_orders"], "related_resource": "Order"}], "unsatisfied": []}
+
+Produce the LLD plan as JSON conforming to the appended schema.
+
+Pagination helper — use for every offset-paginated list route.
+
+When you set httpRoutes.*.paginationKind="offset" on a route, its recipe
+MUST follow this exact pattern:
+
+  - Request shape includes `page: "number"` and `page_size: "number"`.
+  - Response shape is exactly:
+      { items: "{...}[]", total: "number", page: "number", page_size: "number" }
+  - The recipe contains exactly ONE `sql_select` step whose template is
+    a plain SELECT with NO LIMIT, NO OFFSET, NO COUNT(*). Set its
+    `bindResultTo` (e.g. "rows").
+  - The recipe's `response` step body is:
+      { items: "$rows.items", total: "$rows.total",
+        page: "$rows.page", page_size: "$rows.page_size" }
+  - DO NOT emit a separate count query or an offset-math compute step —
+    the paginate() helper handles both at codegen time.
+
+The handler codegen translates the bare sql_select into:
+
+  import { paginate } from "../lib/paginate.js";
+  const rows = await paginate(sql, sql`<your SELECT here>`,
+                              { page: req.body.page, page_size: req.body.page_size });
+  res.json(rows);
+
+Caps page_size at 100 by default. For a higher cap on a specific route,
+add a comment in the sql_select.purpose like "max 1000" and the codegen
+will pass `{ maxPageSize: 1000 }` as the fourth arg.
+
+
+Money helper — use for every monetary value the recipe touches.
+
+Storage stays integer minor units in BIGINT columns. The
+helper converts between Shopify's decimal-string payloads and stored
+integers correctly for every currency Shopify supports — including
+zero-decimal (JPY, KRW) and three-decimal (BHD, JOD) where the legacy
+formula `Math.round(parseFloat(x) * 100)` is silently wrong.
+
+API surface (import { money } from "../lib/money.js"):
+
+  money.toMinorUnits(value, currency)   -> integer minor units
+  money.fromMinorUnits(amount, currency) -> decimal number (rare)
+  money.format(amount, currency)        -> plain decimal string
+  money.sum(amounts)                    -> integer (use instead of +)
+  money.percentage(amount, pct)         -> integer (tax, discount, fee)
+  money.currency(code)                  -> { code, decimalDigits }
+
+Recipe rules:
+
+  - Compute steps that derive money from a Shopify decimal string MUST
+    use `money.toMinorUnits(value, currency)`. Do NOT inline
+    `Math.round(parseFloat(x) * 100)` — it is wrong for zero-decimal
+    (JPY, KRW) and three-decimal (BHD, JOD) currencies.
+  - Compute steps that aggregate money MUST use `money.sum([a, b, c])`.
+    Never `+` raw integers in compute expressions when the meaning is
+    "total of these money amounts".
+  - Compute steps that take a percentage of money (tax, fee, discount)
+    MUST use `money.percentage(amount, pct)`. Never inline
+    `amount * pct / 100`.
+  - Currency code is always required — pass it from the same Shopify
+    payload that carried the amount (e.g. presentmentMoney.currencyCode
+    or shopMoney.currencyCode). Persist the currency code alongside
+    the amount in a TEXT column so future reads can format correctly.
+
+Example compute step expression:
+
+  expression: "money.toMinorUnits(payload.totalPriceSet.shopMoney.amount,
+                                  payload.totalPriceSet.shopMoney.currencyCode)"
+
+
+Config helper — use for every app-wide setting (rate, threshold, toggle,
+TTL, choice).
+
+Storage is the platform-owned `app_config` table (template-managed, one
+row per setting key, JSONB value). Per-tenant via search_path. Do NOT
+declare a config table in `database.tables` — the helper writes directly
+to `app_config` with no per-app DDL.
+
+API surface (import { config } from "../lib/config.js"):
+
+  config.get(key, default)    -> stored value, or default if missing/null
+  config.get(key)             -> value or undefined
+  config.set(key, value)      -> upsert (last-writer-wins)
+  config.getMany(keys)        -> { key: value } subset (missing keys absent)
+  config.getAll()             -> { key: value } map of every key
+  config.unset(key)           -> remove a key (rare)
+
+Recipe rules:
+
+  - Reads happen in `compute` steps:
+      expression: "await config.get('points_per_dollar', 1)"
+    The default literal MUST always be supplied — never assume a key
+    is set on first run.
+  - Writes happen in admin "save settings" routes via a `compute` step
+    per knob, or one batched compute step iterating req.body. The
+    typical pattern collapses the legacy 5-step admin save (read, merge,
+    upsert, validate, respond) to: validate → config.set → 200.
+  - Key conventions: lowercase snake_case, ≤63 chars, regex
+    `^[a-z][a-z0-9_]{0,62}$`. Group related keys by prefix —
+    `loyalty_*`, `notification_*`, `discount_*` — so an admin page can
+    list them coherently.
+  - Concurrent writes: last-writer-wins. The merchant overrides their
+    own setting — that's the right semantics. If a recipe needs
+    optimistic locking on a counter-style value, use a real DB column
+    instead of config.
+
+Example admin "save settings" recipe (3 steps total):
+
+  1. compute   purpose: "validate input"
+               expression: "(typeof req.body.points_per_dollar === 'number'
+                            && req.body.points_per_dollar >= 0)
+                            ? true
+                            : (() => { throw new Error('invalid rate') })()"
+  2. compute   purpose: "persist setting"
+               expression: "await config.set('points_per_dollar',
+                                              req.body.points_per_dollar)"
+  3. response  status: 200
+               body: { ok: "true" }
+
+
+Workflow lifecycle helper — use for every multi-state row lifecycle
+(pending → running → completed/failed, draft → submitted →
+approved/rejected, etc.).
+
+Storage: the workflow-bearing table you declare in `database.tables`
+must have a `status TEXT` column with the state set in `enum`. Standard
+optional columns (`started_at TIMESTAMPTZ`, `finished_at TIMESTAMPTZ`,
+`failure_reason TEXT`) are recommended; the helper writes them when
+present. The state set is yours — the helper has zero opinion about
+"pending" / "running" / etc.; those are conventions you can override.
+
+API surface (import { workflow } from "../lib/workflow.js"):
+
+  workflow.claim(table, id, { from, to?, statusColumn?, startedAtColumn?, extraWhere? })
+      Atomic single-statement UPDATE … WHERE status=$from RETURNING *.
+      Returns the row, or null if zero rows matched (already claimed,
+      wrong state, gated out by extraWhere). NEVER throws on race.
+
+  workflow.complete(table, id, { to?, finishedAtColumn? })
+      Marks the row terminal-success.
+
+  workflow.fail(table, id, reason, { to?, finishedAtColumn?, failureReasonColumn? })
+      Marks the row terminal-failure with reason (truncated to 4000).
+
+  workflow.attempt(table, id, claimOptions, async (row) => …, { complete?, fail? })
+      One-shot: claim → run callback → complete-or-fail. Re-throws
+      callback errors AFTER persisting failure_reason. Returns
+      { row, value } or null (if claim came back empty).
+
+  workflow.sweepStale(table, { ttlMinutes?, runningState?, timedOutState?, … })
+      Flips rows that have been 'running' too long back to a terminal
+      state. Single SQL statement, RETURNING the swept ids.
+
+Recipe rules (these REPLACE the hand-rolled sql_claim + try_catch +
+sql_update pattern for kind="workflow" stateMachines — that's why this
+contract is injected for usesWorkflow=true capabilities):
+
+  - Use `workflow.attempt(...)` inside a single `compute` step. The
+    callback's body holds the actual side effects (Shopify call, email
+    send, etc.). On callback throw, the helper persists failure_reason
+    (truncated) and re-throws — the cron-runner sees the error and
+    decides retry. NO sql_claim, try_catch, or sql_update for the
+    lifecycle is needed in the recipe.
+  - Custom state names are supported: `claim(t, id, { from: "approved",
+    to: "shipped" })`. The standard quartet is convention, not
+    constraint.
+  - Multi-step lifecycles call `claim` repeatedly with different
+    `from`/`to` pairs (claim pending→running, do work, claim
+    running→awaiting_input, …).
+  - `extraWhere` accepts a `sql\`...\`` predicate AND-ed into the WHERE
+    clause. Use for time-gated transitions (`scheduled_at <= now()`)
+    or relation gates.
+
+Stale sweeper — REQUIRED for every workflow-bearing table. Without it,
+rows that crash mid-execution stay in 'running' forever. The validator
+rejects workflow plans that omit it. Recipe shape:
+
+  triggeredBy: "cron:sweep_<table>"
+  cronSchedule: "*/10 * * * *"   (every 10 minutes)
+  steps:
+    - kind: compute
+      purpose: "sweep stale running rows"
+      expression: "await workflow.sweepStale('<table>')"
+
+Example workflow recipe (cron: process_run):
+
+  inputs: [{ name: "runId", source: "cron.payload", fieldPath: "run_id",
+            type: "string", nullable: false }]
+  steps:
+    - kind: compute
+      purpose: "claim, run, finalise"
+      expression: "await workflow.attempt('rule_runs', runId,
+                     { from: 'pending' },
+                     async (row) => { /* do work — see other steps' example */ })"

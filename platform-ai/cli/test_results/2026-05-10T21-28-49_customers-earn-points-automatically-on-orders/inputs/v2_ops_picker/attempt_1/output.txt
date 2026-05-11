@@ -1,0 +1,30 @@
+```json
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "create-discount-code",
+      "ops": [
+        {
+          "name": "customerByIdentifier",
+          "surface": "admin",
+          "note": "Resolve the customer's GID from the stored customer external id so the discount can be scoped to that customer as a usage restriction"
+        },
+        {
+          "name": "discountCodeBasicCreate",
+          "surface": "admin",
+          "note": "Create the single-use fixed-amount discount code in Shopify and return the resulting code string and discount node GID"
+        }
+      ]
+    }
+  ],
+  "webhooks": [
+    {
+      "trigger_event": "an order is paid",
+      "topic": "orders/paid",
+      "note": "Delivers order id, customer object, and subtotal fields needed to award points; idempotency check runs against the order external id carried in this payload"
+    }
+  ],
+  "unsatisfied": []
+}
+```

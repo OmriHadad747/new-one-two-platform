@@ -292,7 +292,17 @@ class HttpRoute(_StrictModel):
     purpose: str
     requestShape: dict[str, str] = Field(default_factory=dict)
     responseShape: dict[str, str] = Field(default_factory=dict)
-    paginationKind: Optional[Literal["offset", "cursor"]] = None
+    # "offset" / "cursor"  →  the route's primary purpose is to page through a
+    #                         large collection; LLD generates paginate() / cursor
+    #                         helpers and the validator enforces matching recipe
+    #                         shape.
+    # "inline"  →  the route returns a mixed response that happens to include a
+    #              bounded embedded list (top-N rankings, fixed-size collection
+    #              capped by config). The list is naturally bounded; no cursor
+    #              or offset machinery is needed. Use this instead of None when
+    #              the responseShape carries a `[]` value but the caller is not
+    #              paginating.
+    paginationKind: Optional[Literal["offset", "cursor", "inline"]] = None
 
     @field_validator("path")
     @classmethod
@@ -1192,8 +1202,11 @@ class LLDPlan(_StrictModel):
                 if has_list and route.paginationKind is None:
                     raise ValueError(
                         f"httpRoutes.{surface_name} '{route.path}' responseShape "
-                        "contains a list value but paginationKind is null; "
-                        "set paginationKind to 'offset' or 'cursor'"
+                        "contains a list value but paginationKind is null; set "
+                        "paginationKind to 'offset' or 'cursor' for paginated "
+                        "collections, or 'inline' for bounded embedded lists "
+                        "(top-N rankings, config-capped collections returned "
+                        "alongside other fields)"
                     )
         return self
 

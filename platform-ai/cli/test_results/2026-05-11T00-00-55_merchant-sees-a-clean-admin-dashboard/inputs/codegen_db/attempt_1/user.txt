@@ -1,0 +1,69 @@
+Feature: Merchant sees a clean admin dashboard with revenue, AOV, top products, and repeat customer rate updated on page load.
+Triggers: admin
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LLD database.tables — authoritative column definitions (implement exactly):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Table: daily_revenue_snapshots
+  purpose: Stores one pre-aggregated revenue and order-volume row per calendar day so any date range query is answered by summing a bounded set of rows.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  snapshot_date  TIMESTAMPTZ  NOT NULL   -- Calendar day this row covers (stored as midnight UTC)
+  currency_code  TEXT  NOT NULL   -- ISO 4217 currency code from the shop's money; required for money helper formatting
+  total_revenue  BIGINT  NOT NULL DEFAULT 0   -- Sum of all order totalPriceSet.shopMoney.amount in minor units for the day
+  order_count  INTEGER  NOT NULL DEFAULT 0   -- Total number of orders created on snapshot_date
+  zero_revenue_order_count  INTEGER  NOT NULL DEFAULT 0   -- Number of orders whose total revenue is zero (fully discounted)
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  UNIQUE (snapshot_date)
+  Indexes:
+    - snapshot_date
+
+Table: daily_product_snapshots
+  purpose: Stores pre-aggregated per-product sales figures for each calendar day so top-products queries over any date range require only a bounded aggregation over this table.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  snapshot_date  TIMESTAMPTZ  NOT NULL   -- Calendar day this row covers (stored as midnight UTC)
+  product_external_id  BIGINT  NOT NULL   -- Shopify numeric product ID; raw segment parsed from the GID
+  product_name  TEXT  NOT NULL   -- Product title at snapshot time; retained for historical display even if product is later deleted
+  currency_code  TEXT  NOT NULL   -- ISO 4217 currency code for revenue_contribution
+  units_sold  INTEGER  NOT NULL DEFAULT 0   -- Total quantity of this product sold across all line items on snapshot_date
+  revenue_contribution  BIGINT  NOT NULL DEFAULT 0   -- Sum of line item totalDiscountedPrice in minor units for this product on snapshot_date
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  UNIQUE (snapshot_date, product_external_id)
+  Indexes:
+    - snapshot_date
+    - snapshot_date,product_external_id
+
+Table: daily_customer_activity
+  purpose: Stores the order count placed by each identifiable customer on each calendar day, enabling repeat customer rate to be computed for any date range without scanning raw orders.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  snapshot_date  TIMESTAMPTZ  NOT NULL   -- Calendar day this row covers (stored as midnight UTC)
+  customer_external_id  BIGINT  NOT NULL   -- Shopify numeric customer ID; raw segment parsed from the customer GID; anonymous orders are omitted entirely
+  orders_placed  INTEGER  NOT NULL DEFAULT 0   -- Number of orders placed by this customer on snapshot_date
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  UNIQUE (snapshot_date, customer_external_id)
+  Indexes:
+    - snapshot_date
+    - snapshot_date,customer_external_id
+
+Table: snapshot_runs
+  purpose: Tracks every scheduled snapshot job execution and its outcome so duplicate runs are detected and failures are auditable.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  target_date  TIMESTAMPTZ  NOT NULL   -- Calendar day (midnight UTC) this run is computing snapshots for
+  status  TEXT  NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed'))   -- Lifecycle status of this run attempt
+  failure_reason  TEXT  NULL   -- Error message captured when status transitions to failed
+  started_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  completed_at  TIMESTAMPTZ  NULL   -- Timestamp when status transitions to completed or failed
+  Indexes:
+    - target_date,status
+    - started_at
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Generate the PostgreSQL DDL migration for this feature.
+Plain CREATE TABLE / CREATE INDEX against unqualified names.
+Add COMMENT ON TABLE / COMMENT ON COLUMN where the LLD supplies a `purpose`.
+No tenant_id, no RLS, no CREATE POLICY — see the isolation
+model in the system prompt.
+Output ONLY raw SQL (no markdown fences).

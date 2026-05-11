@@ -1,0 +1,300 @@
+{
+  "schema_version": "1",
+  "archetype": "backend+admin",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "When an order is paid, the system immediately records the order and its line items into the local order store so the data is available for aggregation. Every fifteen minutes the scheduler bulk-fetches recent orders from the platform to reconcile any missed events, then recomputes all four metrics — revenue, AOV, top products, and repeat customer rate — across the merchant-configured date window and writes a fresh snapshot to the metrics and top-product tables. On page load the admin dashboard reads directly from the pre-aggregated snapshot tables, returning all metrics in a single fast response regardless of order volume. Repeat customer rate is derived by identifying customers who appear on more than one order within the window, not by counting unique customer identifiers within a single pass.",
+  "triggers": [
+    {
+      "kind": "external-event",
+      "event": "an order is paid",
+      "signalFields": ["order external id", "customer external id", "order total", "order placed at", "line items with product identity, quantity, and item total"],
+      "idempotency": "if an order record already exists for the order external id, treat the event as a no-op and do not re-insert or re-aggregate"
+    },
+    {
+      "kind": "schedule",
+      "cadence": "every 15 minutes",
+      "jobPurpose": "Reconcile any orders missed by webhook delivery and rebuild all pre-aggregated dashboard metrics.",
+      "perTickWork": "Bulk-fetch orders placed within the configured date window from the platform, upsert any missing order and item records, then recompute and overwrite the metrics snapshot and top-product snapshot tables.",
+      "bulkFetchRule": true
+    }
+  ],
+  "externalContracts": [
+    {
+      "surface": "admin",
+      "path": "/admin/dashboard",
+      "method": "GET",
+      "purpose": "Return the pre-aggregated scalar metrics — revenue, AOV, order count, and repeat customer rate — for the configured date window.",
+      "requestShape": {},
+      "responseShape": {
+        "revenue": "money",
+        "average_order_value": "money",
+        "order_count": "count",
+        "repeat_customer_rate": "count",
+        "window_start": "timestamp",
+        "window_end": "timestamp",
+        "refreshed_at": "timestamp"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/dashboard/top-products",
+      "method": "GET",
+      "purpose": "Return the ranked list of top products by revenue contribution for the configured date window.",
+      "requestShape": {},
+      "responseShape": {
+        "products": "list",
+        "window_start": "timestamp",
+        "window_end": "timestamp",
+        "refreshed_at": "timestamp"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/settings",
+      "method": "GET",
+      "purpose": "Return the current dashboard configuration, including the merchant's preferred date window in days.",
+      "requestShape": {},
+      "responseShape": {
+        "date_window_days": "count"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/settings",
+      "method": "POST",
+      "purpose": "Save the merchant's preferred date window so subsequent aggregation runs and dashboard reads use the updated range.",
+      "requestShape": {
+        "date_window_days": "count"
+      },
+      "responseShape": {
+        "date_window_days": "count"
+      }
+    }
+  ],
+  "persistence": [
+    {
+      "name": "order_records",
+      "purpose": "Stores one row per captured paid order, serving as the source of truth for all metric aggregations.",
+      "columns": [
+        {"name": "id", "role": "identifier", "nullable": false},
+        {"name": "order_external_id", "role": "reference", "nullable": false, "purpose": "identifies the paid order in the external platform"},
+        {"name": "customer_external_id", "role": "reference", "nullable": true, "purpose": "identifies the customer who placed the order; nullable for guest orders with no associated customer"},
+        {"name": "order_total", "role": "money", "nullable": false},
+        {"name": "placed_at", "role": "timestamp", "nullable": false},
+        {"name": "created_at", "role": "timestamp", "nullable": false}
+      ],
+      "keyedBy": "one row per paid order, deduplicated by order external id",
+      "statusField": null,
+      "queryPatterns": [
+        "all orders with placed_at within a given date range, used for scalar metric aggregation",
+        "all orders grouped by customer external id within a date range, used for repeat customer rate computation",
+        "single order looked up by order external id for upsert deduplication"
+      ]
+    },
+    {
+      "name": "order_item_records",
+      "purpose": "Stores one row per line item on a captured order, enabling product-level revenue and volume aggregation.",
+      "columns": [
+        {"name": "id", "role": "identifier", "nullable": false},
+        {"name": "order_external_id", "role": "reference", "nullable": false, "purpose": "links this item to its parent order"},
+        {"name": "product_external_id", "role": "reference", "nullable": false, "purpose": "identifies the product in the external platform"},
+        {"name": "product_title", "role": "text", "nullable": false},
+        {"name": "quantity", "role": "count", "nullable": false},
+        {"name": "item_total", "role": "money", "nullable": false},
+        {"name": "placed_at", "role": "timestamp", "nullable": false}
+      ],
+      "keyedBy": "one row per line item per order, identified by the combination of order external id and product external id",
+      "statusField": null,
+      "queryPatterns": [
+        "all items with placed_at within a date range grouped by product external id, summing item total and quantity, ordered by total revenue descending for top-product ranking"
+      ]
+    },
+    {
+      "name": "metrics_snapshot",
+      "purpose": "Stores the most recently computed scalar dashboard metrics so the admin page can load instantly without querying raw order data.",
+      "columns": [
+        {"name": "id", "role": "identifier", "nullable": false},
+        {"name": "revenue", "role": "money", "nullable": false},
+        {"name": "average_order_value", "role": "money", "nullable": false},
+        {"name": "order_count", "role": "count", "nullable": false},
+        {"name": "repeat_customer_rate", "role": "count", "nullable": false},
+        {"name": "window_start", "role": "timestamp", "nullable": false},
+        {"name": "window_end", "role": "timestamp", "nullable": false},
+        {"name": "refreshed_at", "role": "timestamp", "nullable": false}
+      ],
+      "keyedBy": "single row representing the current pre-aggregated metrics state; overwritten on each aggregation run",
+      "statusField": null,
+      "queryPatterns": [
+        "single-row fetch returning the most recently refreshed metrics record"
+      ]
+    },
+    {
+      "name": "top_product_snapshot",
+      "purpose": "Stores the pre-ranked list of top products by revenue for the current aggregation window so the admin dashboard can serve product rankings instantly.",
+      "columns": [
+        {"name": "id", "role": "identifier", "nullable": false},
+        {"name": "product_external_id", "role": "reference", "nullable": false, "purpose": "identifies the ranked product in the external platform"},
+        {"name": "product_title", "role": "text", "nullable": false},
+        {"name": "revenue_total", "role": "money", "nullable": false},
+        {"name": "order_count", "role": "count", "nullable": false},
+        {"name": "rank", "role": "count", "nullable": false},
+        {"name": "window_start", "role": "timestamp", "nullable": false},
+        {"name": "window_end", "role": "timestamp", "nullable": false},
+        {"name": "refreshed_at", "role": "timestamp", "nullable": false}
+      ],
+      "keyedBy": "one row per ranked product per snapshot window; all rows are replaced atomically on each aggregation run",
+      "statusField": null,
+      "queryPatterns": [
+        "all rows from the most recent snapshot ordered by rank ascending"
+      ]
+    },
+    {
+      "name": "dashboard_settings",
+      "purpose": "Stores the merchant's configured date window preference used by both the aggregation schedule and the dashboard read endpoint.",
+      "columns": [
+        {"name": "id", "role": "identifier", "nullable": false},
+        {"name": "date_window_days", "role": "count", "nullable": false},
+        {"name": "updated_at", "role": "timestamp", "nullable": false}
+      ],
+      "keyedBy": "single row representing the only configuration record for this merchant",
+      "statusField": null,
+      "queryPatterns": [
+        "single-row fetch to retrieve the current date window configuration"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "record-order",
+      "description": "Persist a paid order's header data so it is available for metric aggregation.",
+      "kind": "write",
+      "dataNeeds": ["order external id", "customer external id", "order total", "order placed at"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": true,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "record-order-items",
+      "description": "Persist the line items of a paid order so product-level revenue can be aggregated.",
+      "kind": "write",
+      "dataNeeds": ["order external id", "line items with product identity, product title, quantity, and item total", "order placed at"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": true,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "sync-recent-orders",
+      "description": "Bulk-fetch orders placed within the configured date window from the platform and upsert any records not yet captured by webhook delivery.",
+      "kind": "read",
+      "dataNeeds": ["date window start", "date window end"],
+      "integration": "shopify-admin",
+      "returnsList": true,
+      "touchesMoney": true,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "compute-scalar-metrics",
+      "description": "Calculate total revenue, AOV, order count, and repeat customer rate from stored order records within the configured date window.",
+      "kind": "compute",
+      "dataNeeds": ["order records within date window", "customer external ids per order within date window", "date window bounds"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": true,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "compute-top-products",
+      "description": "Rank products by total revenue contribution from stored order item records within the configured date window.",
+      "kind": "compute",
+      "dataNeeds": ["order item records within date window grouped by product"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": true,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "persist-metrics-snapshot",
+      "description": "Overwrite the metrics snapshot table with the freshly computed scalar metrics so the dashboard read is always current.",
+      "kind": "write",
+      "dataNeeds": ["computed revenue", "computed average order value", "computed order count", "computed repeat customer rate", "window start", "window end"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": true,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "persist-top-products-snapshot",
+      "description": "Replace the top-product snapshot table with the freshly ranked product list so the dashboard product read is always current.",
+      "kind": "write",
+      "dataNeeds": ["ranked product list with product external id, product title, revenue total, order count, and rank", "window start", "window end"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": true,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "read-dashboard-metrics",
+      "description": "Serve the pre-aggregated scalar metrics from the snapshot table to the admin dashboard on page load.",
+      "kind": "read",
+      "dataNeeds": ["most recent metrics snapshot"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": true,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "read-top-products",
+      "description": "Serve the pre-ranked product list from the snapshot table to the admin dashboard on page load.",
+      "kind": "read",
+      "dataNeeds": ["most recent top-product snapshot"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": true,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "save-dashboard-settings",
+      "description": "Persist the merchant's chosen date window so all subsequent aggregation runs and dashboard reads use the updated value.",
+      "kind": "write",
+      "dataNeeds": ["date window in days"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": true,
+      "usesWorkflow": false
+    },
+    {
+      "id": "read-dashboard-settings",
+      "description": "Return the current dashboard configuration to the admin settings page.",
+      "kind": "read",
+      "dataNeeds": ["dashboard settings record"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": true,
+      "usesWorkflow": false
+    }
+  ],
+  "stateMachine": null,
+  "edgeCases": [
+    "Duplicate order-paid webhook delivery for the same order — the system must check for an existing order record by order external id and exit without inserting or triggering re-aggregation.",
+    "An order has no associated customer identity (guest checkout) — the order is still recorded and counted toward revenue and AOV, but excluded from the repeat customer rate numerator and denominator.",
+    "An order has a total of zero (fully discounted) — it is counted in order volume and AOV denominator but contributes zero to revenue; AOV must not divide by zero when all orders in the window are zero-revenue.",
+    "The merchant changes the date window setting between two aggregation ticks — the next schedule run uses the new window and overwrites both snapshot tables atomically; the previous snapshot is not shown after the update is saved.",
+    "The platform bulk-fetch returns more orders than can be processed in a single tick — the job must page through all results before computing metrics so the snapshot reflects the complete window, not a partial set.",
+    "The top-product snapshot table is empty on first install before any aggregation has run — the dashboard read must return an explicit empty state rather than an error so the merchant sees a graceful blank slate."
+  ]
+}

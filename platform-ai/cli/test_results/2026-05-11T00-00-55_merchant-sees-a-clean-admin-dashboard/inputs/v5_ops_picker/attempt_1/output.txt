@@ -1,0 +1,17 @@
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "fetch-orders-in-bulk",
+      "ops": [
+        {
+          "name": "orders",
+          "surface": "admin",
+          "note": "Paginated bulk fetch of all orders placed on the target calendar day, filtered by created_at date range; returns pageInfo for cursor-based iteration over the full day's order volume"
+        }
+      ]
+    }
+  ],
+  "webhooks": [],
+  "unsatisfied": []
+}

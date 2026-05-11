@@ -81,8 +81,7 @@ Produce the LLD plan as JSON conforming to the appended schema."""
 _REVISE_SUFFIX_TEMPLATE = """\
 
 
-REVISE the previous attempt below to address every finding. Output a
-single JSON object conforming to the appended schema. Sections the
+REVISE the previous attempt below to address every finding. Sections the
 validator did NOT flag must be copied character-for-character from the
 previous attempt — same table names and column orders, same recipe ids,
 same step ordering, same SQL templates, same GraphQL strings, same
@@ -90,11 +89,15 @@ contract paths, same edge-case wording. Do not drop, rename, reword, or
 reorder anything outside the flagged scope. Do not add new sections
 beyond what a finding's fix explicitly requires.
 
-PREVIOUS ATTEMPT:
+OUTPUT FORMAT — strictly enforced:
+  - JSON only. Your response MUST start with `{{` and end with `}}`.
+  - No preamble ("Looking at the finding…", "I see that…", etc.).
+  - No markdown fences.
+  - No commentary after the JSON.
+  Anything outside that contract is rejected as invalid output.
 
-```json
+PREVIOUS ATTEMPT:
 {prior_output}
-```
 
 FINDINGS:
 {findings_text}"""
@@ -107,9 +110,12 @@ def run_lld_agent(
     on_attempt_failed: Optional[Callable[[int, List[str]], None]] = None,
     validator_hint: Optional[str] = None,
     prior_plan: Optional[Dict[str, Any]] = None,
-) -> Tuple[Dict[str, Any], int, int]:
+) -> Tuple[Dict[str, Any], int, int, int, int]:
     """
-    Run the LLD agent. Returns (lld_dict, in_tokens, out_tokens).
+    Run the LLD agent. Returns
+    `(lld_dict, in_tokens, out_tokens, cache_read_tokens, cache_creation_tokens)`.
+    Cache fields are summed across retry attempts so the caller can show
+    actual cost rather than raw input totals.
 
     Validation lives inside the schema (`LLDPlan`). The agent retries on
     its own when validation fails — the caller does not need an outer
@@ -141,8 +147,8 @@ def run_lld_agent(
     system = build_system_prompt()
     base_user = _USER_TEMPLATE.format(
         prompt=prompt,
-        hld_json=json.dumps(plan, indent=2),
-        ops_picks_json=json.dumps(ops_picks, indent=2),
+        hld_json=json.dumps(plan),
+        ops_picks_json=json.dumps(ops_picks),
     )
 
     if _hld_has_list_capability(plan):
@@ -165,13 +171,15 @@ def run_lld_agent(
 
     total_in = 0
     total_out = 0
+    total_cache_r = 0
+    total_cache_c = 0
     last_errors: List[str] = []
     # Carry the prior attempt's raw output so the model can revise it
     # character-for-character on retry instead of regenerating from scratch.
     # Seeded from `prior_plan` when the caller (e.g. a future lld_v retry)
     # passes one alongside `validator_hint`.
     last_output: Optional[str] = (
-        json.dumps(prior_plan, indent=2) if prior_plan is not None else None
+        json.dumps(prior_plan) if prior_plan is not None else None
     )
     if validator_hint and last_output is not None:
         last_errors = [validator_hint]
@@ -187,11 +195,23 @@ def run_lld_agent(
         result = invoke(llm, system, base_user, retry_suffix=retry_suffix)
         total_in += result.input_tokens
         total_out += result.output_tokens
+        total_cache_r += result.cache_read_tokens
+        total_cache_c += result.cache_creation_tokens
 
         # Persist the raw model response next to the prompt files. No-op
         # outside an active `input_log` block.
         dump_output(result.content)
-        last_output = result.content
+        # Minify the prior output before echoing it back on the next retry:
+        #   - strips markdown fences (avoid nested ``` in the retry template)
+        #   - drops whatever indentation the model chose, saving ~30% of
+        #     retry-suffix tokens.
+        # Fall back to the raw content when the response isn't parseable —
+        # the next attempt's validator will surface the same parse error
+        # we hit here.
+        try:
+            last_output = json.dumps(json.loads(extract_json(result.content)))
+        except (ValueError, json.JSONDecodeError):
+            last_output = result.content
 
         # Truncation is a config problem (cap too low for the schema), not a
         # model error to retry against — the next attempt only adds suffix
@@ -204,6 +224,8 @@ def run_lld_agent(
                 ],
                 total_in,
                 total_out,
+                total_cache_r,
+                total_cache_c,
             )
 
         try:
@@ -231,9 +253,11 @@ def run_lld_agent(
         # wire — matches the schema the model was prompted with.
         lld_dict = parsed.model_dump(mode="json", by_alias=True)
         _enrich_with_runtime_examples(lld_dict, ops_picks)
-        return lld_dict, total_in, total_out
+        return lld_dict, total_in, total_out, total_cache_r, total_cache_c
 
-    raise LLDValidationError(_MAX_ATTEMPTS, last_errors, total_in, total_out)
+    raise LLDValidationError(
+        _MAX_ATTEMPTS, last_errors, total_in, total_out, total_cache_r, total_cache_c
+    )
 
 
 # ── Internals ─────────────────────────────────────────────────────────
@@ -248,11 +272,15 @@ class LLDValidationError(RuntimeError):
         errors: List[str],
         in_tokens: int,
         out_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
     ) -> None:
         self.attempts = attempts
         self.errors = errors
         self.in_tokens = in_tokens
         self.out_tokens = out_tokens
+        self.cache_read_tokens = cache_read_tokens
+        self.cache_creation_tokens = cache_creation_tokens
         bullets = "\n".join(f"  - {e}" for e in errors)
         super().__init__(f"LLD agent failed after {attempts} attempt(s):\n{bullets}")
 

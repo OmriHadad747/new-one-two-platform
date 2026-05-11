@@ -84,9 +84,12 @@ def run_hld_agent(
     on_attempt_failed: Optional[Callable[[int, List[str]], None]] = None,
     validator_hint: Optional[str] = None,
     prior_plan: Optional[Dict[str, Any]] = None,
-) -> Tuple[Dict[str, Any], int, int]:
+) -> Tuple[Dict[str, Any], int, int, int, int]:
     """
-    Run the HLD agent. Returns (plan_dict, in_tokens, out_tokens).
+    Run the HLD agent. Returns
+    `(plan_dict, in_tokens, out_tokens, cache_read_tokens, cache_creation_tokens)`.
+    Cache fields are summed across retry attempts so the caller can show
+    actual cost rather than raw input totals.
 
     Validation lives inside the schema (`HLDPlan`); the agent retries on
     its own when validation fails — the caller does not need an outer
@@ -113,14 +116,14 @@ def run_hld_agent(
         # copied verbatim instead of silently regenerated.
         base_user = _REVISE_TEMPLATE.format(
             prompt=prompt,
-            intent_json=json.dumps(intent, indent=2),
-            prior_plan_json=json.dumps(prior_plan, indent=2),
+            intent_json=json.dumps(intent),
+            prior_plan_json=json.dumps(prior_plan),
             findings_text=validator_hint,
         )
     else:
         base_user = _USER_TEMPLATE.format(
             prompt=prompt,
-            intent_json=json.dumps(intent, indent=2),
+            intent_json=json.dumps(intent),
         )
     llm = get_llm(
         model=get_agent_model("hld"),
@@ -130,6 +133,8 @@ def run_hld_agent(
 
     total_in = 0
     total_out = 0
+    total_cache_r = 0
+    total_cache_c = 0
     last_errors: List[str] = []
 
     for attempt in range(1, _MAX_ATTEMPTS + 1):
@@ -137,6 +142,8 @@ def run_hld_agent(
         result = invoke(llm, system, base_user, retry_suffix=retry_suffix)
         total_in += result.input_tokens
         total_out += result.output_tokens
+        total_cache_r += result.cache_read_tokens
+        total_cache_c += result.cache_creation_tokens
 
         # Persist the raw model response next to the prompt files, so a
         # 3-attempt failure is fully post-mortem-able without re-running.
@@ -154,6 +161,8 @@ def run_hld_agent(
                 ],
                 total_in,
                 total_out,
+                total_cache_r,
+                total_cache_c,
             )
 
         try:
@@ -183,9 +192,13 @@ def run_hld_agent(
             plan.model_dump(mode="json", by_alias=True),
             total_in,
             total_out,
+            total_cache_r,
+            total_cache_c,
         )
 
-    raise HLDValidationError(_MAX_ATTEMPTS, last_errors, total_in, total_out)
+    raise HLDValidationError(
+        _MAX_ATTEMPTS, last_errors, total_in, total_out, total_cache_r, total_cache_c
+    )
 
 
 # ── Internals ─────────────────────────────────────────────────────────
@@ -200,11 +213,15 @@ class HLDValidationError(RuntimeError):
         errors: List[str],
         in_tokens: int,
         out_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
     ) -> None:
         self.attempts = attempts
         self.errors = errors
         self.in_tokens = in_tokens
         self.out_tokens = out_tokens
+        self.cache_read_tokens = cache_read_tokens
+        self.cache_creation_tokens = cache_creation_tokens
         bullets = "\n".join(f"  - {e}" for e in errors)
         super().__init__(f"HLD agent failed after {attempts} attempt(s):\n{bullets}")
 

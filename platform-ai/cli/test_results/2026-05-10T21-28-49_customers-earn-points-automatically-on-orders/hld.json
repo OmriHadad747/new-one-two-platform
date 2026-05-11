@@ -21,7 +21,7 @@
     "feasibility": "feasible",
     "blockedReason": null,
     "complexity": "high",
-    "dataFlow": "When a paid order event arrives, the system checks whether a points transaction already exists for that order; if so, it exits as a no-op. Otherwise it computes points earned using the configured earning rate, appends a credit transaction to the ledger, and increments the customer's running balance. If the updated balance meets or exceeds the configured redemption threshold, the system debits the threshold amount from the balance, appends a debit transaction, and creates a single-use discount code in Shopify, recording the grant against the customer. On the storefront, the widget reads the customer's current points balance and any active unredeemed discount code so the customer can see their standing and copy their code at checkout. The merchant adjusts the earning rate and redemption threshold from the admin settings page, with changes taking effect on all subsequent orders.",
+    "dataFlow": "When an order is paid, the system checks whether points have already been awarded for that order; if not, it computes the points earned based on the configured earning rate, credits the customer's balance ledger, and appends a transaction record. When a customer loads the storefront widget, their current balance and redemption eligibility are returned so the widget can render correctly without a form submission. When an eligible customer requests to redeem, the system debits the required threshold of points from their balance, records the redemption, and creates a single-use discount code in Shopify that the customer can apply at checkout. The merchant adjusts the earning rate, redemption threshold, and discount value from the admin settings page, which are persisted and immediately used by all subsequent awards and redemptions.",
     "triggers": [
       {
         "kind": "external-event",
@@ -31,100 +31,13 @@
           "customer external id",
           "order subtotal"
         ],
-        "idempotency": "if a points transaction row already exists for the order external id, treat the event as a no-op and perform no balance update or discount generation"
+        "idempotency": "if a points transaction row already exists for the order external id, treat the event as a no-op and make no balance or ledger changes"
       }
     ],
     "capabilities": [
       {
-        "id": "compute-points-earned",
-        "description": "Calculate how many points a customer earns for a paid order by multiplying the order subtotal by the configured earning rate.",
-        "kind": "compute",
-        "dataNeeds": [
-          "order subtotal",
-          "earning rate"
-        ],
-        "integration": null,
-        "returnsList": false,
-        "touchesMoney": true,
-        "usesConfig": true,
-        "usesWorkflow": false
-      },
-      {
-        "id": "record-points-credit",
-        "description": "Append a credit transaction to the ledger and atomically increment the customer's running balance by the earned points amount.",
-        "kind": "write",
-        "dataNeeds": [
-          "customer external id",
-          "order external id",
-          "points amount"
-        ],
-        "integration": null,
-        "returnsList": false,
-        "touchesMoney": false,
-        "usesConfig": false,
-        "usesWorkflow": false
-      },
-      {
-        "id": "check-redemption-eligibility",
-        "description": "Determine whether a customer's updated balance meets or exceeds the configured redemption threshold.",
-        "kind": "compute",
-        "dataNeeds": [
-          "customer points balance",
-          "redemption threshold"
-        ],
-        "integration": null,
-        "returnsList": false,
-        "touchesMoney": false,
-        "usesConfig": true,
-        "usesWorkflow": false
-      },
-      {
-        "id": "generate-discount-code",
-        "description": "Create a single-use discount code in the external platform for the customer's earned discount value.",
-        "kind": "write",
-        "dataNeeds": [
-          "customer external id",
-          "discount value"
-        ],
-        "integration": "shopify-admin",
-        "returnsList": false,
-        "touchesMoney": true,
-        "usesConfig": true,
-        "usesWorkflow": false
-      },
-      {
-        "id": "record-discount-grant",
-        "description": "Append a debit transaction and write the discount grant record, linking the generated code to the customer and the points redeemed.",
-        "kind": "write",
-        "dataNeeds": [
-          "customer external id",
-          "discount code external id",
-          "discount code value",
-          "discount amount",
-          "points redeemed"
-        ],
-        "integration": null,
-        "returnsList": false,
-        "touchesMoney": true,
-        "usesConfig": false,
-        "usesWorkflow": false
-      },
-      {
-        "id": "get-customer-points-status",
-        "description": "Read a customer's current points balance and most recent active discount grant for display in the storefront widget.",
-        "kind": "read",
-        "dataNeeds": [
-          "customer external id"
-        ],
-        "integration": null,
-        "returnsList": false,
-        "touchesMoney": false,
-        "usesConfig": true,
-        "usesWorkflow": false
-      },
-      {
-        "id": "load-program-settings",
-        "description": "Read the current earning rate, redemption threshold, and discount value from the program settings record.",
+        "id": "read-program-settings",
+        "description": "Fetch the current earning rate, redemption threshold, and discount value so they can be used in award and redemption calculations.",
         "kind": "read",
         "dataNeeds": [],
         "integration": null,
@@ -134,8 +47,8 @@
         "usesWorkflow": false
       },
       {
-        "id": "save-program-settings",
-        "description": "Persist an updated earning rate, redemption threshold, and discount value supplied by the merchant from the admin panel.",
+        "id": "update-program-settings",
+        "description": "Persist the merchant's updated earning rate, redemption threshold, and discount value.",
         "kind": "write",
         "dataNeeds": [
           "earning rate",
@@ -149,8 +62,51 @@
         "usesWorkflow": false
       },
       {
+        "id": "compute-points-earned",
+        "description": "Calculate the whole number of points a customer earns for a given order subtotal using the configured earning rate.",
+        "kind": "compute",
+        "dataNeeds": [
+          "order subtotal",
+          "earning rate"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": true,
+        "usesConfig": true,
+        "usesWorkflow": false
+      },
+      {
+        "id": "credit-customer-balance",
+        "description": "Upsert the customer's point balance row and append an earning transaction to the ledger for a paid order.",
+        "kind": "write",
+        "dataNeeds": [
+          "customer external id",
+          "order external id",
+          "points to credit"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "get-customer-balance",
+        "description": "Fetch a customer's current point balance and assess whether they meet the redemption threshold.",
+        "kind": "read",
+        "dataNeeds": [
+          "customer external id",
+          "redemption threshold"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": true,
+        "usesWorkflow": false
+      },
+      {
         "id": "list-customer-balances",
-        "description": "Return a paginated list of all customer point balances for the merchant admin overview.",
+        "description": "Return a paginated list of all customer point balances for the merchant admin dashboard.",
         "kind": "read",
         "dataNeeds": [
           "page cursor"
@@ -160,12 +116,74 @@
         "touchesMoney": false,
         "usesConfig": false,
         "usesWorkflow": false
+      },
+      {
+        "id": "initiate-redemption",
+        "description": "Debit the redemption threshold of points from the customer's balance and insert a pending redemption record.",
+        "kind": "write",
+        "dataNeeds": [
+          "customer external id",
+          "redemption threshold",
+          "discount value"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": true,
+        "usesConfig": true,
+        "usesWorkflow": false
+      },
+      {
+        "id": "record-points-transaction",
+        "description": "Write one immutable row to the points ledger recording a debit or compensating credit tied to a redemption, so every balance change has an auditable proof record.",
+        "kind": "write",
+        "dataNeeds": [
+          "customer external id",
+          "points delta",
+          "transaction type",
+          "balance after",
+          "source redemption id"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "create-discount-code",
+        "description": "Create a single-use discount code in Shopify for the redeeming customer and return its code string.",
+        "kind": "write",
+        "dataNeeds": [
+          "customer external id",
+          "discount value"
+        ],
+        "integration": "shopify-admin",
+        "returnsList": false,
+        "touchesMoney": true,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "record-redemption-outcome",
+        "description": "Mark a redemption record as completed with the issued discount code external id, or failed with a reason, so the ledger remains consistent.",
+        "kind": "write",
+        "dataNeeds": [
+          "redemption id",
+          "outcome",
+          "discount code external id",
+          "failure reason"
+        ],
+        "integration": null,
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": true
       }
     ],
     "persistence": [
       {
         "name": "program_settings",
-        "purpose": "Stores the single merchant-configurable loyalty program configuration: earning rate, redemption threshold, and discount value.",
+        "purpose": "Stores the single merchant-configured rule set governing how points are earned and redeemed.",
         "columns": [
           {
             "name": "id",
@@ -175,21 +193,21 @@
           },
           {
             "name": "earning_rate",
-            "role": "count",
+            "role": "ratio",
             "nullable": false,
-            "purpose": "points awarded per whole currency unit spent"
+            "purpose": "fraction of order subtotal awarded as points, e.g. 0.01 means 1 point per dollar"
           },
           {
             "name": "redemption_threshold",
             "role": "count",
             "nullable": false,
-            "purpose": "minimum points balance required to generate a discount code"
+            "purpose": "minimum point balance required before a customer may redeem"
           },
           {
             "name": "discount_value",
             "role": "money",
             "nullable": false,
-            "purpose": "monetary value of the discount code generated at redemption"
+            "purpose": "fixed monetary discount issued when a customer redeems"
           },
           {
             "name": "updated_at",
@@ -198,15 +216,15 @@
             "purpose": null
           }
         ],
-        "keyedBy": "single row representing the only program configuration record",
+        "keyedBy": "single row representing the only configuration record for this merchant",
         "statusField": null,
         "queryPatterns": [
-          "single row fetch for the current configuration on every order event and storefront request"
+          "single-row fetch on every award and redemption operation"
         ]
       },
       {
         "name": "customer_point_balances",
-        "purpose": "Maintains the authoritative running points balance for each customer to support fast reads on the storefront widget and threshold checks.",
+        "purpose": "Maintains the running point balance and lifetime totals for every customer who has earned points.",
         "columns": [
           {
             "name": "id",
@@ -221,7 +239,19 @@
             "purpose": "identifies the customer whose balance this row represents"
           },
           {
-            "name": "points_balance",
+            "name": "current_balance",
+            "role": "count",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "lifetime_earned",
+            "role": "count",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "lifetime_redeemed",
             "role": "count",
             "nullable": false,
             "purpose": null
@@ -236,13 +266,13 @@
         "keyedBy": "one row per customer, deduplicated by customer external id",
         "statusField": null,
         "queryPatterns": [
-          "single row lookup by customer external id for balance reads and atomic increment or decrement",
-          "all rows ordered by points balance descending for the admin customer list"
+          "single row looked up by customer external id on award and redemption",
+          "all rows ordered by current balance descending for admin list, supporting cursor pagination"
         ]
       },
       {
         "name": "point_transactions",
-        "purpose": "Immutable ledger of every points credit and debit event per customer, enabling auditing and idempotency checks.",
+        "purpose": "Immutable ledger recording every points credit and debit with its source, enabling idempotency checks and audit history.",
         "columns": [
           {
             "name": "id",
@@ -254,22 +284,28 @@
             "name": "customer_external_id",
             "role": "reference",
             "nullable": false,
-            "purpose": "identifies the customer whose balance is affected"
+            "purpose": "identifies the customer whose balance was affected"
           },
           {
             "name": "order_external_id",
             "role": "reference",
             "nullable": true,
-            "purpose": "identifies the paid order that caused a credit transaction; null for debit transactions"
+            "purpose": "identifies the paid order that triggered an earning transaction; null for redemption debits"
           },
           {
-            "name": "transaction_kind",
+            "name": "transaction_type",
             "role": "status",
             "nullable": false,
-            "purpose": "credit for points earned, debit for points redeemed against a discount grant"
+            "purpose": "earned or redeemed"
           },
           {
-            "name": "points_amount",
+            "name": "points_delta",
+            "role": "count",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "balance_after",
             "role": "count",
             "nullable": false,
             "purpose": null
@@ -281,16 +317,16 @@
             "purpose": null
           }
         ],
-        "keyedBy": "one credit row per paid order per customer, deduplicated by order external id; debit rows are keyed by the associated discount grant",
+        "keyedBy": "one row per discrete earning or redemption event; earning rows are deduplicated by order external id",
         "statusField": null,
         "queryPatterns": [
-          "existence check by order external id to enforce idempotency before awarding points",
-          "all transactions for a given customer ordered by creation time for audit"
+          "lookup by order external id to enforce idempotency on duplicate order-paid events",
+          "all transactions for a given customer ordered by creation time"
         ]
       },
       {
-        "name": "discount_grants",
-        "purpose": "Tracks every discount code generated for a customer when their points balance crosses the redemption threshold, including whether it has been used.",
+        "name": "redemptions",
+        "purpose": "Tracks every discount code issued to a customer and its current state so double-application and concurrent redemptions can be prevented.",
         "columns": [
           {
             "name": "id",
@@ -302,29 +338,23 @@
             "name": "customer_external_id",
             "role": "reference",
             "nullable": false,
-            "purpose": "identifies the customer the discount code belongs to"
+            "purpose": "identifies the customer who requested the discount"
           },
           {
             "name": "discount_code_external_id",
             "role": "reference",
             "nullable": true,
-            "purpose": "identifies the discount code record in the external platform; null until successfully created"
+            "purpose": "identifies the discount code created in the external platform"
           },
           {
-            "name": "discount_code_value",
-            "role": "text",
-            "nullable": true,
-            "purpose": "human-readable code string the customer enters at checkout"
-          },
-          {
-            "name": "discount_amount",
-            "role": "money",
+            "name": "points_debited",
+            "role": "count",
             "nullable": false,
             "purpose": null
           },
           {
-            "name": "points_redeemed",
-            "role": "count",
+            "name": "discount_value",
+            "role": "money",
             "nullable": false,
             "purpose": null
           },
@@ -335,17 +365,23 @@
             "purpose": null
           },
           {
+            "name": "failure_reason",
+            "role": "text",
+            "nullable": true,
+            "purpose": null
+          },
+          {
             "name": "created_at",
             "role": "timestamp",
             "nullable": false,
             "purpose": null
           }
         ],
-        "keyedBy": "one row per discount generation event per customer",
+        "keyedBy": "one row per redemption attempt, each uniquely identified by its own id",
         "statusField": null,
         "queryPatterns": [
-          "most recent active (unredeemed) discount grant for a given customer for storefront display",
-          "all grants for a given customer ordered by creation time for audit"
+          "lookup of any pending or completed redemption for a customer to detect concurrent redemption attempts",
+          "single row lookup by id when recording outcome"
         ]
       }
     ],
@@ -355,100 +391,94 @@
         "surface": "admin",
         "path": "/admin/settings",
         "method": "GET",
-        "purpose": "Return the current earning rate and redemption threshold so the merchant can review the program configuration.",
+        "purpose": "Return the current points program configuration so the merchant can review earning rate, redemption threshold, and discount value.",
         "requestShape": {},
         "responseShape": {
-          "earning_rate": "count",
-          "redemption_threshold": "count",
-          "discount_value": "money"
+          "settings": "object"
         }
       },
       {
         "surface": "admin",
         "path": "/admin/settings",
         "method": "POST",
-        "purpose": "Save a new earning rate, redemption threshold, and discount value for the loyalty program.",
+        "purpose": "Save updated points program configuration including earning rate, redemption threshold, and discount value.",
         "requestShape": {
-          "earning_rate": "count",
+          "earning_rate": "ratio",
           "redemption_threshold": "count",
           "discount_value": "money"
         },
         "responseShape": {
-          "earning_rate": "count",
-          "redemption_threshold": "count",
-          "discount_value": "money"
+          "settings": "object"
         }
       },
       {
         "surface": "admin",
-        "path": "/admin/customers/points",
+        "path": "/admin/customer-balances",
         "method": "GET",
-        "purpose": "Return a paginated list of customers with their current points balances for merchant oversight.",
+        "purpose": "Return a paginated list of all customer point balances for merchant visibility and auditing.",
         "requestShape": {
           "cursor": "text"
         },
         "responseShape": {
-          "customers": "list",
+          "balances": "list",
           "next_cursor": "text",
           "total_count": "count"
         }
       },
       {
         "surface": "widget",
-        "path": "/widget/points/status",
+        "path": "/widget/points-balance",
         "method": "GET",
-        "purpose": "Return the authenticated customer's current points balance and any active unredeemed discount code so the widget can render the correct state on page load.",
+        "purpose": "Return the authenticated customer's current point balance and whether they are eligible to redeem a discount; customer identity is resolved from the authenticated storefront session token and an empty ineligible response is returned if identity cannot be resolved.",
         "requestShape": {},
         "responseShape": {
-          "points_balance": "count",
+          "current_balance": "count",
+          "redemption_eligible": "flag",
+          "redemption_threshold": "count",
+          "discount_value": "money"
+        }
+      },
+      {
+        "surface": "widget",
+        "path": "/widget/redeem",
+        "method": "POST",
+        "purpose": "Debit the customer's points by the redemption threshold and issue a single-use discount code for use at checkout; customer identity is derived exclusively from the authenticated storefront session token and the request is rejected if identity cannot be resolved.",
+        "requestShape": {},
+        "responseShape": {
           "discount_code": "text",
-          "threshold": "count",
-          "earning_rate": "count"
+          "points_debited": "count",
+          "remaining_balance": "count"
         }
       }
     ],
     "edgeCases": [
-      "Duplicate order-paid event delivery for the same order \u2014 the idempotency check on point transactions must exit before any balance mutation or discount evaluation occurs.",
-      "Duplicate order-paid event arrives after a partial processing failure (credit recorded but discount generation incomplete) \u2014 the idempotency check must distinguish a fully-committed processing record from a partially-committed one, e.g. by checking both the point transaction row and the resulting discount_grants row before deciding no-op vs. resumption.",
-      "Two paid orders for the same customer arrive near-simultaneously \u2014 the balance increment and threshold check must execute atomically to ensure at most one discount code is generated per threshold crossing.",
-      "Guest checkout with no associated customer record \u2014 skip all points processing and do not create any ledger or balance row.",
-      "External platform rejects discount code creation after points have already been debited \u2014 the debit transaction and balance decrement must be rolled back so the customer does not lose points without receiving a code.",
-      "Shopify discount code creation succeeds but the local record-discount-grant write fails before commit \u2014 on retry, the system must detect the already-created Shopify code (by idempotency key or lookup) and skip re-creation, then re-attempt only the local write.",
-      "Merchant lowers the redemption threshold after customers have already accumulated points \u2014 the new threshold applies only on the next order event; no retroactive discount codes are generated for customers who already meet it.",
-      "Customer has an active unredeemed discount code when a new threshold crossing occurs \u2014 do not generate a second code; wait until the existing grant is used or expires before issuing a new one."
+      "Duplicate order-paid webhook for the same order \u2014 the system detects an existing earning transaction for that order external id and exits before any balance write or ledger append occurs.",
+      "Two orders paid near-simultaneously for the same customer \u2014 balance updates must be applied with a row-level lock or optimistic concurrency so neither credit is lost and the final balance equals the sum of both awards.",
+      "Customer attempts to redeem while their balance is exactly at threshold but a concurrent redemption request is already in progress \u2014 the second request must detect the pending redemption and be rejected before any balance debit occurs.",
+      "Guest checkout with no customer identity \u2014 the event carries no customer external id, so no points are awarded and no error is raised; the gap is visible in the transaction ledger absence.",
+      "Shopify rejects the discount code creation after the balance has already been debited \u2014 the redemption is marked failed, the debited points are restored to the customer's balance, and a compensating transaction is appended to the ledger.",
+      "Merchant raises the redemption threshold after customers have already accumulated balances below the new threshold \u2014 existing balances are preserved unchanged and customers simply must earn additional points before their next redemption."
     ]
   },
   "validation_errors": [],
   "hld_v_findings": [
     {
-      "severity": "important",
-      "location": "capabilities[5] (get-customer-points-status)",
-      "issue": "X3: The widget GET route '/widget/points/status' declares `\"customer_external_id\": \"identifier\"` in its requestShape, but the widget cannot securely supply this value \u2014 it is a server-side identity that must be resolved from the authenticated session, not passed in by the caller. A caller-supplied customer_external_id opens a horizontal privilege-escalation path where one customer can query another's balance and discount code simply by changing the parameter.",
-      "fix": "Remove 'customer_external_id' from the requestShape of GET /widget/points/status; the LLD should resolve the customer identity from the authenticated session context, not from a caller-supplied field."
+      "severity": "critical",
+      "location": "capabilities[6] (initiate-redemption) and edgeCases[4]",
+      "issue": "\"Debit the redemption threshold of points from the customer's balance and insert a pending redemption record.\" \u2014 The capability writes to `customer_point_balances` and `redemptions` but has no coverage of a corresponding write to `point_transactions`. The `point_transactions` table's stated purpose is to record \"every points credit and debit,\" yet the entire redemption debit path \u2014 and the compensating credit described in edge case 5 (\"a compensating transaction is appended to the ledger\") \u2014 has no backing capability that writes to that table. This leaves the ledger structurally incomplete: a debit can be applied to the balance with no ledger row to prove it happened, and the compensating credit on failure references a transaction that was never recorded. Any audit, dispute, or balance reconciliation will fail.",
+      "fix": "Add a capability (e.g. `record-points-transaction`) with kind `write`, dataNeeds `[customer external id, points delta, transaction type, balance after, source redemption id]`, integration null, that writes one row to `point_transactions`; call it both from the redemption debit path and from the compensating credit path on failure, and remove the implicit ledger-write responsibility from `initiate-redemption`'s description."
     },
     {
       "severity": "important",
-      "location": "capabilities[3] (generate-discount-code) and capabilities[4] (record-discount-grant)",
-      "issue": "C2: The 'generate-discount-code' capability calls out to the Shopify Admin API to create a discount code but there is no paired write capability and no edge case that records the outcome when the Shopify call succeeds but the subsequent 'record-discount-grant' DB write fails. The edge case present covers the rollback direction (Shopify rejects \u2192 roll back debit) but not the opposite split-brain: Shopify accepts \u2192 app crashes before persisting the grant \u2192 the code exists in Shopify but the customer never sees it and a retry will generate a second code.",
-      "fix": "Add an edge case explicitly covering 'Shopify discount code creation succeeds but the local record-discount-grant write fails before commit \u2014 on retry, the system must detect the already-created Shopify code (by idempotency key or lookup) and skip re-creation, then re-attempt only the local write.'"
+      "location": "externalContracts[3] (widget GET /widget/points-balance) requestShape",
+      "issue": "\"customer_external_id\": \"identifier\" \u2014 The widget GET accepts the customer's external identifier as a caller-supplied input. In a storefront context any authenticated (or unauthenticated) session can supply any identifier and retrieve another customer's balance and redemption eligibility. The LLD will faithfully implement a lookup keyed on that field with no further access control, because nothing in the plan instructs it otherwise.",
+      "fix": "Remove `customer_external_id` from the requestShape and add a note in the purpose that identity is resolved from the authenticated storefront session token; if the customer cannot be resolved, return an empty/ineligible response rather than an error."
     },
     {
       "severity": "important",
-      "location": "capabilities[4] (record-discount-grant), usesWorkflow flag",
-      "issue": "C5: 'record-discount-grant' has `\"usesWorkflow\": true`, but the discount_grants table's statusField is null and there is no stateMachine \u2014 meaning there is no declared lifecycle for this capability to own. The 'status' column on discount_grants represents an application workflow (pending \u2192 active \u2192 used/expired), and the spec reserves usesWorkflow=true for capabilities that own and write status transitions on a declared lifecycle. A capability that merely inserts the initial row (with an initial status) and never transitions it should be usesWorkflow=false; if a separate transition capability (e.g. mark-discount-used) is intended, it is missing from the plan.",
-      "fix": "Either set usesWorkflow=false on 'record-discount-grant' (it performs an initial-state insert only) and add a separate capability that transitions discount_grants.status when the code is used or expires, OR confirm the insert-only intent and set usesWorkflow=false with no further change."
-    },
-    {
-      "severity": "important",
-      "location": "triggers[0] and edgeCases",
-      "issue": "T1: The external-event trigger for 'an order is paid' includes idempotency text on the trigger itself, but the edgeCases list addresses only the duplicate-delivery scenario for the balance/discount path. There is no edge case covering a duplicate delivery that arrives *after* a partial failure \u2014 e.g. the first delivery credited points but crashed before the debit/discount step; the second delivery finds a transaction row for the order and exits as a no-op, silently leaving the customer with a balance that should have triggered a discount. The deduplication anchor exits unconditionally on any existing transaction row, which conflates 'fully processed' with 'partially processed'.",
-      "fix": "Add an edge case: 'Duplicate order-paid event arrives after a partial processing failure (credit recorded but discount generation incomplete) \u2014 the idempotency check must distinguish a fully-committed processing record from a partially-committed one, e.g. by checking both the point transaction row and the resulting discount_grants row before deciding no-op vs. resumption.'"
-    },
-    {
-      "severity": "minor",
-      "location": "capabilities[2] (check-redemption-eligibility), dataNeeds",
-      "issue": "T2: The trigger's signalFields include `\"order subtotal\"` which is consumed by 'compute-points-earned', and `\"customer external id\"` which is consumed by 'record-points-credit' and 'get-customer-points-status'. However, the signal field `\"order external id\"` is listed on the trigger and is used by 'record-points-credit' and the idempotency check described in the dataFlow, yet no capability explicitly lists 'order external id' in dataNeeds for the idempotency guard step \u2014 the check is described only in the trigger's idempotency prose and in the edgeCases, leaving the LLD without a capability anchor to generate the guard logic against.",
-      "fix": "Add 'order external id' to the dataNeeds of 'record-points-credit' (it already writes it to point_transactions) and ensure the idempotency pre-check is expressed as a dataNeed on a dedicated read capability or on 'record-points-credit' itself so the LLD has an explicit anchor for the existence check query."
+      "location": "externalContracts[4] (widget POST /widget/redeem) requestShape",
+      "issue": "\"customer_external_id\": \"identifier\" \u2014 The same caller-supplied identity problem applies to the redemption POST: any caller that supplies an arbitrary customer external id would trigger a balance debit and discount code issuance against that customer's account. This is the higher-severity surface because it is a write path with a money consequence (`touchesMoney: true` on related capabilities).",
+      "fix": "Remove `customer_external_id` from the requestShape and derive customer identity exclusively from the authenticated session context, consistent with the fix for the widget GET."
     }
   ]
 }

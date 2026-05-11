@@ -1,0 +1,32 @@
+Feature: Shoppers can ask product questions on the storefront, merchants review and answer them in the admin, and answered Q&A becomes publicly visible on product pages.
+Triggers: widget, admin
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LLD database.tables — authoritative column definitions (implement exactly):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Table: product_questions
+  purpose: Stores every shopper-submitted question and the merchant's answer, along with the lifecycle status that controls storefront visibility.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  product_external_id  BIGINT  NOT NULL   -- Shopify numeric product ID this question belongs to
+  shopper_identifier  TEXT  NULL   -- Logged-in customer ID or guest token supplied by the widget
+  question_text  TEXT  NOT NULL
+  answer_text  TEXT  NULL
+  status  TEXT  NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'answered', 'published', 'rejected'))
+  answered_at  TIMESTAMPTZ  NULL
+  visibility_decided_at  TIMESTAMPTZ  NULL
+  failure_reason  TEXT  NULL   -- Records error message when a workflow transition fails
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  Indexes:
+    - product_external_id, status
+    - status, created_at
+    - status, product_external_id, created_at
+    - created_at
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Generate the PostgreSQL DDL migration for this feature.
+Plain CREATE TABLE / CREATE INDEX against unqualified names.
+Add COMMENT ON TABLE / COMMENT ON COLUMN where the LLD supplies a `purpose`.
+No tenant_id, no RLS, no CREATE POLICY — see the isolation
+model in the system prompt.
+Output ONLY raw SQL (no markdown fences).

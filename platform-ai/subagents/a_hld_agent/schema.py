@@ -33,6 +33,7 @@ ColumnRole = Literal[
     "reference",
     "timestamp",
     "money",
+    "ratio",
     "status",
     "flag",
     "text",
@@ -46,6 +47,7 @@ ShapeKind = Literal[
     "reference",
     "timestamp",
     "money",
+    "ratio",
     "status",
     "flag",
     "text",
@@ -229,6 +231,14 @@ class StateMachine(_StrictModel):
 
 # ── External contracts ────────────────────────────────────────────────
 
+# Accepted requestShape keys that signal pagination on a list-returning GET.
+# Whitelisted by name (rather than role) because a cursor is "text" in the
+# semantic-kind vocabulary, which is indistinguishable from any other free-
+# form text input — naming is the only structural signal we have here.
+_PAGINATION_CURSOR_KEYS: frozenset[str] = frozenset(
+    {"cursor", "page", "page_cursor", "after", "before"}
+)
+
 
 class ExternalContract(_StrictModel):
     surface: Literal["widget", "admin"]
@@ -267,6 +277,27 @@ class ExternalContract(_StrictModel):
                     f"semantic kind; allowed: {sorted(_VALID_SHAPE_KINDS)}"
                 )
         return v
+
+    # Rule X2 — any GET that returns a `list` must expose a pagination
+    # cursor in the request so the LLD can generate a paginated query.
+    # Pushed down from the validator's semantic-judgment layer: the old
+    # validator kept rationalising "this list is naturally small" and
+    # silently dropping the finding. A structural check has no such
+    # judgment to apply and always fires when the shape is wrong.
+    @model_validator(mode="after")
+    def _list_get_must_paginate(self) -> "ExternalContract":
+        if self.method != "GET":
+            return self
+        if not any(v == "list" for v in self.responseShape.values()):
+            return self
+        if not any(k in _PAGINATION_CURSOR_KEYS for k in self.requestShape):
+            raise ValueError(
+                f"GET {self.path} returns a 'list' in responseShape but "
+                f"has no pagination cursor in requestShape. Add one of "
+                f"{sorted(_PAGINATION_CURSOR_KEYS)} (typically 'cursor' "
+                f"with kind 'text') so the endpoint is paginable at scale."
+            )
+        return self
 
 
 # ── HLD plan (top-level) ──────────────────────────────────────────────

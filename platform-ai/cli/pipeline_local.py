@@ -248,14 +248,18 @@ def _filter_summary_to_allowed_topics(summary_md: str, allowed: frozenset[str]) 
 
 def _phase_hld(
     intent: Dict[str, Any], prompt: str, run_dir: Path
-) -> Tuple[Dict[str, Any], str, int, int]:
+) -> Tuple[Dict[str, Any], str, int, int, int, int]:
     """
     Run the HLD agent. The legacy architect lives in
     `subagents/architect_agent.py` for reference — this phase now produces
     an HLD plan (schema-agnostic, integration-agnostic). Pydantic-driven
     validation lives inside the agent; no outer retry loop is needed.
 
-    Returns (plan_dict, product_prompt, total_in_tokens, total_out_tokens).
+    Returns
+    `(plan_dict, product_prompt, total_in_tokens, total_out_tokens,
+    cache_read_tokens, cache_creation_tokens)`. Cache fields let the CLI
+    surface the actual prompt-cache hit ratio rather than the raw input
+    total.
     """
     from cli.chat_local import (
         _DIM,
@@ -295,7 +299,7 @@ def _phase_hld(
     t0 = time.monotonic()
     try:
         with input_log("hld", run_dir):
-            plan, hld_in, hld_out = run_hld_agent(
+            plan, hld_in, hld_out, hld_cr, hld_cc = run_hld_agent(
                 prompt=prompt,
                 intent=intent,
                 on_attempt_failed=_on_attempt_failed,
@@ -307,7 +311,12 @@ def _phase_hld(
             ok=False,
             ms=ms,
             notes=f"failed after {err.attempts} attempt(s)  "
-            + _tok_note(err.in_tokens, err.out_tokens),
+            + _tok_note(
+                err.in_tokens,
+                err.out_tokens,
+                cache_read=err.cache_read_tokens,
+                cache_create=err.cache_creation_tokens,
+            ),
         )
         print(f"\n  {_RED}HLD failed after {err.attempts} attempts:{_RESET}")
         for e in err.errors:
@@ -319,7 +328,7 @@ def _phase_hld(
         "HLD",
         ok=True,
         ms=ms,
-        notes=_tok_note(hld_in, hld_out),
+        notes=_tok_note(hld_in, hld_out, cache_read=hld_cr, cache_create=hld_cc),
     )
 
     if plan.get("feasibility") == "blocked":
@@ -330,7 +339,7 @@ def _phase_hld(
         print(f"\n  {_RED}Platform limitation:{_RESET} {blocked_reason}")
         sys.exit(1)
 
-    return plan, product_prompt, hld_in, hld_out
+    return plan, product_prompt, hld_in, hld_out, hld_cr, hld_cc
 
 
 def _phase_ops_picker(
@@ -428,7 +437,7 @@ def _phase_lld(
     ops_picks: Dict[str, Any],
     prompt: str,
     run_dir: Path,
-) -> Tuple[Dict[str, Any], int, int]:
+) -> Tuple[Dict[str, Any], int, int, int, int]:
     """
     Run the LLD agent (LLD stage 2).
 
@@ -437,7 +446,10 @@ def _phase_lld(
     etc). Pydantic validation lives inside the agent; the runner also
     enriches recipe steps with platform-runtime examples before returning.
 
-    Returns (lld_dict, in_tokens, out_tokens).
+    Returns
+    `(lld_dict, in_tokens, out_tokens, cache_read_tokens, cache_creation_tokens)`.
+    Cache fields let the CLI surface the actual prompt-cache hit ratio
+    rather than the raw input total.
     """
     from cli.chat_local import (
         _DIM,
@@ -467,7 +479,7 @@ def _phase_lld(
     t0 = time.monotonic()
     try:
         with input_log("lld", run_dir):
-            lld_dict, in_tok, out_tok = run_lld_agent(
+            lld_dict, in_tok, out_tok, cache_r, cache_c = run_lld_agent(
                 prompt=prompt,
                 plan=plan,
                 ops_picks=ops_picks,
@@ -480,7 +492,12 @@ def _phase_lld(
             ok=False,
             ms=ms,
             notes=f"failed after {err.attempts} attempt(s)  "
-            + _tok_note(err.in_tokens, err.out_tokens),
+            + _tok_note(
+                err.in_tokens,
+                err.out_tokens,
+                cache_read=err.cache_read_tokens,
+                cache_create=err.cache_creation_tokens,
+            ),
         )
         print(f"\n  {_RED}LLD failed after {err.attempts} attempts:{_RESET}")
         for e in err.errors:
@@ -488,8 +505,13 @@ def _phase_lld(
         sys.exit(1)
 
     ms = int((time.monotonic() - t0) * 1000)
-    _agent_line("LLD", ok=True, ms=ms, notes=_tok_note(in_tok, out_tok))
-    return lld_dict, in_tok, out_tok
+    _agent_line(
+        "LLD",
+        ok=True,
+        ms=ms,
+        notes=_tok_note(in_tok, out_tok, cache_read=cache_r, cache_create=cache_c),
+    )
+    return lld_dict, in_tok, out_tok, cache_r, cache_c
 
 
 def _phase_codegen(
@@ -543,8 +565,8 @@ def _phase_codegen(
 
     _CODEGEN_LABELS = {
         "handler": "Handler",
-        "db": "Migration",
-        "storefront": "Widget JS",
+        "db": "DB",
+        "storefront": "Storefront",
         "admin_ui": "Admin UI",
     }
 

@@ -1,0 +1,7 @@
+Merchant request: Merchant sees a clean admin dashboard with revenue, AOV, top products, and repeat customer rate updated on page load.
+
+Product-agent intent (use as context — pick the archetype, capabilities,
+and contracts from the merchant's actual needs):
+{"triggerTypes": ["admin"], "resources": ["Order", "Product"], "desiredOutcome": "Merchant sees a clean admin dashboard with revenue, AOV, top products, and repeat customer rate updated on page load.", "cronHint": null, "appCategory": "backend_admin", "qualityBrief": "A good version calculates metrics accurately from order history (filtering by date range), displays charts that are readable at a glance, and loads quickly even with thousands of orders. Pay attention to repeat customers \u2014 this requires matching customers across multiple orders, not just counting unique email addresses in one period. Handle edge cases like orders with no customer email and zero-revenue orders gracefully."}
+
+Produce the HLD plan as JSON conforming to the appended schema.

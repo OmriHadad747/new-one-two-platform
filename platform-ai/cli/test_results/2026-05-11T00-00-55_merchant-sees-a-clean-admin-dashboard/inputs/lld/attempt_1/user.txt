@@ -1,0 +1,206 @@
+Merchant request: Merchant sees a clean admin dashboard with revenue, AOV, top products, and repeat customer rate updated on page load.
+
+HLD plan (schema-agnostic, integration-agnostic — your domain spine):
+{"schema_version": "1", "archetype": "backend+admin", "feasibility": "feasible", "blockedReason": null, "complexity": "high", "dataFlow": "A daily schedule job fetches all orders from the external commerce platform for the target period in bulk and writes pre-aggregated daily snapshots covering revenue totals, per-product sales figures, and per-customer order activity. When the merchant opens the admin dashboard and selects a date range, the app reads the relevant snapshot rows, computes aggregate revenue, AOV, top products, and repeat customer rate entirely from stored snapshots, and returns all four metrics in a single response. Because every metric is served from pre-aggregated tables, page load time is independent of total order volume. Orders with no associated customer are counted toward revenue and product snapshots but excluded from repeat customer rate calculations; zero-revenue orders are counted toward order volume but contribute nothing to revenue or AOV.", "triggers": [{"kind": "schedule", "cadence": "once daily during a low-traffic window", "jobPurpose": "Recompute and persist pre-aggregated daily metric snapshots so the admin dashboard can serve all four metrics instantly for any date range.", "perTickWork": "One tick fetches all orders placed on the previous calendar day in bulk, then writes or replaces the corresponding daily revenue snapshot row, daily per-product snapshot rows, and daily per-customer activity rows for that date.", "bulkFetchRule": true}], "capabilities": [{"id": "fetch-orders-in-bulk", "description": "Retrieve all orders placed on the target calendar day from the external commerce platform in a single bulk fetch.", "kind": "read", "dataNeeds": ["target date"], "integration": "shopify-admin", "returnsList": true, "touchesMoney": true, "usesConfig": false, "usesWorkflow": false}, {"id": "mark-run-started", "description": "Record that a snapshot job has begun for a given target date so concurrent or duplicate invocations can detect and exit early.", "kind": "write", "dataNeeds": ["target date"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false}, {"id": "write-daily-revenue-snapshot", "description": "Aggregate order totals for the target date and persist the resulting revenue, order count, and zero-revenue order count as a daily snapshot row.", "kind": "write", "dataNeeds": ["target date", "order revenue amounts", "order count"], "integration": null, "returnsList": false, "touchesMoney": true, "usesConfig": false, "usesWorkflow": false}, {"id": "write-daily-product-snapshots", "description": "Aggregate per-product units sold and revenue contribution for the target date and persist one snapshot row per product.", "kind": "write", "dataNeeds": ["target date", "product identifiers", "product names", "per-product units sold", "per-product revenue"], "integration": null, "returnsList": false, "touchesMoney": true, "usesConfig": false, "usesWorkflow": false}, {"id": "write-daily-customer-activity", "description": "Aggregate per-customer order counts for the target date, excluding orders with no identifiable customer, and persist one activity row per customer.", "kind": "write", "dataNeeds": ["target date", "customer external identifiers", "per-customer order counts"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false}, {"id": "record-run-outcome", "description": "Mark a snapshot run as completed or failed and record any failure reason so the merchant and operators can audit job health.", "kind": "write", "dataNeeds": ["run id", "outcome", "failure reason"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": true}, {"id": "read-dashboard-metrics", "description": "Read and aggregate the daily revenue, product, and customer activity snapshots for the requested date range and return all four dashboard metrics in a single pass.", "kind": "read", "dataNeeds": ["date range start", "date range end", "top products display count"], "integration": null, "returnsList": false, "touchesMoney": true, "usesConfig": true, "usesWorkflow": false}, {"id": "compute-repeat-customer-rate", "description": "From the aggregated per-customer order counts for the requested date range, calculate the proportion of customers who placed more than one order.", "kind": "compute", "dataNeeds": ["per-customer total order counts for date range"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false}, {"id": "read-settings", "description": "Return the current merchant dashboard configuration for display on the settings page and consumption by the dashboard metrics read.", "kind": "read", "dataNeeds": [], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": true, "usesWorkflow": false}, {"id": "save-settings", "description": "Persist updated merchant preferences for default date range and top-products display count.", "kind": "write", "dataNeeds": ["default date range in days", "top products display count"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": true, "usesWorkflow": false}], "persistence": [{"name": "daily_revenue_snapshots", "purpose": "Stores one pre-aggregated revenue and order-volume row per calendar day so any date range query can be answered by summing a bounded set of rows.", "columns": [{"name": "id", "role": "identifier", "nullable": false, "purpose": null}, {"name": "snapshot_date", "role": "timestamp", "nullable": false, "purpose": null}, {"name": "total_revenue", "role": "money", "nullable": false, "purpose": null}, {"name": "order_count", "role": "count", "nullable": false, "purpose": null}, {"name": "zero_revenue_order_count", "role": "count", "nullable": false, "purpose": null}, {"name": "created_at", "role": "timestamp", "nullable": false, "purpose": null}, {"name": "updated_at", "role": "timestamp", "nullable": false, "purpose": null}], "keyedBy": "one row per calendar day, deduplicated by snapshot date", "statusField": null, "queryPatterns": ["all rows where snapshot date falls within a merchant-supplied date range, ordered by date ascending", "single row looked up by snapshot date when a run writes or replaces the day's figures"]}, {"name": "daily_product_snapshots", "purpose": "Stores pre-aggregated per-product sales figures for each calendar day so top-products queries over any date range require only a bounded aggregation over this table.", "columns": [{"name": "id", "role": "identifier", "nullable": false, "purpose": null}, {"name": "snapshot_date", "role": "timestamp", "nullable": false, "purpose": null}, {"name": "product_external_id", "role": "reference", "nullable": false, "purpose": "identifies the product in the external commerce platform"}, {"name": "product_name", "role": "text", "nullable": false, "purpose": null}, {"name": "units_sold", "role": "count", "nullable": false, "purpose": null}, {"name": "revenue_contribution", "role": "money", "nullable": false, "purpose": null}, {"name": "created_at", "role": "timestamp", "nullable": false, "purpose": null}, {"name": "updated_at", "role": "timestamp", "nullable": false, "purpose": null}], "keyedBy": "one row per product per calendar day, deduplicated by the combination of snapshot date and product external id", "statusField": null, "queryPatterns": ["all rows where snapshot date falls within a date range, grouped by product external id and summed by revenue contribution and units sold, to produce a ranked top-products list", "rows for a specific snapshot date when a run writes or replaces that day's product figures"]}, {"name": "daily_customer_activity", "purpose": "Stores the order count placed by each identifiable customer on each calendar day, enabling repeat customer rate to be computed for any date range without scanning raw orders.", "columns": [{"name": "id", "role": "identifier", "nullable": false, "purpose": null}, {"name": "snapshot_date", "role": "timestamp", "nullable": false, "purpose": null}, {"name": "customer_external_id", "role": "reference", "nullable": false, "purpose": "identifies the customer across multiple orders; rows for anonymous orders are omitted"}, {"name": "orders_placed", "role": "count", "nullable": false, "purpose": null}, {"name": "created_at", "role": "timestamp", "nullable": false, "purpose": null}, {"name": "updated_at", "role": "timestamp", "nullable": false, "purpose": null}], "keyedBy": "one row per identifiable customer per calendar day, deduplicated by the combination of snapshot date and customer external id", "statusField": null, "queryPatterns": ["all rows where snapshot date falls within a date range, grouped by customer external id with total orders summed, to classify customers as first-time or repeat", "rows for a specific snapshot date when a run writes or replaces that day's customer activity"]}, {"name": "snapshot_runs", "purpose": "Tracks every scheduled snapshot job execution and its outcome so duplicate runs are detected and failures are auditable.", "columns": [{"name": "id", "role": "identifier", "nullable": false, "purpose": null}, {"name": "target_date", "role": "timestamp", "nullable": false, "purpose": null}, {"name": "status", "role": "status", "nullable": false, "purpose": null}, {"name": "failure_reason", "role": "text", "nullable": true, "purpose": null}, {"name": "started_at", "role": "timestamp", "nullable": false, "purpose": null}, {"name": "completed_at", "role": "timestamp", "nullable": true, "purpose": null}], "keyedBy": "one row per run attempt; at most one non-failed row per target date \u2014 failed rows may be superseded by a subsequent attempt for the same date", "statusField": null, "queryPatterns": ["single row looked up by target date where status is in-progress or completed, to block any duplicate or concurrent invocation before any snapshot write occurs", "most recent rows ordered by started at descending for operational monitoring", "single row looked up by target date where status is failed, to locate an existing failed record that the retry attempt should overwrite in place rather than insert a new row"]}, {"name": "app_settings", "purpose": "Stores the single merchant-configurable configuration record controlling dashboard defaults such as default date range and top-products display count.", "columns": [{"name": "id", "role": "identifier", "nullable": false, "purpose": null}, {"name": "default_date_range_days", "role": "count", "nullable": false, "purpose": null}, {"name": "top_products_display_count", "role": "count", "nullable": false, "purpose": null}, {"name": "updated_at", "role": "timestamp", "nullable": false, "purpose": null}], "keyedBy": "single row representing the only configuration record", "statusField": null, "queryPatterns": ["full row read on every dashboard load and settings page load", "full row replaced when the merchant saves new preferences"]}], "stateMachine": null, "externalContracts": [{"surface": "admin", "path": "/admin/dashboard", "method": "GET", "purpose": "Return all four pre-aggregated dashboard metrics for the merchant-supplied date range.", "requestShape": {"date_from": "timestamp", "date_to": "timestamp"}, "responseShape": {"total_revenue": "money", "average_order_value": "money", "total_orders": "count", "repeat_customer_rate": "ratio", "top_products": "list", "data_through_date": "timestamp"}}, {"surface": "admin", "path": "/admin/settings", "method": "GET", "purpose": "Return the current dashboard configuration so the admin UI can render the correct defaults on load.", "requestShape": {}, "responseShape": {"default_date_range_days": "count", "top_products_display_count": "count"}}, {"surface": "admin", "path": "/admin/settings", "method": "POST", "purpose": "Save merchant-configured dashboard preferences such as default date range and number of top products to display.", "requestShape": {"default_date_range_days": "count", "top_products_display_count": "count"}, "responseShape": {"saved": "flag"}}], "edgeCases": ["A snapshot run is triggered a second time for the same target date before the first run completes \u2014 the second invocation must detect the in-progress run record and exit without writing any snapshot rows.", "An order has no identifiable customer \u2014 it must be included in revenue and product snapshots but silently excluded from daily customer activity rows so repeat customer rate is not distorted.", "All orders on a given day have zero revenue (e.g. fully discounted) \u2014 the daily revenue snapshot must still be written with zero revenue and the correct order count so AOV computes as zero rather than being absent from the range.", "The merchant requests a date range that extends beyond the most recent completed snapshot date \u2014 the response must reflect the latest available data date so the merchant knows the figures are partial.", "A product is deleted from the external platform after its snapshot rows have been written \u2014 historical product name and revenue figures must remain readable from the snapshot without requiring a live product lookup.", "The daily job fails mid-run after writing the revenue snapshot but before writing product or customer snapshots \u2014 the run must be marked failed, the partial snapshot rows must not be served to the dashboard, and the next scheduled run must overwrite them cleanly."]}
+
+Ops-picker output (Shopify GraphQL ops + webhook topics, with each op
+enriched with its signature, return-type SDL, input types, and real
+example queries from Shopify's docs — use these to write the actual
+GraphQL strings inside your shopify_query / shopify_mutation steps):
+{"schema_version": "1", "capabilities": [{"capability_id": "fetch-orders-in-bulk", "ops": [{"name": "orders", "surface": "admin", "note": "Paginated bulk fetch of all orders placed on the target calendar day, filtered by created_at date range; returns pageInfo for cursor-based iteration over the full day's order volume", "args": [{"name": "first", "required": false, "type": "Int"}, {"name": "after", "required": false, "type": "String"}, {"name": "last", "required": false, "type": "Int"}, {"name": "before", "required": false, "type": "String"}, {"name": "reverse", "required": false, "type": "Boolean"}, {"name": "sortKey", "required": false, "type": "OrderSortKeys"}, {"name": "query", "required": false, "type": "String"}, {"name": "savedSearchId", "required": false, "type": "ID"}], "examples": [{"query": "query {\n  orders(first: 10) {\n    edges {\n      cursor\n      node {\n        id\n      }\n    }\n    pageInfo {\n      hasNextPage\n      hasPreviousPage\n      startCursor\n      endCursor\n    }\n  }\n}", "response": {"orders": {"edges": [{"cursor": "eyJsYXN0X2lkIjoxMjYyMTY1MTYsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "node": {"id": "gid://shopify/Order/126216516"}}, {"cursor": "eyJsYXN0X2lkIjoxNDg5Nzc3NzYsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "node": {"id": "gid://shopify/Order/148977776"}}, {"cursor": "eyJsYXN0X2lkIjoyMzUyNDAzMDIsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "node": {"id": "gid://shopify/Order/235240302"}}, {"cursor": "eyJsYXN0X2lkIjozNTc5NDQ4NTQsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "node": {"id": "gid://shopify/Order/357944854"}}, {"cursor": "eyJsYXN0X2lkIjo0MDQ0ODE1NzUsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "node": {"id": "gid://shopify/Order/404481575"}}, {"cursor": "eyJsYXN0X2lkIjo0MDkyMTQzNjMsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "node": {"id": "gid://shopify/Order/409214363"}}, {"cursor": "eyJsYXN0X2lkIjo0NzE4NjExMjksImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "node": {"id": "gid://shopify/Order/471861129"}}, {"cursor": "eyJsYXN0X2lkIjo0ODA3OTYxODksImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "node": {"id": "gid://shopify/Order/480796189"}}, {"cursor": "eyJsYXN0X2lkIjo1MjcyMjkyODksImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "node": {"id": "gid://shopify/Order/527229289"}}, {"cursor": "eyJsYXN0X2lkIjo1NTY1Mjc2MzgsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "node": {"id": "gid://shopify/Order/556527638"}}], "pageInfo": {"endCursor": "eyJsYXN0X2lkIjo1NTY1Mjc2MzgsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9", "hasNextPage": true, "hasPreviousPage": false, "startCursor": "eyJsYXN0X2lkIjoxMjYyMTY1MTYsImxhc3RfdmFsdWUiOiIyMDA1LTA3LTMxIDE1OjU3OjExLjAwMDAwMCJ9"}}}, "scenario_title": "Retrieve a list of orders", "variables": null}, {"query": "query {\n  order1: order(id: \"gid://shopify/Order/148977776\") {\n    name\n  }\n  order2: order(id: \"gid://shopify/Order/1073459961\") {\n    name\n  }\n}", "response": {"order1": {"name": "#1001"}, "order2": {"name": "#1018"}}, "scenario_title": "Retrieve a list of orders using their IDs and GraphQL aliases", "variables": null}, {"query": "query {\n  orders(first: 5) {\n    edges {\n      node {\n        id\n        name\n        createdAt\n        displayFinancialStatus\n        displayFulfillmentStatus\n        totalPriceSet {\n          shopMoney {\n            amount\n            currencyCode\n          }\n        }\n        subtotalPriceSet {\n          shopMoney {\n            amount\n            currencyCode\n          }\n        }\n        email\n        shippingAddress {\n          address1\n          city\n          provinceCode\n          zip\n        }\n        lineItems(first: 5) {\n          edges {\n            node {\n              name\n              quantity\n              sku\n              variant {\n                id\n                title\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}", "response": {"orders": {"edges": [{"node": {"createdAt": "2024-01-01T00:00:00Z", "displayFinancialStatus": "PAID", "displayFulfillmentStatus": "UNFULFILLED", "email": "bob@example.com", "id": "gid://shopify/Order/158040885", "lineItems": {"edges": [{"node": {"name": "Draft - 151cm", "quantity": 10, "sku": "draft-151", "variant": {"id": "gid://shopify/ProductVariant/168923715", "title": "151cm"}}}]}, "name": "#2000", "shippingAddress": null, "subtotalPriceSet": {"shopMoney": {"amount": "2000.0", "currencyCode": "CAD"}}, "totalPriceSet": {"shopMoney": {"amount": "2000.0", "currencyCode": "CAD"}}}}, {"node": {"createdAt": "2024-01-01T00:00:00Z", "displayFinancialStatus": "PAID", "displayFulfillmentStatus": "UNFULFILLED", "email": "bob@example.com", "id": "gid://shopify/Order/199007853", "lineItems": {"edges": []}, "name": "#2006", "shippingAddress": null, "subtotalPriceSet": {"shopMoney": {"amount": "2000.0", "currencyCode": "CAD"}}, "totalPriceSet": {"shopMoney": {"amount": "2000.0", "currencyCode": "CAD"}}}}, {"node": {"createdAt": "2024-01-01T00:00:00Z", "displayFinancialStatus": "PAID", "displayFulfillmentStatus": "UNFULFILLED", "email": "bob@example.com", "id": "gid://shopify/Order/212949620", "lineItems": {"edges": []}, "name": "#2002", "shippingAddress": null, "subtotalPriceSet": {"shopMoney": {"amount": "2000.0", "currencyCode": "CAD"}}, "totalPriceSet": {"shopMoney": {"amount": "2000.0", "currencyCode": "CAD"}}}}, {"node": {"createdAt": "2024-01-01T00:00:00Z", "displayFinancialStatus": "PAID", "displayFulfillmentStatus": "UNFULFILLED", "email": "bob@example.com", "id": "gid://shopify/Order/294238686", "lineItems": {"edges": []}, "name": "#2009", "shippingAddress": null, "subtotalPriceSet": {"shopMoney": {"amount": "2000.0", "currencyCode": "CAD"}}, "totalPriceSet": {"shopMoney": {"amount": "2000.0", "currencyCode": "CAD"}}}}, {"node": {"createdAt": "2024-01-01T00:00:00Z", "displayFinancialStatus": "PAID", "displayFulfillmentStatus": "UNFULFILLED", "email": "bob@example.com", "id": "gid://shopify/Order/316002265", "lineItems": {"edges": []}, "name": "#2003", "shippingAddress": null, "subtotalPriceSet": {"shopMoney": {"amount": "2000.0", "currencyCode": "CAD"}}, "totalPriceSet": {"shopMoney": {"amount": "2000.0", "currencyCode": "CAD"}}}}]}}, "scenario_title": "Retrieve specific order details", "variables": null}, {"query": "query {\n  orders(first: 10, query: \"updated_at:>2019-12-01\") {\n    edges {\n      node {\n        id\n        updatedAt\n      }\n    }\n  }\n}", "response": {"orders": {"edges": [{"node": {"id": "gid://shopify/Order/158040885", "updatedAt": "2024-01-01T12:34:43Z"}}, {"node": {"id": "gid://shopify/Order/199007853", "updatedAt": "2024-01-01T12:34:43Z"}}, {"node": {"id": "gid://shopify/Order/212949620", "updatedAt": "2024-01-01T12:34:43Z"}}, {"node": {"id": "gid://shopify/Order/294238686", "updatedAt": "2024-01-01T12:34:43Z"}}, {"node": {"id": "gid://shopify/Order/316002265", "updatedAt": "2024-01-01T12:34:43Z"}}, {"node": {"id": "gid://shopify/Order/459506686", "updatedAt": "2024-01-01T12:34:43Z"}}, {"node": {"id": "gid://shopify/Order/634584900", "updatedAt": "2024-01-01T12:34:43Z"}}, {"node": {"id": "gid://shopify/Order/744797037", "updatedAt": "2024-01-01T12:34:43Z"}}, {"node": {"id": "gid://shopify/Order/1001810659", "updatedAt": "2024-01-01T12:34:43Z"}}, {"node": {"id": "gid://shopify/Order/1021030140", "updatedAt": "2024-01-01T12:34:43Z"}}]}}, "scenario_title": "Retrieve the first 10 orders updated after December 1, 2019", "variables": null}, {"query": "query {\n  orders(first: 10, query: \"financial_status:authorized\") {\n    edges {\n      node {\n        id\n        displayFinancialStatus\n      }\n    }\n  }\n}", "response": {"orders": {"edges": [{"node": {"displayFinancialStatus": "AUTHORIZED", "id": "gid://shopify/Order/471861129"}}, {"node": {"displayFinancialStatus": "AUTHORIZED", "id": "gid://shopify/Order/527229289"}}, {"node": {"displayFinancialStatus": "AUTHORIZED", "id": "gid://shopify/Order/751082136"}}, {"node": {"displayFinancialStatus": "AUTHORIZED", "id": "gid://shopify/Order/431501862"}}]}}, "scenario_title": "Retrieve the first 10 orders with authorized payments", "variables": null}], "inputTypesSdl": {"OrderSortKeys": "enum OrderSortKeys {\n  CREATED_AT\n  CURRENT_TOTAL_PRICE\n  CUSTOMER_NAME\n  DESTINATION\n  FINANCIAL_STATUS\n  FULFILLMENT_STATUS\n  ID\n  ORDER_NUMBER\n  PO_NUMBER\n  PROCESSED_AT\n  RELEVANCE\n  TOTAL_ITEMS_QUANTITY\n  TOTAL_PRICE\n  UPDATED_AT\n}"}, "isConnection": true, "kind": "query", "returnTypeName": "OrderConnection", "returnTypeSdl": "type OrderConnection {\n  edges: [OrderEdge!]!\n  nodes: [Order!]!\n  pageInfo: PageInfo!\n}", "userErrorsField": null}]}], "webhooks": [], "unsatisfied": []}
+
+Produce the LLD plan as JSON conforming to the appended schema.
+
+Pagination helper — use for every offset-paginated list route.
+
+When you set httpRoutes.*.paginationKind="offset" on a route, its recipe
+MUST follow this exact pattern:
+
+  - Request shape includes `page: "number"` and `page_size: "number"`.
+  - Response shape is exactly:
+      { items: "{...}[]", total: "number", page: "number", page_size: "number" }
+  - The recipe contains exactly ONE `sql_select` step whose template is
+    a plain SELECT with NO LIMIT, NO OFFSET, NO COUNT(*). Set its
+    `bindResultTo` (e.g. "rows").
+  - The recipe's `response` step body is:
+      { items: "$rows.items", total: "$rows.total",
+        page: "$rows.page", page_size: "$rows.page_size" }
+  - DO NOT emit a separate count query or an offset-math compute step —
+    the paginate() helper handles both at codegen time.
+
+The handler codegen translates the bare sql_select into:
+
+  import { paginate } from "../lib/paginate.js";
+  const rows = await paginate(sql, sql`<your SELECT here>`,
+                              { page: req.body.page, page_size: req.body.page_size });
+  res.json(rows);
+
+Caps page_size at 100 by default. For a higher cap on a specific route,
+add a comment in the sql_select.purpose like "max 1000" and the codegen
+will pass `{ maxPageSize: 1000 }` as the fourth arg.
+
+
+Money helper — use for every monetary value the recipe touches.
+
+Storage stays integer minor units in BIGINT columns. The
+helper converts between Shopify's decimal-string payloads and stored
+integers correctly for every currency Shopify supports — including
+zero-decimal (JPY, KRW) and three-decimal (BHD, JOD) where the legacy
+formula `Math.round(parseFloat(x) * 100)` is silently wrong.
+
+API surface (import { money } from "../lib/money.js"):
+
+  money.toMinorUnits(value, currency)   -> integer minor units
+  money.fromMinorUnits(amount, currency) -> decimal number (rare)
+  money.format(amount, currency)        -> plain decimal string
+  money.sum(amounts)                    -> integer (use instead of +)
+  money.percentage(amount, pct)         -> integer (tax, discount, fee)
+  money.currency(code)                  -> { code, decimalDigits }
+
+Recipe rules:
+
+  - Compute steps that derive money from a Shopify decimal string MUST
+    use `money.toMinorUnits(value, currency)`. Do NOT inline
+    `Math.round(parseFloat(x) * 100)` — it is wrong for zero-decimal
+    (JPY, KRW) and three-decimal (BHD, JOD) currencies.
+  - Compute steps that aggregate money MUST use `money.sum([a, b, c])`.
+    Never `+` raw integers in compute expressions when the meaning is
+    "total of these money amounts".
+  - Compute steps that take a percentage of money (tax, fee, discount)
+    MUST use `money.percentage(amount, pct)`. Never inline
+    `amount * pct / 100`.
+  - Currency code is always required — pass it from the same Shopify
+    payload that carried the amount (e.g. presentmentMoney.currencyCode
+    or shopMoney.currencyCode). Persist the currency code alongside
+    the amount in a TEXT column so future reads can format correctly.
+
+Example compute step expression:
+
+  expression: "money.toMinorUnits(payload.totalPriceSet.shopMoney.amount,
+                                  payload.totalPriceSet.shopMoney.currencyCode)"
+
+
+Config helper — use for every app-wide setting (rate, threshold, toggle,
+TTL, choice).
+
+Storage is the platform-owned `app_config` table (template-managed, one
+row per setting key, JSONB value). Per-tenant via search_path. Do NOT
+declare a config table in `database.tables` — the helper writes directly
+to `app_config` with no per-app DDL.
+
+API surface (import { config } from "../lib/config.js"):
+
+  config.get(key, default)    -> stored value, or default if missing/null
+  config.get(key)             -> value or undefined
+  config.set(key, value)      -> upsert (last-writer-wins)
+  config.getMany(keys)        -> { key: value } subset (missing keys absent)
+  config.getAll()             -> { key: value } map of every key
+  config.unset(key)           -> remove a key (rare)
+
+Recipe rules:
+
+  - Reads happen in `compute` steps:
+      expression: "await config.get('points_per_dollar', 1)"
+    The default literal MUST always be supplied — never assume a key
+    is set on first run.
+  - Writes happen in admin "save settings" routes via a `compute` step
+    per knob, or one batched compute step iterating req.body. The
+    typical pattern collapses the legacy 5-step admin save (read, merge,
+    upsert, validate, respond) to: validate → config.set → 200.
+  - Key conventions: lowercase snake_case, ≤63 chars, regex
+    `^[a-z][a-z0-9_]{0,62}$`. Group related keys by prefix —
+    `loyalty_*`, `notification_*`, `discount_*` — so an admin page can
+    list them coherently.
+  - Concurrent writes: last-writer-wins. The merchant overrides their
+    own setting — that's the right semantics. If a recipe needs
+    optimistic locking on a counter-style value, use a real DB column
+    instead of config.
+
+Example admin "save settings" recipe (3 steps total):
+
+  1. compute   purpose: "validate input"
+               expression: "(typeof req.body.points_per_dollar === 'number'
+                            && req.body.points_per_dollar >= 0)
+                            ? true
+                            : (() => { throw new Error('invalid rate') })()"
+  2. compute   purpose: "persist setting"
+               expression: "await config.set('points_per_dollar',
+                                              req.body.points_per_dollar)"
+  3. response  status: 200
+               body: { ok: "true" }
+
+
+Workflow lifecycle helper — use for every multi-state row lifecycle
+(pending → running → completed/failed, draft → submitted →
+approved/rejected, etc.).
+
+Storage: the workflow-bearing table you declare in `database.tables`
+must have a `status TEXT` column with the state set in `enum`. Standard
+optional columns (`started_at TIMESTAMPTZ`, `finished_at TIMESTAMPTZ`,
+`failure_reason TEXT`) are recommended; the helper writes them when
+present. The state set is yours — the helper has zero opinion about
+"pending" / "running" / etc.; those are conventions you can override.
+
+API surface (import { workflow } from "../lib/workflow.js"):
+
+  workflow.claim(table, id, { from, to?, statusColumn?, startedAtColumn?, extraWhere? })
+      Atomic single-statement UPDATE … WHERE status=$from RETURNING *.
+      Returns the row, or null if zero rows matched (already claimed,
+      wrong state, gated out by extraWhere). NEVER throws on race.
+
+  workflow.complete(table, id, { to?, finishedAtColumn? })
+      Marks the row terminal-success.
+
+  workflow.fail(table, id, reason, { to?, finishedAtColumn?, failureReasonColumn? })
+      Marks the row terminal-failure with reason (truncated to 4000).
+
+  workflow.attempt(table, id, claimOptions, async (row) => …, { complete?, fail? })
+      One-shot: claim → run callback → complete-or-fail. Re-throws
+      callback errors AFTER persisting failure_reason. Returns
+      { row, value } or null (if claim came back empty).
+
+  workflow.sweepStale(table, { ttlMinutes?, runningState?, timedOutState?, … })
+      Flips rows that have been 'running' too long back to a terminal
+      state. Single SQL statement, RETURNING the swept ids.
+
+Recipe rules (these REPLACE the hand-rolled sql_claim + try_catch +
+sql_update pattern for kind="workflow" stateMachines — that's why this
+contract is injected for usesWorkflow=true capabilities):
+
+  - Use `workflow.attempt(...)` inside a single `compute` step. The
+    callback's body holds the actual side effects (Shopify call, email
+    send, etc.). On callback throw, the helper persists failure_reason
+    (truncated) and re-throws — the cron-runner sees the error and
+    decides retry. NO sql_claim, try_catch, or sql_update for the
+    lifecycle is needed in the recipe.
+  - Custom state names are supported: `claim(t, id, { from: "approved",
+    to: "shipped" })`. The standard quartet is convention, not
+    constraint.
+  - Multi-step lifecycles call `claim` repeatedly with different
+    `from`/`to` pairs (claim pending→running, do work, claim
+    running→awaiting_input, …).
+  - `extraWhere` accepts a `sql\`...\`` predicate AND-ed into the WHERE
+    clause. Use for time-gated transitions (`scheduled_at <= now()`)
+    or relation gates.
+
+Stale sweeper — REQUIRED for every workflow-bearing table. Without it,
+rows that crash mid-execution stay in 'running' forever. The validator
+rejects workflow plans that omit it. Recipe shape:
+
+  triggeredBy: "cron:sweep_<table>"
+  cronSchedule: "*/10 * * * *"   (every 10 minutes)
+  steps:
+    - kind: compute
+      purpose: "sweep stale running rows"
+      expression: "await workflow.sweepStale('<table>')"
+
+Example workflow recipe (cron: process_run):
+
+  inputs: [{ name: "runId", source: "cron.payload", fieldPath: "run_id",
+            type: "string", nullable: false }]
+  steps:
+    - kind: compute
+      purpose: "claim, run, finalise"
+      expression: "await workflow.attempt('rule_runs', runId,
+                     { from: 'pending' },
+                     async (row) => { /* do work — see other steps' example */ })"

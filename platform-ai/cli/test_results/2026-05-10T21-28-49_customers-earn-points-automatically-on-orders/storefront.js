@@ -1,0 +1,235 @@
+window.__PLATFORM_CATALOG__ = [];
+export function mount(container, host) {
+  const SLUG = "points-loyalty";
+  const { customerId } = host.context;
+
+  const style = document.createElement("style");
+  style.textContent = `
+    .app-${SLUG}-wrap { font-family: inherit; padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; max-width: 400px; }
+    .app-${SLUG}-loading { color: #6b7280; font-size: 14px; }
+    .app-${SLUG}-title { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
+    .app-${SLUG}-balance { font-size: 28px; font-weight: 700; color: #111827; margin: 0 0 4px; }
+    .app-${SLUG}-balance-label { font-size: 13px; color: #6b7280; margin: 0 0 14px; }
+    .app-${SLUG}-progress-track { background: #f3f4f6; border-radius: 999px; height: 10px; overflow: hidden; margin-bottom: 8px; }
+    .app-${SLUG}-progress-fill { background: #6366f1; height: 100%; border-radius: 999px; transition: width 0.3s ease; }
+    .app-${SLUG}-progress-label { font-size: 12px; color: #6b7280; margin: 0 0 16px; }
+    .app-${SLUG}-btn { display: inline-block; padding: 10px 20px; background: #6366f1; color: #fff; border: none; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer; }
+    .app-${SLUG}-btn:disabled { background: #a5b4fc; cursor: not-allowed; }
+    .app-${SLUG}-processing { font-size: 14px; color: #6b7280; margin: 0 0 8px; }
+    .app-${SLUG}-code-wrap { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 12px; margin-top: 10px; }
+    .app-${SLUG}-code-label { font-size: 12px; color: #15803d; margin: 0 0 4px; }
+    .app-${SLUG}-code { font-size: 18px; font-weight: 700; color: #166534; letter-spacing: 2px; margin: 0; }
+    .app-${SLUG}-status { font-size: 14px; margin: 10px 0 0; }
+    .app-${SLUG}-error { color: #dc2626; }
+    .app-${SLUG}-success { color: #16a34a; }
+    .app-${SLUG}-guest { font-size: 14px; color: #6b7280; padding: 12px 0; }
+  `;
+  container.appendChild(style);
+
+  const wrap = document.createElement("div");
+  wrap.className = `app-${SLUG}-wrap`;
+  container.appendChild(wrap);
+
+  const status = document.createElement("p");
+  status.setAttribute("aria-live", "polite");
+  status.className = `app-${SLUG}-status`;
+
+  function showLoading() {
+    wrap.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = `app-${SLUG}-loading`;
+    p.textContent = "Loading your points…";
+    wrap.appendChild(p);
+  }
+
+  function showGuest() {
+    wrap.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = `app-${SLUG}-guest`;
+    p.textContent = "Sign in to view your points balance and earn rewards.";
+    wrap.appendChild(p);
+  }
+
+  function renderBalance(data, redeemState) {
+    wrap.innerHTML = "";
+
+    const title = document.createElement("p");
+    title.className = `app-${SLUG}-title`;
+    title.textContent = "Your Loyalty Points";
+    wrap.appendChild(title);
+
+    const bal = document.createElement("p");
+    bal.className = `app-${SLUG}-balance`;
+    bal.textContent = String(data.current_balance);
+    wrap.appendChild(bal);
+
+    const balLabel = document.createElement("p");
+    balLabel.className = `app-${SLUG}-balance-label`;
+    balLabel.textContent = "points earned";
+    wrap.appendChild(balLabel);
+
+    const threshold = data.redemption_threshold || 1;
+    const pct = Math.min(100, Math.round((data.current_balance / threshold) * 100));
+
+    const track = document.createElement("div");
+    track.className = `app-${SLUG}-progress-track`;
+    const fill = document.createElement("div");
+    fill.className = `app-${SLUG}-progress-fill`;
+    fill.style.width = pct + "%";
+    track.appendChild(fill);
+    wrap.appendChild(track);
+
+    const progLabel = document.createElement("p");
+    progLabel.className = `app-${SLUG}-progress-label`;
+    if (data.redemption_eligible) {
+      progLabel.textContent = "Threshold reached — you can redeem!";
+    } else {
+      const needed = threshold - data.current_balance;
+      progLabel.textContent = needed + " more points until $" + data.discount_value + " off";
+    }
+    wrap.appendChild(progLabel);
+
+    if (redeemState === "processing") {
+      const proc = document.createElement("p");
+      proc.className = `app-${SLUG}-processing`;
+      proc.textContent = "Processing your redemption… your discount code will appear here shortly.";
+      proc.setAttribute("aria-live", "polite");
+      wrap.appendChild(proc);
+      const btn = document.createElement("button");
+      btn.className = `app-${SLUG}-btn`;
+      btn.disabled = true;
+      btn.textContent = "Processing…";
+      wrap.appendChild(btn);
+    } else if (redeemState && redeemState.code) {
+      const codeWrap = document.createElement("div");
+      codeWrap.className = `app-${SLUG}-code-wrap`;
+      const codeLabel = document.createElement("p");
+      codeLabel.className = `app-${SLUG}-code-label`;
+      codeLabel.textContent = "Your discount code:";
+      codeWrap.appendChild(codeLabel);
+      const codeEl = document.createElement("p");
+      codeEl.className = `app-${SLUG}-code`;
+      codeEl.textContent = redeemState.code;
+      codeWrap.appendChild(codeEl);
+      wrap.appendChild(codeWrap);
+      const note = document.createElement("p");
+      note.className = `app-${SLUG}-status app-${SLUG}-success`;
+      note.setAttribute("aria-live", "polite");
+      note.textContent = "Apply this code at checkout to save $" + data.discount_value + ".";
+      wrap.appendChild(note);
+    } else if (data.redemption_eligible) {
+      const btn = document.createElement("button");
+      btn.className = `app-${SLUG}-btn`;
+      btn.textContent = "Redeem for $" + data.discount_value + " off";
+      btn.addEventListener("click", function () {
+        handleRedeem(btn, data);
+      });
+      wrap.appendChild(btn);
+    }
+
+    status.className = `app-${SLUG}-status`;
+    status.textContent = "";
+    wrap.appendChild(status);
+  }
+
+  function renderError(msg) {
+    wrap.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = `app-${SLUG}-status app-${SLUG}-error`;
+    p.setAttribute("aria-live", "polite");
+    p.textContent = msg;
+    wrap.appendChild(p);
+  }
+
+  async function handleRedeem(btn, balanceData) {
+    btn.disabled = true;
+    btn.textContent = "Processing…";
+    status.textContent = "";
+    renderBalance(balanceData, "processing");
+
+    let redeemResult;
+    try {
+      redeemResult = await host.call("/redeem", { customerId: customerId });
+    } catch (_) {
+      renderBalance(balanceData, null);
+      const errEl = wrap.querySelector("." + `app-${SLUG}-status`);
+      if (errEl) {
+        errEl.className = `app-${SLUG}-status app-${SLUG}-error`;
+        errEl.setAttribute("aria-live", "polite");
+        errEl.textContent = "Redemption failed. Please try again.";
+      }
+      return;
+    }
+
+    if (!redeemResult || !redeemResult.redemption_id) {
+      renderBalance(balanceData, null);
+      const errEl = wrap.querySelector("." + `app-${SLUG}-status`);
+      if (errEl) {
+        errEl.className = `app-${SLUG}-status app-${SLUG}-error`;
+        errEl.setAttribute("aria-live", "polite");
+        errEl.textContent = "Unexpected response. Please try again.";
+      }
+      return;
+    }
+
+    if (redeemResult.status === "complete" && redeemResult.discount_code) {
+      renderBalance(balanceData, { code: redeemResult.discount_code });
+      return;
+    }
+
+    renderBalance(balanceData, "processing");
+
+    const visibilityHandler = function () {
+      if (document.visibilityState === "visible") {
+        document.removeEventListener("visibilitychange", visibilityHandler);
+        recheckBalance(true);
+      }
+    };
+    document.addEventListener("visibilitychange", visibilityHandler);
+    container.__appPointsVisibilityHandler = visibilityHandler;
+  }
+
+  async function recheckBalance(fromVisibility) {
+    let fresh;
+    try {
+      fresh = await host.call("/points-balance", { customerId: customerId });
+    } catch (_) {
+      return;
+    }
+    if (!fresh) return;
+
+    if (fresh.pending_discount_code) {
+      renderBalance(fresh, { code: fresh.pending_discount_code });
+    } else if (fromVisibility && fresh.redemption_eligible === false) {
+      renderBalance(fresh, null);
+    } else {
+      renderBalance(fresh, "processing");
+    }
+  }
+
+  async function init() {
+    if (!customerId) {
+      showGuest();
+      return;
+    }
+
+    showLoading();
+
+    let data;
+    try {
+      data = await host.call("/points-balance", { customerId: customerId });
+    } catch (_) {
+      renderError("Unable to load points balance. Please refresh to try again.");
+      return;
+    }
+
+    if (!data) {
+      renderError("Unable to load points balance. Please refresh to try again.");
+      return;
+    }
+
+    renderBalance(data, null);
+  }
+
+  init();
+}

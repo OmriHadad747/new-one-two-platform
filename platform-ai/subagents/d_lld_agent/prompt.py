@@ -583,13 +583,27 @@ Each entry:
                      declared. If the HLD's shape is genuinely
                      incomplete, surface it as a platformGap rather
                      than silently inventing fields.
-  paginationKind    null | "offset" | "cursor"
+  paginationKind    null | "offset" | "cursor" | "inline"
                      REQUIRED when responseShape contains a list value
                      (any value of the form "{...}[]" or ending in "[]").
-                     When set, use the `paginate` helper (see PLATFORM
-                     API SURFACE) — the full helper contract is also
-                     appended to your user message. Validator rejects
-                     list responses with paginationKind=null.
+                     Pick by the route's purpose:
+                       - "offset"  : the route's primary purpose is paging
+                                     through a large collection; use the
+                                     `paginate` helper (see PLATFORM API
+                                     SURFACE — its full contract is also
+                                     appended to your user message).
+                       - "cursor"  : keyset-paginated collection; recipe
+                                     emits its own keyset SELECT and
+                                     next-cursor compute.
+                       - "inline"  : a bounded embedded list returned
+                                     alongside other fields (top-N
+                                     ranking, fixed-size collection
+                                     capped by config). No cursor / no
+                                     offset / no paginate() helper.
+                                     The recipe just SELECTs the rows
+                                     with a LIMIT and returns them.
+                     Validator rejects list responses with
+                     paginationKind=null.
 
 A recipe in capabilityRecipes binds to each route via \
 `triggeredBy: "widget:<METHOD>:<path>"` or \
@@ -1419,9 +1433,7 @@ def build_system_prompt() -> str:
     """
     from subagents.e_storefront_agent.widget_shapes import widget_shapes_section
 
-    schema_json = json.dumps(LLDPlan.model_json_schema(), indent=2)
-    return (
-        SYSTEM_PROMPT_TEMPLATE
-        .replace("__SCHEMA_JSON__", schema_json)
-        .replace("__WIDGET_SHAPES_SECTION__", widget_shapes_section())
+    schema_json = json.dumps(LLDPlan.model_json_schema())
+    return SYSTEM_PROMPT_TEMPLATE.replace("__SCHEMA_JSON__", schema_json).replace(
+        "__WIDGET_SHAPES_SECTION__", widget_shapes_section()
     )

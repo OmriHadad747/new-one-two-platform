@@ -1,0 +1,63 @@
+Feature: Customers earn points automatically on orders and receive automatic discounts at checkout when points reach a configurable threshold.
+Triggers: webhook, cron, admin
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LLD database.tables — authoritative column definitions (implement exactly):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Table: customer_point_balances
+  purpose: Maintains the running point balance and lifetime totals for every customer who has earned points.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  customer_external_id  BIGINT  NOT NULL   -- Shopify numeric customer ID
+  current_balance  BIGINT  NOT NULL DEFAULT 0   -- Current redeemable point balance
+  lifetime_earned  BIGINT  NOT NULL DEFAULT 0   -- Total points ever earned
+  lifetime_redeemed  BIGINT  NOT NULL DEFAULT 0   -- Total points ever redeemed
+  updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  UNIQUE (customer_external_id)
+  Indexes:
+    - customer_external_id
+    - current_balance DESC
+
+Table: point_transactions
+  purpose: Immutable ledger recording every points credit and debit with its source, enabling idempotency checks and audit history.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  customer_external_id  BIGINT  NOT NULL   -- Shopify numeric customer ID whose balance was affected
+  order_external_id  BIGINT  NULL   -- Shopify numeric order ID that triggered an earning transaction; null for redemption debits
+  redemption_id  UUID  NULL   -- FK to redemptions row for debit transactions; null for earn transactions
+  transaction_type  TEXT  NOT NULL CHECK (transaction_type IN ('earned', 'redeemed', 'compensating_credit'))   -- Whether this transaction credits or debits points
+  points_delta  BIGINT  NOT NULL   -- Signed integer — positive for credits, negative for debits
+  balance_after  BIGINT  NOT NULL   -- Customer balance immediately after this transaction
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  UNIQUE (order_external_id)
+  FOREIGN KEY (redemption_id) REFERENCES redemptions(id) ON DELETE SET NULL
+  Indexes:
+    - customer_external_id
+    - order_external_id
+    - redemption_id
+
+Table: redemptions
+  purpose: Tracks every discount code issued to a customer and its current state so double-application and concurrent redemptions can be prevented.
+  id  UUID  PRIMARY KEY DEFAULT gen_random_uuid()
+  customer_external_id  BIGINT  NOT NULL   -- Shopify numeric customer ID who requested the discount
+  discount_code_external_id  BIGINT  NULL   -- Shopify numeric DiscountCodeNode ID after successful creation
+  discount_code_string  TEXT  NULL   -- Human-readable discount code string returned to the customer
+  points_debited  BIGINT  NOT NULL   -- Number of points debited for this redemption
+  discount_value_minor  BIGINT  NOT NULL   -- Discount value in minor currency units at time of redemption
+  currency  TEXT  NOT NULL   -- ISO 4217 currency code for the discount value
+  status  TEXT  NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed'))   -- Workflow status of this redemption attempt
+  failure_reason  TEXT  NULL   -- Error message when status=failed
+  started_at  TIMESTAMPTZ  NULL   -- When the workflow picked up this row
+  finished_at  TIMESTAMPTZ  NULL   -- When the workflow reached a terminal state
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+  Indexes:
+    - customer_external_id
+    - status
+    - customer_external_id, status
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Generate the PostgreSQL DDL migration for this feature.
+Plain CREATE TABLE / CREATE INDEX against unqualified names.
+Add COMMENT ON TABLE / COMMENT ON COLUMN where the LLD supplies a `purpose`.
+No tenant_id, no RLS, no CREATE POLICY — see the isolation
+model in the system prompt.
+Output ONLY raw SQL (no markdown fences).

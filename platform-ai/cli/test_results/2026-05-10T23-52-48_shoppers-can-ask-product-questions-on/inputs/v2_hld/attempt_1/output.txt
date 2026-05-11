@@ -1,0 +1,149 @@
+{
+  "schema_version": "1",
+  "archetype": "backend+admin+storefront",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "A shopper submits a question for a product via the storefront widget; the question is stored in a pending state and is invisible to other shoppers. The merchant opens the admin questions list, optionally filtering by product or status or searching by keyword, and writes an answer — recording the outcome as answered, which immediately makes the Q&A pair publicly visible on the product page. The merchant may later hide an answered question, removing it from storefront display without deleting it, or permanently delete it. The storefront widget reads only answered questions for the requested product, so pending and hidden questions never reach shoppers.",
+  "triggers": [],
+  "externalContracts": [
+    {
+      "surface": "widget",
+      "path": "/widget/questions",
+      "method": "GET",
+      "purpose": "Return all answered, publicly visible Q&A pairs for a given product so the widget renders the correct initial state on page load.",
+      "requestShape": { "product_id": "reference" },
+      "responseShape": { "questions": "list" }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/questions",
+      "method": "POST",
+      "purpose": "Accept a new question from a shopper for a specific product and store it for merchant review.",
+      "requestShape": { "product_id": "reference", "question_text": "text", "display_name": "text" },
+      "responseShape": { "question_id": "identifier", "status": "status" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions",
+      "method": "GET",
+      "purpose": "Return a paginated, filterable, and searchable list of questions for the merchant admin panel.",
+      "requestShape": { "status_filter": "status", "product_id": "reference", "search": "text", "sort_by": "text", "cursor": "text" },
+      "responseShape": { "questions": "list", "next_cursor": "text", "total_count": "count" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions/answer",
+      "method": "POST",
+      "purpose": "Record the merchant's answer for a question and mark it as answered so it becomes publicly visible.",
+      "requestShape": { "question_id": "identifier", "answer_text": "text" },
+      "responseShape": { "question_id": "identifier", "status": "status" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions/visibility",
+      "method": "POST",
+      "purpose": "Toggle a question's visibility between answered and hidden without altering the answer text.",
+      "requestShape": { "question_id": "identifier", "visible": "flag" },
+      "responseShape": { "question_id": "identifier", "status": "status" }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/questions/remove",
+      "method": "POST",
+      "purpose": "Permanently delete a question and its answer from the system.",
+      "requestShape": { "question_id": "identifier" },
+      "responseShape": { "deleted": "flag" }
+    }
+  ],
+  "persistence": [
+    {
+      "name": "product_questions",
+      "purpose": "Stores every shopper-submitted question, its optional merchant answer, and the current review status that governs storefront visibility.",
+      "columns": [
+        { "name": "id", "role": "identifier", "nullable": false, "purpose": null },
+        { "name": "product_external_id", "role": "reference", "nullable": false, "purpose": "identifies the product this question belongs to" },
+        { "name": "question_text", "role": "text", "nullable": false, "purpose": null },
+        { "name": "shopper_display_name", "role": "text", "nullable": true, "purpose": null },
+        { "name": "answer_text", "role": "text", "nullable": true, "purpose": null },
+        { "name": "status", "role": "status", "nullable": false, "purpose": null },
+        { "name": "asked_at", "role": "timestamp", "nullable": false, "purpose": null },
+        { "name": "answered_at", "role": "timestamp", "nullable": true, "purpose": null }
+      ],
+      "keyedBy": "one row per submitted question; no deduplication — multiple questions on the same product are each independent rows",
+      "statusField": null,
+      "queryPatterns": [
+        "all questions in answered status for a given product, ordered by answered date, for storefront display",
+        "all questions filtered by status and optionally by product, ordered by asked date descending or product, with cursor pagination, for admin list",
+        "full-text search across question text and answer text for admin keyword search",
+        "single question looked up by identifier when recording an answer or visibility change"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "submit-question",
+      "description": "Store a new shopper question for a product in pending status so it awaits merchant review.",
+      "kind": "write",
+      "dataNeeds": ["product external id", "question text", "shopper display name"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "record-review-outcome",
+      "description": "Record the merchant's answer and the resulting visibility outcome for a question, transitioning its status accordingly.",
+      "kind": "write",
+      "dataNeeds": ["question identifier", "outcome", "answer text"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": true
+    },
+    {
+      "id": "list-questions-admin",
+      "description": "Return a paginated, filterable, sortable, and searchable list of questions for the merchant admin panel.",
+      "kind": "read",
+      "dataNeeds": ["status filter", "product external id filter", "search text", "sort preference", "page cursor"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "list-published-questions",
+      "description": "Return all answered, publicly visible Q&A pairs for a specific product for storefront display.",
+      "kind": "read",
+      "dataNeeds": ["product external id"],
+      "integration": null,
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "remove-question",
+      "description": "Permanently delete a question and its associated answer so it no longer appears in the admin list or on the storefront.",
+      "kind": "write",
+      "dataNeeds": ["question identifier"],
+      "integration": null,
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    }
+  ],
+  "stateMachine": null,
+  "edgeCases": [
+    "A shopper submits a question for a product that already has an identical question — the system stores it as a new independent row and lets the merchant decide whether to answer or ignore it.",
+    "The storefront widget requests published questions for a product that has no answered questions yet — the system returns an empty list and the widget renders a prompt-to-ask state without error.",
+    "A merchant answers a question and then immediately hides it before any shopper loads the page — the question must never appear in storefront responses; status must be evaluated at read time, not cached.",
+    "A question in answered status is deleted by the merchant while a shopper's widget has already loaded it — the deletion is immediate in the database; subsequent widget refreshes will not include the deleted question.",
+    "A shopper submits an extremely long question or answer text — the system stores the full content without truncation; display wrapping is enforced in the UI layer.",
+    "The merchant submits an answer for a question identifier that no longer exists (race with a concurrent deletion) — the system returns a not-found response and takes no action."
+  ]
+}

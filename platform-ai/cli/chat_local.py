@@ -160,8 +160,8 @@ _AGENT_COLOR: Dict[str, str] = {
     "HLD Check": _MAGENTA,
     "Ops": _CYAN,
     "Handler": _BLUE,
-    "Migration": _CYAN,
-    "Widget JS": _YELLOW,
+    "DB": _CYAN,
+    "Storefront": _YELLOW,
     "Admin UI": _YELLOW,
     "Validation": _GREEN,
     "Validator": _MAGENTA,
@@ -358,7 +358,7 @@ def _agent_line(name: str, ok: bool, ms: Optional[int], notes: str = "") -> None
     icon = _c("✓", _BRIGHT_GREEN, _BOLD) if ok else _c("✗", _RED, _BOLD)
     color = _AGENT_COLOR.get(name, _CYAN)
     label = _c(name.ljust(14), color, _BOLD)
-    timing = _c(f"{ms}ms".ljust(7), _DIM) if ms is not None else _c("—".ljust(7), _DIM)
+    timing = _c(f"{ms / 1000:.1f}s".ljust(7), _DIM) if ms is not None else _c("—".ljust(7), _DIM)
     line = f"  {label} {icon}  {timing}  {notes}".rstrip()
     print(f"\r{line}")
 
@@ -439,7 +439,7 @@ def _format_slot(slot: Dict[str, Any], frame: str) -> str:
     # done
     icon = slot.get("icon") or _c("✓", _BRIGHT_GREEN, _BOLD)
     ms = slot.get("ms")
-    timing = _c(f"{ms}ms".ljust(7), _DIM) if ms is not None else _c("—".ljust(7), _DIM)
+    timing = _c(f"{ms / 1000:.1f}s".ljust(7), _DIM) if ms is not None else _c("—".ljust(7), _DIM)
     notes = slot.get("notes", "")
     return f"  {label} {icon}  {timing}  {notes}".rstrip()
 
@@ -557,7 +557,7 @@ def _stop_spinner_group() -> None:
                 else "·"
             )
             ms = slot.get("ms")
-            ms_str = f"{ms}ms" if ms is not None else "—"
+            ms_str = f"{ms / 1000:.1f}s" if ms is not None else "—"
             print(
                 f"  {slot['name']:<14} {icon}  {ms_str}  {slot.get('notes', '')}".rstrip(),
                 flush=True,
@@ -574,9 +574,40 @@ def _ktok(n: int) -> str:
     return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
 
 
-def _tok_note(in_tok: int, out_tok: int, extra: str = "") -> str:
-    """'in=2.4k out=0.8k' — append extra if provided."""
-    base = f"in={_ktok(in_tok)} out={_ktok(out_tok)}"
+def _tok_note(
+    in_tok: int,
+    out_tok: int,
+    extra: str = "",
+    cache_read: int = 0,
+    cache_create: int = 0,
+) -> str:
+    """
+    Render a token-count summary line for an agent run.
+
+    Without cache numbers (`cache_read == cache_create == 0`):
+        'in=2.4k out=0.8k'
+
+    With cache hits (the common case after the first call within the cache
+    TTL), the input figure becomes the TOTAL (uncached + cache-read +
+    cache-create) so totals match the run summary, and a parenthetical
+    breakdown surfaces the cache hit ratio:
+        'in=14.3k (cache hit 9.1k=64%) out=0.8k'
+
+    cache_read tokens are billed at ~10% of the full input price; cache_create
+    tokens at ~125% (only on the first call within the TTL). Surfacing the
+    cache hit ratio lets the operator see when reuse is working and when a
+    new prefix forced a cache-create.
+    """
+    cached_total = cache_read + cache_create
+    if cached_total > 0:
+        total_in = in_tok + cached_total
+        pct = round(cache_read * 100 / total_in) if total_in else 0
+        base = (
+            f"in={_ktok(total_in)} (cache hit {_ktok(cache_read)}={pct}%)"
+            f" out={_ktok(out_tok)}"
+        )
+    else:
+        base = f"in={_ktok(in_tok)} out={_ktok(out_tok)}"
     return f"{base}  {extra}" if extra else base
 
 
@@ -1220,7 +1251,7 @@ def _md_pipeline_header(
         "",
         f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
         f"**Status:** {status}  ",
-        f"**Total:** {total_ms}ms  ",
+        f"**Total:** {total_ms / 1000:.1f}s  ",
         f"**Tokens:** in={total_in} out={total_out} total={total_in + total_out}  ",
         f"**Prompt:** {prompt}",
         "",
@@ -1721,7 +1752,9 @@ def main() -> None:
     else:
         _phase_header("HLD")
         try:
-            plan, product_prompt, hld_in, hld_out = _phase_hld(intent, prompt, run_dir)
+            plan, product_prompt, hld_in, hld_out, _hld_cr, _hld_cc = _phase_hld(
+                intent, prompt, run_dir
+            )
         except SystemExit:
             _fail_db("HLD phase failed")
             raise
@@ -1750,19 +1783,28 @@ def main() -> None:
         _hld_v_t0 = time.monotonic()
         try:
             with input_log("hld_v", run_dir):
-                hld_v_findings, hld_v_in, hld_v_out = run_hld_validator(
-                    plan, prompt, intent
-                )
+                (
+                    hld_v_findings,
+                    hld_v_in,
+                    hld_v_out,
+                    hld_v_cr,
+                    hld_v_cc,
+                ) = run_hld_validator(plan, prompt, intent)
         except Exception as _exc:
             _log.warning("hld_v: failed (%s) — fail-open", _exc)
-            hld_v_findings, hld_v_in, hld_v_out = [], 0, 0
+            hld_v_findings, hld_v_in, hld_v_out, hld_v_cr, hld_v_cc = [], 0, 0, 0, 0
         _hld_v_ms = int((time.monotonic() - _hld_v_t0) * 1000)
         all_tokens["hld_v"] = (hld_v_in, hld_v_out)
 
         _retryable = list(hld_v_findings)
         _sev_note = f"{len(hld_v_findings)} finding(s)" if hld_v_findings else "clean"
         _agent_line(
-            "HLD Check", True, _hld_v_ms, _tok_note(hld_v_in, hld_v_out, _sev_note)
+            "HLD Check",
+            True,
+            _hld_v_ms,
+            _tok_note(
+                hld_v_in, hld_v_out, _sev_note, cache_read=hld_v_cr, cache_create=hld_v_cc
+            ),
         )
 
         # Print findings BEFORE the retry so the operator sees what is being
@@ -1813,7 +1855,7 @@ def main() -> None:
                 # model output land in inputs/hld/attempt_N — without this,
                 # a 3-attempt validator-hint retry leaves no post-mortem trail.
                 with input_log("hld", run_dir):
-                    plan, _r_in, _r_out = run_hld_agent(
+                    plan, _r_in, _r_out, _r_cr, _r_cc = run_hld_agent(
                         prompt,
                         intent,
                         validator_hint=_hint,
@@ -1823,7 +1865,14 @@ def main() -> None:
                 _r_in_prev, _r_out_prev = all_tokens.get("hld", (0, 0))
                 all_tokens["hld"] = (_r_in_prev + _r_in, _r_out_prev + _r_out)
                 product_prompt = ""
-                _agent_line("HLD", True, None, "corrected")
+                _agent_line(
+                    "HLD",
+                    True,
+                    None,
+                    _tok_note(
+                        _r_in, _r_out, "corrected", cache_read=_r_cr, cache_create=_r_cc
+                    ),
+                )
             except Exception as _exc:
                 _log.warning(
                     "hld_v retry: HLD re-run failed (%s) — keeping original", _exc
@@ -1968,7 +2017,9 @@ def main() -> None:
     else:
         _phase_header("LLD")
         try:
-            lld, lld_in, lld_out = _phase_lld(plan, ops_picks, prompt, run_dir)
+            lld, lld_in, lld_out, _lld_cr, _lld_cc = _phase_lld(
+                plan, ops_picks, prompt, run_dir
+            )
         except SystemExit:
             _fail_db("LLD phase failed")
             raise

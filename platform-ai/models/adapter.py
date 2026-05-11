@@ -478,14 +478,97 @@ def invoke_conversation(
 
 
 def extract_json(text: str) -> str:
-    """Strip markdown code fences and extract the first JSON object/array."""
+    """
+    Strip markdown code fences and extract the top-level JSON object/array.
+
+    Two cases we handle, in priority order:
+
+      Case A — the response is pure JSON (the first non-whitespace char
+      after fence-stripping is `{` or `[`). Use the cheap slice from the
+      first opening brace to the last matching closing brace. If the JSON
+      is malformed, json.loads will fail downstream and the caller's retry
+      path surfaces the parse error to the model verbatim — exactly what
+      we want, because the model intended pure JSON and just got it
+      slightly wrong (one missing comma, an extra `{`, etc.). Trying to
+      "rescue" a malformed top-level by extracting an inner sub-block
+      silently feeds the wrong shape to Pydantic.
+
+      Case B — the response begins with prose ("Looking at the finding…")
+      and the JSON appears later. Walk the text looking for balanced JSON
+      blocks, ignoring braces inside string literals. Return the LARGEST
+      parseable block — prose preambles may contain small literal
+      fragments like `{...}` (invalid JSON, skipped) or `[]` (valid empty
+      array but tiny); the real JSON is by far the biggest parseable
+      block in the text. Picking by size eliminates those false positives
+      reliably.
+    """
+    import json as _json
     import re
 
     text = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.MULTILINE)
-    text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE)
-    # Find first { or [
+    text = re.sub(r"```\s*$", "", text.strip(), flags=re.MULTILINE).strip()
+
+    # Case A — pure JSON output. Let json.loads surface parse errors so
+    # the retry loop can show the model exactly what's malformed.
+    if text.startswith("{") or text.startswith("["):
+        end = max(text.rfind("}"), text.rfind("]")) + 1
+        return text[:end].strip() if end > 0 else text
+
+    # Case B — prose-then-JSON. Walk balanced blocks and return the
+    # first one that parses cleanly.
+    def _balanced_slice(s: str, start: int) -> Optional[str]:
+        open_ch = s[start]
+        if open_ch not in "{[":
+            return None
+        close_ch = "}" if open_ch == "{" else "]"
+        depth = 0
+        in_str = False
+        escape = False
+        for i in range(start, len(s)):
+            c = s[i]
+            if in_str:
+                if escape:
+                    escape = False
+                elif c == "\\":
+                    escape = True
+                elif c == '"':
+                    in_str = False
+                continue
+            if c == '"':
+                in_str = True
+                continue
+            if c == open_ch:
+                depth += 1
+            elif c == close_ch:
+                depth -= 1
+                if depth == 0:
+                    return s[start : i + 1]
+        return None
+
+    best: str = ""
+    i = 0
+    while i < len(text):
+        if text[i] not in "{[":
+            i += 1
+            continue
+        candidate = _balanced_slice(text, i)
+        if candidate is None:
+            i += 1
+            continue
+        try:
+            _json.loads(candidate)
+            if len(candidate) > len(best):
+                best = candidate
+            i += len(candidate)
+        except ValueError:
+            i += 1
+
+    if best:
+        return best.strip()
+
+    # Last-resort fallback so a malformed response still surfaces a useful
+    # slice on the caller's error path.
     start = next((i for i, c in enumerate(text) if c in "{["), 0)
-    # Find matching last } or ]
     end = max(text.rfind("}"), text.rfind("]")) + 1
     return text[start:end].strip()
 

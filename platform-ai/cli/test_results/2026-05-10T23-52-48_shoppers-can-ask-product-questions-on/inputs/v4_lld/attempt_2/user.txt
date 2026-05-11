@@ -1,0 +1,116 @@
+Merchant request: Shoppers can ask product questions on the storefront, merchants review and answer them in the admin, and answered Q&A becomes publicly visible on product pages.
+
+HLD plan (schema-agnostic, integration-agnostic — your domain spine):
+{"schema_version": "1", "archetype": "backend+admin+storefront", "feasibility": "feasible", "blockedReason": null, "complexity": "high", "dataFlow": "A shopper submits a question for a product via the storefront widget; the question is stored with a pending status and is invisible to the storefront. The merchant browses pending questions in the admin panel, optionally filtered by product or sorted by date, and writes an answer; this transitions the question to answered status. The merchant then explicitly publishes the question, transitioning it to published status, at which point the storefront GET for that product begins returning it. The merchant may instead reject any question, moving it to rejected status and permanently excluding it from the storefront. Shoppers loading a product page call the storefront GET with a cursor and receive only published questions for that product.", "triggers": [], "capabilities": [{"id": "submit-question", "description": "Store a shopper's product question as pending, making it available for merchant review.", "kind": "write", "dataNeeds": ["product external id", "question text", "shopper identifier"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false}, {"id": "list-questions-storefront", "description": "Return published questions and answers for a product so the storefront widget can render them on page load.", "kind": "read", "dataNeeds": ["product external id", "page cursor"], "integration": null, "returnsList": true, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false}, {"id": "list-questions-admin", "description": "Return a filtered, searchable, paginated list of questions across all statuses for the merchant review dashboard.", "kind": "read", "dataNeeds": ["status filter", "product external id filter", "search text", "sort preference", "page cursor"], "integration": null, "returnsList": true, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false}, {"id": "answer-question", "description": "Record the merchant's written answer for a pending question and transition it to answered status.", "kind": "write", "dataNeeds": ["question id", "answer text"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": true}, {"id": "edit-answer", "description": "Overwrite the merchant's answer on any non-rejected question and revert it to answered status, requiring a new publish decision before the question returns to the storefront.", "kind": "write", "dataNeeds": ["question id", "answer text"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": true}, {"id": "set-question-visibility", "description": "Publish or reject an answered question, determining whether it becomes visible on the storefront.", "kind": "write", "dataNeeds": ["question id", "visibility decision"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": true}, {"id": "remove-question", "description": "Permanently delete a question and any associated answer from the system.", "kind": "write", "dataNeeds": ["question id"], "integration": null, "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false}], "persistence": [{"name": "product_questions", "purpose": "Stores every shopper-submitted question and the merchant's answer, along with the lifecycle status that controls storefront visibility.", "columns": [{"name": "id", "role": "identifier", "nullable": false, "purpose": null}, {"name": "product_external_id", "role": "reference", "nullable": false, "purpose": "identifies the product this question belongs to"}, {"name": "shopper_identifier", "role": "reference", "nullable": true, "purpose": "identifies the shopper who submitted the question, when available"}, {"name": "question_text", "role": "text", "nullable": false, "purpose": null}, {"name": "answer_text", "role": "text", "nullable": true, "purpose": null}, {"name": "status", "role": "status", "nullable": false, "purpose": null}, {"name": "answered_at", "role": "timestamp", "nullable": true, "purpose": null}, {"name": "visibility_decided_at", "role": "timestamp", "nullable": true, "purpose": null}, {"name": "created_at", "role": "timestamp", "nullable": false, "purpose": null}], "keyedBy": "one row per shopper question submission; no deduplication \u2014 multiple questions with identical text for the same product are permitted", "statusField": null, "queryPatterns": ["rows filtered by product external id and status equal to published, ordered by creation time, supporting cursor pagination for storefront display", "rows filtered by status and optionally by product external id, with full-text search on question text, ordered by creation time or product external id, supporting cursor pagination for admin review", "single row looked up by id when recording an answer or visibility decision"]}], "stateMachine": null, "externalContracts": [{"surface": "widget", "path": "/widget/questions/submit", "method": "POST", "purpose": "Accept a shopper's question for a specific product and store it as pending for merchant review.", "requestShape": {"product_external_id": "reference", "question_text": "text", "shopper_identifier": "identifier"}, "responseShape": {"question_id": "identifier", "status": "status"}}, {"surface": "widget", "path": "/widget/questions", "method": "GET", "purpose": "Return a paginated list of published questions and answers for a specific product page.", "requestShape": {"product_external_id": "reference", "cursor": "text"}, "responseShape": {"questions": "list", "next_cursor": "text", "total_count": "count"}}, {"surface": "admin", "path": "/admin/questions", "method": "GET", "purpose": "Return a paginated, filterable, searchable list of all questions for the merchant to review.", "requestShape": {"status_filter": "status", "product_external_id": "reference", "search_text": "text", "sort_by": "text", "cursor": "text"}, "responseShape": {"questions": "list", "next_cursor": "text", "total_count": "count"}}, {"surface": "admin", "path": "/admin/questions/answer", "method": "POST", "purpose": "Record the merchant's answer for a specific question and transition it to answered status.", "requestShape": {"question_id": "identifier", "answer_text": "text"}, "responseShape": {"question_id": "identifier", "status": "status"}}, {"surface": "admin", "path": "/admin/questions/answer", "method": "PUT", "purpose": "Overwrite the merchant's answer on any non-rejected question and revert it to answered status, requiring a new publish decision before it returns to the storefront.", "requestShape": {"question_id": "identifier", "answer_text": "text"}, "responseShape": {"question_id": "identifier", "status": "status"}}, {"surface": "admin", "path": "/admin/questions/visibility", "method": "POST", "purpose": "Set a question's visibility to published or rejected, controlling whether it appears on the storefront.", "requestShape": {"question_id": "identifier", "visibility_decision": "status"}, "responseShape": {"question_id": "identifier", "status": "status"}}, {"surface": "admin", "path": "/admin/questions/remove", "method": "DELETE", "purpose": "Permanently remove a question and its answer from the system.", "requestShape": {"question_id": "identifier"}, "responseShape": {"question_id": "identifier"}}], "edgeCases": ["Merchant attempts to publish a question that has no answer text recorded \u2014 the system must reject the visibility change and return a clear error; only answered questions may be published.", "A published question is re-edited by the merchant (answer text updated) \u2014 the question must revert to answered status and require an explicit re-publish decision before returning to the storefront.", "Storefront GET is called for a product that has no published questions \u2014 the response must return an empty list with zero total count rather than an error.", "A deleted question's id is referenced in a concurrent answer or visibility request \u2014 the system must treat the missing row as a terminal no-op and return a not-found signal rather than creating orphan state.", "Two admin sessions submit answers for the same question simultaneously \u2014 the last write wins and the question status remains answered; no duplicate answer rows are created.", "A rejected question is never returned by the storefront GET regardless of query parameters \u2014 the status filter for storefront reads is enforced server-side and cannot be overridden by the caller."]}
+
+Ops-picker output (Shopify GraphQL ops + webhook topics, with each op
+enriched with its signature, return-type SDL, input types, and real
+example queries from Shopify's docs — use these to write the actual
+GraphQL strings inside your shopify_query / shopify_mutation steps):
+{"schema_version": "1", "capabilities": [], "webhooks": [], "unsatisfied": []}
+
+Produce the LLD plan as JSON conforming to the appended schema.
+
+Pagination helper — use for every offset-paginated list route.
+
+When you set httpRoutes.*.paginationKind="offset" on a route, its recipe
+MUST follow this exact pattern:
+
+  - Request shape includes `page: "number"` and `page_size: "number"`.
+  - Response shape is exactly:
+      { items: "{...}[]", total: "number", page: "number", page_size: "number" }
+  - The recipe contains exactly ONE `sql_select` step whose template is
+    a plain SELECT with NO LIMIT, NO OFFSET, NO COUNT(*). Set its
+    `bindResultTo` (e.g. "rows").
+  - The recipe's `response` step body is:
+      { items: "$rows.items", total: "$rows.total",
+        page: "$rows.page", page_size: "$rows.page_size" }
+  - DO NOT emit a separate count query or an offset-math compute step —
+    the paginate() helper handles both at codegen time.
+
+The handler codegen translates the bare sql_select into:
+
+  import { paginate } from "../lib/paginate.js";
+  const rows = await paginate(sql, sql`<your SELECT here>`,
+                              { page: req.body.page, page_size: req.body.page_size });
+  res.json(rows);
+
+Caps page_size at 100 by default. For a higher cap on a specific route,
+add a comment in the sql_select.purpose like "max 1000" and the codegen
+will pass `{ maxPageSize: 1000 }` as the fourth arg.
+
+
+Workflow lifecycle helper — use for every multi-state row lifecycle
+(pending → running → completed/failed, draft → submitted →
+approved/rejected, etc.).
+
+Storage: the workflow-bearing table you declare in `database.tables`
+must have a `status TEXT` column with the state set in `enum`. Standard
+optional columns (`started_at TIMESTAMPTZ`, `finished_at TIMESTAMPTZ`,
+`failure_reason TEXT`) are recommended; the helper writes them when
+present. The state set is yours — the helper has zero opinion about
+"pending" / "running" / etc.; those are conventions you can override.
+
+API surface (import { workflow } from "../lib/workflow.js"):
+
+  workflow.claim(table, id, { from, to?, statusColumn?, startedAtColumn?, extraWhere? })
+      Atomic single-statement UPDATE … WHERE status=$from RETURNING *.
+      Returns the row, or null if zero rows matched (already claimed,
+      wrong state, gated out by extraWhere). NEVER throws on race.
+
+  workflow.complete(table, id, { to?, finishedAtColumn? })
+      Marks the row terminal-success.
+
+  workflow.fail(table, id, reason, { to?, finishedAtColumn?, failureReasonColumn? })
+      Marks the row terminal-failure with reason (truncated to 4000).
+
+  workflow.attempt(table, id, claimOptions, async (row) => …, { complete?, fail? })
+      One-shot: claim → run callback → complete-or-fail. Re-throws
+      callback errors AFTER persisting failure_reason. Returns
+      { row, value } or null (if claim came back empty).
+
+  workflow.sweepStale(table, { ttlMinutes?, runningState?, timedOutState?, … })
+      Flips rows that have been 'running' too long back to a terminal
+      state. Single SQL statement, RETURNING the swept ids.
+
+Recipe rules (these REPLACE the hand-rolled sql_claim + try_catch +
+sql_update pattern for kind="workflow" stateMachines — that's why this
+contract is injected for usesWorkflow=true capabilities):
+
+  - Use `workflow.attempt(...)` inside a single `compute` step. The
+    callback's body holds the actual side effects (Shopify call, email
+    send, etc.). On callback throw, the helper persists failure_reason
+    (truncated) and re-throws — the cron-runner sees the error and
+    decides retry. NO sql_claim, try_catch, or sql_update for the
+    lifecycle is needed in the recipe.
+  - Custom state names are supported: `claim(t, id, { from: "approved",
+    to: "shipped" })`. The standard quartet is convention, not
+    constraint.
+  - Multi-step lifecycles call `claim` repeatedly with different
+    `from`/`to` pairs (claim pending→running, do work, claim
+    running→awaiting_input, …).
+  - `extraWhere` accepts a `sql\`...\`` predicate AND-ed into the WHERE
+    clause. Use for time-gated transitions (`scheduled_at <= now()`)
+    or relation gates.
+
+Stale sweeper — REQUIRED for every workflow-bearing table. Without it,
+rows that crash mid-execution stay in 'running' forever. The validator
+rejects workflow plans that omit it. Recipe shape:
+
+  triggeredBy: "cron:sweep_<table>"
+  cronSchedule: "*/10 * * * *"   (every 10 minutes)
+  steps:
+    - kind: compute
+      purpose: "sweep stale running rows"
+      expression: "await workflow.sweepStale('<table>')"
+
+Example workflow recipe (cron: process_run):
+
+  inputs: [{ name: "runId", source: "cron.payload", fieldPath: "run_id",
+            type: "string", nullable: false }]
+  steps:
+    - kind: compute
+      purpose: "claim, run, finalise"
+      expression: "await workflow.attempt('rule_runs', runId,
+                     { from: 'pending' },
+                     async (row) => { /* do work — see other steps' example */ })"

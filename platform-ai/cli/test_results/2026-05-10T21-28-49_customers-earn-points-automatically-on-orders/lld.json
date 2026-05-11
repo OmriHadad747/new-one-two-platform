@@ -1,0 +1,1257 @@
+{
+  "schema_version": "1",
+  "shopifyIntegration": {
+    "webhookTopics": [
+      "orders/paid"
+    ],
+    "cronSchedule": "*/10 * * * *",
+    "bulkFetchRequired": false
+  },
+  "database": {
+    "tables": [
+      {
+        "name": "customer_point_balances",
+        "purpose": "Maintains the running point balance and lifetime totals for every customer who has earned points.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "customer_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "Shopify numeric customer ID"
+          },
+          {
+            "name": "current_balance",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL DEFAULT 0",
+            "enum": null,
+            "purpose": "Current redeemable point balance"
+          },
+          {
+            "name": "lifetime_earned",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL DEFAULT 0",
+            "enum": null,
+            "purpose": "Total points ever earned"
+          },
+          {
+            "name": "lifetime_redeemed",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL DEFAULT 0",
+            "enum": null,
+            "purpose": "Total points ever redeemed"
+          },
+          {
+            "name": "updated_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "enum": null,
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": {
+          "columns": [
+            "customer_external_id"
+          ]
+        },
+        "indexes": [
+          "customer_external_id",
+          "current_balance DESC"
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "point_transactions",
+        "purpose": "Immutable ledger recording every points credit and debit with its source, enabling idempotency checks and audit history.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "customer_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "Shopify numeric customer ID whose balance was affected"
+          },
+          {
+            "name": "order_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "Shopify numeric order ID that triggered an earning transaction; null for redemption debits"
+          },
+          {
+            "name": "redemption_id",
+            "sqlType": "UUID",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "FK to redemptions row for debit transactions; null for earn transactions"
+          },
+          {
+            "name": "transaction_type",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": [
+              "earned",
+              "redeemed",
+              "compensating_credit"
+            ],
+            "purpose": "Whether this transaction credits or debits points"
+          },
+          {
+            "name": "points_delta",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "Signed integer \u2014 positive for credits, negative for debits"
+          },
+          {
+            "name": "balance_after",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "Customer balance immediately after this transaction"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "enum": null,
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": {
+          "columns": [
+            "order_external_id"
+          ]
+        },
+        "indexes": [
+          "customer_external_id",
+          "order_external_id",
+          "redemption_id"
+        ],
+        "foreignKeys": [
+          {
+            "column": "redemption_id",
+            "references": "redemptions(id)",
+            "onDelete": "SET NULL"
+          }
+        ]
+      },
+      {
+        "name": "redemptions",
+        "purpose": "Tracks every discount code issued to a customer and its current state so double-application and concurrent redemptions can be prevented.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "enum": null,
+            "purpose": null
+          },
+          {
+            "name": "customer_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "Shopify numeric customer ID who requested the discount"
+          },
+          {
+            "name": "discount_code_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "Shopify numeric DiscountCodeNode ID after successful creation"
+          },
+          {
+            "name": "discount_code_string",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "Human-readable discount code string returned to the customer"
+          },
+          {
+            "name": "points_debited",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "Number of points debited for this redemption"
+          },
+          {
+            "name": "discount_value_minor",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "Discount value in minor currency units at time of redemption"
+          },
+          {
+            "name": "currency",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": null,
+            "purpose": "ISO 4217 currency code for the discount value"
+          },
+          {
+            "name": "status",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT 'pending'",
+            "enum": [
+              "pending",
+              "completed",
+              "failed"
+            ],
+            "purpose": "Workflow status of this redemption attempt"
+          },
+          {
+            "name": "failure_reason",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "Error message when status=failed"
+          },
+          {
+            "name": "started_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "When the workflow picked up this row"
+          },
+          {
+            "name": "finished_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NULL",
+            "enum": null,
+            "purpose": "When the workflow reached a terminal state"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "enum": null,
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": null,
+        "indexes": [
+          "customer_external_id",
+          "status",
+          "customer_external_id, status"
+        ],
+        "foreignKeys": []
+      }
+    ]
+  },
+  "stateMachine": null,
+  "httpRoutes": {
+    "widget": [
+      {
+        "path": "/points-balance",
+        "method": "GET",
+        "purpose": "Return the authenticated customer's current point balance and redemption eligibility.",
+        "requestShape": {
+          "customerId": "string|null"
+        },
+        "responseShape": {
+          "current_balance": "number",
+          "redemption_eligible": "boolean",
+          "redemption_threshold": "number",
+          "discount_value": "number"
+        },
+        "paginationKind": null
+      },
+      {
+        "path": "/redeem",
+        "method": "POST",
+        "purpose": "Debit the customer's points by the redemption threshold and enqueue discount code creation; returns immediately with the record id.",
+        "requestShape": {
+          "customerId": "string|null"
+        },
+        "responseShape": {
+          "redemption_id": "string",
+          "status": "string"
+        },
+        "paginationKind": null
+      }
+    ],
+    "admin": [
+      {
+        "path": "/settings",
+        "method": "GET",
+        "purpose": "Return the current points program configuration so the merchant can review earning rate, redemption threshold, and discount value.",
+        "requestShape": {},
+        "responseShape": {
+          "earning_rate": "number",
+          "redemption_threshold": "number",
+          "discount_value": "number",
+          "currency": "string"
+        },
+        "paginationKind": null
+      },
+      {
+        "path": "/settings",
+        "method": "POST",
+        "purpose": "Save updated points program configuration including earning rate, redemption threshold, and discount value.",
+        "requestShape": {
+          "earning_rate": "number",
+          "redemption_threshold": "number",
+          "discount_value": "number",
+          "currency": "string"
+        },
+        "responseShape": {
+          "earning_rate": "number",
+          "redemption_threshold": "number",
+          "discount_value": "number",
+          "currency": "string"
+        },
+        "paginationKind": null
+      },
+      {
+        "path": "/customer-balances",
+        "method": "GET",
+        "purpose": "Return a cursor-paginated list of all customer point balances ordered by current balance descending for merchant visibility and auditing.",
+        "requestShape": {
+          "cursor_balance": "number|null",
+          "cursor_id": "string|null",
+          "page_size": "number"
+        },
+        "responseShape": {
+          "items": "{ customer_external_id: number, current_balance: number, lifetime_earned: number, lifetime_redeemed: number, updated_at: string }[]",
+          "next_cursor": "string|null",
+          "page_size": "number"
+        },
+        "paginationKind": "cursor"
+      }
+    ]
+  },
+  "capabilityRecipes": {
+    "award-points-on-order-paid": {
+      "triggeredBy": "webhook:orders/paid",
+      "description": "When an order is paid, compute and credit points to the customer's balance, guarded by an idempotency check on the order external id.",
+      "inputs": [
+        {
+          "name": "orderIdRaw",
+          "source": "webhook.payload",
+          "fieldPath": "id",
+          "type": "number",
+          "nullable": false
+        },
+        {
+          "name": "customerRaw",
+          "source": "webhook.payload",
+          "fieldPath": "customer",
+          "type": "object",
+          "nullable": true
+        },
+        {
+          "name": "subtotalPriceStr",
+          "source": "webhook.payload",
+          "fieldPath": "subtotal_price",
+          "type": "string",
+          "nullable": false
+        },
+        {
+          "name": "currencyRaw",
+          "source": "webhook.payload",
+          "fieldPath": "currency",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "compute",
+          "purpose": "null-defend customer id from payload (R3)",
+          "bindResultTo": "customerIdRaw",
+          "expression": "customerRaw?.id ?? null"
+        },
+        {
+          "kind": "decision",
+          "purpose": "skip guest checkouts with no customer identity",
+          "bindResultTo": null,
+          "condition": "customerIdRaw === null",
+          "ifTrue": [
+            {
+              "kind": "log",
+              "purpose": "record skipped guest checkout",
+              "bindResultTo": null,
+              "level": "info",
+              "fields": {
+                "order_id": "$orderIdRaw"
+              },
+              "message": "award-points: skipping guest checkout \u2014 no customer id"
+            },
+            {
+              "kind": "return",
+              "purpose": "exit \u2014 no customer to credit",
+              "bindResultTo": null
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "parse customer id to BIGINT-safe number",
+          "bindResultTo": "customerId",
+          "expression": "Number(customerIdRaw)"
+        },
+        {
+          "kind": "compute",
+          "purpose": "parse order id to BIGINT-safe number",
+          "bindResultTo": "orderId",
+          "expression": "Number(orderIdRaw)"
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "idempotency check \u2014 look for an existing earning transaction for this order",
+          "bindResultTo": "existingTx",
+          "template": "SELECT id FROM point_transactions WHERE order_external_id = ${orderId} AND transaction_type = 'earned' LIMIT 1",
+          "bindings": [
+            {
+              "name": "orderId",
+              "source": "orderId"
+            }
+          ]
+        },
+        {
+          "kind": "decision",
+          "purpose": "skip if this order was already awarded points",
+          "bindResultTo": null,
+          "condition": "existingTx.length > 0",
+          "ifTrue": [
+            {
+              "kind": "log",
+              "purpose": "record idempotent skip",
+              "bindResultTo": null,
+              "level": "info",
+              "fields": {
+                "order_id": "$orderId"
+              },
+              "message": "award-points: duplicate order-paid webhook \u2014 skipping"
+            },
+            {
+              "kind": "return",
+              "purpose": "exit \u2014 already processed",
+              "bindResultTo": null
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "load earning rate from config",
+          "bindResultTo": "earningRate",
+          "expression": "await config.get('loyalty_earning_rate', 0.01)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "compute subtotal in minor units using money helper",
+          "bindResultTo": "subtotalMinor",
+          "expression": "money.toMinorUnits(subtotalPriceStr, currencyRaw)",
+          "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "compute whole points to award \u2014 floor of (subtotal in major units * earningRate)",
+          "bindResultTo": "pointsToCredit",
+          "expression": "Math.floor(money.fromMinorUnits(subtotalMinor, currencyRaw) * earningRate)",
+          "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
+        },
+        {
+          "kind": "decision",
+          "purpose": "skip zero-point awards (very small orders or rate rounds to zero)",
+          "bindResultTo": null,
+          "condition": "pointsToCredit <= 0",
+          "ifTrue": [
+            {
+              "kind": "log",
+              "purpose": "record zero-point skip",
+              "bindResultTo": null,
+              "level": "info",
+              "fields": {
+                "order_id": "$orderId",
+                "subtotal_minor": "$subtotalMinor"
+              },
+              "message": "award-points: zero points computed \u2014 skipping ledger write"
+            },
+            {
+              "kind": "return",
+              "purpose": "exit \u2014 nothing to credit",
+              "bindResultTo": null
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "sql_transaction",
+          "purpose": "atomically upsert balance and append ledger row with row-level locking",
+          "bindResultTo": null,
+          "steps": [
+            {
+              "kind": "sql_upsert",
+              "purpose": "upsert customer balance, locking the row to prevent concurrent-credit loss",
+              "bindResultTo": "updatedBalance",
+              "template": "INSERT INTO customer_point_balances (customer_external_id, current_balance, lifetime_earned, lifetime_redeemed, updated_at) VALUES (${customerId}, ${pointsToCredit}, ${pointsToCredit}, 0, now()) ON CONFLICT (customer_external_id) DO UPDATE SET current_balance = customer_point_balances.current_balance + ${pointsToCredit}, lifetime_earned = customer_point_balances.lifetime_earned + ${pointsToCredit}, updated_at = now() RETURNING current_balance",
+              "bindings": [
+                {
+                  "name": "customerId",
+                  "source": "customerId"
+                },
+                {
+                  "name": "pointsToCredit",
+                  "source": "pointsToCredit"
+                }
+              ]
+            },
+            {
+              "kind": "sql_insert",
+              "purpose": "append immutable earning transaction to the ledger",
+              "bindResultTo": null,
+              "template": "INSERT INTO point_transactions (customer_external_id, order_external_id, redemption_id, transaction_type, points_delta, balance_after) VALUES (${customerId}, ${orderId}, NULL, 'earned', ${pointsToCredit}, ${balanceAfter}) ON CONFLICT (order_external_id) DO NOTHING",
+              "bindings": [
+                {
+                  "name": "customerId",
+                  "source": "customerId"
+                },
+                {
+                  "name": "orderId",
+                  "source": "orderId"
+                },
+                {
+                  "name": "pointsToCredit",
+                  "source": "pointsToCredit"
+                },
+                {
+                  "name": "balanceAfter",
+                  "source": "updatedBalance[0].current_balance"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "log",
+          "purpose": "structured success log for timeline reconstruction (R8)",
+          "bindResultTo": null,
+          "level": "info",
+          "fields": {
+            "order_id": "$orderId",
+            "customer_id": "$customerId",
+            "points_credited": "$pointsToCredit"
+          },
+          "message": "award-points: points credited successfully"
+        }
+      ],
+      "postconditions": [
+        "Exactly zero or one earning transaction rows exist per order_external_id.",
+        "customer_point_balances.current_balance equals the sum of all positive points_delta values minus all negative points_delta values in point_transactions for that customer.",
+        "Guest checkouts produce no ledger or balance rows and no error."
+      ],
+      "edgeCases": [
+        "Duplicate orders/paid webhook for the same order \u2014 existingTx check exits before any write.",
+        "Two orders paid concurrently for the same customer \u2014 the sql_transaction upsert uses SQL addition (not read-modify-write) so both credits land without loss.",
+        "Subtotal so small that floor(subtotal * rate) = 0 \u2014 recipe exits without writing a zero-point ledger row.",
+        "Guest checkout (customer is null) \u2014 detected by null-defense compute on payload.customer.id; recipe exits early with an info log."
+      ]
+    },
+    "widget-get-points-balance": {
+      "triggeredBy": "widget:GET:/points-balance",
+      "description": "Return the authenticated customer's current point balance and redemption eligibility for the storefront widget.",
+      "inputs": [
+        {
+          "name": "customerIdStr",
+          "source": "request.body",
+          "fieldPath": "customerId",
+          "type": "string|null",
+          "nullable": true
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "reject unauthenticated requests with no customer identity",
+          "bindResultTo": null,
+          "condition": "customerIdStr === null || customerIdStr === undefined",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "return ineligible empty response for unresolved identity",
+              "bindResultTo": null,
+              "status": 200,
+              "body": {
+                "current_balance": "0",
+                "redemption_eligible": "false",
+                "redemption_threshold": "0",
+                "discount_value": "0"
+              }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "parse customer id to number",
+          "bindResultTo": "customerId",
+          "expression": "Number(customerIdStr)"
+        },
+        {
+          "kind": "compute",
+          "purpose": "load redemption threshold from config",
+          "bindResultTo": "redemptionThreshold",
+          "expression": "await config.get('loyalty_redemption_threshold', 500)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "load discount value minor units from config",
+          "bindResultTo": "discountValueMinor",
+          "expression": "await config.get('loyalty_discount_value_minor', 1000)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "fetch customer balance row",
+          "bindResultTo": "balanceRows",
+          "template": "SELECT current_balance FROM customer_point_balances WHERE customer_external_id = ${customerId} LIMIT 1",
+          "bindings": [
+            {
+              "name": "customerId",
+              "source": "customerId"
+            }
+          ]
+        },
+        {
+          "kind": "compute",
+          "purpose": "resolve current balance, defaulting to zero if no row yet",
+          "bindResultTo": "currentBalance",
+          "expression": "balanceRows.length > 0 ? Number(balanceRows[0].current_balance) : 0"
+        },
+        {
+          "kind": "compute",
+          "purpose": "assess redemption eligibility \u2014 must meet threshold and have no concurrent pending redemption",
+          "bindResultTo": "eligible",
+          "expression": "currentBalance >= redemptionThreshold"
+        },
+        {
+          "kind": "response",
+          "purpose": "return balance and eligibility to widget",
+          "bindResultTo": null,
+          "status": 200,
+          "body": {
+            "current_balance": "$currentBalance",
+            "redemption_eligible": "$eligible",
+            "redemption_threshold": "$redemptionThreshold",
+            "discount_value": "$discountValueMinor"
+          }
+        }
+      ],
+      "postconditions": [
+        "Returns 200 in all cases \u2014 unknown customer id returns zero balance and ineligible.",
+        "redemption_eligible reflects current_balance >= configured redemption_threshold at read time."
+      ],
+      "edgeCases": [
+        "Customer has never earned points \u2014 no balance row exists; recipe returns zero balance and ineligible=false.",
+        "customerId is null (guest or unauthenticated session) \u2014 returns safe empty response with status 200."
+      ]
+    },
+    "widget-redeem-points": {
+      "triggeredBy": "widget:POST:/redeem",
+      "description": "Debit the customer's points by the redemption threshold, insert a pending redemption record, and enqueue the discount code creation job.",
+      "inputs": [
+        {
+          "name": "customerIdStr",
+          "source": "request.body",
+          "fieldPath": "customerId",
+          "type": "string|null",
+          "nullable": true
+        }
+      ],
+      "steps": [
+        {
+          "kind": "decision",
+          "purpose": "reject requests with no resolvable customer identity",
+          "bindResultTo": null,
+          "condition": "customerIdStr === null || customerIdStr === undefined",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "return 401 for unresolved identity",
+              "bindResultTo": null,
+              "status": 401,
+              "body": {
+                "error": "customer identity required"
+              }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "parse customer id to number",
+          "bindResultTo": "customerId",
+          "expression": "Number(customerIdStr)"
+        },
+        {
+          "kind": "compute",
+          "purpose": "load redemption threshold from config",
+          "bindResultTo": "redemptionThreshold",
+          "expression": "await config.get('loyalty_redemption_threshold', 500)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "load discount value minor units from config",
+          "bindResultTo": "discountValueMinor",
+          "expression": "await config.get('loyalty_discount_value_minor', 1000)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "load currency code from config",
+          "bindResultTo": "currency",
+          "expression": "await config.get('loyalty_currency', 'USD')",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "detect any in-progress pending redemption for this customer to block concurrent redemptions",
+          "bindResultTo": "pendingRedemptions",
+          "template": "SELECT id FROM redemptions WHERE customer_external_id = ${customerId} AND status = 'pending' LIMIT 1",
+          "bindings": [
+            {
+              "name": "customerId",
+              "source": "customerId"
+            }
+          ]
+        },
+        {
+          "kind": "decision",
+          "purpose": "reject if a concurrent redemption is already pending",
+          "bindResultTo": null,
+          "condition": "pendingRedemptions.length > 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "return 409 to indicate a redemption is already in progress",
+              "bindResultTo": null,
+              "status": 409,
+              "body": {
+                "error": "a redemption is already in progress for this customer"
+              }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "sql_claim",
+          "purpose": "atomically debit points from balance \u2014 rejects if balance is insufficient (R1)",
+          "bindResultTo": "debitResult",
+          "template": "UPDATE customer_point_balances SET current_balance = current_balance - ${threshold}, lifetime_redeemed = lifetime_redeemed + ${threshold}, updated_at = now() WHERE customer_external_id = ${customerId} AND current_balance >= ${threshold} RETURNING id, current_balance",
+          "bindings": [
+            {
+              "name": "customerId",
+              "source": "customerId"
+            },
+            {
+              "name": "threshold",
+              "source": "redemptionThreshold"
+            }
+          ],
+          "zeroRowAction": "skip"
+        },
+        {
+          "kind": "decision",
+          "purpose": "return 422 if the balance claim returned no rows (insufficient balance)",
+          "bindResultTo": null,
+          "condition": "debitResult === null || debitResult.length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "return insufficient balance error",
+              "bindResultTo": null,
+              "status": 422,
+              "body": {
+                "error": "insufficient point balance to redeem"
+              }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "capture new balance after debit",
+          "bindResultTo": "balanceAfterDebit",
+          "expression": "Number(debitResult[0].current_balance)"
+        },
+        {
+          "kind": "sql_transaction",
+          "purpose": "atomically insert the pending redemption row and the debit ledger transaction",
+          "bindResultTo": null,
+          "steps": [
+            {
+              "kind": "sql_insert",
+              "purpose": "create the pending redemption record",
+              "bindResultTo": "newRedemption",
+              "template": "INSERT INTO redemptions (customer_external_id, points_debited, discount_value_minor, currency, status) VALUES (${customerId}, ${threshold}, ${discountValueMinor}, ${currency}, 'pending') RETURNING id",
+              "bindings": [
+                {
+                  "name": "customerId",
+                  "source": "customerId"
+                },
+                {
+                  "name": "threshold",
+                  "source": "redemptionThreshold"
+                },
+                {
+                  "name": "discountValueMinor",
+                  "source": "discountValueMinor"
+                },
+                {
+                  "name": "currency",
+                  "source": "currency"
+                }
+              ]
+            },
+            {
+              "kind": "sql_insert",
+              "purpose": "append immutable debit transaction to the ledger",
+              "bindResultTo": null,
+              "template": "INSERT INTO point_transactions (customer_external_id, order_external_id, redemption_id, transaction_type, points_delta, balance_after) VALUES (${customerId}, NULL, ${redemptionId}, 'redeemed', ${negThreshold}, ${balanceAfterDebit})",
+              "bindings": [
+                {
+                  "name": "customerId",
+                  "source": "customerId"
+                },
+                {
+                  "name": "redemptionId",
+                  "source": "newRedemption[0].id"
+                },
+                {
+                  "name": "negThreshold",
+                  "source": "-redemptionThreshold"
+                },
+                {
+                  "name": "balanceAfterDebit",
+                  "source": "balanceAfterDebit"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "enqueue",
+          "purpose": "queue the Shopify discount code creation job for async processing",
+          "bindResultTo": null,
+          "jobName": "process_redemption",
+          "payload": {
+            "redemption_id": "$newRedemption[0].id"
+          },
+          "dedupKey": "$newRedemption[0].id",
+          "example": "import { enqueueJob } from \"../lib/cron-enqueue.js\";\n\n// Push one row onto the tenant's `cron_queue`. The template's cron-runner\n// picks it up on the next poll tick (FOR UPDATE SKIP LOCKED), dispatches\n// to `jobs[jobName]` in src/routes/cron.ts, retries on failure with\n// exponential backoff (3 attempts: 30s, 5min, 30min), and sweeps stale\n// rows. Use this from an HTTP route to break the request \u2192 background-work\n// boundary so the route responds in <2s.\n//\n// `jobName` MUST be a key exported from src/routes/cron.ts; the LLD's\n// enqueue cross-validator already enforced that this matches a\n// triggeredBy: \"cron:<jobName>\" recipe in the same plan.\n//\n// `payload` is arbitrary JSON-serialisable data; the cron JobFn receives\n// it as its single argument.\n//\n// `dedupKey` (optional) collapses concurrent enqueues of the same logical\n// job \u2014 a second enqueue with the same (jobName, dedupKey) while a prior\n// row is still pending/processing is a silent no-op. Use the parent\n// record's id as the dedupKey to make routes safe to retry.\n\nawait enqueueJob(\"process_run\", { run_id: insertedRunId }, { dedupKey: insertedRunId });\n\n// Pattern \u2014 HTTP route that spawns long work and returns 202:\n//   1. await sql`INSERT INTO rule_runs (...) VALUES (...) RETURNING id` \u2192 runId\n//   2. await enqueueJob(\"process_run\", { run_id: runId }, { dedupKey: runId })\n//   3. res.status(202).json({ run_id: runId, status: \"pending\" })\n"
+        },
+        {
+          "kind": "response",
+          "purpose": "return 202 with the redemption id so the widget can poll for the code",
+          "bindResultTo": null,
+          "status": 202,
+          "body": {
+            "redemption_id": "$newRedemption[0].id",
+            "status": "pending"
+          }
+        }
+      ],
+      "postconditions": [
+        "Exactly one pending redemption row created per successful request.",
+        "Customer balance is debited by exactly redemption_threshold before the response is sent.",
+        "One debit ledger row written per redemption with negative points_delta.",
+        "Concurrent duplicate requests for the same customer are blocked by the pending-redemption check."
+      ],
+      "edgeCases": [
+        "Customer balance exactly meets threshold but concurrent redemption is pending \u2014 pendingRedemptions check returns 409 before any debit.",
+        "Insufficient balance \u2014 sql_claim WHERE current_balance >= threshold returns zero rows; recipe returns 422 without inserting any rows.",
+        "Unauthenticated request (customerId null) \u2014 rejected with 401 before any DB access.",
+        "Network retry of a POST after the first enqueue succeeded \u2014 pending redemption row exists so the second call hits the 409 guard."
+      ]
+    },
+    "process-redemption": {
+      "triggeredBy": "cron:process_redemption",
+      "description": "Claim a pending redemption, create the Shopify discount code, mark complete; on failure restore the customer's balance and mark failed.",
+      "inputs": [
+        {
+          "name": "redemptionId",
+          "source": "cron.payload",
+          "fieldPath": "redemption_id",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "compute",
+          "purpose": "claim, create discount code, and finalise redemption via workflow helper",
+          "bindResultTo": "workflowResult",
+          "expression": "await workflow.attempt('redemptions', redemptionId, { from: 'pending', to: 'completed', startedAtColumn: 'started_at', finishedAtColumn: 'finished_at' }, async (row) => { const customerGid = `gid://shopify/Customer/${row.customer_external_id}`; const discountValueDecimal = money.format(row.discount_value_minor, row.currency); const code = `LOYALTY-${row.id.slice(0,8).toUpperCase()}`; const result = await shopify.graphql(`mutation CreateLoyaltyDiscount($input: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $input) { codeDiscountNode { id codeDiscount { ... on DiscountCodeBasic { codes(first: 1) { nodes { code } } } } } userErrors { field message } } }`, { input: { title: `Loyalty Reward ${code}`, code: code, startsAt: new Date().toISOString(), endsAt: null, appliesOncePerCustomer: true, usageLimit: 1, customerGets: { items: { all: true }, value: { discountAmount: { amount: discountValueDecimal, appliesOnEachItem: false } } }, customerSelection: { customers: { add: [customerGid] } } } }); if (result.discountCodeBasicCreate.userErrors.length > 0) { throw new Error(result.discountCodeBasicCreate.userErrors.map(e => e.message).join('; ')); } const discountNodeGid = result.discountCodeBasicCreate.codeDiscountNode.id; const discountNodeId = Number(discountNodeGid.split('/').pop()); const discountCodeStr = result.discountCodeBasicCreate.codeDiscountNode.codeDiscount.codes.nodes[0].code; await sql`UPDATE redemptions SET discount_code_external_id = ${discountNodeId}, discount_code_string = ${discountCodeStr} WHERE id = ${redemptionId}`; return { discountCodeStr, discountNodeId }; }, { fail: async (row, reason) => { await sql`UPDATE customer_point_balances SET current_balance = current_balance + ${row.points_debited}, updated_at = now() WHERE customer_external_id = ${row.customer_external_id}`; await sql`INSERT INTO point_transactions (customer_external_id, order_external_id, redemption_id, transaction_type, points_delta, balance_after) SELECT ${row.customer_external_id}, NULL, ${row.id}, 'compensating_credit', ${row.points_debited}, cpb.current_balance FROM customer_point_balances cpb WHERE cpb.customer_external_id = ${row.customer_external_id}`; } })",
+          "example": "import { workflow } from \"../lib/workflow.js\";\n\n// One-shot lifecycle: atomic claim \u2192 run callback \u2192 mark complete (or\n// persist failure_reason and re-throw on callback error). Returns\n// `null` immediately when the row is already claimed / in the wrong\n// state / missing \u2014 callback NEVER runs in that case.\nconst result = await workflow.attempt<RuleRun, void>(\n  \"rule_runs\",\n  runId,\n  { from: \"pending\" },\n  async (row) => {\n    // Side effects here. If this throws, helper persists status='failed'\n    // with err.message (truncated) and re-throws so the cron-runner sees it.\n    await processRow(row);\n  },\n);\nif (!result) return; // someone else claimed it\n\n// Primitives for non-canonical flows (multi-step, branching terminals):\nconst claimed = await workflow.claim<Approval>(\n  \"approvals\",\n  approvalId,\n  { from: \"draft\", to: \"submitted\" },\n);\nif (!claimed) return;\n// \u2026 do work \u2026\nawait workflow.complete(\"approvals\", approvalId, { to: \"approved\" });\n// or:\nawait workflow.fail(\"approvals\", approvalId, \"policy violation: \u2026\");\n\n// Stale sweeper \u2014 call from a low-frequency cron tick (every ~10 min):\nconst swept = await workflow.sweepStale(\"rule_runs\", { ttlMinutes: 30 });\nconsole.log(JSON.stringify({ event: \"sweep\", count: swept.count }));\n"
+        },
+        {
+          "kind": "decision",
+          "purpose": "log outcome \u2014 null means the row was already claimed by another runner",
+          "bindResultTo": null,
+          "condition": "workflowResult === null",
+          "ifTrue": [
+            {
+              "kind": "log",
+              "purpose": "log race skip",
+              "bindResultTo": null,
+              "level": "info",
+              "fields": {
+                "redemption_id": "$redemptionId"
+              },
+              "message": "process-redemption: row already claimed by another worker"
+            }
+          ],
+          "ifFalse": [
+            {
+              "kind": "log",
+              "purpose": "log successful completion",
+              "bindResultTo": null,
+              "level": "info",
+              "fields": {
+                "redemption_id": "$redemptionId"
+              },
+              "message": "process-redemption: discount code created and redemption completed"
+            }
+          ]
+        }
+      ],
+      "postconditions": [
+        "On success: redemption.status='completed', discount_code_external_id and discount_code_string set, point_transactions row unchanged.",
+        "On failure: redemption.status='failed', failure_reason set, customer balance restored by points_debited, compensating_credit ledger row appended.",
+        "Race condition: second runner finds row not in 'pending' state and exits without side effects."
+      ],
+      "edgeCases": [
+        "Shopify returns userErrors on discount code creation \u2014 workflow.attempt's fail callback restores balance and appends compensating_credit before marking failed.",
+        "Two cron runners pick up the same redemption_id \u2014 workflow.claim atomicity ensures only one proceeds; the other gets null and exits.",
+        "Row is already in completed or failed state when cron fires \u2014 claim returns null; recipe logs and exits cleanly."
+      ]
+    },
+    "sweep-stale-redemptions": {
+      "triggeredBy": "cron:sweep_redemptions",
+      "description": "Sweep redemption rows that have been in 'pending' status too long back to 'failed' so balance restoration can be retried.",
+      "inputs": [],
+      "steps": [
+        {
+          "kind": "compute",
+          "purpose": "sweep stale running redemption rows older than 15 minutes",
+          "bindResultTo": "sweptIds",
+          "expression": "await workflow.sweepStale('redemptions', { ttlMinutes: 15, runningState: 'pending', timedOutState: 'failed' })",
+          "example": "import { workflow } from \"../lib/workflow.js\";\n\n// One-shot lifecycle: atomic claim \u2192 run callback \u2192 mark complete (or\n// persist failure_reason and re-throw on callback error). Returns\n// `null` immediately when the row is already claimed / in the wrong\n// state / missing \u2014 callback NEVER runs in that case.\nconst result = await workflow.attempt<RuleRun, void>(\n  \"rule_runs\",\n  runId,\n  { from: \"pending\" },\n  async (row) => {\n    // Side effects here. If this throws, helper persists status='failed'\n    // with err.message (truncated) and re-throws so the cron-runner sees it.\n    await processRow(row);\n  },\n);\nif (!result) return; // someone else claimed it\n\n// Primitives for non-canonical flows (multi-step, branching terminals):\nconst claimed = await workflow.claim<Approval>(\n  \"approvals\",\n  approvalId,\n  { from: \"draft\", to: \"submitted\" },\n);\nif (!claimed) return;\n// \u2026 do work \u2026\nawait workflow.complete(\"approvals\", approvalId, { to: \"approved\" });\n// or:\nawait workflow.fail(\"approvals\", approvalId, \"policy violation: \u2026\");\n\n// Stale sweeper \u2014 call from a low-frequency cron tick (every ~10 min):\nconst swept = await workflow.sweepStale(\"rule_runs\", { ttlMinutes: 30 });\nconsole.log(JSON.stringify({ event: \"sweep\", count: swept.count }));\n"
+        },
+        {
+          "kind": "log",
+          "purpose": "log count of swept rows for ops visibility",
+          "bindResultTo": null,
+          "level": "info",
+          "fields": {
+            "swept_count": "$sweptIds.length"
+          },
+          "message": "sweep-stale-redemptions: swept stale rows"
+        }
+      ],
+      "postconditions": [
+        "Any redemption row stuck in 'pending' for more than 15 minutes is flipped to 'failed'."
+      ],
+      "edgeCases": [
+        "No stale rows \u2014 sweepStale returns empty array; log shows swept_count=0."
+      ]
+    },
+    "admin-get-settings": {
+      "triggeredBy": "admin:GET:/settings",
+      "description": "Return the current points program configuration from config store.",
+      "inputs": [],
+      "steps": [
+        {
+          "kind": "compute",
+          "purpose": "load all loyalty config keys in one call",
+          "bindResultTo": "settings",
+          "expression": "await config.getMany(['loyalty_earning_rate', 'loyalty_redemption_threshold', 'loyalty_discount_value_minor', 'loyalty_currency'])",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "response",
+          "purpose": "return current settings to the admin panel",
+          "bindResultTo": null,
+          "status": 200,
+          "body": {
+            "earning_rate": "$settings.loyalty_earning_rate ?? 0.01",
+            "redemption_threshold": "$settings.loyalty_redemption_threshold ?? 500",
+            "discount_value": "$settings.loyalty_discount_value_minor ?? 1000",
+            "currency": "$settings.loyalty_currency ?? 'USD'"
+          }
+        }
+      ],
+      "postconditions": [
+        "Returns the most recently persisted settings, or sensible defaults on first run."
+      ],
+      "edgeCases": [
+        "First install before any settings have been saved \u2014 config.getMany returns empty map; recipe fills all values from defaults."
+      ]
+    },
+    "admin-post-settings": {
+      "triggeredBy": "admin:POST:/settings",
+      "description": "Validate and persist the merchant's updated points program configuration.",
+      "inputs": [
+        {
+          "name": "earningRate",
+          "source": "request.body",
+          "fieldPath": "earning_rate",
+          "type": "number",
+          "nullable": false
+        },
+        {
+          "name": "redemptionThreshold",
+          "source": "request.body",
+          "fieldPath": "redemption_threshold",
+          "type": "number",
+          "nullable": false
+        },
+        {
+          "name": "discountValueMinor",
+          "source": "request.body",
+          "fieldPath": "discount_value",
+          "type": "number",
+          "nullable": false
+        },
+        {
+          "name": "currency",
+          "source": "request.body",
+          "fieldPath": "currency",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "compute",
+          "purpose": "validate all input fields are in acceptable ranges",
+          "bindResultTo": null,
+          "expression": "(typeof earningRate === 'number' && earningRate > 0 && earningRate <= 1 && typeof redemptionThreshold === 'number' && redemptionThreshold >= 1 && Number.isInteger(redemptionThreshold) && typeof discountValueMinor === 'number' && discountValueMinor > 0 && Number.isInteger(discountValueMinor) && typeof currency === 'string' && currency.length === 3) ? true : (() => { throw new Error('invalid settings input') })()"
+        },
+        {
+          "kind": "compute",
+          "purpose": "persist earning rate",
+          "bindResultTo": null,
+          "expression": "await config.set('loyalty_earning_rate', earningRate)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "persist redemption threshold",
+          "bindResultTo": null,
+          "expression": "await config.set('loyalty_redemption_threshold', redemptionThreshold)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "persist discount value in minor units",
+          "bindResultTo": null,
+          "expression": "await config.set('loyalty_discount_value_minor', discountValueMinor)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "persist currency code",
+          "bindResultTo": null,
+          "expression": "await config.set('loyalty_currency', currency)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "response",
+          "purpose": "return saved settings to confirm persistence",
+          "bindResultTo": null,
+          "status": 200,
+          "body": {
+            "earning_rate": "$earningRate",
+            "redemption_threshold": "$redemptionThreshold",
+            "discount_value": "$discountValueMinor",
+            "currency": "$currency"
+          }
+        }
+      ],
+      "postconditions": [
+        "All four config keys updated atomically (last-writer-wins) after validation passes.",
+        "Invalid input causes a 500 before any config.set call mutates state."
+      ],
+      "edgeCases": [
+        "Merchant raises redemption threshold above existing customer balances \u2014 existing balances are preserved; customers simply need more points before their next redemption.",
+        "Concurrent admin save from two browser tabs \u2014 last-writer-wins per config.set semantics; no corruption."
+      ]
+    },
+    "admin-list-customer-balances": {
+      "triggeredBy": "admin:GET:/customer-balances",
+      "description": "Return a cursor-paginated list of customer point balances ordered by current balance descending.",
+      "inputs": [
+        {
+          "name": "cursorBalance",
+          "source": "request.query",
+          "fieldPath": "cursor_balance",
+          "type": "number|null",
+          "nullable": true
+        },
+        {
+          "name": "cursorId",
+          "source": "request.query",
+          "fieldPath": "cursor_id",
+          "type": "string|null",
+          "nullable": true
+        },
+        {
+          "name": "pageSize",
+          "source": "request.query",
+          "fieldPath": "page_size",
+          "type": "number",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "compute",
+          "purpose": "clamp page size between 1 and 100",
+          "bindResultTo": "limit",
+          "expression": "Math.min(Math.max(Number(pageSize) || 20, 1), 100)"
+        },
+        {
+          "kind": "compute",
+          "purpose": "determine if a cursor is provided for keyset navigation",
+          "bindResultTo": "hasCursor",
+          "expression": "cursorBalance !== null && cursorBalance !== undefined && cursorId !== null && cursorId !== undefined"
+        },
+        {
+          "kind": "decision",
+          "purpose": "choose cursor or first-page query",
+          "bindResultTo": null,
+          "condition": "hasCursor",
+          "ifTrue": [
+            {
+              "kind": "sql_select",
+              "purpose": "fetch next page using keyset cursor on (current_balance DESC, id DESC)",
+              "bindResultTo": "rows",
+              "template": "SELECT id, customer_external_id, current_balance, lifetime_earned, lifetime_redeemed, updated_at FROM customer_point_balances WHERE (current_balance, id::text) < (${cursorBalance}, ${cursorId}) ORDER BY current_balance DESC, id DESC LIMIT ${limitPlusOne}",
+              "bindings": [
+                {
+                  "name": "cursorBalance",
+                  "source": "cursorBalance"
+                },
+                {
+                  "name": "cursorId",
+                  "source": "cursorId"
+                },
+                {
+                  "name": "limitPlusOne",
+                  "source": "limit + 1"
+                }
+              ]
+            }
+          ],
+          "ifFalse": [
+            {
+              "kind": "sql_select",
+              "purpose": "fetch first page ordered by current balance descending",
+              "bindResultTo": "rows",
+              "template": "SELECT id, customer_external_id, current_balance, lifetime_earned, lifetime_redeemed, updated_at FROM customer_point_balances ORDER BY current_balance DESC, id DESC LIMIT ${limitPlusOne}",
+              "bindings": [
+                {
+                  "name": "limitPlusOne",
+                  "source": "limit + 1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "compute",
+          "purpose": "determine if there is a next page",
+          "bindResultTo": "hasNextPage",
+          "expression": "rows.length > limit"
+        },
+        {
+          "kind": "compute",
+          "purpose": "trim result to page size",
+          "bindResultTo": "pageItems",
+          "expression": "hasNextPage ? rows.slice(0, limit) : rows"
+        },
+        {
+          "kind": "compute",
+          "purpose": "build next cursor from last item if more pages exist",
+          "bindResultTo": "nextCursor",
+          "expression": "hasNextPage ? JSON.stringify({ balance: pageItems[pageItems.length - 1].current_balance, id: pageItems[pageItems.length - 1].id }) : null"
+        },
+        {
+          "kind": "response",
+          "purpose": "return paginated balances to admin panel",
+          "bindResultTo": null,
+          "status": 200,
+          "body": {
+            "items": "$pageItems",
+            "next_cursor": "$nextCursor",
+            "page_size": "$limit"
+          }
+        }
+      ],
+      "postconditions": [
+        "Items are always ordered by current_balance DESC, id DESC for stable keyset pagination.",
+        "next_cursor is null on the last page."
+      ],
+      "edgeCases": [
+        "No customers have earned points \u2014 both queries return empty arrays; next_cursor=null, items=[].",
+        "page_size outside 1\u2013100 range \u2014 clamped silently."
+      ]
+    }
+  },
+  "widgetTargetTemplates": [
+    "product",
+    "index",
+    "cart"
+  ],
+  "platformGaps": [
+    {
+      "gap": "No synchronous Shopify discount code creation within an HTTP request budget \u2014 discount creation involves a Shopify mutation that may exceed the 2-second HTTP compute budget at scale.",
+      "mitigation": "Redemption request inserts a pending row, debits points synchronously, and enqueues process_redemption job; the widget polls /points-balance for a status update until the code appears.",
+      "uxImplication": "After clicking Redeem, the customer sees a 'processing' state; the discount code is displayed only after the cron job completes, typically within seconds."
+    },
+    {
+      "gap": "Shopify discount code API does not support batch creation \u2014 each redemption requires one API call.",
+      "mitigation": "Each process_redemption cron job handles one redemption atomically via workflow.attempt; no batching is needed because redemptions are individually enqueued.",
+      "uxImplication": null
+    }
+  ],
+  "emailSpec": null,
+  "uxExpectations": {
+    "storefront": "Widget renders the customer's current point balance and a clear threshold progress indicator; when eligible, a single 'Redeem for $X off' button triggers redemption and transitions to a 'code pending' state, then displays the generated discount code once processing completes.",
+    "admin": "Admin dashboard prioritises a settings panel for earning rate, threshold, and discount value at the top, followed by a scrollable paginated leaderboard of customer balances showing current balance and lifetime totals so the merchant can audit program activity.",
+    "widgetShapes": [
+      "stateless_display",
+      "form_persist_no_state_check"
+    ]
+  },
+  "edgeCases": [
+    "Shopify rejects the discount code creation after points are already debited \u2014 the workflow.attempt fail callback restores the customer's balance in customer_point_balances and appends a compensating_credit row to point_transactions so the ledger remains consistent.",
+    "Two concurrent orders/paid webhooks for the same order external id arrive simultaneously \u2014 the UNIQUE constraint on point_transactions.order_external_id causes the second INSERT to be silently ignored via ON CONFLICT DO NOTHING, and the idempotency SELECT at recipe start causes the second webhook to exit before reaching the transaction block.",
+    "Two simultaneous redemption POST requests from the same customer \u2014 the pending-redemption SELECT check plus the balance sql_claim WHERE current_balance >= threshold together ensure only one debit can proceed; the second request receives a 409 or 422.",
+    "Merchant raises the redemption threshold after customers have partially accumulated points \u2014 existing balance rows are unchanged; customers whose balance no longer meets the new threshold see redemption_eligible=false in the widget until they earn more points.",
+    "A redemption row is stuck in 'pending' due to a cron worker crash \u2014 the sweep_redemptions job at */10 * * * * flips rows older than 15 minutes to 'failed', and the fail callback restores the balance so the customer can retry.",
+    "Customer with no point_transactions and no customer_point_balances row calls /widget/points-balance \u2014 the sql_select returns zero rows; the recipe returns current_balance=0 and redemption_eligible=false without error."
+  ]
+}
