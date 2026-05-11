@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
 
-
 # ── Route-shape predicates (mechanical dispatch from lld.httpRoutes.widget) ──
 
 
@@ -869,9 +868,7 @@ def widget_shapes_section() -> str:
     return "\n".join(lines)
 
 
-def examples_for_widget(
-    lld: Dict[str, Any], intent: Dict[str, Any]
-) -> List[str]:
+def examples_for_widget(lld: Dict[str, Any], intent: Dict[str, Any]) -> List[str]:
     """
     Return the list of example JS bodies to append to the storefront
     agent's user message, picked by the dispatcher.

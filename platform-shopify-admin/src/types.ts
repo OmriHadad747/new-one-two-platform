@@ -17,6 +17,19 @@ export interface AdminBridge {
   context: {
     shop: string;
     appId: string;
+    /**
+     * Shop currency in ISO 4217 form (e.g. "USD", "EUR", "JPY"). Used
+     * by admin modules to format money fields with `Intl.NumberFormat`.
+     * Required — every Shopify shop has a primary currency.
+     */
+    currency: string;
+    /**
+     * BCP-47 locale tag for the shop's primary language
+     * (e.g. "en-US", "fr-CA", "ja-JP"). Drives `Intl.NumberFormat` /
+     * `Intl.DateTimeFormat` / `Intl.RelativeTimeFormat` in admin
+     * modules. Required — every Shopify shop has a primary locale.
+     */
+    locale: string;
   };
   /**
    * Call the app's admin handler.
@@ -39,6 +52,89 @@ export interface AdminBridge {
    * variant defaults to "success".
    */
   notify: (message: string, variant?: "success" | "error") => void;
+  /**
+   * Open Shopify Admin's native ResourcePicker so the merchant can
+   * choose products / collections / customers / variants from their
+   * live store. Wraps `shopify.resourcePicker()` from App Bridge.
+   *
+   * Returns the merchant's selection, or null if they cancelled.
+   * Each selected resource is `{ id, title, ... }` — `id` is the
+   * Shopify GraphQL gid (e.g. "gid://shopify/Product/123") and is
+   * what the admin module persists. The full result shape passes
+   * through App Bridge unchanged; cast it to the type that matches
+   * the resource being picked.
+   *
+   * Prefer this over a custom search-and-pick UI for any Shopify
+   * resource — it's the native experience merchants expect.
+   */
+  pickResource: (options: PickResourceOptions) => Promise<PickedResource[] | null>;
+  /**
+   * Native Shopify Admin Contextual Save Bar — the floating "You
+   * have unsaved changes [Discard] [Save]" affordance. Wraps
+   * `shopify.saveBar.*` from App Bridge.
+   *
+   * Pattern:
+   *   - On any input change in a settings form, call show()
+   *   - On Save click (the merchant's), wire your save handler via
+   *     addEventListener("show"/"save"/"discard") on the saveBar
+   *     event, or simply call hide() yourself after a successful
+   *     bridge.call().
+   *   - On successful save / discard, call hide()
+   *
+   * The save bar floats above the panel and survives merchant
+   * navigation attempts — clicking another nav link prompts a
+   * "leave with unsaved changes?" confirm.
+   */
+  saveBar: {
+    show: (id?: string) => void;
+    hide: (id?: string) => void;
+  };
+}
+
+/**
+ * Options accepted by `bridge.pickResource()`. Mirrors a useful
+ * subset of `@shopify/app-bridge-react`'s ResourcePicker options —
+ * what the admin agent will typically ask for.
+ */
+export interface PickResourceOptions {
+  /**
+   * Which kind of resource to pick. Maps 1:1 to Shopify's
+   * ResourcePicker types.
+   *
+   * Note: `"customer"` is NOT supported by App Bridge's native
+   * ResourcePicker — for customer selection, fall back to the
+   * `resource_picker` shape with a /customers/search backend.
+   */
+  type: "product" | "collection" | "variant";
+  /**
+   * `true` for multi-select (no cap), a number for a multi-select
+   * cap, `false`/omitted for single-select.
+   */
+  multiple?: boolean | number;
+  /**
+   * Optional pre-selected resources (re-opening the picker on an
+   * already-edited record). Each id is a Shopify GraphQL gid.
+   */
+  selectionIds?: { id: string }[];
+  /**
+   * GraphQL filter query passed verbatim to Shopify (e.g.
+   * `"status:active"`). Optional; absent means no filter.
+   */
+  query?: string;
+}
+
+/**
+ * One resource entry from `bridge.pickResource()`. Shape varies by
+ * `type` — every entry has `id` + `title`, beyond that you cast to
+ * the resource-specific subtype.
+ */
+export interface PickedResource {
+  id: string;            // gid://shopify/<Type>/<numeric_id>
+  title?: string;
+  handle?: string;
+  variants?: PickedResource[];
+  // Shopify returns more fields per type — extend per usage.
+  [key: string]: unknown;
 }
 
 /**

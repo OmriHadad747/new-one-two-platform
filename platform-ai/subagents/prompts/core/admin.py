@@ -22,8 +22,15 @@ WHERE:
 
     bridge.context = {
       shop: string,      // "example.myshopify.com"
-      tenantId: string,  // platform tenant UUID
+      appId: string,     // platform app UUID for this admin module
+      currency: string,  // ISO 4217 (e.g. "USD", "EUR", "JPY")
+      locale: string,    // BCP-47 (e.g. "en-US", "fr-CA", "ja-JP")
     }
+    // Format money/dates using Intl.* with bridge.context.locale +
+    // bridge.context.currency — never hardcode "USD" or "en-US".
+    //   new Intl.NumberFormat(bridge.context.locale,
+    //     { style: "currency", currency: bridge.context.currency })
+    //     .format(amount);
 
     bridge.call(path, body?)     // POST to the platform backend handler. Returns Promise<any>.
                                   // path must be one of the paths in adminApiCatalog.

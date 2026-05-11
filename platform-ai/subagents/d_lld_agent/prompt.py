@@ -1323,6 +1323,47 @@ __WIDGET_SHAPES_SECTION__
                      Currency switcher ["mutate_page_dom",
                                         "stateless_display"]
 
+  adminShapes     admin archetypes only — list of architectural
+                   micro-patterns this admin panel composes. Each
+                   shape teaches ONE pattern; real admin panels stack
+                   2–4 shapes. Pick EVERY pattern that applies. The
+                   admin codegen attaches a matching worked example
+                   for each. Empty list for non-admin archetypes.
+                   Closed enum:
+
+__ADMIN_SHAPES_SECTION__
+
+                   Composition examples:
+                     Quick View cfg     ["settings_form"]
+                     Back-in-stock      ["settings_form", "kpi_stats_row",
+                                         "paginated_table",
+                                         "empty_state_cta"]
+                     FAQ builder        ["paginated_table", "editor_modal",
+                                         "confirm_modal", "drag_reorder",
+                                         "empty_state_cta"]
+                     Size chart         ["paginated_table", "editor_modal",
+                                         "resource_picker", "confirm_modal"]
+                     Store locator      ["paginated_table", "editor_modal",
+                                         "file_upload", "confirm_modal"]
+                     Volume discount    ["paginated_table", "editor_modal",
+                                         "resource_picker", "confirm_modal"]
+                     Newsletter popup   ["tabs_layout", "settings_form",
+                                         "kpi_stats_row", "paginated_table"]
+                     Order analytics    ["kpi_stats_row", "inline_chart",
+                                         "paginated_table",
+                                         "date_range_picker"]
+                     Onboarding setup   ["wizard"]
+                     Bulk order tagger  ["settings_form", "async_runner"]
+                     CSV exporter       ["settings_form", "async_runner",
+                                         "file_download",
+                                         "date_range_picker"]
+                     Packing slip print ["paginated_table",
+                                         "bulk_select_actions",
+                                         "file_download", "detail_drawer"]
+                     Returns manager    ["paginated_table", "table_filters",
+                                         "confirm_modal", "async_runner",
+                                         "detail_drawer", "inline_edit"]
+
 Both feed the widget / admin codegens directly — they'll use these to \
 shape layout, empty states, and interaction patterns. Be specific:
   OK   "Widget should feel lightweight — one-click subscribe with email
@@ -1426,14 +1467,17 @@ __SCHEMA_JSON__
 def build_system_prompt() -> str:
     """
     Render the LLD agent's system prompt with the live `LLDPlan` JSON schema
-    appended and the widget-shapes enum interpolated. Both the Pydantic
-    model and the storefront agent's `widget_shapes` registry are single
-    sources of truth — bumping either automatically updates what the
-    agent sees.
+    appended and the widget/admin shape enums interpolated. The Pydantic
+    model, the storefront agent's `widget_shapes` registry, and the admin
+    agent's `admin_shapes` registry are all single sources of truth —
+    bumping any of them automatically updates what the agent sees.
     """
     from subagents.e_storefront_agent.widget_shapes import widget_shapes_section
+    from subagents.e_admin_agent.admin_shapes import admin_shapes_section
 
     schema_json = json.dumps(LLDPlan.model_json_schema())
-    return SYSTEM_PROMPT_TEMPLATE.replace("__SCHEMA_JSON__", schema_json).replace(
-        "__WIDGET_SHAPES_SECTION__", widget_shapes_section()
+    return (
+        SYSTEM_PROMPT_TEMPLATE.replace("__SCHEMA_JSON__", schema_json)
+        .replace("__WIDGET_SHAPES_SECTION__", widget_shapes_section())
+        .replace("__ADMIN_SHAPES_SECTION__", admin_shapes_section())
     )

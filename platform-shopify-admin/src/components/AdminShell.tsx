@@ -2,7 +2,12 @@ import { useEffect, useState, useCallback } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { NavMenu, TitleBar } from "@shopify/app-bridge-react";
 import { Page, Spinner, EmptyState, Banner, BlockStack, InlineStack, Text } from "@shopify/polaris";
-import type { AdminApp, AdminBridge } from "../types.js";
+import type {
+  AdminApp,
+  AdminBridge,
+  PickedResource,
+  PickResourceOptions,
+} from "../types.js";
 import { ModuleFrame } from "./ModuleFrame.js";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
@@ -17,6 +22,15 @@ export function AdminShell({ shop }: Props) {
   const [apps, setApps] = useState<AdminApp[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Shop metadata used by every module's bridge.context for currency /
+  // locale-aware formatting. Lives at this level (not per-module) so a
+  // single fetch services every module the merchant might open.
+  // Defaults are USD / en-US so renders are non-blocking on first paint
+  // and degrade gracefully if the metadata endpoint is unavailable.
+  const [shopMeta, setShopMeta] = useState<{ currency: string; locale: string }>({
+    currency: "USD",
+    locale: "en-US",
+  });
 
   // Active app driven by URL param so NavMenu links work correctly
   const [activeAppId, setActiveAppId] = useState<string>(() => {
@@ -57,12 +71,47 @@ export function AdminShell({ shop }: Props) {
     };
   }, [shop]);
 
+  // ── Shop metadata fetch (currency + locale) ───────────────────────────────
+  // Drives `bridge.context.currency` / `bridge.context.locale` so admin
+  // modules can format money / dates with `Intl.NumberFormat`.
+  //
+  // TODO(backend): implement `GET /api/admin/shop?shop=<domain>` returning
+  // `{ currency: string, locale: string }`. The platform-back handler
+  // should pull these from the cached Shopify shop record
+  // (`shop { currencyCode primaryLocale }` GraphQL query, refreshed on
+  // shop/update webhook). Until the endpoint exists, defaults (USD /
+  // en-US) keep modules rendering — they format with the merchant's
+  // domestic conventions on first launch and update on next reload.
+
+  useEffect(() => {
+    if (!shop) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/admin/shop?shop=${encodeURIComponent(shop)}`);
+        if (!res.ok) return; // endpoint may not exist yet — keep defaults
+        const data = (await res.json()) as { currency?: string; locale?: string };
+        if (cancelled) return;
+        if (data.currency && data.locale) {
+          setShopMeta({ currency: data.currency, locale: data.locale });
+        }
+      } catch {
+        // Network error — keep defaults. No banner; module-level
+        // formatting still works, merchant just sees USD instead of
+        // their primary currency until the endpoint comes online.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shop]);
+
   // ── Bridge factory ────────────────────────────────────────────────────────
   // A new bridge is created per activeAppId so it's always bound to the correct app.
 
   const makeBridge = useCallback(
     (appId: string): AdminBridge => ({
-      context: { shop, appId },
+      context: { shop, appId, currency: shopMeta.currency, locale: shopMeta.locale },
 
       call: async (path: string, args?: unknown) => {
         const token = await shopify.idToken();
@@ -123,8 +172,40 @@ export function AdminShell({ shop }: Props) {
       notify: (message: string, variant?: "success" | "error") => {
         shopify.toast.show(message, { isError: variant === "error" });
       },
+
+      // Native ResourcePicker — opens Shopify's own picker UI for
+      // products / collections / customers / variants. Far better UX
+      // (and zero Admin GraphQL spend) than a custom search field.
+      // Returns the merchant's selection, or null if they cancelled.
+      pickResource: async (options: PickResourceOptions) => {
+        // `shopify.resourcePicker` returns the selection on confirm,
+        // `undefined` on cancel. We normalise cancel → null so admin
+        // modules can branch with a single `if (!selection)` check.
+        const result = (await shopify.resourcePicker({
+          type: options.type,
+          multiple: options.multiple,
+          selectionIds: options.selectionIds,
+          query: options.query,
+        })) as PickedResource[] | undefined;
+        return result ?? null;
+      },
+
+      // Native Contextual Save Bar — Shopify's floating "You have
+      // unsaved changes" affordance. The `id` parameter is forwarded
+      // verbatim so admin modules that own multiple save bars (rare)
+      // can address each one; omitting it uses the default save bar.
+      saveBar: {
+        show: (id?: string) => {
+          if (id) shopify.saveBar.show(id);
+          else shopify.saveBar.show("save-bar");
+        },
+        hide: (id?: string) => {
+          if (id) shopify.saveBar.hide(id);
+          else shopify.saveBar.hide("save-bar");
+        },
+      },
     }),
-    [shop, shopify]
+    [shop, shopify, shopMeta.currency, shopMeta.locale]
   );
 
   // ── Derived state ─────────────────────────────────────────────────────────

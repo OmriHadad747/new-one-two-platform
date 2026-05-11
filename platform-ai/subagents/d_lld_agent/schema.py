@@ -789,6 +789,7 @@ class UxExpectations(_StrictModel):
     storefront: Optional[str] = None
     admin: Optional[str] = None
     widgetShapes: List[str] = Field(default_factory=list)
+    adminShapes: List[str] = Field(default_factory=list)
 
     @field_validator("widgetShapes")
     @classmethod
@@ -804,6 +805,24 @@ class UxExpectations(_StrictModel):
                 f"unknown widgetShapes: {sorted(set(bad))}. "
                 "Allowed values come from "
                 "subagents.e_storefront_agent.widget_shapes.WIDGET_SHAPES."
+            )
+        return v
+
+    @field_validator("adminShapes")
+    @classmethod
+    def _check_admin_shapes(cls, v: List[str]) -> List[str]:
+        """Reject any shape name not present in the admin agent's
+        registry. Parallels widgetShapes — adding a new shape to
+        subagents.e_admin_agent.admin_shapes.ADMIN_SHAPES makes it
+        valid here automatically."""
+        from subagents.e_admin_agent.admin_shapes import is_known_shape
+
+        bad = [name for name in v if not is_known_shape(name)]
+        if bad:
+            raise ValueError(
+                f"unknown adminShapes: {sorted(set(bad))}. "
+                "Allowed values come from "
+                "subagents.e_admin_agent.admin_shapes.ADMIN_SHAPES."
             )
         return v
 
