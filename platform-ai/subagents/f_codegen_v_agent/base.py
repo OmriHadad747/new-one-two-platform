@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 
 # Allowed values for Finding.artifact. Driving constants for the revision-
 # locking predicates in the crew.
-VALID_ARTIFACTS = frozenset({"plan", "handler", "db", "storefront", "admin_ui"})
+VALID_ARTIFACTS = frozenset({"plan", "backend", "db", "storefront", "admin_ui"})
 
 VALID_VALIDATORS = frozenset({"agent_rules", "bug_finder", "quality_brief_coverage"})
 

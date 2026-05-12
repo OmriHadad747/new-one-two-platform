@@ -5,7 +5,7 @@ Receives the complete generated artifacts and writes:
   1. A merchant-facing explanation (2-3 paragraphs, zero jargon)
   2. A technical summary JSON for the platform dashboard
 
-System prompt and user template live in subagents/prompts/explanation/
+System prompt and user template live in subagents/h_explenation_agent/explanation.py
 (EXPLANATION_BASE + EXPLANATION_USER_TEMPLATE).
 
 Model: claude-haiku (fast; writing task, no code generation).

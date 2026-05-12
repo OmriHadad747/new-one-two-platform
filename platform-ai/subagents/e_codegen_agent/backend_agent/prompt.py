@@ -1,7 +1,7 @@
 """
 Backend agent system prompt.
 
-The handler agent's role under the LLD-driven pipeline is small and
+The backend agent's role under the LLD-driven pipeline is small and
 deterministic: translate the LLD's `capabilityRecipes` (a typed step-AST)
 into TypeScript handler files. Everything that used to be JIT-injected
 from topics/ + capabilities/ — Shopify API surface, bulk-fetch theory,

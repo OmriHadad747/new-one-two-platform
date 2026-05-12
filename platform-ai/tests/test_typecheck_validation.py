@@ -22,7 +22,7 @@ from subagents.e_codegen_agent.backend_agent import typecheck as typecheck_valid
 from subagents.e_codegen_agent.backend_agent.typecheck import (
     _DEFAULT_TEMPLATE_ROOT,
     _parse_findings,
-    validate_handler_typecheck,
+    validate_backend_typecheck,
 )
 
 
@@ -49,23 +49,23 @@ def _fake_proc(
 
 
 def test_returns_empty_for_non_bundle_input() -> None:
-    assert validate_handler_typecheck("just plain text, no markers") == []
+    assert validate_backend_typecheck("just plain text, no markers") == []
 
 
 def test_returns_empty_for_empty_string() -> None:
-    assert validate_handler_typecheck("") == []
+    assert validate_backend_typecheck("") == []
 
 
 def test_returns_empty_when_template_root_has_no_tsconfig(tmp_path: Path) -> None:
     bundle = _bundle(("src/routes/admin.ts", "export const x = 1;"))
     # tmp_path is a clean dir with no tsconfig.json — should skip.
-    assert validate_handler_typecheck(bundle, template_root=tmp_path) == []
+    assert validate_backend_typecheck(bundle, template_root=tmp_path) == []
 
 
 def test_returns_empty_when_template_root_has_no_node_modules(tmp_path: Path) -> None:
     (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
     bundle = _bundle(("src/routes/admin.ts", "export const x = 1;"))
-    assert validate_handler_typecheck(bundle, template_root=tmp_path) == []
+    assert validate_backend_typecheck(bundle, template_root=tmp_path) == []
 
 
 def test_returns_empty_when_no_tsc_available(tmp_path: Path) -> None:
@@ -73,7 +73,7 @@ def test_returns_empty_when_no_tsc_available(tmp_path: Path) -> None:
     (tmp_path / "node_modules").mkdir()
     bundle = _bundle(("src/routes/admin.ts", "export const x = 1;"))
     with patch.object(typecheck_validation, "_resolve_tsc_command", return_value=None):
-        assert validate_handler_typecheck(bundle, template_root=tmp_path) == []
+        assert validate_backend_typecheck(bundle, template_root=tmp_path) == []
 
 
 def test_returns_empty_on_subprocess_timeout(tmp_path: Path) -> None:
@@ -88,7 +88,7 @@ def test_returns_empty_on_subprocess_timeout(tmp_path: Path) -> None:
             side_effect=subprocess.TimeoutExpired(cmd=["tsc"], timeout=1),
         ):
             assert (
-                validate_handler_typecheck(
+                validate_backend_typecheck(
                     bundle, template_root=tmp_path, timeout_sec=1
                 )
                 == []
@@ -103,7 +103,7 @@ def test_returns_empty_when_tsc_exits_zero(tmp_path: Path) -> None:
         typecheck_validation, "_resolve_tsc_command", return_value=["tsc"]
     ):
         with patch("subprocess.run", return_value=_fake_proc(0)):
-            assert validate_handler_typecheck(bundle, template_root=tmp_path) == []
+            assert validate_backend_typecheck(bundle, template_root=tmp_path) == []
 
 
 # ── Output parsing ─────────────────────────────────────────────────────────────
@@ -197,7 +197,7 @@ def test_real_tsc_catches_unknown_identifier() -> None:
             ),
         ),
     )
-    findings = validate_handler_typecheck(bundle)
+    findings = validate_backend_typecheck(bundle)
     # Either: (a) tsc surfaces a TS2339/TS2551 on `platfrom`, or
     # (b) tsc surfaces TS2304/TS18048-class errors on the surrounding express
     # types if the template doesn't expose `req.platform` typing yet.

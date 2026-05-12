@@ -4,7 +4,7 @@ Revision agent system prompt — always-on core.
 Revision-specific rules only. The handler surface (HARNESS_BASE, capability
 docs, topic HANDLER sections) is JIT'd into the USER prompt by
 revision_agent._build_user_prompt, using the exact same assembler
-(`build_handler_jit_sections`) the handler generator uses. Duplication is
+(`build_handler_jit_sections`) the backend generator uses. Duplication is
 eliminated: a change to HARNESS_BASE or a topic/capability flows to both
 first-run and revision paths automatically.
 """
@@ -51,20 +51,20 @@ MIGRATION — incremental DDL only
 - SELECT cron.schedule(...) is deployer-owned — do not emit it.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WIDGET / ADMIN UI (widget_js, admin_ui)
+WIDGET / ADMIN UI (storefront, admin_ui)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 - Revise only when the prior bundle includes the module AND the revision
   touches the widget or admin surface (catalog change, field rename, UX update).
 - Output raw JavaScript (the same ES module format the generator emits) —
-  no ===FILE:=== markers; widget_js and admin_ui are single-file artifacts.
+  no ===FILE:=== markers; storefront and admin_ui are single-file artifacts.
 - Set the field to null when it is not applicable (backend-only app) or
   when the revision does not require any change to that surface.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT — respond with ONLY this JSON object (no markdown fences, no explanation):
 {
-  "handler": "<full revised handler file bundle, wrapped in ===FILE:=== / ===END=== markers>",
+  "backend": "<full revised handler file bundle, wrapped in ===FILE:=== / ===END=== markers>",
   "db": "<incremental SQL DDL, or exactly '-- no schema changes'>",
   "storefront": "<revised ES module, or null>",
   "admin_ui": "<revised ES module, or null>"

@@ -5,7 +5,7 @@ The LLD is the authoritative spec — every column's name, sqlType, constraints,
 enum, foreignKeys, uniqueConstraint, and indexes are spec'd there. This
 generator is a near-mechanical translation from that structure into DDL.
 
-System prompt lives in subagents/e_db_agent/prompt.py (DB_BASE).
+System prompt lives in subagents/e_codegen_agent/db_agent/prompt.py (DB_BASE).
 
 Isolation model: each tenant has its own Postgres schema; the deployer runs
 migrations with search_path pinned to that schema, so `CREATE TABLE foo`
@@ -31,7 +31,7 @@ from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
 from subagents.e_codegen_agent.db_agent.prompt import DB_BASE
-from subagents.e_codegen_agent.db_agent.validator import validate_migration_artifact
+from subagents.e_codegen_agent.db_agent.validator import validate_db_artifact
 
 _SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMENT")
 
@@ -96,7 +96,7 @@ class DbGenerator(Generator):
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         prior_tables = _extract_table_names(ctx.prior_db_sql or "")
-        return validate_migration_artifact(artifact, prior_tables=prior_tables)
+        return validate_db_artifact(artifact, prior_tables=prior_tables)
 
 
 # ── Private prompt-building helpers ───────────────────────────────────────────

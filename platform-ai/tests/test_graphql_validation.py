@@ -21,7 +21,7 @@ from subagents.e_codegen_agent.backend_agent.graphql_check import (
     _ADMIN_HELPERS,
     _STOREFRONT_HELPERS,
     _extract_queries,
-    validate_handler_graphql,
+    validate_backend_graphql,
 )
 
 
@@ -186,7 +186,7 @@ def test_clean_query_passes(monkeypatch) -> None:
             'await shopify.graphql(`query { order(id: "x") { id name } }`);',
         ),
     )
-    assert validate_handler_graphql(bundle) == []
+    assert validate_backend_graphql(bundle) == []
 
 
 def test_unknown_field_is_flagged(monkeypatch) -> None:
@@ -198,7 +198,7 @@ def test_unknown_field_is_flagged(monkeypatch) -> None:
             'await shopify.graphql(`query { order(id: "x") { id customer } }`);',
         ),
     )
-    findings = validate_handler_graphql(bundle)
+    findings = validate_backend_graphql(bundle)
     assert any("customer" in f for f in findings)
 
 
@@ -211,7 +211,7 @@ def test_missing_required_arg_is_flagged(monkeypatch) -> None:
             "await shopify.graphql(`query { orders { edges { node { id } } } }`);",
         ),
     )
-    findings = validate_handler_graphql(bundle)
+    findings = validate_backend_graphql(bundle)
     assert any("first" in f.lower() for f in findings)
 
 
@@ -224,7 +224,7 @@ def test_wrong_arg_type_is_flagged(monkeypatch) -> None:
             'await shopify.graphql(`query { orders(first: "fifty") { edges { node { id } } } }`);',
         ),
     )
-    findings = validate_handler_graphql(bundle)
+    findings = validate_backend_graphql(bundle)
     assert findings, "expected validation error for non-Int first arg"
 
 
@@ -237,7 +237,7 @@ def test_parse_error_is_flagged(monkeypatch) -> None:
             'await shopify.graphql(`query { order(id: "x") { id `);',
         ),
     )
-    findings = validate_handler_graphql(bundle)
+    findings = validate_backend_graphql(bundle)
     assert findings
     assert any("parse error" in f.lower() for f in findings)
 
@@ -250,7 +250,7 @@ def test_finding_includes_file_path_and_helper(monkeypatch) -> None:
             'await shopify.graphql(`query { order(id: "x") { fakeField } }`);',
         ),
     )
-    findings = validate_handler_graphql(bundle)
+    findings = validate_backend_graphql(bundle)
     assert findings
     assert "src/routes/cron.ts" in findings[0]
     assert "shopify.graphql" in findings[0]
@@ -266,7 +266,7 @@ def test_storefront_query_skipped_when_catalog_missing(monkeypatch) -> None:
         ),
     )
     # No findings — storefront catalog returns None → skip.
-    assert validate_handler_graphql(bundle) == []
+    assert validate_backend_graphql(bundle) == []
 
 
 def test_admin_and_storefront_routed_independently(monkeypatch) -> None:
@@ -282,7 +282,7 @@ def test_admin_and_storefront_routed_independently(monkeypatch) -> None:
             'await shopify.storefront(`query { product(id: "x") { fakeField } }`);',
         ),
     )
-    findings = validate_handler_graphql(bundle)
+    findings = validate_backend_graphql(bundle)
     # Only the admin finding fires — storefront query has no schema to check against.
     assert len(findings) >= 1
     assert all("shopify.graphql" in f for f in findings)
@@ -293,11 +293,11 @@ def test_admin_and_storefront_routed_independently(monkeypatch) -> None:
 
 
 def test_returns_empty_for_empty_bundle() -> None:
-    assert validate_handler_graphql("") == []
+    assert validate_backend_graphql("") == []
 
 
 def test_returns_empty_for_non_bundle_input() -> None:
-    assert validate_handler_graphql("just plain text, no markers") == []
+    assert validate_backend_graphql("just plain text, no markers") == []
 
 
 def test_returns_empty_when_no_shopify_calls(monkeypatch) -> None:
@@ -305,7 +305,7 @@ def test_returns_empty_when_no_shopify_calls(monkeypatch) -> None:
     bundle = _bundle(
         ("src/routes/cron.ts", "const r = await sql`SELECT * FROM orders`;"),
     )
-    assert validate_handler_graphql(bundle) == []
+    assert validate_backend_graphql(bundle) == []
 
 
 # ── Routing constants ─────────────────────────────────────────────────────────
@@ -357,7 +357,7 @@ def test_real_catalog_catches_unknown_field() -> None:
             ),
         ),
     )
-    findings = validate_handler_graphql(bundle)
+    findings = validate_backend_graphql(bundle)
     assert findings, "expected real catalog to flag fakeFieldXYZ as unknown"
     assert any("fakeFieldXYZ" in f for f in findings)
 
@@ -377,4 +377,4 @@ def test_real_catalog_passes_clean_query() -> None:
             ),
         ),
     )
-    assert validate_handler_graphql(bundle) == []
+    assert validate_backend_graphql(bundle) == []

@@ -1,7 +1,7 @@
 """
 Cross-artifact validation — admin UI field-shape vs handler routes.
 
-Public entry point: validate_admin_handler_contract.
+Public entry point: validate_admin_backend_contract.
 
 Scans the admin panel's `bridge.call(path, { field1, field2 })`
 invocations and the handler's matching `adminRouter.<method>("/path",
@@ -38,7 +38,6 @@ from utils.static_validations.cross_handler import (
 )
 from utils.static_validations.js_parse import extract_call_keys as _extract_call_keys
 
-
 # Admin-UI side: bridge.call('path', { field1: ..., field2 })
 _ADMIN_CALL_RE = re.compile(
     r"bridge\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{([^}]*)\}",
@@ -56,7 +55,7 @@ _ADMIN_ROUTE_RE = re.compile(
 )
 
 
-def validate_admin_handler_contract(
+def validate_admin_backend_contract(
     admin_ui_js: str,
     handler_code: str,
     admin_api_catalog: Optional[List[Dict[str, Any]]] = None,
@@ -73,7 +72,7 @@ def validate_admin_handler_contract(
 
     Returns {generator_name: [errors]} attributed to both sides so both
     receive the mismatch on retry. Route existence is pre-checked by
-    validate_handler_artifact's `_validate_admin_router`.
+    validate_backend_artifact's `_validate_admin_router`.
 
     Skipped silently when:
       - either artifact is empty;
@@ -99,7 +98,7 @@ def validate_admin_handler_contract(
 
         body = route_bodies.get(path)
         if body is None:
-            # Route absence is reported by validate_handler_artifact;
+            # Route absence is reported by validate_backend_artifact;
             # skip here to avoid double-reporting the same drift.
             continue
 
@@ -114,7 +113,7 @@ def validate_admin_handler_contract(
                 f"({method}) but handler's adminRouter route never reads "
                 f"`{slot_label}` — collected data is silently discarded"
             )
-            errors.setdefault("handler", []).append(msg)
+            errors.setdefault("backend", []).append(msg)
             errors.setdefault("admin_ui", []).append(msg)
             continue
 
@@ -126,7 +125,7 @@ def validate_admin_handler_contract(
                 f"from {slot_label} — field-name mismatch. Align both "
                 f"sides to the adminApiCatalog requestShape."
             )
-            errors.setdefault("handler", []).append(msg)
+            errors.setdefault("backend", []).append(msg)
             errors.setdefault("admin_ui", []).append(msg)
 
     return errors

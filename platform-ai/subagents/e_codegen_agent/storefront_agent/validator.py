@@ -1,16 +1,12 @@
 """
 Widget-artifact validation — runs on the generated storefront widget JS.
 
-Public entry point: validate_widget_artifact.
-
-Moved here from llm_validations/widget_artifact.py during the
-legacy-architect cleanup — the validator is storefront-agent-specific
-and belongs alongside the rest of the e_storefront_agent surface.
+Public entry point: validate_storefront_artifact.
 
 document.* scoping and setTimeout discipline live in
 utils.static_validations.shared_checks because they are reused by the
-admin_ui validator (subagents/e_admin_agent/validator.py) with
-identical semantics.
+admin_ui validator (subagents/e_codegen_agent/admin_agent/validator.py)
+with identical semantics.
 """
 
 from __future__ import annotations
@@ -56,8 +52,8 @@ FORBIDDEN_WIDGET_JS_PATTERNS = [
 # (document.cookie). We denylist those specific shapes and accept
 # everything else — addEventListener, querySelector, getElementById,
 # dispatchEvent, createElement are all legitimate.
-def validate_widget_artifact(
-    widget_js: str,
+def validate_storefront_artifact(
+    storefront: str,
     platform_api_catalog: List[Dict[str, str]],
 ) -> List[str]:
     """
@@ -66,19 +62,19 @@ def validate_widget_artifact(
     """
     errors: List[str] = []
 
-    if not widget_js or not widget_js.strip():
+    if not storefront or not storefront.strip():
         return errors  # backend — no widget JS to validate
 
     # Single-file artifact: the revision agent's prompt forbids `===FILE:===`
-    # markers in widget_js / admin_ui (they're handler-bundle-only). If a
+    # markers in storefront / admin_ui (they're handler-bundle-only). If a
     # marker leaks in, the App Block runtime fails to evaluate the module
     # (`===` at file head is an ES-module syntax error) — silent storefront
     # breakage at deploy time with no actionable error. Run against the RAW
     # source: the marker is a literal token at line start, not something
     # scrubbing should erase.
-    if re.search(r"^\s*===FILE:\s+", widget_js, re.MULTILINE):
+    if re.search(r"^\s*===FILE:\s+", storefront, re.MULTILINE):
         errors.append(
-            "widget_js must be a single-file ES module — '===FILE: …===' "
+            "storefront must be a single-file ES module — '===FILE: …===' "
             "bundle markers are not allowed (handler-bundle format leaked into "
             "widget output; see prompts/core/revision.py)"
         )
@@ -90,7 +86,7 @@ def validate_widget_artifact(
     # Path-arg extraction (host.call, host.storefront) and the form-submission
     # signal continue to use the RAW source — they need the literal string
     # contents inside the quotes that scrubbing would erase.
-    scrubbed = _strip_comments_and_strings(widget_js)
+    scrubbed = _strip_comments_and_strings(storefront)
 
     if not re.search(r"\bexport\s+function\s+mount\b", scrubbed):
         errors.append(
@@ -111,7 +107,7 @@ def validate_widget_artifact(
     # host.storefront() must use relative paths. Uses RAW source — the path
     # we want to inspect lives inside a string literal that scrubbing erases.
     storefront_calls = re.findall(
-        r"""host\.storefront\s*\(\s*['"`]([^'"`]+)['"`]""", widget_js
+        r"""host\.storefront\s*\(\s*['"`]([^'"`]+)['"`]""", storefront
     )
     for path in storefront_calls:
         if path.startswith("http://") or path.startswith("https://"):
@@ -123,7 +119,7 @@ def validate_widget_artifact(
     # host.call() paths must be in the catalog. Uses RAW source for the same
     # reason — the path is inside the literal that scrubbing erases.
     catalog_paths = {entry["path"] for entry in platform_api_catalog}
-    called_paths = re.findall(r"""host\.call\s*\(\s*['"]([^'"]+)['"]""", widget_js)
+    called_paths = re.findall(r"""host\.call\s*\(\s*['"]([^'"]+)['"]""", storefront)
     for path in called_paths:
         if path not in catalog_paths:
             errors.append(
@@ -162,7 +158,7 @@ def validate_widget_artifact(
     has_explicit_submit = bool(
         re.search(
             r"""type=["']submit["']|addEventListener\(\s*["']submit["']|\.submit\s*\(""",
-            widget_js,
+            storefront,
         )
     )
     has_host_call = bool(re.search(r"\bhost\.call\s*\(", scrubbed))

@@ -1,7 +1,7 @@
 """
 Cross-artifact validation — widget JS field-shape vs handler routes.
 
-Public entry point: validate_widget_handler_contract.
+Public entry point: validate_widget_backend_contract.
 
 Scans the widget's `host.call(path, { field1, field2 })` invocations and
 the handler's matching `widgetRouter.<method>("/path", async (req, res)
@@ -58,7 +58,7 @@ _WIDGET_ROUTE_RE = re.compile(
 )
 
 
-def validate_widget_handler_contract(
+def validate_widget_backend_contract(
     storefront: str,
     handler_code: str,
     platform_api_catalog: Optional[List[Dict[str, Any]]] = None,
@@ -76,7 +76,7 @@ def validate_widget_handler_contract(
 
     Returns {generator_name: [errors]} attributed to both sides so both
     receive the mismatch on retry. Route existence is pre-checked by
-    validate_handler_artifact's `_validate_widget_router`.
+    validate_backend_artifact's `_validate_widget_router`.
 
     Skipped silently when:
       - either artifact is empty;
@@ -102,7 +102,7 @@ def validate_widget_handler_contract(
 
         body = route_bodies.get(path)
         if body is None:
-            # Route absence is reported by validate_handler_artifact;
+            # Route absence is reported by validate_backend_artifact;
             # skip here to avoid double-reporting the same drift.
             continue
 
@@ -117,7 +117,7 @@ def validate_widget_handler_contract(
                 f"({method}) but handler's widgetRouter route never reads "
                 f"`{slot_label}` — collected data is silently discarded"
             )
-            errors.setdefault("handler", []).append(msg)
+            errors.setdefault("backend", []).append(msg)
             errors.setdefault("storefront", []).append(msg)
             continue
 
@@ -129,7 +129,7 @@ def validate_widget_handler_contract(
                 f"from {slot_label} — field-name mismatch. Align both "
                 f"sides to the widgetApiCatalog requestShape."
             )
-            errors.setdefault("handler", []).append(msg)
+            errors.setdefault("backend", []).append(msg)
             errors.setdefault("storefront", []).append(msg)
 
     return errors

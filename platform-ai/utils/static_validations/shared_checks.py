@@ -46,7 +46,7 @@ def find_document_violations(js: str) -> List[str]:
     Return a single actionable error naming the specific forbidden
     ``document.*`` properties used. Empty list when only safe shapes
     (addEventListener, querySelector, getElementById, createElement, etc.)
-    appear. Reused by validate_widget_artifact and validate_admin_ui_artifact.
+    appear. Reused by validate_storefront_artifact and validate_admin_ui_artifact.
     """
     found = sorted(
         {

@@ -2,10 +2,9 @@
 Read + slice helpers for the committed Shopify GraphQL example bank.
 
 Reads from catalogs/ and produces a JIT-injected prompt fragment keyed on a
-list of approved operations. Where llm_validations/shopify_ops.py slices the
-*schema summary* (field/type listings), this module slices the *example
-bank* — worked GraphQL scenarios mined from shopify.dev. Both are appended
-side-by-side from subagents/jit/handler.py.
+list of approved operations. Where `subagents/c_ops_picker_agent/shopify_ops.py`
+slices the *schema summary* (field/type listings), this module slices the
+*example bank* — worked GraphQL scenarios mined from shopify.dev.
 
 Source of truth
 ---------------

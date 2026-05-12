@@ -3,7 +3,7 @@ Offline GraphQL validator for generated handler bundles.
 
 Why
 ---
-The handler agent writes Shopify GraphQL queries inside template literals
+The backend agent writes Shopify GraphQL queries inside template literals
 passed to `shopify.graphql / shopify.graphqlPaginate / shopify.bulkQuery`
 (Admin API) and `shopify.storefront` (Storefront API). The Shopify schemas
 have ~270 queries and ~480 mutations across ~3000 types each — far beyond
@@ -52,7 +52,9 @@ _ADMIN_HELPERS = frozenset({"graphql", "graphqlPaginate", "bulkQuery"})
 _STOREFRONT_HELPERS = frozenset({"storefront"})
 
 # Catalog locations. The build script writes to the same paths.
-_CATALOGS_ROOT = Path(__file__).resolve().parent.parent / "catalogs"
+# platform-ai/subagents/e_codegen_agent/backend_agent/graphql_check.py
+# -> platform-ai/catalogs ⇒ 4 parents.
+_CATALOGS_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "catalogs"
 
 
 # ── Query extraction ──────────────────────────────────────────────────────────
@@ -154,7 +156,7 @@ def _load_schema(surface: str, version: str = WEBHOOK_API_VERSION):
 # ── Public entry point ────────────────────────────────────────────────────────
 
 
-def validate_handler_graphql(handler_bundle: str) -> List[str]:
+def validate_backend_graphql(handler_bundle: str) -> List[str]:
     """
     Validate every Shopify GraphQL query in the handler bundle against the
     committed catalog schemas.

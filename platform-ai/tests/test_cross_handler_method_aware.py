@@ -1,6 +1,6 @@
 """
 Tests for the method-aware cross-handler validators —
-`validate_widget_handler_contract` and `validate_admin_handler_contract`.
+`validate_widget_backend_contract` and `validate_admin_backend_contract`.
 
 The architect catalog declares `method: "GET" | "POST"` per path; the SDK
 (host.call / bridge.call) encodes args as a query string for GET and as a
@@ -23,8 +23,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 import pytest
 
-from llm_validations.cross_admin_handler import validate_admin_handler_contract
-from llm_validations.cross_widget_handler import validate_widget_handler_contract
+from subagents.e_codegen_agent.cross_admin_backend import validate_admin_backend_contract
+from subagents.e_codegen_agent.cross_widget_backend import validate_widget_backend_contract
 
 
 # ── Surface fixtures ──────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ from llm_validations.cross_widget_handler import validate_widget_handler_contrac
 Surface = Dict[str, Any]
 
 ADMIN_SURFACE: Surface = {
-    "validator": validate_admin_handler_contract,
+    "validator": validate_admin_backend_contract,
     "client_label": "admin UI",
     "ui_artifact_key": "admin_ui",
     "call_fn": "bridge.call",
@@ -43,7 +43,7 @@ ADMIN_SURFACE: Surface = {
 }
 
 WIDGET_SURFACE: Surface = {
-    "validator": validate_widget_handler_contract,
+    "validator": validate_widget_backend_contract,
     "client_label": "widget",
     "ui_artifact_key": "storefront",
     "call_fn": "host.call",
@@ -106,9 +106,9 @@ def test_get_wrong_bug_flagged_on_both_sides(surface: Surface) -> None:
     handler = _route(surface, "get", "/list", "const { status } = req.body;")
     errors = _run(surface, ui, handler, catalog)
     # Both generators receive the error so retry feedback reaches each side.
-    assert "handler" in errors
+    assert "backend" in errors
     assert surface["ui_artifact_key"] in errors
-    msg = errors["handler"][0]
+    msg = errors["backend"][0]
     assert "(GET)" in msg
     assert "req.query" in msg
     assert "silently discarded" in msg
@@ -154,9 +154,9 @@ def test_get_extra_field_flagged(surface: Surface) -> None:
     )
     handler = _route(surface, "get", "/list", "const { status, limit } = req.query;")
     errors = _run(surface, ui, handler, catalog)
-    assert "handler" in errors
-    assert "sortBy" in errors["handler"][0]
-    assert "(GET)" in errors["handler"][0]
+    assert "backend" in errors
+    assert "sortBy" in errors["backend"][0]
+    assert "(GET)" in errors["backend"][0]
 
 
 @pytest.mark.parametrize("surface", ALL_SURFACES, ids=["admin", "widget"])
@@ -165,9 +165,9 @@ def test_post_extra_field_flagged(surface: Surface) -> None:
     ui = _ui(surface, f"{surface['call_fn']}('/save', {{ a: 1, b: 2, c: 3 }});")
     handler = _route(surface, "post", "/save", "const { a, b } = req.body;")
     errors = _run(surface, ui, handler, catalog)
-    assert "handler" in errors
-    assert "c" in errors["handler"][0]
-    assert "(POST)" in errors["handler"][0]
+    assert "backend" in errors
+    assert "c" in errors["backend"][0]
+    assert "(POST)" in errors["backend"][0]
 
 
 # ── Edge cases — silent-skip behavior is documented; verify it stays silent ──
@@ -208,8 +208,8 @@ def test_lowercase_method_in_catalog_normalized(surface: Surface) -> None:
     # Handler reads req.body — wrong slot for GET — flagged.
     handler = _route(surface, "get", "/list", "const { status } = req.body;")
     errors = _run(surface, ui, handler, catalog)
-    assert "handler" in errors
-    assert "req.query" in errors["handler"][0]
+    assert "backend" in errors
+    assert "req.query" in errors["backend"][0]
 
 
 @pytest.mark.parametrize("surface", ALL_SURFACES, ids=["admin", "widget"])

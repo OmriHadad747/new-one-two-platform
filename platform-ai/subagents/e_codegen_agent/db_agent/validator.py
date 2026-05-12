@@ -1,11 +1,7 @@
 """
 Migration-artifact validation — runs on the generated migration SQL.
 
-Public entry point: validate_migration_artifact.
-
-Moved here from llm_validations/migration_artifact.py during the
-legacy-architect cleanup — the validator is db-agent-specific and
-belongs alongside the rest of the e_db_agent surface.
+Public entry point: validate_db_artifact.
 """
 
 from __future__ import annotations
@@ -18,7 +14,7 @@ from utils.static_validations.sql_parse import (
 )
 
 
-def validate_migration_artifact(
+def validate_db_artifact(
     sql: str, prior_tables: List[str] | None = None
 ) -> List[str]:
     """

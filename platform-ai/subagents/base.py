@@ -10,7 +10,7 @@ Every generator in the pipeline implements the Generator ABC:
   parse(raw)         — post-process raw LLM output (strip fences, normalize)
   validate(art, ctx) — static analysis; returns error strings, [] = pass
   generate(ctx)      — template method: system_prompt + user_prompt → invoke → parse.
-                       Overridden by HandlerGenerator ONLY to capture a
+                       Overridden by BackendGenerator ONLY to capture a
                        structured email-metadata sidecar alongside the code.
                        Do not override elsewhere unless a future generator
                        has a similar structured side-output requirement.
@@ -20,7 +20,7 @@ registering it in registry.py. No changes to orchestration code (crew.py).
 
 CodegenContext carries all inputs shared across generators for a single generation
 run. Sub-agents read only the fields they need. It also carries one side-band
-output slot (handler_email_metadata) written by HandlerGenerator.generate() so
+output slot (backend_email_metadata) written by BackendGenerator.generate() so
 the orchestrator can read structured metadata without changing the artifacts dict
 shape.
 
@@ -53,7 +53,7 @@ class CodegenContext:
                         don't need to guard against None.
     previous_errors     Validation errors from the prior attempt on THIS generator.
                         None on the first attempt. Used to build a retry prompt.
-    prior_handler_code  The currently deployed handler source, present only on revision runs.
+    prior_backend_code  The currently deployed handler source, present only on revision runs.
                         Accepts either a plain string (legacy CommonJS handler.js) or a
                         List[{path, contents}] (new multi-file bundle from the
                         platform-back era). _format_prior_handler in handler_agent.py
@@ -66,9 +66,9 @@ class CodegenContext:
                         existing tables.
     prior_admin_ui_code The currently deployed admin UI module, present only on
                         revision runs for apps with an admin panel.
-    handler_email_metadata
+    backend_email_metadata
                         Side-band OUTPUT slot (not an input). Populated by
-                        HandlerGenerator.generate() when the handler emits
+                        BackendGenerator.generate() when the handler emits
                         the email-metadata sidecar (variables + starterContent
                         the handler wrote alongside its code). None when the
                         handler does not call ctx.services.email.send. The
@@ -80,11 +80,11 @@ class CodegenContext:
     plan: Dict[str, Any]
     # LLD plan (output of run_lld_agent). Empty until the LLD-consuming
     # codegens are migrated off the legacy arch plan. The e_db_agent
-    # is the first to read it; handler/widget/admin still read `plan`.
+    # is the first to read it; backend/storefront/admin_ui still read `plan`.
     lld: Dict[str, Any] = field(default_factory=dict)
     platform_api_catalog: List[Dict[str, str]] = field(default_factory=list)
     previous_errors: Optional[List[str]] = None
-    prior_handler_code: Optional[Any] = None  # str | List[Dict[str, str]]
+    prior_backend_code: Optional[Any] = None  # str | List[Dict[str, str]]
     prior_storefront_code: Optional[str] = (
         None  # prior widget JS on revision runs (was prior_storefront_code)
     )
@@ -93,11 +93,11 @@ class CodegenContext:
     )
     prior_admin_ui_code: Optional[str] = None
 
-    # OUTPUT slot — see docstring. Written by HandlerGenerator.generate().
-    handler_email_metadata: Optional[Dict[str, Any]] = None
+    # OUTPUT slot — see docstring. Written by BackendGenerator.generate().
+    backend_email_metadata: Optional[Dict[str, Any]] = None
     # OUTPUT slot — raw LLM response (pre-parse) so the artifact validator can
     # see the email-metadata fence that parse() strips out of the bundle.
-    handler_raw_response: Optional[str] = None
+    backend_raw_response: Optional[str] = None
 
 
 # Thinking token budget for high-complexity features.
@@ -111,14 +111,14 @@ _THINKING_BUDGET_HIGH = 4000
 
 def needs_extended_thinking(plan: Dict[str, Any]) -> bool:
     """
-    Thinking gate — reads the architect's ``complexity`` label.
+    Thinking gate — reads the legacy plan's ``complexity`` label.
 
-    The architect labels complexity using the concrete rubric in
-    subagents/prompts/architect/_core.py (stateMachine, cronBatching,
-    2+ webhooks, cross-surface contract, plus a narrow semantic escape
-    hatch). Consumers use that single label so complexity lives in one
-    place — the plan. If labelling drift shows up in practice, tighten
-    the architect rubric rather than scattering overrides here.
+    The legacy architect labelled complexity (low / medium / high) on
+    the plan; consumers used that single label so complexity lived in
+    one place. The architect agent has been retired; on the new HLD/LLD
+    pipeline this helper falls back to "low" when ctx.plan is empty.
+    Re-introduce a per-LLD complexity label in `d_lld_agent/schema.py`
+    if extended thinking ever needs to fire on the new path.
     """
     complexity = (plan.get("appContracts") or {}).get("complexity", "low")
     return complexity == "high"
@@ -131,7 +131,7 @@ class Generator(ABC):
     Subclasses must set the class-level attributes and implement the four
     abstract methods. The concrete generate() method is inherited and
     typically should not be overridden — see its docstring for the one
-    supported exception (structured side-band output, as in HandlerGenerator).
+    supported exception (structured side-band output, as in BackendGenerator).
     """
 
     # ── Class-level declarations (override in every subclass) ─────────────────
@@ -143,7 +143,7 @@ class Generator(ABC):
     max_tokens: int = 2048
 
     #: Does this generator benefit from extended thinking? Defaults to True
-    #: (handler/widget_js/admin_ui all benefit on complex apps). Migration is
+    #: (handler/storefront/admin_ui all benefit on complex apps). Migration is
     #: a near-mechanical translation of dbContracts into DDL — reasoning does
     #: not scale with complexity, so it opts out to save tokens and latency.
     supports_thinking: bool = True
@@ -208,8 +208,8 @@ class Generator(ABC):
 
         This is the only entry point the orchestrator needs to call.
         Override ONLY when a generator has structured side-band output that
-        can't be expressed as a single artifact string (see HandlerGenerator,
-        which writes ctx.handler_email_metadata alongside the returned code).
+        can't be expressed as a single artifact string (see BackendGenerator,
+        which writes ctx.backend_email_metadata alongside the returned code).
         For every other case, customise system_prompt, user_prompt, and parse.
 
         Extended thinking is enabled when the plan is structurally complex —

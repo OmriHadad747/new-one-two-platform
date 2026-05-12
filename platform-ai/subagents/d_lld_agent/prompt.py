@@ -8,10 +8,11 @@ contract — every rule is either a field constraint, a `Literal`, or a
 
 Centralization posture
 ----------------------
-The LLD agent is the SINGLE source of Shopify + handler/widget/admin
-knowledge in the pipeline. Codegen agents downstream do NOT receive any
-JIT-injected docs about Shopify, the platform SDK, or the runtime
-contract — they implement what this agent specs, verbatim. Every pattern
+The LLD agent is the SINGLE source of Shopify + runtime-contract
+knowledge (the deployed handler, widget, and admin UI) in the pipeline.
+Codegen agents downstream (backend, db, storefront, admin_ui) do NOT
+receive any JIT-injected docs about Shopify, the platform SDK, or the
+runtime contract — they implement what this agent specs, verbatim. Every pattern
 the codegens used to learn from JIT (atomic claim, userErrors check,
 GID format, paginate-vs-bulk, identity migration, money-as-cents,
 template-owned email fields, etc.) must be carried into the LLD output
@@ -401,9 +402,9 @@ that do not apply to this archetype, never invent stubs)
 2. database — physical schema
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-The migration codegen produces DDL mechanically from this. The handler \
-codegen reads exact column names from this. ANY ambiguity here means the \
-two will drift.
+The db codegen produces DDL mechanically from this. The backend codegen \
+reads exact column names from this. ANY ambiguity here means the two \
+will drift.
 
 Every HLD persistence table appears here. Plus any extra table the LLD \
 needs (e.g. an audit log a recipe writes to that the HLD didn't surface \
@@ -472,7 +473,7 @@ because it was an implementation detail).
                        Use for log/audit tables that reference a parent.
                        onDelete: "CASCADE" | "SET NULL" | "RESTRICT"
                        Repeating an FK already encoded in `constraints` is
-                       fine — the migration codegen dedupes; preferring
+                       fine — the db codegen dedupes; preferring
                        the explicit `foreignKeys` entry keeps parsing
                        simple.
 
@@ -903,7 +904,7 @@ email_send
   dataKeys            list of camelCase keys the recipe passes in the
                        `data` object. Must match the email-metadata
                        sidecar declared in emailSpec.dataKeys. The
-                       handler codegen emits the sidecar from emailSpec;
+                       backend codegen emits the sidecar from emailSpec;
                        you only declare which keys this particular send
                        uses.
   onQuotaExceeded     "log_and_skip" | "abort_recipe"
@@ -1261,7 +1262,7 @@ Each entry:
   uxImplication   optional one sentence when the gap affects what the
                    widget or admin UI can show (e.g. "async delivery
                    means the widget can only confirm intent, not
-                   completion"). The widget / admin codegen reads this
+                   completion"). The storefront / admin_ui codegen reads this
                    and shapes UX accordingly.
 
 NOT available — never propose mitigations that reference these:
@@ -1327,7 +1328,7 @@ __WIDGET_SHAPES_SECTION__
                    micro-patterns this admin panel composes. Each
                    shape teaches ONE pattern; real admin panels stack
                    2–4 shapes. Pick EVERY pattern that applies. The
-                   admin codegen attaches a matching worked example
+                   admin_ui codegen attaches a matching worked example
                    for each. Empty list for non-admin archetypes.
                    Closed enum:
 
@@ -1364,7 +1365,7 @@ __ADMIN_SHAPES_SECTION__
                                          "confirm_modal", "async_runner",
                                          "detail_drawer", "inline_edit"]
 
-Both feed the widget / admin codegens directly — they'll use these to \
+Both feed the storefront / admin_ui codegens directly — they'll use these to \
 shape layout, empty states, and interaction patterns. Be specific:
   OK   "Widget should feel lightweight — one-click subscribe with email
         pre-filled for logged-in customers. Show subscriber count as

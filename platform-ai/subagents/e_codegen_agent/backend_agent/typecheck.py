@@ -7,7 +7,7 @@ After the regex/contract validators pass, the handler bundle still might
 fail to compile — wrong import shape, typo'd req.platform.shopDomain,
 mismatched generic on a sql<T> tagged template, missing await, etc. tsc
 catches every one of those mechanically and produces actionable error
-messages the handler agent can fix on retry.
+messages the backend agent can fix on retry.
 
 How
 ---
@@ -30,7 +30,7 @@ not crash the pipeline — the regex + LLM validators still run.
 
 Template-bug filter: errors whose file path matches a template-owned
 file (server.ts, lib/db.ts, etc. — see template_tables.TEMPLATE_OWNED_FILES)
-are logged loudly but excluded from findings. The handler agent can't fix
+are logged loudly but excluded from findings. The backend agent can't fix
 template bugs by regenerating handler code, so feeding those errors back
 would dead-cycle the retry loop until abort.
 """
@@ -60,9 +60,9 @@ _TSC_ERROR_RE = re.compile(
 )
 
 # Default location of the handler template baseline relative to this file.
-# platform-ai/subagents/e_backend_agent/typecheck.py -> platform-back/templates/handler
+# platform-ai/subagents/e_codegen_agent/backend_agent/typecheck.py -> platform-back/templates/handler
 _DEFAULT_TEMPLATE_ROOT = (
-    Path(__file__).resolve().parent.parent.parent.parent
+    Path(__file__).resolve().parent.parent.parent.parent.parent
     / "platform-back"
     / "templates"
     / "handler"
@@ -71,7 +71,7 @@ _DEFAULT_TEMPLATE_ROOT = (
 _DEFAULT_TIMEOUT_SEC = 60
 
 
-def validate_handler_typecheck(
+def validate_backend_typecheck(
     handler_bundle: str,
     template_root: Optional[Path] = None,
     timeout_sec: int = _DEFAULT_TIMEOUT_SEC,
@@ -82,7 +82,7 @@ def validate_handler_typecheck(
     Parameters
     ----------
     handler_bundle:
-        Raw ===FILE: ... === markered string from HandlerGenerator.
+        Raw ===FILE: ... === markered string from BackendGenerator.
     template_root:
         Path to platform-back/templates/handler. Defaults to the location
         relative to this file.
@@ -228,7 +228,7 @@ def _parse_findings(output: str, tmp: Path) -> List[str]:
         rel_str = rel.as_posix()
 
         if rel_str in _TEMPLATE_OWNED_FILES:
-            # Template bug — not actionable by the handler agent. Log loudly
+            # Template bug — not actionable by the backend agent. Log loudly
             # so the platform team notices, but keep it out of the retry loop.
             template_bug_count += 1
             log.error(

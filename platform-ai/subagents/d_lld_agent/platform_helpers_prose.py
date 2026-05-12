@@ -210,7 +210,7 @@ MUST follow this exact pattern:
   - DO NOT emit a separate count query or an offset-math compute step —
     the paginate() helper handles both at codegen time.
 
-The handler codegen translates the bare sql_select into:
+The backend codegen translates the bare sql_select into:
 
   import { paginate } from "../lib/paginate.js";
   const rows = await paginate(sql, sql`<your SELECT here>`,

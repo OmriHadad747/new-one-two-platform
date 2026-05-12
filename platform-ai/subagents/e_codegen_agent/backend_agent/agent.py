@@ -19,7 +19,7 @@ Plus from `ctx.intent`:
   - desiredOutcome, qualityBrief, appCategory
 
 Plus, on revision runs only:
-  - ctx.prior_handler_code → previously deployed handler source
+  - ctx.prior_backend_code → previously deployed handler source
 
 Model: claude-sonnet-4-6 (via agent_models.py)
 """
@@ -38,13 +38,13 @@ from subagents.base import (
     needs_extended_thinking,
 )
 from subagents.e_codegen_agent.backend_agent.prompt import BACKEND_BASE
-from subagents.e_codegen_agent.backend_agent.validator import validate_handler_artifact
+from subagents.e_codegen_agent.backend_agent.validator import validate_backend_artifact
 
 log = logging.getLogger(__name__)
 
 # Fence the handler emits AFTER the file bundle when emailSpec is non-null.
 # Carries the data: keys passed to platform.email.send + merchant-facing
-# starter copy. Captured side-band into ctx.handler_email_metadata.
+# starter copy. Captured side-band into ctx.backend_email_metadata.
 _EMAIL_META_FENCE_RE = re.compile(
     r"```email-metadata\s*\n(.*?)\n```",
     re.DOTALL,
@@ -52,7 +52,7 @@ _EMAIL_META_FENCE_RE = re.compile(
 
 
 class BackendGenerator(Generator):
-    name = "handler"
+    name = "backend"
     max_tokens = 16000
 
     # ── Generator interface ────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ class BackendGenerator(Generator):
             "",
         ]
 
-        prior = _format_prior_handler(ctx.prior_handler_code)
+        prior = _format_prior_handler(ctx.prior_backend_code)
         if prior:
             sections += ["", prior]
 
@@ -126,7 +126,7 @@ class BackendGenerator(Generator):
         `variables` it passed and `starterContent` for the Email tab.
 
         parse() handles the file bundle. This override additionally extracts
-        the sidecar JSON and stashes it on ctx.handler_email_metadata — an
+        the sidecar JSON and stashes it on ctx.backend_email_metadata — an
         OUTPUT slot on CodegenContext the orchestrator reads after the
         future resolves.
         """
@@ -150,20 +150,20 @@ class BackendGenerator(Generator):
             retry_suffix=retry_suffix,
         )
 
-        ctx.handler_email_metadata = _extract_email_metadata(result.content)
-        ctx.handler_raw_response = result.content
+        ctx.backend_email_metadata = _extract_email_metadata(result.content)
+        ctx.backend_raw_response = result.content
         return self.parse(result.content), result.input_tokens, result.output_tokens
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         lld = ctx.lld or {}
-        return validate_handler_artifact(
+        return validate_backend_artifact(
             artifact,
             api_plan_topics=_lld_webhook_topics(lld),
             widget_catalog=_lld_widget_catalog(lld),
             admin_catalog=_lld_admin_catalog(lld),
             declared_capabilities=_capabilities_from_recipes(lld),
             db_contracts=_lld_db_contracts(lld),
-            raw_artifact=ctx.handler_raw_response or artifact,
+            raw_artifact=ctx.backend_raw_response or artifact,
         )
 
 
@@ -239,7 +239,7 @@ def _route_to_catalog_entry(route: Dict[str, Any]) -> Dict[str, Any]:
 
 def _lld_db_contracts(lld: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Project `database.tables[]` into the dbContracts shape
-    `validate_handler_artifact` expects (table + columns with name/enum)."""
+    `validate_backend_artifact` expects (table + columns with name/enum)."""
     tables = (lld.get("database") or {}).get("tables") or []
     out: List[Dict[str, Any]] = []
     for t in tables:

@@ -46,10 +46,10 @@ from subagents.base import CodegenContext
 from subagents.h_explenation_agent.explanation_agent import run_explanation_agent
 from subagents.g_revision_agent.revision_agent import run_revision_agent
 from subagents.f_codegen_v_agent.base import run_llm_validators
-from crews.feature_generator.crew import (
+from subagents.e_codegen_agent.orchestration import (
+    _revision_locked_artifacts,
     run_codegen_parallel,
     validate_artifacts,
-    _revision_locked_artifacts,
 )
 from utils.file_bundle import parse_file_bundle, ParseError
 
@@ -81,15 +81,15 @@ def _save_generated_files(
     callers), fall back to no prelude — the SDK will treat absent manifest
     as all-POST, matching the pre-method-aware-SDK behaviour.
     """
-    handler_raw = artifacts.get("handler", "")
-    if handler_raw:
+    backend_raw = artifacts.get("backend", "")
+    if backend_raw:
         try:
-            for f in parse_file_bundle(handler_raw):
+            for f in parse_file_bundle(backend_raw):
                 dest = run_dir / f["path"]
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_text(f["contents"])
         except ParseError:
-            (run_dir / "handler_bundle.ts").write_text(handler_raw)
+            (run_dir / "handler_bundle.ts").write_text(backend_raw)
 
     migration = artifacts.get("db", "")
     if migration:
@@ -158,7 +158,7 @@ def _save_codegen_failure_local(
     when the process exits — leaving the merchant with errors but nothing
     to inspect. The dumped files use the SAME layout as a successful run
     (handler split via `===FILE:===` markers, migration in migrations/,
-    single-file widget/admin at the run-dir root) so the same inspection
+    single-file storefront/admin_ui at the run-dir root) so the same inspection
     workflow applies to a failed run. `plan` is forwarded so the saved
     widget.js / admin_ui.js get the same `__PLATFORM_CATALOG__` prelude
     the deployed bundles get.
@@ -366,7 +366,7 @@ def _phase_ops_picker(
         _tok_note,
     )
     from catalogs.shopify_webhooks import load_summary_md
-    from llm_validations.shopify_ops import get_op_names, load_summary
+    from subagents.c_ops_picker_agent.shopify_ops import get_op_names, load_summary
     from subagents.e_codegen_agent.backend_agent.constants import WEBHOOK_TOPICS
 
     admin_idx = load_summary("admin")
@@ -377,7 +377,8 @@ def _phase_ops_picker(
     # payload fields each topic delivers. The picker can now match the HLD
     # trigger's signalFields against what Shopify really sends, instead of
     # picking from a flat list of names. Platform-owned topics are filtered
-    # out via _PLATFORM_OWNED_EXCLUSIONS (see subagents.prompts.topics.webhook),
+    # out via _PLATFORM_OWNED_EXCLUSIONS (see
+    # subagents.e_codegen_agent.backend_agent.constants),
     # so the LLM never sees app/uninstalled, customers/data_request, etc.
     full_summary = load_summary_md()
     allowed = WEBHOOK_TOPICS
@@ -535,7 +536,7 @@ def _phase_codegen(
     first iteration starts from that state instead of the empty dicts. The
     crew's `_plan_codegen_batch` already short-circuits any generator whose
     artifact is present and has no errors, so passing the saved bundle from
-    a previous run is the entire mechanism for "skip handler/widget/admin if
+    a previous run is the entire mechanism for "skip backend/storefront/admin_ui if
     they already passed". `prior_retry_log` and `prior_token_totals` carry
     the audit trail forward so a resumed run's report.md / per-agent token
     summary reflects the cumulative cost, not just this resumed segment.
@@ -563,7 +564,7 @@ def _phase_codegen(
     token_totals: Dict[str, Tuple[int, int]] = dict(prior_token_totals or {})
 
     _CODEGEN_LABELS = {
-        "handler": "Handler",
+        "backend": "Handler",
         "db": "DB",
         "storefront": "Storefront",
         "admin_ui": "Admin UI",
@@ -572,7 +573,7 @@ def _phase_codegen(
     # Resume case: when prior_artifacts arrives with an error_map (codegen
     # was halted mid-pipeline), the first attempt should display only the
     # failed/missing generators in the spinner — same as a normal retry —
-    # rather than spinning rows for handler/migration/widget/admin and
+    # rather than spinning rows for backend/db/storefront/admin_ui and
     # never advancing the ones that won't run. The crew already filters
     # correctly via _plan_codegen_batch; this is purely the label list.
     _is_resumed_first = prior_artifacts and (
@@ -580,7 +581,7 @@ def _phase_codegen(
         or any(
             n not in artifacts
             for n in (
-                ["handler", "db"]
+                ["backend", "db"]
                 + (["storefront"] if is_storefront else [])
                 + (["admin_ui"] if is_admin_ui else [])
             )
@@ -592,7 +593,7 @@ def _phase_codegen(
             generators_this_round = list(error_map.keys()) or [
                 n
                 for n in (
-                    ["handler", "db"]
+                    ["backend", "db"]
                     + (["storefront"] if is_storefront else [])
                     + (["admin_ui"] if is_admin_ui else [])
                 )
@@ -600,7 +601,7 @@ def _phase_codegen(
             ]
         else:
             generators_this_round = (
-                ["handler", "db"]
+                ["backend", "db"]
                 + (["storefront"] if is_storefront else [])
                 + (["admin_ui"] if is_admin_ui else [])
             )
@@ -670,8 +671,8 @@ def _phase_codegen(
                 retry_log=retry_log,
                 codegen_token_totals={k: list(v) for k, v in token_totals.items()},
                 codegen_error_map=None,
-                handler_email_metadata=base_ctx.handler_email_metadata,
-                handler_raw_response=base_ctx.handler_raw_response,
+                backend_email_metadata=base_ctx.backend_email_metadata,
+                backend_raw_response=base_ctx.backend_raw_response,
             )
             return artifacts, retry_log, token_totals
 
@@ -731,8 +732,8 @@ def _phase_codegen(
         retry_log=retry_log,
         codegen_token_totals={k: list(v) for k, v in token_totals.items()},
         codegen_error_map={k: list(v) for k, v in error_map.items()},
-        handler_email_metadata=base_ctx.handler_email_metadata,
-        handler_raw_response=base_ctx.handler_raw_response,
+        backend_email_metadata=base_ctx.backend_email_metadata,
+        backend_raw_response=base_ctx.backend_raw_response,
     )
 
     all_errors = [f"{n}: {e}" for n, errs in error_map.items() for e in errs]
@@ -767,7 +768,7 @@ def _phase_validator(
     """
     Run LLM validator + optional revision pass.
 
-    The revision agent fixes only widget_js / admin_ui (handler and migration are
+    The revision agent fixes only storefront / admin_ui (handler and migration are
     locked as read-only context). Revision output is statically validated; if both
     attempts fail the run exits with an error and saves the bad artifacts.
 
@@ -887,7 +888,7 @@ def _phase_validator(
     # the actual code it needs to fix, not from a (possibly absent) prior bundle.
     revision_ctx = dataclasses.replace(
         base_ctx,
-        prior_handler_code=artifacts.get("handler") or base_ctx.prior_handler_code,
+        prior_backend_code=artifacts.get("backend") or base_ctx.prior_backend_code,
         prior_db_sql=artifacts.get("db") or base_ctx.prior_db_sql,
         prior_storefront_code=artifacts.get("storefront") or base_ctx.prior_storefront_code,
         prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,

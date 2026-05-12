@@ -34,7 +34,7 @@ from pydantic import ValidationError
 
 from models.adapter import dump_output, extract_json, get_llm, invoke
 from models.agent_models import get_agent_model
-from llm_validations.shopify_ops import load_op_details
+from subagents.c_ops_picker_agent.shopify_ops import load_op_details
 from subagents.c_ops_picker_agent.prompt import build_system_prompt
 from subagents.c_ops_picker_agent.schema import OpsPicks
 

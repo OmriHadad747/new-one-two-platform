@@ -9,7 +9,7 @@ the Pydantic model.
 Catalog injection is the runner's job — `build_system_prompt()` substitutes
 `__ADMIN_OPERATION_INDEX__`, `__STOREFRONT_OPERATION_INDEX__`, and
 `__WEBHOOK_TOPIC_CATALOG__` with the live indexes loaded from
-`llm_validations.shopify_ops` (and the webhook catalog).
+`subagents.c_ops_picker_agent.shopify_ops` (and the webhook catalog).
 """
 
 from __future__ import annotations

@@ -40,7 +40,7 @@ _MAX_OUTPUT_TOKENS = 2000
 
 
 SYSTEM_PROMPT = """\
-You are an LLM-side validator for a Shopify-app codegen pipeline. The architect agent emits a plan JSON; the handler agent emits a TypeScript file bundle. Both agents are taught explicit rules in their prompts. Your job is to find places where the output violates those rules in ways structural validators cannot detect — i.e., where the failure depends on understanding intent, prose, or cross-field consistency.
+You are an LLM-side validator for a Shopify-app codegen pipeline. The architect agent emits a plan JSON; the backend agent emits a TypeScript file bundle. Both agents are taught explicit rules in their prompts. Your job is to find places where the output violates those rules in ways structural validators cannot detect — i.e., where the failure depends on understanding intent, prose, or cross-field consistency.
 
 You will be given the architect plan, the handler bundle, and the user's app intent. Return only HIGH-confidence findings — every flagged item must be a real violation that would degrade or break the running app, not a stylistic preference.
 
@@ -153,7 +153,7 @@ OUTPUT FORMAT — return JSON only:
 {
   "findings": [
     {
-      "artifact": "plan" | "handler" | "db" | "storefront" | "admin_ui",
+      "artifact": "plan" | "backend" | "db" | "storefront" | "admin_ui",
       "location": "<file:symbol or plan field path or route>",
       "issue": "<one sentence: what is wrong>",
       "failure_mode": "<one sentence: how it fails at runtime>",
@@ -193,7 +193,7 @@ def _build_user_prompt(
 
     plan_block = "ARCHITECT PLAN\n══════════════\n\n" + json.dumps(plan, indent=2)
 
-    handler = artifacts.get("handler") or "(missing)"
+    handler = artifacts.get("backend") or "(missing)"
     migration = artifacts.get("db") or "(missing)"
 
     artifacts_lines = [

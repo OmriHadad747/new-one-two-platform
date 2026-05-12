@@ -13,8 +13,8 @@ Advantages over per-generator revision:
     only what changed, preserves working logic
   - Atomic: one LLM call rather than 3–4 parallel ones that can diverge
 
-Output: { "handler": "...", "db": "...", "storefront": "...", "admin_ui": "..." }
-Keys widget_js and admin_ui are null when not applicable.
+Output: { "backend": "...", "db": "...", "storefront": "...", "admin_ui": "..." }
+Keys storefront and admin_ui are null when not applicable.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ def _build_user_prompt(
     intent = ctx.intent
     plan = ctx.plan
 
-    prior_handler = ctx.prior_handler_code or "(none)"
+    prior_handler = ctx.prior_backend_code or "(none)"
     prior_migration = ctx.prior_db_sql or "(none)"
     prior_widget = (
         ctx.prior_storefront_code or "(none)"
@@ -131,7 +131,7 @@ Fix ALL of them in your revised output:
 
     handler_label = (
         "handler.js (READ-ONLY — do not output a revised version)"
-        if "handler" in locked_artifacts
+        if "backend" in locked_artifacts
         else "handler.js (prior)"
     )
     migration_label = (
@@ -140,7 +140,7 @@ Fix ALL of them in your revised output:
         else "migration.sql (prior — NEVER drop or recreate these tables)"
     )
 
-    # Build the same handler-surface view the handler agent sees at first-run
+    # Build the same handler-surface view the backend agent sees at first-run
     # time — HARNESS_BASE plus capability docs and topic sections gated by the
     # revised plan. This is what the revision agent must respect when editing.
     widget_catalog = (plan.get("appContracts") or {}).get("widgetApiCatalog") or []
@@ -209,7 +209,7 @@ def run_revision_agent(
         CodegenContext with prior_* fields populated from the existing bundle.
         plan must already contain the architect output (shopifyPlan + appContracts).
     is_storefront:
-        True if the app has a storefront widget (widget_js artifact expected).
+        True if the app has a storefront widget (storefront artifact expected).
     is_admin_ui:
         True if the app has an admin UI panel (admin_ui artifact expected).
     validation_issues:
@@ -227,7 +227,7 @@ def run_revision_agent(
     Returns
     -------
     Tuple of (artifacts_dict, input_tokens, output_tokens).
-    artifacts_dict keys match generator names: "handler", "db", and
+    artifacts_dict keys match generator names: "backend", "db", and
     optionally "storefront" and/or "admin_ui".
     Returns ({}, in, out) on parse failure — caller falls back to run_codegen_parallel.
     """
@@ -268,14 +268,14 @@ def run_revision_agent(
 
     artifacts: Dict[str, str] = {}
 
-    if "handler" not in locked_artifacts:
-        handler = parsed.get("handler")
+    if "backend" not in locked_artifacts:
+        handler = parsed.get("backend")
         if isinstance(handler, str) and handler.strip():
             code = re.sub(
                 r"^```(?:javascript|js)?\s*", "", handler.strip(), flags=re.MULTILINE
             )
             code = re.sub(r"```\s*$", "", code.strip(), flags=re.MULTILINE)
-            artifacts["handler"] = code.strip()
+            artifacts["backend"] = code.strip()
 
     if "db" not in locked_artifacts:
         migration = parsed.get("db")

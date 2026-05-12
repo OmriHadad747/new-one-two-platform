@@ -13,17 +13,17 @@ LLM adapter, no anthropic SDK.
 
 from __future__ import annotations
 
-from subagents.e_codegen_agent.backend_agent.validator import validate_handler_artifact
+from subagents.e_codegen_agent.backend_agent.validator import validate_backend_artifact
 
 
 # ── Finding 4 — singleton ─────────────────────────────────────────────────────
 #
 # test_architect_plan_rejects_singleton_with_id_column was removed when the
-# legacy `llm_validations.arch_plan.validate_architect_plan` was retired
-# alongside the architect agent. The singleton-with-id-column rule now
-# belongs to the LLD schema validator in
-# `subagents/d_lld_agent/schema.py`; equivalent coverage should land there
-# (or in d_lld_agent's own test surface), not in this legacy file.
+# legacy architect plan validator was retired alongside the architect
+# agent. The singleton-with-id-column rule now belongs to the LLD schema
+# validator in `subagents/d_lld_agent/schema.py`; equivalent coverage
+# should land there (or in d_lld_agent's own test surface), not in this
+# legacy file.
 
 
 # test_handler_render_surfaces_singleton_upsert_pattern was removed when
@@ -90,7 +90,7 @@ def test_handler_validator_flags_insert_with_unknown_status_literal() -> None:
         "    await sql`INSERT INTO abandoned_cart_queue (id, status) "
         "VALUES (gen_random_uuid(), 'queued')`;"
     )
-    errors = validate_handler_artifact(
+    errors = validate_backend_artifact(
         _make_handler_bundle(body),
         api_plan_topics=[],
         db_contracts=_QUEUE_CONTRACTS,
@@ -106,7 +106,7 @@ def test_handler_validator_passes_when_literals_match_enum() -> None:
         "VALUES (gen_random_uuid(), 'pending')`;\n"
         "    await sql`UPDATE abandoned_cart_queue SET status = 'sent' WHERE id = ${id}`;"
     )
-    errors = validate_handler_artifact(
+    errors = validate_backend_artifact(
         _make_handler_bundle(body),
         api_plan_topics=[],
         db_contracts=_QUEUE_CONTRACTS,

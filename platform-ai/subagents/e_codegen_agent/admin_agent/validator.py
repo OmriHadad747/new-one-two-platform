@@ -2,10 +2,6 @@
 Admin-UI-artifact validation — runs on the generated admin-panel JS.
 
 Public entry point: validate_admin_ui_artifact.
-
-Moved here from llm_validations/admin_ui_artifact.py during the
-legacy-architect cleanup — the validator is admin-agent-specific and
-belongs alongside the rest of the e_admin_agent surface.
 """
 
 from __future__ import annotations
@@ -59,7 +55,7 @@ def validate_admin_ui_artifact(
         return errors
 
     # Single-file artifact: the revision agent's prompt forbids `===FILE:===`
-    # markers in widget_js / admin_ui (they're handler-bundle-only). If a
+    # markers in storefront / admin_ui (they're handler-bundle-only). If a
     # marker leaks in, the Shopify Admin iframe fails to evaluate the module
     # (`===` at file head is an ES-module syntax error) — silent admin-panel
     # breakage at deploy time with no actionable error. Run against the RAW
@@ -151,7 +147,7 @@ def validate_admin_ui_artifact(
     # work agent_rules can do but a regex cannot. See ADMIN_UI_RULES.md
     # row 23 (now llm). The `_format_state_machine` and
     # `_format_column_enums` user-prompt scaffolding in
-    # subagents/e_admin_agent/agent.py remains in place — that's the
-    # prevention side; agent_rules is the detection side.
+    # subagents/e_codegen_agent/admin_agent/agent.py remains in place —
+    # that's the prevention side; agent_rules is the detection side.
 
     return errors

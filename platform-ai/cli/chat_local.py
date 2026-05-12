@@ -391,7 +391,7 @@ def _retry_line(name: str, notes: str) -> None:
 
 # ── Multi-line spinner group ──────────────────────────────────────────────────
 #
-# Codegen runs handler/migration/widget/admin in parallel via a
+# Codegen runs backend/db/storefront/admin_ui in parallel via a
 # ThreadPoolExecutor in crew.run_codegen_parallel. The single-slot spinner
 # can only animate one label at a time, so the CLI used to show whichever
 # _spinner() was called last (the admin_ui slot) and hid the fact that
@@ -1274,110 +1274,32 @@ def _md_pipeline_header(
     return lines
 
 
-def _save_artifacts_md(
+def _save_run_artifacts(
     run_dir: Path,
     prompt: str,
     artifacts: Dict[str, str],
-    stop_label: str,
     is_storefront: bool,
     is_admin_ui: bool,
-    retry_log: Optional[List[Dict]] = None,
     intent: Optional[Dict] = None,
     plan: Optional[Dict] = None,
-    validator_trace: Optional[Dict[str, Any]] = None,
-    handler_email_metadata: Optional[Dict[str, Any]] = None,
-    total_ms: int = 0,
-    all_tokens: Optional[Dict[str, Tuple[int, int]]] = None,
     hld_v_findings: Optional[List] = None,
 ) -> Path:
+    """
+    Persist the run's canonical artefacts to ``run_dir`` and return the dir.
+
+    Writes:
+      - per-generator artefact files (parsed handler bundle + db.sql + the
+        storefront / admin_ui single-file modules) via _save_generated_files.
+      - hld.json alongside, whenever an HLD plan is present.
+
+    Token totals + retry trail + validator trace live in state.json (written
+    by the resume-state machinery) — no Markdown report duplicates them
+    anymore.
+    """
     _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
-    # Always persist the canonical HLD output as a sibling file.
     if plan:
         _save_hld_json(run_dir, prompt, intent or {}, plan, [], "", hld_v_findings)
-    # Skip writing report.md — the run dir already has hld.json / lld.json /
-    # ops_picks.json / state.json plus the per-generator artifact files
-    # (handler bundle, db.sql, storefront.js, admin_ui.js). state.json carries
-    # all token + retry info. The Markdown report duplicated this content and
-    # has been retired. The function still runs the side-effects above so
-    # callers stay valid.
     return run_dir
-    # ── Dead code below kept for reference; no longer reached. ────────────
-    path = run_dir / "report.md"
-
-    lines = _md_pipeline_header(stop_label, prompt, total_ms, all_tokens or {})
-
-    if intent:
-        lines += [
-            "## Intent (Product Agent)",
-            "",
-            "```json",
-            json.dumps(intent, indent=2),
-            "```",
-            "",
-        ]
-    if plan:
-        lines += [
-            "## HLD Plan",
-            "",
-            "See [`hld.json`](hld.json) for the canonical plan.",
-            "",
-        ]
-
-    if retry_log:
-        resolved = (
-            stop_label != "codegen"
-            or not retry_log
-            or all(entry["attempt"] < _MAX_CODEGEN_RETRIES for entry in retry_log)
-        )
-        heading = "## Validation Retries" + (
-            " (all resolved)" if resolved else " (UNRESOLVED — max retries hit)"
-        )
-        lines += [heading, ""]
-        for entry in retry_log:
-            lines.append(f"### Attempt {entry['attempt']}")
-            for gen_name, errs in entry["errors"].items():
-                for e in errs:
-                    lines.append(f"- **{gen_name}**: {e}")
-            lines.append("")
-
-    if validator_trace:
-        lines += _validator_revision_md_lines(validator_trace)
-
-    lines += ["## Artifacts", ""]
-    if artifacts.get("handler"):
-        lines += [
-            "### handler.js",
-            "",
-            "```javascript",
-            artifacts["handler"],
-            "```",
-            "",
-        ]
-    if handler_email_metadata is not None:
-        lines += _email_metadata_md_lines(handler_email_metadata)
-    if artifacts.get("migration"):
-        lines += ["### migration.sql", "", "```sql", artifacts["migration"], "```", ""]
-    if is_storefront and artifacts.get("storefront"):
-        lines += [
-            "### widget.js",
-            "",
-            "```javascript",
-            artifacts["storefront"],
-            "```",
-            "",
-        ]
-    if is_admin_ui and artifacts.get("admin_ui"):
-        lines += [
-            "### admin_ui.js",
-            "",
-            "```javascript",
-            artifacts["admin_ui"],
-            "```",
-            "",
-        ]
-
-    path.write_text("\n".join(lines) + "\n")
-    return path
 
 
 def _email_metadata_md_lines(meta: Dict[str, Any]) -> List[str]:
@@ -1385,8 +1307,9 @@ def _email_metadata_md_lines(meta: Dict[str, Any]) -> List[str]:
     Render the handler's email-metadata sidecar for the test-results report.
 
     Makes sidecar presence, declared variables, and starter content inspectable
-    at a glance — matches the contract in subagents/prompts/capabilities/handler.py
-    ("Email metadata sidecar"). Empty/None metadata produces nothing.
+    at a glance — matches the email-metadata sidecar contract documented
+    in subagents/e_codegen_agent/backend_agent/prompt.py. Empty/None
+    metadata produces nothing.
     """
     if not meta:
         return []
@@ -1445,7 +1368,7 @@ def _build_bundle(
     explanation: Dict[str, Any],
     is_storefront: bool,
     is_admin_ui: bool,
-    handler_email_metadata: Optional[Dict[str, Any]] = None,
+    backend_email_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Assemble the FeatureBundle dict from generation outputs.
@@ -1455,16 +1378,16 @@ def _build_bundle(
     Email metadata flow matches crew.py — see _publish_success for the full
     rationale. usesEmail / emailTypeSuggestion come from the hld plan;
     emailVariables / emailStarterContent come from the handler's structured
-    sidecar (captured by HandlerGenerator.generate() onto base_ctx).
+    sidecar (captured by BackendGenerator.generate() onto base_ctx).
     """
-    handler_raw = artifacts.get("handler", "")
+    backend_raw = artifacts.get("backend", "")
     shopify_plan = plan.get("shopifyPlan", {})
     technical = explanation.get("technical", {})
     app_contracts = plan.get("appContracts") or {}
 
     uses_email = "email" in (app_contracts.get("handlerCapabilities") or [])
     email_spec = app_contracts.get("emailSpec") or {}
-    sidecar = handler_email_metadata or {}
+    sidecar = backend_email_metadata or {}
     raw_variables = sidecar.get("variables")
     email_variables: List[str] = [
         v for v in (raw_variables or []) if isinstance(v, str)
@@ -1480,7 +1403,7 @@ def _build_bundle(
 
     from utils.file_bundle import parse_file_bundle
 
-    handler_files = parse_file_bundle(handler_raw) if handler_raw else []
+    handler_files = parse_file_bundle(backend_raw) if backend_raw else []
 
     return {
         "widgetModule": artifacts.get("storefront") if is_storefront else None,
@@ -1886,10 +1809,9 @@ def main() -> None:
             all_tokens={k: list(v) for k, v in all_tokens.items()},
         )
         # Always persist hld.json after the HLD phase completes — same
-        # pattern as ops_picks.json / lld.json. Earlier the file was only
-        # written from `_save_artifacts_md` at a finalising stop, which
-        # left mid-pipeline runs without a standalone HLD artifact on disk
-        # (the data lived only inside state.json).
+        # pattern as ops_picks.json / lld.json. Without this, mid-pipeline
+        # runs would have the HLD only inside state.json with no standalone
+        # artifact on disk for inspection.
         _save_hld_json(
             run_dir, prompt, intent, plan, [], product_prompt, hld_v_findings
         )
@@ -1897,23 +1819,21 @@ def main() -> None:
     if stop_after == "hld":
         # User-requested stop. Mark the run done so it stops appearing in
         # --list-resume — partial-pipeline stops are a deliberate exit, not
-        # an interruption. The hld.json + report.md are still on disk for
-        # inspection.
+        # an interruption. hld.json + state.json are on disk for inspection;
+        # the full-pipeline report.md is only written when the run reaches
+        # the validator stage without an early stop.
         _save_state(run_dir, checkpoint="done", halt_reason=None)
         total_ms = int((time.monotonic() - total_start) * 1000)
-        # `_save_artifacts_md` writes hld.json itself, so no standalone call
-        # is needed here. The report links to it instead of inlining the JSON.
-        _save_artifacts_md(
+        # `_save_run_artifacts` writes hld.json itself, so no standalone
+        # call is needed here.
+        _save_run_artifacts(
             run_dir,
             prompt,
             {},
-            "hld",
             is_storefront,
             is_admin_ui,
             intent=intent,
             plan=plan,
-            total_ms=total_ms,
-            all_tokens=all_tokens,
             hld_v_findings=hld_v_findings,
         )
         print()
@@ -1964,21 +1884,18 @@ def main() -> None:
 
     if stop_after == "ops-picker":
         # User-requested stop — same finalisation pattern as stop=hld.
-        # ops_picks.json + report.md are on disk for inspection; the run
+        # ops_picks.json + state.json are on disk for inspection; the run
         # is marked done so it stops appearing in --list-resume.
         _save_state(run_dir, checkpoint="done", halt_reason=None)
         total_ms = int((time.monotonic() - total_start) * 1000)
-        _save_artifacts_md(
+        _save_run_artifacts(
             run_dir,
             prompt,
             {},
-            "ops-picker",
             is_storefront,
             is_admin_ui,
             intent=intent,
             plan=plan,
-            total_ms=total_ms,
-            all_tokens=all_tokens,
             hld_v_findings=hld_v_findings,
         )
         print()
@@ -2037,17 +1954,14 @@ def main() -> None:
         # User-requested stop. Mark done, write report, exit cleanly.
         _save_state(run_dir, checkpoint="done", halt_reason=None)
         total_ms = int((time.monotonic() - total_start) * 1000)
-        _save_artifacts_md(
+        _save_run_artifacts(
             run_dir,
             prompt,
             {},
-            "lld",
             is_storefront,
             is_admin_ui,
             intent=intent,
             plan=plan,
-            total_ms=total_ms,
-            all_tokens=all_tokens,
             hld_v_findings=hld_v_findings,
         )
         print()
@@ -2073,10 +1987,10 @@ def main() -> None:
     )
     # Restore handler side-bands when resuming so the bundle build / report
     # match the prior run.
-    if resume_state and resume_state.get("handler_email_metadata") is not None:
-        base_ctx.handler_email_metadata = resume_state["handler_email_metadata"]
-    if resume_state and resume_state.get("handler_raw_response") is not None:
-        base_ctx.handler_raw_response = resume_state["handler_raw_response"]
+    if resume_state and resume_state.get("backend_email_metadata") is not None:
+        base_ctx.backend_email_metadata = resume_state["backend_email_metadata"]
+    if resume_state and resume_state.get("backend_raw_response") is not None:
+        base_ctx.backend_raw_response = resume_state["backend_raw_response"]
 
     # Resume into codegen if:
     #   - checkpoint is past codegen (skip entirely; reuse artifacts)
@@ -2142,19 +2056,14 @@ def main() -> None:
         # resume list (same reasoning as stop_after=hld).
         _save_state(run_dir, checkpoint="done", halt_reason=None)
         total_ms = int((time.monotonic() - total_start) * 1000)
-        _save_artifacts_md(
+        _save_run_artifacts(
             run_dir,
             prompt,
             artifacts,
-            "codegen",
             is_storefront,
             is_admin_ui,
-            retry_log or None,
             intent=intent,
             plan=plan,
-            handler_email_metadata=base_ctx.handler_email_metadata,
-            total_ms=total_ms,
-            all_tokens=all_tokens,
             hld_v_findings=hld_v_findings,
         )
         print()
@@ -2191,7 +2100,7 @@ def main() -> None:
             tk = resume_state["validator_tokens"]
             all_tokens["validator"] = (int(tk.get("in", 0)), int(tk.get("out", 0)))
         # Use the merged artifacts from the prior run if revision swapped
-        # widget/admin in.
+        # storefront / admin_ui in.
         if resume_state.get("artifacts"):
             artifacts = dict(resume_state["artifacts"])
         # Try to recover the prior revision trace so the resumed report.md
@@ -2274,20 +2183,14 @@ def main() -> None:
         # resume list (same reasoning as stop_after=hld).
         _save_state(run_dir, checkpoint="done")
         total_ms = int((time.monotonic() - total_start) * 1000)
-        _save_artifacts_md(
+        _save_run_artifacts(
             run_dir,
             prompt,
             artifacts,
-            "validator",
             is_storefront,
             is_admin_ui,
-            retry_log or None,
             intent=intent,
             plan=plan,
-            validator_trace=validator_trace,
-            handler_email_metadata=base_ctx.handler_email_metadata,
-            total_ms=total_ms,
-            all_tokens=all_tokens,
             hld_v_findings=hld_v_findings,
         )
         print()
@@ -2321,7 +2224,7 @@ def main() -> None:
                 explanation,
                 is_storefront,
                 is_admin_ui,
-                handler_email_metadata=base_ctx.handler_email_metadata,
+                backend_email_metadata=base_ctx.backend_email_metadata,
             )
             db_local.store_bundle(job_id, app_id, bundle)
         except Exception as exc:
@@ -2358,8 +2261,8 @@ def main() -> None:
             lines.append("")
     if validator_trace:
         lines += _validator_revision_md_lines(validator_trace)
-    if base_ctx.handler_email_metadata is not None:
-        lines += _email_metadata_md_lines(base_ctx.handler_email_metadata)
+    if base_ctx.backend_email_metadata is not None:
+        lines += _email_metadata_md_lines(base_ctx.backend_email_metadata)
     if merchant_facing:
         lines += ["## Explanation", "", merchant_facing]
     (run_dir / "report.md").write_text("\n".join(lines) + "\n")
@@ -2399,7 +2302,7 @@ def main() -> None:
         ("Output", _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
     ]
     for key, label in [
-        ("handler", "handler.js"),
+        ("backend", "handler.js"),
         ("migration", "migration.sql"),
         ("storefront", "widget.js"),
         ("admin_ui", "admin_ui.js"),

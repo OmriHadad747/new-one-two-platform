@@ -27,7 +27,7 @@ from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
 from subagents.e_codegen_agent.storefront_agent.prompt import STOREFRONT_BASE
-from subagents.e_codegen_agent.storefront_agent.validator import validate_widget_artifact
+from subagents.e_codegen_agent.storefront_agent.validator import validate_storefront_artifact
 from subagents.e_codegen_agent.storefront_agent.widget_shapes import examples_for_widget
 
 
@@ -91,7 +91,7 @@ class StorefrontGenerator(Generator):
 
     def validate(self, artifact: str, ctx: CodegenContext) -> List[str]:
         catalog = _widget_catalog_from_lld(ctx.lld)
-        return validate_widget_artifact(artifact, catalog)
+        return validate_storefront_artifact(artifact, catalog)
 
 
 # ── Post-parse sanitisation ──────────────────────────────────────────────────

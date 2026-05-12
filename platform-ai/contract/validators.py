@@ -16,7 +16,6 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
-
 # ─── GenerationRequest ────────────────────────────────────────────────────────
 
 
@@ -37,8 +36,9 @@ class ProgressEvent(BaseModel):
     jobId: str
     agent: Literal[
         "product",
-        "architect",
-        "handler",
+        "architect",  # legacy — retired upstream but kept for wire-format compat
+        "handler",  # legacy — superseded by "backend"; kept for wire-format compat
+        "backend",
         "db",
         "storefront",
         "admin_ui",

@@ -63,7 +63,7 @@ OUTPUT FORMAT — return JSON only:
 {
   "findings": [
     {
-      "artifact": "plan" | "handler" | "db" | "storefront" | "admin_ui",
+      "artifact": "plan" | "backend" | "db" | "storefront" | "admin_ui",
       "location": "<file:symbol or route or job>",
       "issue": "<one sentence: what is wrong>",
       "failure_mode": "<one sentence: how it fails at runtime>",
@@ -88,7 +88,7 @@ def _build_user_prompt(
     plan = ctx.plan or {}
     plan_block = "ARCHITECT PLAN\n══════════════\n\n" + json.dumps(plan, indent=2)
 
-    handler = artifacts.get("handler") or "(missing)"
+    handler = artifacts.get("backend") or "(missing)"
     migration = artifacts.get("db") or "(missing)"
 
     artifacts_lines = [
@@ -110,7 +110,7 @@ def _build_user_prompt(
         admin = artifacts.get("admin_ui") or "(missing)"
         artifacts_lines.extend(["", "── admin_ui.js ──", admin])
 
-    sidecar = ctx.handler_email_metadata
+    sidecar = ctx.backend_email_metadata
     if sidecar:
         artifacts_lines.extend(
             ["", "── email-metadata sidecar ──", json.dumps(sidecar, indent=2)]

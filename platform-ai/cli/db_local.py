@@ -81,9 +81,9 @@ def _upload_bundle_to_gcs(job_id: str, bundle: Dict[str, Any]) -> str:
     return obj_name
 
 
-def _upload_js_to_gcs(app_id: str, widget_js: str | None, admin_js: str | None) -> None:
+def _upload_js_to_gcs(app_id: str, storefront: str | None, admin_js: str | None) -> None:
     """Upload rendered widget.js / admin.js to fake-GCS."""
-    for name, content in [("widget.js", widget_js), ("admin.js", admin_js)]:
+    for name, content in [("widget.js", storefront), ("admin.js", admin_js)]:
         if not content:
             continue
         obj_name = f"{app_id}/{name}"
@@ -159,9 +159,9 @@ def store_bundle(job_id: str, app_id: str, bundle: Dict[str, Any]) -> None:
     """
     archetype  = _archetype_from_bundle(bundle)
     gcs_path   = _upload_bundle_to_gcs(job_id, bundle)
-    widget_js  = bundle.get("widgetModule")
+    storefront  = bundle.get("widgetModule")
     admin_js   = bundle.get("adminUiModule")
-    _upload_js_to_gcs(app_id, widget_js, admin_js)
+    _upload_js_to_gcs(app_id, storefront, admin_js)
 
     handler_module = bundle.get("handlerModule") or {}
     raw_topics = handler_module.get("webhookTopics") or []

@@ -9,7 +9,7 @@ To add a new generator:
 
 Ordering matters: generators are run in parallel, but the dict order is used
 when logging and when building the artifacts dict. Keep logically related
-generators adjacent (handler before migration, widget/admin after handler
+generators adjacent (backend before db, storefront/admin_ui after backend
 since they consume the handler's API catalog).
 """
 

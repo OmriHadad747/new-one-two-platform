@@ -80,7 +80,7 @@ WEBHOOK_TOPICS: frozenset[str] = (
 # ── Template-owned tables / files (handler must not author) ──────────────────
 
 # Tables the platform-back template ships unconditionally (see
-# platform-back/templates/handler/migrations/). Handler code uses helpers
+# platform-back/templates/backend/dbs/). Handler code uses helpers
 # (`enqueueJob`, template router) instead of touching these tables.
 TEMPLATE_OWNED_TABLES: frozenset[str] = frozenset({"cron_queue", "processed_webhooks"})
 

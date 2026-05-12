@@ -2,7 +2,7 @@
 Handler-artifact validation — runs on the handler bundle after codegen.
 
 Public entry points:
-  validate_handler_artifact   — full handler-bundle check
+  validate_backend_artifact   — full handler-bundle check
   FORBIDDEN_HANDLER_PATTERNS  — regex/message pairs (also consumed by tests)
 """
 
@@ -135,7 +135,7 @@ _TEMPLATE_PACKAGES = frozenset(
 )
 
 
-def validate_handler_artifact(
+def validate_backend_artifact(
     artifact: str,
     api_plan_topics: List[str],
     widget_catalog: Optional[List[Dict[str, Any]]] = None,

@@ -2,13 +2,13 @@
 Tests for _revision_locked_artifacts — decides which artifacts the revision
 agent may edit based on which LLM-validator findings fired.
 
-The new validator layer (subagents/validators) emits a uniform Finding shape
+The new validator layer (subagents/f_codegen_v_agent) emits a uniform Finding shape
 where every entry carries an `artifact` field. The locking policy reads only
 that field — no Q-key categories.
 
 Locking rules:
     artifact == "db"   →  migration itself is broken; unlock both.
-    artifact == "handler"     →  backend problem; lock migration, fix handler.
+    artifact == "backend"     →  backend problem; lock migration, fix handler.
     artifact ∈ {storefront,
                 admin_ui}     →  frontend misalignment; keep backend locked.
     artifact == "plan"        →  informational; revision can't re-run architect.
@@ -33,7 +33,7 @@ for _mod in [
 ]:
     sys.modules.setdefault(_mod, MagicMock())
 
-from crews.feature_generator.crew import _revision_locked_artifacts  # noqa: E402
+from subagents.e_codegen_agent.orchestration import _revision_locked_artifacts  # noqa: E402
 
 
 def _f(artifact: str, validator: str = "agent_rules") -> Dict:
@@ -77,18 +77,18 @@ def test_multiple_migration_findings_unlock_both() -> None:
 
 def test_handler_finding_locks_migration_only() -> None:
     # Handler misuses a correct migration — lock migration, fix handler.
-    result = _revision_locked_artifacts([_f("handler")])
+    result = _revision_locked_artifacts([_f("backend")])
     assert result == frozenset({"db"})
 
 
 def test_handler_finding_from_bug_finder_locks_migration_only() -> None:
-    result = _revision_locked_artifacts([_f("handler", "bug_finder")])
+    result = _revision_locked_artifacts([_f("backend", "bug_finder")])
     assert result == frozenset({"db"})
 
 
 def test_multiple_handler_findings_lock_migration_only() -> None:
     result = _revision_locked_artifacts(
-        [_f("handler"), _f("handler", "bug_finder")]
+        [_f("backend"), _f("backend", "bug_finder")]
     )
     assert result == frozenset({"db"})
 
@@ -98,17 +98,17 @@ def test_multiple_handler_findings_lock_migration_only() -> None:
 
 def test_widget_finding_locks_both_backends() -> None:
     result = _revision_locked_artifacts([_f("storefront")])
-    assert result == frozenset({"handler", "db"})
+    assert result == frozenset({"backend", "db"})
 
 
 def test_admin_finding_locks_both_backends() -> None:
     result = _revision_locked_artifacts([_f("admin_ui")])
-    assert result == frozenset({"handler", "db"})
+    assert result == frozenset({"backend", "db"})
 
 
 def test_widget_and_admin_findings_lock_both_backends() -> None:
     result = _revision_locked_artifacts([_f("storefront"), _f("admin_ui")])
-    assert result == frozenset({"handler", "db"})
+    assert result == frozenset({"backend", "db"})
 
 
 # ── Mixed cases ───────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ def test_widget_and_admin_findings_lock_both_backends() -> None:
 def test_handler_finding_with_widget_finding_locks_migration_only() -> None:
     # Backend finding upgrades the lock — even with a co-occurring frontend
     # issue, revision must be allowed to edit the handler.
-    result = _revision_locked_artifacts([_f("handler"), _f("storefront")])
+    result = _revision_locked_artifacts([_f("backend"), _f("storefront")])
     assert result == frozenset({"db"})
 
 
@@ -129,25 +129,25 @@ def test_plan_finding_alone_locks_both_default() -> None:
     # leak through — it must not crash, and it must default to the safe
     # frontend-only revision lock.
     result = _revision_locked_artifacts([_f("plan")])
-    assert result == frozenset({"handler", "db"})
+    assert result == frozenset({"backend", "db"})
 
 
 def test_plan_finding_with_handler_finding_locks_migration_only() -> None:
     # Same defensive guarantee as above for the mixed case: even if a plan
     # finding leaks through filtering, a co-occurring handler finding still
     # drives the lock decision correctly.
-    result = _revision_locked_artifacts([_f("plan"), _f("handler")])
+    result = _revision_locked_artifacts([_f("plan"), _f("backend")])
     assert result == frozenset({"db"})
 
 
 def test_empty_issues_locks_both() -> None:
     # No findings → conservative default (frontend-only revision shape).
     result = _revision_locked_artifacts([])
-    assert result == frozenset({"handler", "db"})
+    assert result == frozenset({"backend", "db"})
 
 
 def test_finding_without_artifact_field_treated_as_no_op() -> None:
     # Defensive: a malformed entry without an artifact field is ignored,
     # falling through to the empty-issues default.
     result = _revision_locked_artifacts([{"question": "agent_rules[]", "issue": "x"}])
-    assert result == frozenset({"handler", "db"})
+    assert result == frozenset({"backend", "db"})

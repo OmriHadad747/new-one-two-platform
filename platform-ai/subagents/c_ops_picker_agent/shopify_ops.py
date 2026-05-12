@@ -43,7 +43,9 @@ from subagents.e_codegen_agent.backend_agent.constants import WEBHOOK_API_VERSIO
 
 log = logging.getLogger(__name__)
 
-_CATALOGS_ROOT = Path(__file__).resolve().parent.parent / "catalogs"
+# platform-ai/subagents/c_ops_picker_agent/shopify_ops.py
+# -> platform-ai/catalogs ⇒ 3 parents.
+_CATALOGS_ROOT = Path(__file__).resolve().parent.parent.parent / "catalogs"
 
 # Each operation in summary.md is one line that starts with the op name
 # followed by either `(` (op with args) or `:` (op with no args). The build

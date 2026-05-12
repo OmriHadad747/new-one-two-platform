@@ -4,8 +4,6 @@ Per-agent model configuration.
 
 from __future__ import annotations
 
-import os
-
 _DEFAULTS: dict[str, str] = {
     "product": "claude-haiku-4-5-20251001",
     "hld": "claude-sonnet-4-6",
@@ -15,9 +13,8 @@ _DEFAULTS: dict[str, str] = {
     "db": "claude-sonnet-4-6",
     "storefront": "claude-sonnet-4-6",
     "admin_ui": "claude-sonnet-4-6",
-    "handler": "claude-sonnet-4-6",
+    "backend": "claude-sonnet-4-6",
     "bug_finder": "claude-sonnet-4-6",
-    "quality_brief_coverage": "claude-haiku-4-5-20251001",
     "agent_rules": "claude-haiku-4-5-20251001",
     "revision": "claude-sonnet-4-6",
     "explanation": "claude-haiku-4-5-20251001",
