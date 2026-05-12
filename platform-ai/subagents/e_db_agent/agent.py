@@ -12,7 +12,7 @@ migrations with search_path pinned to that schema, so `CREATE TABLE foo`
 lands at `tenant_<uuid>.foo` automatically. Emitted SQL therefore has no
 tenant_id column, no RLS, no CREATE POLICY.
 
-Validator allow-list (enforced by both `llm_validations.migration_artifact`
+Validator allow-list (enforced by both `subagents.e_db_agent.validator`
 and platform-back's `packages/deployer/src/sql-validator.ts`):
   Allowed:     CREATE TABLE, CREATE INDEX (incl. UNIQUE),
                ALTER TABLE ADD COLUMN IF NOT EXISTS, COMMENT ON.
@@ -29,9 +29,9 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
-from llm_validations.migration_artifact import validate_migration_artifact
 from subagents.base import CodegenContext, Generator
 from subagents.e_db_agent.prompt import DB_BASE
+from subagents.e_db_agent.validator import validate_migration_artifact
 
 _SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMENT")
 

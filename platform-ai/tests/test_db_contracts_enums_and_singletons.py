@@ -14,68 +14,17 @@ LLM adapter, no anthropic SDK.
 from __future__ import annotations
 
 from subagents.handler_agent import _format_db_contracts as handler_format_db
-from subagents.admin_ui_agent import _format_column_enums
-from llm_validations.admin_ui_artifact import validate_admin_ui_artifact
-from llm_validations.arch_plan import validate_architect_plan
 from llm_validations.handler_artifact import validate_handler_artifact
 
 
 # ── Finding 4 — singleton ─────────────────────────────────────────────────────
-
-
-def test_architect_plan_rejects_singleton_with_id_column() -> None:
-    plan = {
-        "shopifyPlan": {"webhookTopics": [], "cronSchedule": None},
-        "appContracts": {
-            "feasibility": "feasible",
-            "complexity": "low",
-            "edgeCases": ["a", "b", "c"],
-            "uxExpectations": {"storefront": None, "admin": "x"},
-            "stateMachine": None,
-            "platformGaps": [],
-            "handlerCapabilities": [],
-            "shopifyGraphqlOperations": {"admin": [], "storefront": []},
-            "cronBatching": None,
-            "dbContracts": [
-                {
-                    "table": "settings",
-                    "singleton": True,
-                    "columns": [
-                        {
-                            "name": "id",
-                            "type": "UUID",
-                            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
-                        },
-                        {
-                            "name": "delay_minutes",
-                            "type": "INTEGER",
-                            "constraints": "NOT NULL DEFAULT 60",
-                        },
-                    ],
-                    "uniqueConstraint": None,
-                    "indexes": [],
-                }
-            ],
-            "webhookContract": None,
-            "cronContract": None,
-            "adminApiCatalog": [
-                {
-                    "path": "/settings",
-                    "method": "GET",
-                    "requestShape": {},
-                    "responseShape": {"delay_minutes": "number"},
-                }
-            ],
-            "adminCapabilities": [],
-            "widgetTargetTemplates": None,
-            "widgetApiCatalog": None,
-            "widgetCapabilities": None,
-        },
-    }
-    errors = validate_architect_plan(plan, app_archetype="backend_admin")
-    assert any(
-        "singleton: true but also" in e and "'id' column" in e for e in errors
-    ), errors
+#
+# test_architect_plan_rejects_singleton_with_id_column was removed when the
+# legacy `llm_validations.arch_plan.validate_architect_plan` was retired
+# alongside the architect agent. The singleton-with-id-column rule now
+# belongs to the LLD schema validator in
+# `subagents/d_lld_agent/schema.py`; equivalent coverage should land there
+# (or in d_lld_agent's own test surface), not in this legacy file.
 
 
 def test_handler_render_surfaces_singleton_upsert_pattern() -> None:
@@ -146,57 +95,10 @@ _QUEUE_CONTRACTS = [
 ]
 
 
-def test_architect_plan_rejects_default_outside_enum() -> None:
-    plan = {
-        "shopifyPlan": {"webhookTopics": [], "cronSchedule": None},
-        "appContracts": {
-            "feasibility": "feasible",
-            "complexity": "low",
-            "edgeCases": ["a", "b", "c"],
-            "uxExpectations": {"storefront": None, "admin": "x"},
-            "stateMachine": None,
-            "platformGaps": [],
-            "handlerCapabilities": [],
-            "shopifyGraphqlOperations": {"admin": [], "storefront": []},
-            "cronBatching": None,
-            "dbContracts": [
-                {
-                    "table": "abandoned_cart_queue",
-                    "columns": [
-                        {
-                            "name": "id",
-                            "type": "UUID",
-                            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
-                        },
-                        {
-                            "name": "status",
-                            "type": "TEXT",
-                            "constraints": "NOT NULL DEFAULT 'queued'",
-                            "enum": ["pending", "sent", "failed"],
-                        },
-                    ],
-                    "uniqueConstraint": None,
-                    "indexes": [],
-                }
-            ],
-            "webhookContract": None,
-            "cronContract": None,
-            "adminApiCatalog": [
-                {
-                    "path": "/queue",
-                    "method": "GET",
-                    "requestShape": {},
-                    "responseShape": {"items": []},
-                }
-            ],
-            "adminCapabilities": [],
-            "widgetTargetTemplates": None,
-            "widgetApiCatalog": None,
-            "widgetCapabilities": None,
-        },
-    }
-    errors = validate_architect_plan(plan, app_archetype="backend_admin")
-    assert any("DEFAULT 'queued'" in e and "not in" in e for e in errors), errors
+# test_architect_plan_rejects_default_outside_enum was removed alongside
+# `validate_architect_plan` — the "DEFAULT must be a member of the column
+# enum" rule now belongs in the LLD schema validator
+# (`subagents/d_lld_agent/schema.py`). Coverage should land there.
 
 
 def test_handler_validator_flags_insert_with_unknown_status_literal() -> None:
@@ -244,6 +146,10 @@ def test_handler_validator_passes_when_literals_match_enum() -> None:
 # stateMachine + handler writes).
 
 
-def test_admin_ui_format_column_enums_emits_vocabulary() -> None:
-    rendered = _format_column_enums({"appContracts": {"dbContracts": _QUEUE_CONTRACTS}})
-    assert 'abandoned_cart_queue.status: ["pending", "sent", "failed"]' in rendered
+# test_admin_ui_format_column_enums_emits_vocabulary was removed when the
+# legacy `admin_ui_agent._format_column_enums(plan)` was retired. The new
+# `e_admin_agent.agent._format_column_enums(lld)` reads from
+# `lld.database.tables[]` (column shape: name + enum) rather than
+# `plan.appContracts.dbContracts[]` (column shape: name + enum + constraints).
+# Equivalent coverage should land in the new e_admin_agent test surface,
+# not be force-fit onto the legacy plan-shaped fixtures in this file.

@@ -2,6 +2,10 @@
 Admin-UI-artifact validation — runs on the generated admin-panel JS.
 
 Public entry point: validate_admin_ui_artifact.
+
+Moved here from llm_validations/admin_ui_artifact.py during the
+legacy-architect cleanup — the validator is admin-agent-specific and
+belongs alongside the rest of the e_admin_agent surface.
 """
 
 from __future__ import annotations
@@ -16,7 +20,6 @@ from utils.static_validations.shared_checks import (
     find_document_violations as _find_document_violations,
     find_setTimeout_violations as _find_setTimeout_violations,
 )
-
 
 # `import` and `export default` are not in this list — the Shopify Admin
 # iframe loads the panel as an ES module via `<script type="module">`, and
@@ -42,6 +45,7 @@ FORBIDDEN_ADMIN_UI_PATTERNS = [
     # legitimate when the component needs page-level reads or events.
     (r"\bsetInterval\s*\(", "setInterval is not allowed"),
 ]
+
 
 def validate_admin_ui_artifact(
     admin_ui_js: str,
@@ -146,9 +150,8 @@ def validate_admin_ui_artifact(
     # attributes from dbContracts-column filter attributes — semantic
     # work agent_rules can do but a regex cannot. See ADMIN_UI_RULES.md
     # row 23 (now llm). The `_format_state_machine` and
-    # `_format_column_enums` user-prompt scaffolding in admin_ui_agent.py
-    # remains in place — that's the prevention side; agent_rules is the
-    # detection side.
+    # `_format_column_enums` user-prompt scaffolding in
+    # subagents/e_admin_agent/agent.py remains in place — that's the
+    # prevention side; agent_rules is the detection side.
 
     return errors
-

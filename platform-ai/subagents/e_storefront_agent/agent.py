@@ -25,9 +25,9 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
-from llm_validations.widget_artifact import validate_widget_artifact
 from subagents.base import CodegenContext, Generator
 from subagents.e_storefront_agent.prompt import STOREFRONT_BASE
+from subagents.e_storefront_agent.validator import validate_widget_artifact
 from subagents.e_storefront_agent.widget_shapes import examples_for_widget
 
 

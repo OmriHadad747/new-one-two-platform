@@ -250,10 +250,9 @@ def _phase_hld(
     intent: Dict[str, Any], prompt: str, run_dir: Path
 ) -> Tuple[Dict[str, Any], str, int, int, int, int]:
     """
-    Run the HLD agent. The legacy architect lives in
-    `subagents/architect_agent.py` for reference — this phase now produces
-    an HLD plan (schema-agnostic, integration-agnostic). Pydantic-driven
-    validation lives inside the agent; no outer retry loop is needed.
+    Run the HLD agent. Produces an HLD plan (schema-agnostic,
+    integration-agnostic). Pydantic-driven validation lives inside the
+    agent; no outer retry loop is needed.
 
     Returns
     `(plan_dict, product_prompt, total_in_tokens, total_out_tokens,

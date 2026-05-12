@@ -22,8 +22,7 @@ Only runs for admin archetypes (`storefront_backend_admin`,
 skips this generator when is_admin_ui is False.
 
 Generator name is kept as `admin_ui` so the existing artifacts-dict
-key, CLI labels, and cross-artifact validator paths continue to work
-unchanged during the migration off the legacy `admin_ui_agent.py`.
+key, CLI labels, and cross-artifact validator paths continue to work.
 
 Model: claude-sonnet-4-6 (via agent_models.py)
 """
@@ -33,10 +32,10 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
-from llm_validations.admin_ui_artifact import validate_admin_ui_artifact
 from subagents.base import CodegenContext, Generator
 from subagents.e_admin_agent.admin_shapes import examples_for_admin
 from subagents.e_admin_agent.prompt import ADMIN_BASE
+from subagents.e_admin_agent.validator import validate_admin_ui_artifact
 
 
 class AdminGenerator(Generator):

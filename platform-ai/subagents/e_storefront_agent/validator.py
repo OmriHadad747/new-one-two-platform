@@ -3,9 +3,14 @@ Widget-artifact validation — runs on the generated storefront widget JS.
 
 Public entry point: validate_widget_artifact.
 
+Moved here from llm_validations/widget_artifact.py during the
+legacy-architect cleanup — the validator is storefront-agent-specific
+and belongs alongside the rest of the e_storefront_agent surface.
+
 document.* scoping and setTimeout discipline live in
 utils.static_validations.shared_checks because they are reused by the
-admin_ui validator with identical semantics.
+admin_ui validator (subagents/e_admin_agent/validator.py) with
+identical semantics.
 """
 
 from __future__ import annotations

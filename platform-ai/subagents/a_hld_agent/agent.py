@@ -1,9 +1,9 @@
 """
 HLD (high-level design) agent runner.
 
-Replaces the legacy architect agent for plans that stop at the HLD phase.
-The legacy `subagents/architect_agent.py` is intentionally kept for
-reference until the LLD agent + downstream wiring are ready.
+Produces a high-level plan that the LLD agent + downstream e_*_agents
+consume. (The legacy architect_agent was retired during the
+legacy-architect cleanup.)
 
 Flow
 ----

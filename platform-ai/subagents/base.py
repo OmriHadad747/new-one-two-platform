@@ -24,9 +24,10 @@ output slot (handler_email_metadata) written by HandlerGenerator.generate() so
 the orchestrator can read structured metadata without changing the artifacts dict
 shape.
 
-plan shape: see validate_architect_plan in llm_validations/arch_plan.py
-and the architect prompt sections in subagents/prompts/architect/ for the
-authoritative schema. (Previously duplicated here — removed to avoid drift.)
+plan shape: the legacy plan (shopifyPlan + appContracts) has been retired.
+The new pipeline produces an HLD (a_hld_agent) + LLD (d_lld_agent) pair
+that downstream e_*_agents read directly. Legacy ctx.plan is retained
+as a no-op {} until handler / revision / explanation are migrated.
 """
 
 from __future__ import annotations

@@ -2,6 +2,10 @@
 Migration-artifact validation — runs on the generated migration SQL.
 
 Public entry point: validate_migration_artifact.
+
+Moved here from llm_validations/migration_artifact.py during the
+legacy-architect cleanup — the validator is db-agent-specific and
+belongs alongside the rest of the e_db_agent surface.
 """
 
 from __future__ import annotations
@@ -12,7 +16,6 @@ from typing import List
 from utils.static_validations.sql_parse import (
     strip_comments_and_strings as _strip_comments_and_strings,
 )
-
 
 
 def validate_migration_artifact(
@@ -116,7 +119,9 @@ def validate_migration_artifact(
     # tenant_id column is now forbidden — schema isolation replaces it. Flag
     # any column named tenant_id inside a CREATE TABLE body so a drifted
     # generation doesn't silently add it.
-    for stmt in re.findall(r"CREATE\s+TABLE[^;]+\([\s\S]*?\);", scrubbed, re.IGNORECASE):
+    for stmt in re.findall(
+        r"CREATE\s+TABLE[^;]+\([\s\S]*?\);", scrubbed, re.IGNORECASE
+    ):
         if re.search(r"\btenant_id\b", stmt, re.IGNORECASE):
             errors.append(
                 "CREATE TABLE must NOT declare a tenant_id column — each tenant "

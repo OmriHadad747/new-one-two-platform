@@ -51,11 +51,9 @@ from models.adapter import current_input_log_run_dir, input_log
 from subagents.product_agent import run_product_agent
 from subagents.explanation_agent import run_explanation_agent
 from subagents.base import CodegenContext, Generator
-from subagents.architect_agent import run_architect_agent
 from subagents.revision_agent import run_revision_agent
 from subagents.validators import run_llm_validators
 from subagents.registry import GENERATORS
-from llm_validations.arch_plan import validate_architect_plan
 from llm_validations.product_intent import validate_product_intent
 from llm_validations.cross_admin_handler import validate_admin_handler_contract
 from llm_validations.cross_widget_handler import validate_widget_handler_contract
@@ -63,7 +61,10 @@ from llm_validations.cross_widget_handler import validate_widget_handler_contrac
 log = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3  # total codegen attempts (1 initial + 2 retries)
-_MAX_ARCH_ATTEMPTS = 2  # architect: 1 initial + 1 retry
+# The legacy architect phase has been retired. Downstream agents
+# (handler / revision / explanation) still read ctx.plan and will be
+# migrated in the next refactor wave; until then crew passes an empty
+# plan and those phases produce empty/no-op outputs.
 
 # Findings whose `artifact == "db"` mean the migration itself is broken
 # (missing tables/columns) — unlock both so the revision agent fixes both
@@ -258,8 +259,11 @@ def run_feature_generation(request: GenerationRequest) -> None:
             is_admin_ui,
         )
 
-        plan = _phase_architect(request, intent, agent_trace)
-        _check_deadline(request, start_ms, "architect")
+        # Legacy architect retired during the legacy-architect cleanup;
+        # downstream agents (handler / revision / explanation) still read
+        # ctx.plan and will be migrated in the next refactor wave. Pass
+        # an empty plan dict so .get() lookups remain safe.
+        plan: Dict = {}
 
         prior_bundle = request.priorBundle or {}
         prior_handler_module = prior_bundle.get("handlerModule") or {}
@@ -362,8 +366,8 @@ def _phase_product(
 
     # Static gate on the intent dict — five closed-set / cross-field checks
     # that catch the catastrophic-by-cascade failure modes (wrong appCategory,
-    # invalid trigger, mismatched archetype↔trigger pairing). Mirrors how
-    # validate_architect_plan runs on the architect output. See PRODUCT_RULES.md.
+    # invalid trigger, mismatched archetype↔trigger pairing). See
+    # PRODUCT_RULES.md.
     intent_errors = validate_product_intent(intent)
     if intent_errors:
         joined = "; ".join(intent_errors)
@@ -383,98 +387,6 @@ def _phase_product(
     _emit(request, "product", "completed", "Feature spec ready")
     log.info("job=%s intent=%s tokens=(%d,%d)", request.jobId, intent, in_tok, out_tok)
     return intent
-
-
-def _phase_architect(
-    request: GenerationRequest,
-    intent: Dict,
-    agent_trace: List[AgentTraceEntry],
-) -> Dict:
-    """
-    Agent 2: produce shopifyPlan + appContracts (typed contracts for all components).
-
-    Returns the architect plan dict.
-    """
-    _emit(request, "architect", "running", "Planning Shopify API surface…")
-    t0 = _now_ms()
-
-    archetype = intent.get("appCategory")
-
-    plan: Optional[Dict] = None
-    arch_errors: List[str] = []
-    arch_in = 0
-    arch_out = 0
-
-    for attempt in range(1, _MAX_ARCH_ATTEMPTS + 1):
-        plan, attempt_in, attempt_out = run_architect_agent(
-            prompt=request.prompt,
-            intent=intent,
-            app_archetype=archetype,
-            validation_errors=arch_errors if attempt > 1 else None,
-        )
-        arch_in += attempt_in
-        arch_out += attempt_out
-        arch_errors = validate_architect_plan(plan, app_archetype=archetype)
-
-        if not arch_errors:
-            break
-
-        log.warning(
-            "job=%s architect validation attempt=%d errors=%s",
-            request.jobId,
-            attempt,
-            arch_errors,
-        )
-
-        if attempt == _MAX_ARCH_ATTEMPTS:
-            _fail_and_abort(
-                request,
-                "architect",
-                f"Architect validation failed: {arch_errors[0]}",
-                f"Architect produced invalid plan after {_MAX_ARCH_ATTEMPTS} attempts: {arch_errors}",
-            )
-
-        _emit(
-            request,
-            "architect",
-            "running",
-            f"Fixing architect plan (attempt {attempt + 1}/{_MAX_ARCH_ATTEMPTS})…",
-        )
-
-    # Feasibility gate — fail immediately when ctx cannot deliver the core value.
-    contracts = plan.get("appContracts") or {}
-    if contracts.get("feasibility") == "blocked":
-        blocked_reason: str = contracts.get(
-            "blockedReason",
-            "This app requires capabilities that aren't available on the platform yet.",
-        )
-        _fail_and_abort(
-            request,
-            "architect",
-            blocked_reason,
-            blocked_reason,
-            error_code="platform_limitation",
-        )
-
-    agent_trace.append(
-        AgentTraceEntry(
-            agent="architect",
-            latencyMs=_now_ms() - t0,
-            inputTokens=arch_in,
-            outputTokens=arch_out,
-        )
-    )
-    _emit(request, "architect", "completed", "Structural plan ready")
-    log.info(
-        "job=%s architect topics=%s cron=%s has_widget_catalog=%s has_admin_catalog=%s",
-        request.jobId,
-        (plan.get("shopifyPlan") or {}).get("webhookTopics"),
-        (plan.get("shopifyPlan") or {}).get("cronSchedule"),
-        bool(contracts.get("widgetApiCatalog")),
-        bool(contracts.get("adminApiCatalog")),
-    )
-
-    return plan
 
 
 def _phase_codegen(
