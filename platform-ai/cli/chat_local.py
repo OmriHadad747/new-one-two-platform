@@ -104,7 +104,7 @@ _log.basicConfig(
 )
 
 from subagents.base import CodegenContext
-from subagents.product_agent import run_product_agent_analyze
+from subagents._product_agent.agent import run_product_agent_analyze
 from models.adapter import input_log
 from cli.pipeline_local import (
     _MAX_CODEGEN_RETRIES,

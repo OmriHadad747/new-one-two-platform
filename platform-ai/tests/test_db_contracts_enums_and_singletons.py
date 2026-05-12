@@ -13,8 +13,7 @@ LLM adapter, no anthropic SDK.
 
 from __future__ import annotations
 
-from subagents.handler_agent import _format_db_contracts as handler_format_db
-from llm_validations.handler_artifact import validate_handler_artifact
+from subagents.e_codegen_agent.backend_agent.validator import validate_handler_artifact
 
 
 # ── Finding 4 — singleton ─────────────────────────────────────────────────────
@@ -27,29 +26,14 @@ from llm_validations.handler_artifact import validate_handler_artifact
 # (or in d_lld_agent's own test surface), not in this legacy file.
 
 
-def test_handler_render_surfaces_singleton_upsert_pattern() -> None:
-    plan = {
-        "appContracts": {
-            "dbContracts": [
-                {
-                    "table": "settings",
-                    "singleton": True,
-                    "columns": [
-                        {
-                            "name": "delay_minutes",
-                            "type": "INTEGER",
-                            "constraints": "NOT NULL DEFAULT 60",
-                        },
-                    ],
-                    "uniqueConstraint": None,
-                    "indexes": [],
-                }
-            ]
-        }
-    }
-    rendered = handler_format_db(plan)
-    assert "WHERE singleton = true" in rendered
-    assert "ON CONFLICT (singleton) DO UPDATE" in rendered
+# test_handler_render_surfaces_singleton_upsert_pattern was removed when
+# the legacy `handler_agent._format_db_contracts(plan)` was retired. The
+# new backend agent dumps the LLD verbatim as JSON in the user prompt and
+# lets the model translate `database.tables[].singleton` into the upsert
+# pattern via the STEP-KIND TRANSLATION TABLE in `e_backend_agent/prompt.py`.
+# The singleton-upsert pattern check should now live as an integration
+# test against generated handler output, not a unit test on a prompt-
+# formatting helper that no longer exists.
 
 
 # ── Finding 5 — FOR UPDATE SKIP LOCKED ────────────────────────────────────────

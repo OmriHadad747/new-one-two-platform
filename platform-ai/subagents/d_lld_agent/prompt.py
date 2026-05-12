@@ -1472,8 +1472,8 @@ def build_system_prompt() -> str:
     agent's `admin_shapes` registry are all single sources of truth —
     bumping any of them automatically updates what the agent sees.
     """
-    from subagents.e_storefront_agent.widget_shapes import widget_shapes_section
-    from subagents.e_admin_agent.admin_shapes import admin_shapes_section
+    from subagents.e_codegen_agent.storefront_agent.widget_shapes import widget_shapes_section
+    from subagents.e_codegen_agent.admin_agent.admin_shapes import admin_shapes_section
 
     schema_json = json.dumps(LLDPlan.model_json_schema())
     return (

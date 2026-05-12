@@ -43,9 +43,9 @@ from subagents.c_ops_picker_agent.agent import (
     run_ops_picker_agent,
 )
 from subagents.base import CodegenContext
-from subagents.explanation_agent import run_explanation_agent
-from subagents.revision_agent import run_revision_agent
-from subagents.validators import run_llm_validators
+from subagents.h_explenation_agent.explanation_agent import run_explanation_agent
+from subagents.g_revision_agent.revision_agent import run_revision_agent
+from subagents.f_codegen_v_agent.base import run_llm_validators
 from crews.feature_generator.crew import (
     run_codegen_parallel,
     validate_artifacts,
@@ -367,7 +367,7 @@ def _phase_ops_picker(
     )
     from catalogs.shopify_webhooks import load_summary_md
     from llm_validations.shopify_ops import get_op_names, load_summary
-    from subagents.prompts.topics.webhook import WEBHOOK_TOPICS
+    from subagents.e_codegen_agent.backend_agent.constants import WEBHOOK_TOPICS
 
     admin_idx = load_summary("admin")
     storefront_idx = load_summary("storefront")

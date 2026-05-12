@@ -85,8 +85,12 @@ class CodegenContext:
     platform_api_catalog: List[Dict[str, str]] = field(default_factory=list)
     previous_errors: Optional[List[str]] = None
     prior_handler_code: Optional[Any] = None  # str | List[Dict[str, str]]
-    prior_storefront_code: Optional[str] = None  # prior widget JS on revision runs (was prior_storefront_code)
-    prior_db_sql: Optional[str] = None  # prior DDL on revision runs (was prior_migration_sql)
+    prior_storefront_code: Optional[str] = (
+        None  # prior widget JS on revision runs (was prior_storefront_code)
+    )
+    prior_db_sql: Optional[str] = (
+        None  # prior DDL on revision runs (was prior_migration_sql)
+    )
     prior_admin_ui_code: Optional[str] = None
 
     # OUTPUT slot — see docstring. Written by HandlerGenerator.generate().

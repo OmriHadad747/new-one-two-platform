@@ -48,11 +48,11 @@ from contract.validators import (
     AgentTraceEntry,
 )
 from models.adapter import current_input_log_run_dir, input_log
-from subagents.product_agent import run_product_agent
-from subagents.explanation_agent import run_explanation_agent
+from subagents._product_agent.agent import run_product_agent
+from subagents.h_explenation_agent.explanation_agent import run_explanation_agent
 from subagents.base import CodegenContext, Generator
-from subagents.revision_agent import run_revision_agent
-from subagents.validators import run_llm_validators
+from subagents.g_revision_agent.revision_agent import run_revision_agent
+from subagents.f_codegen_v_agent.base import run_llm_validators
 from subagents.registry import GENERATORS
 from llm_validations.product_intent import validate_product_intent
 from llm_validations.cross_admin_handler import validate_admin_handler_contract
@@ -1355,7 +1355,7 @@ def validate_artifacts(
     # regex layer can't see. Runs only when the regex/contract checks pass —
     # broken bundles produce noisy parse errors with no extra signal.
     if "handler" not in error_map:
-        from llm_validations.handler_graphql import validate_handler_graphql
+        from subagents.e_codegen_agent.backend_agent.graphql_check import validate_handler_graphql
 
         graphql_errors = validate_handler_graphql(artifacts.get("handler", ""))
         if graphql_errors:
@@ -1368,7 +1368,7 @@ def validate_artifacts(
     # point, so there are no prior entries to merge) so the retry loop
     # regenerates the handler with tsc messages as feedback.
     if "handler" not in error_map:
-        from llm_validations.handler_typecheck import validate_handler_typecheck
+        from subagents.e_codegen_agent.backend_agent.typecheck import validate_handler_typecheck
 
         tsc_errors = validate_handler_typecheck(artifacts.get("handler", ""))
         if tsc_errors:
