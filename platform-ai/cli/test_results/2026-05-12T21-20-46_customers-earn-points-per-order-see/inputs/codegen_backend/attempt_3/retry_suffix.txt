@@ -1,0 +1,8 @@
+
+
+PREVIOUS ATTEMPT FAILED VALIDATION:
+- [src/routes/webhook-handlers.ts] missing handler for planned topics: ['orders/paid', 'refunds/create']
+- [src/routes/cron.ts] jobs map must include at least one entry
+
+Fix ALL listed errors in this new attempt.
+

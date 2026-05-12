@@ -1,0 +1,45 @@
+```json
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "create-cart-discount",
+      "ops": [
+        {
+          "name": "customerByIdentifier",
+          "surface": "admin",
+          "note": "Resolve the customer's GID from their external id so the discount can be scoped to a single customer"
+        },
+        {
+          "name": "discountCodeBasicCreate",
+          "surface": "admin",
+          "note": "Create a single-use fixed-amount discount code for the computed monetary value tied to the resolved customer"
+        }
+      ]
+    },
+    {
+      "capability_id": "cancel-redemption",
+      "ops": [
+        {
+          "name": "discountCodeDeactivate",
+          "surface": "admin",
+          "note": "Deactivate (void) the previously created discount so it cannot be applied at checkout after the redemption is cancelled"
+        }
+      ]
+    }
+  ],
+  "webhooks": [
+    {
+      "trigger_event": "an order is paid",
+      "topic": "orders/paid",
+      "note": "Delivers full order payload including order id, total price, and customer object needed to compute and credit earned points"
+    },
+    {
+      "trigger_event": "a refund is issued on an order",
+      "topic": "refunds/create",
+      "note": "Delivers refund id, order id, and refund line items needed to compute proportional point reversal"
+    }
+  ],
+  "unsatisfied": []
+}
+```

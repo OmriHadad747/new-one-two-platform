@@ -133,6 +133,7 @@ def run_product_agent_analyze(history: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "status": "needs_clarification",
         "question": parsed.get("question") or _default_clarification_question(),
+        "suggestions": parsed.get("suggestions") or [],
     }
 
 
@@ -183,6 +184,7 @@ def _needs_clarification() -> Dict[str, Any]:
     return {
         "status": "needs_clarification",
         "question": _default_clarification_question(),
+        "suggestions": [],
     }
 
 

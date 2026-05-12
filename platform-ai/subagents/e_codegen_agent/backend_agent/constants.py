@@ -97,6 +97,10 @@ TEMPLATE_OWNED_FILES: frozenset[str] = frozenset(
         "src/lib/shopify.ts",
         "src/lib/cron-runner.ts",
         "src/lib/cron-enqueue.ts",
+        "src/lib/config.ts",
+        "src/lib/money.ts",
+        "src/lib/workflow.ts",
+        "src/lib/paginate.ts",
         "src/routes/webhook.ts",
         "src/migrate.ts",
         # Infrastructure files — generator must not overwrite

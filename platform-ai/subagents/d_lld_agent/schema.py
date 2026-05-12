@@ -1293,6 +1293,109 @@ class LLDPlan(_StrictModel):
                     )
         return self
 
+    @model_validator(mode="after")
+    def _on_conflict_targets_match_unique_constraint(self) -> "LLDPlan":
+        """
+        Every `ON CONFLICT (cols)` in any recipe SQL template MUST target a
+        constraint actually declared on the table: either its PRIMARY KEY
+        column(s), or its `uniqueConstraint.columns` set (set-equality,
+        order-insensitive). Postgres treats the conflict-target list as a
+        SET; the constraint must cover the SAME set.
+
+        Without this check, the LLD can emit `INSERT … ON CONFLICT (a, b)
+        DO NOTHING` against a table with no uniqueConstraint on (a, b) —
+        every INSERT then crashes at runtime with `there is no unique or
+        exclusion constraint matching the ON CONFLICT specification`. The
+        equivalent backend-side check is too late: it catches the gap
+        only after codegen, with no clean recovery. This validator surfaces
+        it during the LLD retry loop instead.
+
+        Skipped silently for:
+          - `ON CONFLICT ON CONSTRAINT <name>` form (no DDL parse here);
+          - conflict targets that include non-identifier tokens (expression
+            indices / partial-index targets — out of scope for regex).
+        """
+        import re as _re
+
+        # Build per-table set of valid conflict-target column-sets.
+        valid_targets: Dict[str, list[frozenset[str]]] = {}
+        for table in self.database.tables:
+            sets: list[frozenset[str]] = []
+            for col in table.columns:
+                if "PRIMARY KEY" in col.constraints.upper():
+                    sets.append(frozenset({col.name.lower()}))
+            if table.uniqueConstraint is not None:
+                sets.append(
+                    frozenset(c.lower() for c in table.uniqueConstraint.columns)
+                )
+            if sets:
+                valid_targets[table.name.lower()] = sets
+
+        insert_re = _re.compile(
+            r"INSERT\s+INTO\s+(\w+)\b[\s\S]*?\bON\s+CONFLICT\s*\(([^)]+)\)",
+            _re.IGNORECASE,
+        )
+        named_re = _re.compile(
+            r"INSERT\s+INTO\s+(\w+)\b[\s\S]*?\bON\s+CONFLICT\s+ON\s+CONSTRAINT\s+(\w+)",
+            _re.IGNORECASE,
+        )
+        ident_re = _re.compile(r"[a-zA-Z_]\w*")
+
+        for rid, recipe in self.capabilityRecipes.items():
+            for tpl in _collect_sql_templates(list(recipe.steps)):
+                # Skip named-constraint form positions to avoid double-flag.
+                named_spans = [(m.start(), m.end()) for m in named_re.finditer(tpl)]
+                for m in insert_re.finditer(tpl):
+                    if any(s <= m.start() < e for s, e in named_spans):
+                        continue
+                    tbl = m.group(1).lower()
+                    cols_str = m.group(2)
+                    tokens = [c.strip().strip('"').strip("`") for c in cols_str.split(",")]
+                    if not all(ident_re.fullmatch(t) for t in tokens):
+                        continue
+                    cols = frozenset(t.lower() for t in tokens)
+                    valid = valid_targets.get(tbl)
+                    if valid is None:
+                        raise ValueError(
+                            f"recipe '{rid}' SQL template targets ON CONFLICT "
+                            f"({', '.join(sorted(cols))}) on table '{tbl}', but "
+                            f"'{tbl}' is not declared in database.tables (or has "
+                            f"no PRIMARY KEY / uniqueConstraint to satisfy the "
+                            "conflict)."
+                        )
+                    if cols not in valid:
+                        declared = sorted(sorted(s) for s in valid)
+                        raise ValueError(
+                            f"recipe '{rid}' uses ON CONFLICT "
+                            f"({', '.join(sorted(cols))}) on table '{tbl}' but no "
+                            f"matching uniqueConstraint or PRIMARY KEY is declared "
+                            f"on that table. Valid conflict targets: {declared}. "
+                            "Add a `uniqueConstraint: {columns: " +
+                            f"{sorted(cols)}" + "}` on the table OR change the ON "
+                            "CONFLICT target to one of the declared sets."
+                        )
+        return self
+
+
+def _collect_sql_templates(steps: list) -> list[str]:
+    """All SQL templates in `steps`, recursing into containers."""
+    out: list[str] = []
+    for s in steps:
+        tpl = getattr(s, "template", None)
+        if isinstance(tpl, str):
+            out.append(tpl)
+        if isinstance(s, DecisionStep):
+            out.extend(_collect_sql_templates(list(s.ifTrue)))
+            out.extend(_collect_sql_templates(list(s.ifFalse)))
+        elif isinstance(s, ForEachStep):
+            out.extend(_collect_sql_templates(list(s.steps)))
+        elif isinstance(s, SqlTransactionStep):
+            out.extend(_collect_sql_templates(list(s.steps)))
+        elif isinstance(s, TryCatchStep):
+            out.extend(_collect_sql_templates(list(s.try_)))
+            out.extend(_collect_sql_templates(list(s.catch)))
+    return out
+
 
 def _collect_compute_calls(steps: list) -> list[str]:
     """All ComputeStep expressions in `steps`, recursing into containers."""

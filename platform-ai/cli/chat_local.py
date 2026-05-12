@@ -2380,3 +2380,41 @@ if __name__ == "__main__":
         print(f"\n  {_RED}Interrupted by user (Ctrl+C). Aborting.{_RESET}")
         # 130 is the conventional exit code for SIGINT.
         sys.exit(130)
+    except Exception as exc:
+        # Surface Anthropic API failures (overloaded, rate-limited, auth,
+        # timeout) as a one-line message instead of a 30-frame traceback.
+        # Imported here so the CLI still loads when `anthropic` is missing.
+        from anthropic import APIError, APIStatusError, APITimeoutError
+
+        if isinstance(exc, (APIError, APITimeoutError)):
+            _stop_spinner()
+            _stop_spinner_group()
+            kind = "request timed out"
+            hint = "rerun in a few seconds"
+            if isinstance(exc, APIStatusError):
+                status = getattr(exc, "status_code", "?")
+                if status == 529:
+                    kind = f"Anthropic API overloaded (HTTP {status})"
+                    hint = "their servers are at capacity — wait ~30s and rerun"
+                elif status == 429:
+                    kind = f"rate limit hit (HTTP {status})"
+                    hint = "wait a minute and rerun, or lower concurrency"
+                elif status in (401, 403):
+                    kind = f"auth error (HTTP {status})"
+                    hint = "check ANTHROPIC_API_KEY"
+                else:
+                    kind = f"Anthropic API error (HTTP {status})"
+                    hint = "retry; if it persists, check status.anthropic.com"
+            req_id = getattr(getattr(exc, "response", None), "headers", {}).get(
+                "request-id"
+            ) if isinstance(exc, APIStatusError) else None
+            print(f"\n  {_RED}✗ {kind}.{_RESET} {hint}.")
+            if req_id:
+                print(f"  {_DIM}request id: {req_id}{_RESET}")
+            print(
+                f"  {_DIM}resume this run:{_RESET} "
+                f"./chat_local.py --resume <run-id> [--stop-after <phase>]"
+            )
+            sys.exit(2)
+        # Anything else — let it surface as a traceback for debugging.
+        raise

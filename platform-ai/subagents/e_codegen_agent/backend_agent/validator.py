@@ -723,10 +723,10 @@ def _validate_ts_file(
             continue
         if base not in allowed_import_specifiers:
             errors.append(
-                f"[{path}] import from '{spec}' is not allowed — the architect "
-                f"did not declare the capability that would authorize it. "
-                f"Allowed package imports for this handler: "
-                f"{sorted(allowed_import_specifiers)}"
+                f"[{path}] import from '{spec}' is not allowed. The handler "
+                f"may only import Node 20 builtins, relative paths "
+                f"(`../lib/*` / `./*`), or these template-shipped packages: "
+                f"{sorted(allowed_import_specifiers)}."
             )
 
     # No `tenant_id` reference inside any `sql\`...\`` tagged template block.

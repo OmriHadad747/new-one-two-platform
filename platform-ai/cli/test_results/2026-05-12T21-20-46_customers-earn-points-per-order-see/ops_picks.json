@@ -1,0 +1,869 @@
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "create-cart-discount",
+      "ops": [
+        {
+          "name": "customerByIdentifier",
+          "surface": "admin",
+          "note": "Resolve the customer's GID from their external id so the discount can be scoped to a single customer",
+          "args": [
+            {
+              "name": "identifier",
+              "required": true,
+              "type": "CustomerIdentifierInput!"
+            }
+          ],
+          "examples": [],
+          "inputTypesSdl": {
+            "CustomerIdentifierInput": "input CustomerIdentifierInput {\n  id: ID\n  customId: UniqueMetafieldValueInput\n  emailAddress: String\n  phoneNumber: String\n}",
+            "UniqueMetafieldValueInput": "input UniqueMetafieldValueInput {\n  namespace: String\n  key: String!\n  value: String!\n}"
+          },
+          "isConnection": false,
+          "kind": "query",
+          "returnTypeName": "Customer",
+          "returnTypeSdl": "type Customer implements CommentEventSubject & HasEvents & HasMetafieldDefinitions & HasMetafields & HasStoreCreditAccounts & LegacyInteroperability & Node {\n  addresses(first: Int): [MailingAddress!]!\n  addressesV2(first: Int, after: String, last: Int, before: String, reverse: Boolean): MailingAddressConnection!\n  amountSpent: MoneyV2!\n  canDelete: Boolean!\n  companyContactProfiles: [CompanyContact!]!\n  createdAt: DateTime!\n  dataSaleOptOut: Boolean!\n  defaultAddress: MailingAddress\n  defaultEmailAddress: CustomerEmailAddress\n  defaultPhoneNumber: CustomerPhoneNumber\n  displayName: String!\n  email: String\n  emailMarketingConsent: CustomerEmailMarketingConsentState\n  events(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: EventSortKeys, query: String): EventConnection!\n  firstName: String\n  hasTimelineComment: Boolean!\n  id: ID!\n  image: Image!\n  lastName: String\n  lastOrder: Order\n  legacyResourceId: UnsignedInt64!\n  lifetimeDuration: String!\n  locale: String!\n  market: Market\n  mergeable: CustomerMergeable!\n  metafield(namespace: String, key: String!): Metafield\n  metafieldDefinitions(namespace: String, pinnedStatus: MetafieldDefinitionPinnedStatus, first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: MetafieldDefinitionSortKeys, query: String): MetafieldDefinitionConnection!\n  metafields(namespace: String, keys: [String!], first: Int, after: String, last: Int, before: String, reverse: Boolean): MetafieldConnection!\n  multipassIdentifier: String\n  note: String\n  numberOfOrders: UnsignedInt64!\n  orders(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: OrderSortKeys, query: String): OrderConnection!\n  paymentMethods(showRevoked: Boolean, first: Int, after: String, last: Int, before: String, reverse: Boolean): CustomerPaymentMethodConnection!\n  phone: String\n  productSubscriberStatus: CustomerProductSubscriberStatus!\n  smsMarketingConsent: CustomerSmsMarketingConsentState\n  state: CustomerState!\n  statistics: CustomerStatistics!\n  storeCreditAccounts(first: Int, after: String, last: Int, before: String, query: String): StoreCreditAccountConnection!\n  subscriptionContracts(first: Int, after: String, last: Int, before: String, reverse: Boolean): SubscriptionContractConnection!\n  tags: [String!]!\n  taxExempt: Boolean!\n  taxExemptions: [TaxExemption!]!\n  unsubscribeUrl: URL!\n  updatedAt: DateTime!\n  validEmailAddress: Boolean!\n  verifiedEmail: Boolean!\n}",
+          "userErrorsField": null
+        },
+        {
+          "name": "discountCodeBasicCreate",
+          "surface": "admin",
+          "note": "Create a single-use fixed-amount discount code for the computed monetary value tied to the resolved customer",
+          "args": [
+            {
+              "name": "basicCodeDiscount",
+              "required": true,
+              "type": "DiscountCodeBasicInput!"
+            }
+          ],
+          "examples": [
+            {
+              "query": "mutation CreateSegmentDiscountCode($basicCodeDiscount: DiscountCodeBasicInput!) {\n  discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {\n    codeDiscountNode {\n      id\n      codeDiscount {\n        ... on DiscountCodeBasic {\n          title\n          codes(first: 10) {\n            nodes {\n              code\n            }\n          }\n          context {\n            ... on DiscountCustomerSegments {\n              segments {\n                id\n              }\n            }\n          }\n          customerGets {\n            value {\n              ... on DiscountAmount {\n                amount {\n                  amount\n                  currencyCode\n                }\n                appliesOnEachItem\n              }\n            }\n          }\n        }\n      }\n    }\n    userErrors {\n      field\n      message\n    }\n  }\n}",
+              "response": {
+                "discountCodeBasicCreate": {
+                  "codeDiscountNode": {
+                    "codeDiscount": {
+                      "codes": {
+                        "nodes": [
+                          {
+                            "code": "VIP20OFF"
+                          }
+                        ]
+                      },
+                      "context": {
+                        "segments": [
+                          {
+                            "id": "gid://shopify/Segment/210588551"
+                          }
+                        ]
+                      },
+                      "customerGets": {
+                        "value": {
+                          "amount": {
+                            "amount": "20.0",
+                            "currencyCode": "USD"
+                          },
+                          "appliesOnEachItem": false
+                        }
+                      },
+                      "title": "$20 off for VIP customers"
+                    },
+                    "id": "gid://shopify/DiscountCodeNode/1057856653"
+                  },
+                  "userErrors": []
+                }
+              },
+              "scenario_title": "Create a discount code with a customer segment",
+              "variables": {
+                "basicCodeDiscount": {
+                  "appliesOncePerCustomer": true,
+                  "code": "VIP20OFF",
+                  "context": {
+                    "customerSegments": {
+                      "add": [
+                        "gid://shopify/Segment/210588551"
+                      ]
+                    }
+                  },
+                  "customerGets": {
+                    "items": {
+                      "all": true
+                    },
+                    "value": {
+                      "discountAmount": {
+                        "amount": "20.00",
+                        "appliesOnEachItem": false
+                      }
+                    }
+                  },
+                  "endsAt": null,
+                  "startsAt": "2025-07-24T16:16:22-04:00",
+                  "title": "$20 off for VIP customers"
+                }
+              }
+            },
+            {
+              "query": "mutation CreateDiscountCode($basicCodeDiscount: DiscountCodeBasicInput!) {\n  discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {\n    codeDiscountNode {\n      id\n      codeDiscount {\n        ... on DiscountCodeBasic {\n          title\n          startsAt\n          endsAt\n          customerSelection {\n            ... on DiscountCustomers {\n              customers {\n                id\n              }\n            }\n          }\n          customerGets {\n            value {\n              ... on DiscountPercentage {\n                percentage\n              }\n            }\n          }\n        }\n      }\n    }\n    userErrors {\n      field\n      message\n    }\n  }\n}",
+              "response": {
+                "discountCodeBasicCreate": {
+                  "codeDiscountNode": {
+                    "codeDiscount": {
+                      "customerGets": {
+                        "value": {
+                          "percentage": 0.1
+                        }
+                      },
+                      "customerSelection": {
+                        "customers": [
+                          {
+                            "id": "gid://shopify/Customer/624407574"
+                          }
+                        ]
+                      },
+                      "endsAt": "2025-12-31T23:59:59Z",
+                      "startsAt": "2025-01-01T00:00:00Z",
+                      "title": "10% off selected items"
+                    },
+                    "id": "gid://shopify/DiscountCodeNode/1057856652"
+                  },
+                  "userErrors": []
+                }
+              },
+              "scenario_title": "Create a percentage off discount code with a minimum purchase requirement",
+              "variables": {
+                "basicCodeDiscount": {
+                  "appliesOncePerCustomer": true,
+                  "code": "10FORYOU",
+                  "customerGets": {
+                    "items": {
+                      "all": true
+                    },
+                    "value": {
+                      "percentage": 0.1
+                    }
+                  },
+                  "customerSelection": {
+                    "customers": {
+                      "add": [
+                        "gid://shopify/Customer/624407574"
+                      ]
+                    }
+                  },
+                  "endsAt": "2025-12-31T23:59:59Z",
+                  "minimumRequirement": {
+                    "subtotal": {
+                      "greaterThanOrEqualToSubtotal": "50.0"
+                    }
+                  },
+                  "startsAt": "2025-01-01T00:00:00Z",
+                  "title": "10% off selected items",
+                  "usageLimit": 100
+                }
+              }
+            },
+            {
+              "query": "mutation CreateSummerDiscount($input: DiscountCodeBasicInput!) {\n  discountCodeBasicCreate(basicCodeDiscount: $input) {\n    codeDiscountNode {\n      id\n      codeDiscount {\n        ... on DiscountCodeBasic {\n          title\n          codes(first: 10) {\n            nodes {\n              code\n            }\n          }\n          startsAt\n          endsAt\n        }\n      }\n    }\n    userErrors {\n      field\n      message\n    }\n  }\n}",
+              "response": {
+                "discountCodeBasicCreate": {
+                  "codeDiscountNode": {
+                    "codeDiscount": {
+                      "codes": {
+                        "nodes": [
+                          {
+                            "code": "BUYNOW20"
+                          }
+                        ]
+                      },
+                      "endsAt": "2024-09-21T00:00:00Z",
+                      "startsAt": "2024-06-21T00:00:00Z",
+                      "title": "Limited time discount off all items"
+                    },
+                    "id": "gid://shopify/DiscountCodeNode/1057856654"
+                  },
+                  "userErrors": []
+                }
+              },
+              "scenario_title": "Create an amount off discount code with an end date",
+              "variables": {
+                "input": {
+                  "appliesOncePerCustomer": true,
+                  "code": "BUYNOW20",
+                  "customerGets": {
+                    "items": {
+                      "all": true
+                    },
+                    "value": {
+                      "discountAmount": {
+                        "amount": 20,
+                        "appliesOnEachItem": false
+                      }
+                    }
+                  },
+                  "customerSelection": {
+                    "all": true
+                  },
+                  "endsAt": "2024-09-21T00:00:00Z",
+                  "startsAt": "2024-06-21T00:00:00Z",
+                  "title": "Limited time discount off all items"
+                }
+              }
+            }
+          ],
+          "inputTypesSdl": {
+            "DateTime": "scalar DateTime",
+            "Decimal": "scalar Decimal",
+            "DiscountAmountInput": "input DiscountAmountInput {\n  amount: Decimal\n  appliesOnEachItem: Boolean\n}",
+            "DiscountBuyerSelection": "enum DiscountBuyerSelection {\n  ALL\n}",
+            "DiscountCodeBasicInput": "input DiscountCodeBasicInput {\n  combinesWith: DiscountCombinesWithInput\n  title: String\n  startsAt: DateTime\n  endsAt: DateTime\n  appliesOncePerCustomer: Boolean\n  code: String\n  usageLimit: Int\n  context: DiscountContextInput\n  tags: [String!]\n  minimumRequirement: DiscountMinimumRequirementInput\n  customerGets: DiscountCustomerGetsInput\n  recurringCycleLimit: Int\n}",
+            "DiscountCollectionsInput": "input DiscountCollectionsInput {\n  add: [ID!]\n  remove: [ID!]\n}",
+            "DiscountCombinesWithInput": "input DiscountCombinesWithInput {\n  productDiscounts: Boolean\n  orderDiscounts: Boolean\n  shippingDiscounts: Boolean\n}",
+            "DiscountContextInput": "input DiscountContextInput {\n  all: DiscountBuyerSelection\n  customers: DiscountCustomersInput\n  customerSegments: DiscountCustomerSegmentsInput\n}",
+            "DiscountCustomerGetsInput": "input DiscountCustomerGetsInput {\n  value: DiscountCustomerGetsValueInput\n  items: DiscountItemsInput\n  appliesOnOneTimePurchase: Boolean\n  appliesOnSubscription: Boolean\n}",
+            "DiscountCustomerGetsValueInput": "input DiscountCustomerGetsValueInput {\n  discountOnQuantity: DiscountOnQuantityInput\n  percentage: Float\n  discountAmount: DiscountAmountInput\n}",
+            "DiscountCustomerSegmentsInput": "input DiscountCustomerSegmentsInput {\n  add: [ID!]\n  remove: [ID!]\n}",
+            "DiscountCustomersInput": "input DiscountCustomersInput {\n  add: [ID!]\n  remove: [ID!]\n}",
+            "DiscountEffectInput": "input DiscountEffectInput {\n  percentage: Float\n  amount: Decimal\n}",
+            "DiscountItemsInput": "input DiscountItemsInput {\n  products: DiscountProductsInput\n  collections: DiscountCollectionsInput\n  all: Boolean\n}",
+            "DiscountMinimumQuantityInput": "input DiscountMinimumQuantityInput {\n  greaterThanOrEqualToQuantity: UnsignedInt64\n}",
+            "DiscountMinimumRequirementInput": "input DiscountMinimumRequirementInput {\n  quantity: DiscountMinimumQuantityInput\n  subtotal: DiscountMinimumSubtotalInput\n}",
+            "DiscountMinimumSubtotalInput": "input DiscountMinimumSubtotalInput {\n  greaterThanOrEqualToSubtotal: Decimal\n}",
+            "DiscountOnQuantityInput": "input DiscountOnQuantityInput {\n  quantity: UnsignedInt64\n  effect: DiscountEffectInput\n}",
+            "DiscountProductsInput": "input DiscountProductsInput {\n  productsToAdd: [ID!]\n  productsToRemove: [ID!]\n  productVariantsToAdd: [ID!]\n  productVariantsToRemove: [ID!]\n}",
+            "UnsignedInt64": "scalar UnsignedInt64"
+          },
+          "isConnection": false,
+          "kind": "mutation",
+          "returnTypeName": "DiscountCodeBasicCreatePayload",
+          "returnTypeSdl": "type DiscountCodeBasicCreatePayload {\n  codeDiscountNode: DiscountCodeNode\n  userErrors: [DiscountUserError!]!\n}",
+          "userErrorsField": "userErrors"
+        }
+      ]
+    },
+    {
+      "capability_id": "cancel-redemption",
+      "ops": [
+        {
+          "name": "discountCodeDeactivate",
+          "surface": "admin",
+          "note": "Deactivate (void) the previously created discount so it cannot be applied at checkout after the redemption is cancelled",
+          "args": [
+            {
+              "name": "id",
+              "required": true,
+              "type": "ID!"
+            }
+          ],
+          "examples": [],
+          "inputTypesSdl": {},
+          "isConnection": false,
+          "kind": "mutation",
+          "returnTypeName": "DiscountCodeDeactivatePayload",
+          "returnTypeSdl": "type DiscountCodeDeactivatePayload {\n  codeDiscountNode: DiscountCodeNode\n  userErrors: [DiscountUserError!]!\n}",
+          "userErrorsField": "userErrors"
+        }
+      ]
+    }
+  ],
+  "webhooks": [
+    {
+      "trigger_event": "an order is paid",
+      "topic": "orders/paid",
+      "note": "Delivers full order payload including order id, total price, and customer object needed to compute and credit earned points",
+      "description": "Occurs whenever an order is paid.",
+      "payloadFields": [
+        {
+          "format": "uri",
+          "name": "admin_graphql_api_id",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "app_id",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "name": "billing_address",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "format": "ipv4",
+          "name": "browser_ip",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "buyer_accepts_marketing",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "name": "cancel_reason",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "format": "date-time",
+          "name": "cancelled_at",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "cart_token",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "checkout_token",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "client_details",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "format": "date-time",
+          "name": "closed_at",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "company",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "name": "confirmation_number",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "confirmed",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "format": "email",
+          "name": "contact_email",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "format": "date-time",
+          "name": "created_at",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "currency",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "current_shipping_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "current_subtotal_price",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "current_subtotal_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "current_total_additional_fees_set",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "name": "current_total_discounts",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "current_total_discounts_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "current_total_duties_set",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "name": "current_total_price",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "current_total_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "current_total_tax",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "current_total_tax_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "customer",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "customer_locale",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "device_id",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "items_type": "object",
+          "name": "discount_applications",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "items_type": "object",
+          "name": "discount_codes",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "duties_included",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "format": "email",
+          "name": "email",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "estimated_taxes",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "name": "financial_status",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "fulfillment_status",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "items_type": "object",
+          "name": "fulfillments",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "id",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "name": "landing_site",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "format": "uri",
+          "name": "landing_site_ref",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "line_item_groups",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "items_type": "object",
+          "name": "line_items",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "location_id",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "name": "merchant_business_entity_id",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "merchant_of_record_app_id",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "name": "name",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "note",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "items_type": "object",
+          "name": "note_attributes",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "number",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "name": "order_number",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "format": "uri",
+          "name": "order_status_url",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "original_total_additional_fees_set",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "name": "original_total_duties_set",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "items_type": "string",
+          "name": "payment_gateway_names",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "payment_terms",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "phone",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "po_number",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "presentment_currency",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "format": "date-time",
+          "name": "processed_at",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "reference",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "referring_site",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "refunds",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "returns",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "shipping_address",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "items_type": "object",
+          "name": "shipping_lines",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "source_identifier",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "source_name",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "format": "uri",
+          "name": "source_url",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "subtotal_price",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "subtotal_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "tags",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "tax_exempt",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "items_type": "object",
+          "name": "tax_lines",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "taxes_included",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "name": "test",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "name": "token",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_cash_rounding_payment_adjustment_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_cash_rounding_refund_adjustment_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_discounts",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_discounts_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_line_items_price",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_line_items_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_outstanding",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_price",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_shipping_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_tax",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_tax_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_tip_received",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_weight",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "format": "date-time",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "user_id",
+          "nullable": true,
+          "type": "integer"
+        }
+      ],
+      "access_scopes": [
+        "orders",
+        "marketplace_orders"
+      ],
+      "related_resource": "Order"
+    },
+    {
+      "trigger_event": "a refund is issued on an order",
+      "topic": "refunds/create",
+      "note": "Delivers refund id, order id, and refund line items needed to compute proportional point reversal",
+      "description": "Occurs whenever a new refund is created without errors on an order, independent from the movement of money.",
+      "payloadFields": [
+        {
+          "format": "uri",
+          "name": "admin_graphql_api_id",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "format": "date-time",
+          "name": "created_at",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "duties",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "id",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "name": "note",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "items_type": "object",
+          "name": "order_adjustments",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "order_id",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "format": "date-time",
+          "name": "processed_at",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "items_type": "object",
+          "name": "refund_line_items",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "refund_shipping_lines",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "restock",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "name": "return",
+          "nullable": false,
+          "type": "unknown"
+        },
+        {
+          "name": "total_duties_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "items_type": "object",
+          "name": "transactions",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "user_id",
+          "nullable": false,
+          "type": "integer"
+        }
+      ],
+      "access_scopes": [
+        "orders",
+        "marketplace_orders",
+        "buyer_membership_orders"
+      ],
+      "related_resource": "Refund"
+    }
+  ],
+  "unsatisfied": []
+}
