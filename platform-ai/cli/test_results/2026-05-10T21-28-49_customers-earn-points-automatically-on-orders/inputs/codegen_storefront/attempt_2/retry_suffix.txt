@@ -1,8 +1,0 @@
-
-
-PREVIOUS ATTEMPT FAILED VALIDATION:
-- setTimeout delay 1500ms exceeds 500ms — use event-driven patterns, not timers
-- setTimeout delay 'POLL_INTERVAL_MS' is not a numeric literal — only literal millisecond values ≤ 500 are allowed (debounce / throttle only)
-
-Fix ALL listed errors in this new attempt.
-

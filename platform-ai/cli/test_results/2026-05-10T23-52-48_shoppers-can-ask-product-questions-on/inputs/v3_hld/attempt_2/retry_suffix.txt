@@ -1,5 +1,0 @@
-
-
-PREVIOUS ATTEMPT FAILED VALIDATION:
-  - externalContracts.0: Value error, GET /widget/questions returns a 'list' in responseShape but has no pagination cursor in requestShape. Add one of ['after', 'before', 'cursor', 'page', 'page_cursor'] (typically 'cursor' with kind 'text') so the endpoint is paginable at scale.
-Fix ALL listed errors in this new attempt. Emit a single JSON object that conforms to the schema; no markdown fences, no prose.
