@@ -33,7 +33,7 @@ from subagents.a_hld_agent.prompt import build_system_prompt
 from subagents.a_hld_agent.schema import HLDPlan
 
 _MAX_ATTEMPTS = 3
-_MAX_TOKENS = 4000
+_MAX_TOKENS = 7000
 _THINKING_BUDGET = 4000
 
 

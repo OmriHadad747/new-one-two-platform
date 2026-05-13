@@ -203,3 +203,16 @@ export function percentage(amount: number, pct: number): number {
   }
   return Math.round((amount * pct) / 100);
 }
+
+// Namespace export so `import { money } from "../lib/money.js"; money.toMinorUnits(...)`
+// works alongside the individual function exports above. Matches the shape
+// of `config` (config.ts) and `workflow` (workflow.ts) so the codegen
+// agents can teach a single import pattern across all three helpers.
+export const money = {
+  currency,
+  toMinorUnits,
+  fromMinorUnits,
+  format,
+  sum,
+  percentage,
+};

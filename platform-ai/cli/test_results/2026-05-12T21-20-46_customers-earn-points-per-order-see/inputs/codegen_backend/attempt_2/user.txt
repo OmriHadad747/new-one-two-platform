@@ -14,14 +14,14 @@ LLD PLAN — authoritative spec for handler implementation
       "orders/paid",
       "refunds/create"
     ],
-    "cronSchedule": "*/10 * * * *",
+    "cronSchedule": null,
     "bulkFetchRequired": false
   },
   "database": {
     "tables": [
       {
         "name": "point_ledger",
-        "purpose": "Append-only audit trail of every point event per customer \u2014 earn, redemption debit, refund reversal, and cancellation credit.",
+        "purpose": "Append-only record of every point event \u2014 earn, redemption debit, refund reversal, and redemption cancellation credit \u2014 providing a full audit trail per customer.",
         "columns": [
           {
             "name": "id",
@@ -35,28 +35,28 @@ LLD PLAN — authoritative spec for handler implementation
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "Shopify customer numeric id whose balance is affected"
+            "purpose": "Shopify customer numeric ID whose balance is affected"
           },
           {
             "name": "order_external_id",
             "sqlType": "BIGINT",
             "constraints": "NULL",
             "enum": null,
-            "purpose": "Shopify order numeric id that triggered an earn or reversal entry"
+            "purpose": "Shopify order numeric ID that triggered an earn or refund-reversal entry"
           },
           {
             "name": "refund_external_id",
             "sqlType": "BIGINT",
             "constraints": "NULL",
             "enum": null,
-            "purpose": "Shopify refund numeric id that triggered a reversal entry"
+            "purpose": "Shopify refund numeric ID that triggered a reversal entry"
           },
           {
             "name": "redemption_id",
             "sqlType": "UUID",
             "constraints": "NULL",
             "enum": null,
-            "purpose": "FK to point_redemptions row that triggered a debit or cancellation credit"
+            "purpose": "point_redemptions row that triggered a debit or cancellation-credit entry"
           },
           {
             "name": "entry_type",
@@ -75,7 +75,7 @@ LLD PLAN — authoritative spec for handler implementation
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "Signed delta \u2014 positive for credits, negative for debits"
+            "purpose": "Positive for credits (earn, cancellation_credit), negative for debits"
           },
           {
             "name": "created_at",
@@ -102,7 +102,7 @@ LLD PLAN — authoritative spec for handler implementation
       },
       {
         "name": "customer_balance_snapshots",
-        "purpose": "Pre-aggregated current point balance per customer enabling O(1) reads from the cart widget and admin audit list.",
+        "purpose": "Pre-aggregated current point balance per customer to allow instant, scalable reads from the cart widget and admin audit list.",
         "columns": [
           {
             "name": "id",
@@ -116,28 +116,28 @@ LLD PLAN — authoritative spec for handler implementation
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "Shopify customer numeric id this snapshot represents"
+            "purpose": "Shopify customer numeric ID \u2014 unique per row"
           },
           {
             "name": "available_points",
             "sqlType": "BIGINT",
             "constraints": "NOT NULL DEFAULT 0",
             "enum": null,
-            "purpose": null
+            "purpose": "Current spendable point balance, clamped to >= 0"
           },
           {
             "name": "lifetime_earned",
             "sqlType": "BIGINT",
             "constraints": "NOT NULL DEFAULT 0",
             "enum": null,
-            "purpose": null
+            "purpose": "Cumulative points ever earned"
           },
           {
             "name": "lifetime_redeemed",
             "sqlType": "BIGINT",
             "constraints": "NOT NULL DEFAULT 0",
             "enum": null,
-            "purpose": null
+            "purpose": "Cumulative points ever redeemed"
           },
           {
             "name": "updated_at",
@@ -153,8 +153,8 @@ LLD PLAN — authoritative spec for handler implementation
           ]
         },
         "indexes": [
-          "customer_external_id",
-          "available_points DESC, id DESC"
+          "available_points",
+          "customer_external_id"
         ],
         "foreignKeys": []
       },
@@ -174,59 +174,59 @@ LLD PLAN — authoritative spec for handler implementation
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "Shopify customer numeric id who applied the redemption"
+            "purpose": "Shopify customer numeric ID who applied the redemption"
           },
           {
             "name": "cart_external_id",
             "sqlType": "TEXT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "Cart token the discount was applied to"
+            "purpose": "Shopify cart token the discount was applied to"
           },
           {
             "name": "discount_external_id",
             "sqlType": "TEXT",
             "constraints": "NULL",
             "enum": null,
-            "purpose": "Shopify DiscountCodeNode GID created for this redemption"
+            "purpose": "Shopify DiscountCodeNode GID for the created discount code"
           },
           {
             "name": "discount_code",
             "sqlType": "TEXT",
             "constraints": "NULL",
             "enum": null,
-            "purpose": "Discount code string returned by Shopify, applied at checkout"
+            "purpose": "Human-readable discount code string returned by Shopify for customer application"
           },
           {
             "name": "points_applied",
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": null
+            "purpose": "Number of points debited for this redemption"
           },
           {
-            "name": "discount_value",
+            "name": "discount_value_minor",
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "Monetary discount amount in minor units"
+            "purpose": "Monetary discount value in currency minor units"
           },
           {
             "name": "currency",
             "sqlType": "TEXT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "ISO 4217 currency code for discount_value minor-unit interpretation"
+            "purpose": "ISO 4217 currency code for discount_value_minor"
           },
           {
             "name": "status",
             "sqlType": "TEXT",
-            "constraints": "NOT NULL DEFAULT 'active'",
+            "constraints": "NOT NULL DEFAULT 'pending'",
             "enum": [
+              "pending",
               "active",
-              "cancelling",
               "cancelled",
-              "expired"
+              "used"
             ],
             "purpose": null
           },
@@ -235,7 +235,7 @@ LLD PLAN — authoritative spec for handler implementation
             "sqlType": "TEXT",
             "constraints": "NULL",
             "enum": null,
-            "purpose": "Captured error message when cancel workflow fails"
+            "purpose": "Reason string when cancellation failed mid-flight"
           },
           {
             "name": "created_at",
@@ -260,42 +260,36 @@ LLD PLAN — authoritative spec for handler implementation
           ]
         },
         "indexes": [
-          "customer_external_id, cart_external_id, status",
-          "id, status"
+          "cart_external_id, customer_external_id, status",
+          "customer_external_id",
+          "id"
         ],
         "foreignKeys": []
       },
       {
-        "name": "earn_claim_log",
-        "purpose": "Dedup sentinel for order earn events \u2014 one row per order_external_id prevents double-crediting on duplicate orders/paid webhook deliveries.",
+        "name": "earn_idempotency",
+        "purpose": "Single-row-per-order dedup table used as the atomic INSERT-form claim for order earn events, preventing double-crediting on duplicate webhook delivery.",
         "columns": [
-          {
-            "name": "id",
-            "sqlType": "UUID",
-            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
-            "enum": null,
-            "purpose": null
-          },
           {
             "name": "order_external_id",
             "sqlType": "BIGINT",
-            "constraints": "NOT NULL",
+            "constraints": "PRIMARY KEY",
             "enum": null,
-            "purpose": "Shopify order numeric id for which points were earned"
+            "purpose": "Shopify order numeric ID \u2014 one row per paid order"
           },
           {
             "name": "customer_external_id",
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "Customer who earned the points"
+            "purpose": "Customer credited for this earn"
           },
           {
-            "name": "points_credited",
+            "name": "points_earned",
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": null
+            "purpose": "Points credited in this earn event"
           },
           {
             "name": "created_at",
@@ -305,54 +299,41 @@ LLD PLAN — authoritative spec for handler implementation
             "purpose": null
           }
         ],
-        "uniqueConstraint": {
-          "columns": [
-            "order_external_id"
-          ]
-        },
-        "indexes": [
-          "order_external_id"
-        ],
+        "uniqueConstraint": null,
+        "indexes": [],
         "foreignKeys": []
       },
       {
-        "name": "refund_reversal_log",
-        "purpose": "Dedup sentinel for refund reversal events \u2014 one row per refund_external_id prevents double-debiting on duplicate refunds/create webhook deliveries.",
+        "name": "refund_idempotency",
+        "purpose": "Single-row-per-refund dedup table used as the atomic INSERT-form claim for refund events, preventing double-reversal on duplicate webhook delivery.",
         "columns": [
-          {
-            "name": "id",
-            "sqlType": "UUID",
-            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
-            "enum": null,
-            "purpose": null
-          },
           {
             "name": "refund_external_id",
             "sqlType": "BIGINT",
-            "constraints": "NOT NULL",
+            "constraints": "PRIMARY KEY",
             "enum": null,
-            "purpose": "Shopify refund numeric id for which points were reversed"
+            "purpose": "Shopify refund numeric ID \u2014 one row per refund"
           },
           {
             "name": "order_external_id",
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "Order the refund was issued against"
+            "purpose": "Parent order for this refund"
           },
           {
             "name": "customer_external_id",
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "Customer whose points were reversed"
+            "purpose": "Customer debited for this reversal"
           },
           {
             "name": "points_reversed",
             "sqlType": "BIGINT",
             "constraints": "NOT NULL",
             "enum": null,
-            "purpose": "Actual points reversed, clamped so balance cannot go negative"
+            "purpose": "Points reversed (actual, may be clamped)"
           },
           {
             "name": "created_at",
@@ -362,85 +343,35 @@ LLD PLAN — authoritative spec for handler implementation
             "purpose": null
           }
         ],
-        "uniqueConstraint": {
-          "columns": [
-            "refund_external_id"
-          ]
-        },
-        "indexes": [
-          "refund_external_id"
-        ],
+        "uniqueConstraint": null,
+        "indexes": [],
         "foreignKeys": []
       }
     ]
   },
-  "stateMachine": {
-    "kind": "workflow",
-    "table": "point_redemptions",
-    "column": "status",
-    "states": [
-      "active",
-      "cancelling",
-      "cancelled",
-      "expired"
-    ],
-    "initialState": "active",
-    "terminalStates": [
-      "cancelled",
-      "expired"
-    ],
-    "unknownSentinel": "null",
-    "skipWhenUnknown": false,
-    "transitions": [
-      {
-        "from": "active",
-        "to": "cancelling",
-        "trigger": "Customer requests redemption cancellation",
-        "action": "workflow.claim gates the cancel flow"
-      },
-      {
-        "from": "cancelling",
-        "to": "cancelled",
-        "trigger": "Shopify discount deactivated and ledger credit written successfully",
-        "action": "workflow.complete marks the row terminal"
-      },
-      {
-        "from": "cancelling",
-        "to": "active",
-        "trigger": "Shopify discount deactivation or ledger write fails",
-        "action": "workflow.fail rolls status back via failure_reason capture"
-      },
-      {
-        "from": "active",
-        "to": "expired",
-        "trigger": "Sweep detects active redemptions older than TTL with no cancellation",
-        "action": "workflow.sweepStale flips to expired"
-      }
-    ]
-  },
+  "stateMachine": null,
   "httpRoutes": {
     "widget": [
       {
         "path": "/balance",
         "method": "GET",
-        "purpose": "Return the customer's current redeemable point balance and its monetary equivalent so the cart widget can render the points panel.",
+        "purpose": "Return the customer's current redeemable point balance and its monetary equivalent so the cart page can render the points panel on load.",
         "requestShape": {
-          "customer_id": "string"
+          "customer_external_id": "string"
         },
         "responseShape": {
           "available_points": "number",
-          "monetary_equivalent": "string",
-          "currency": "string"
+          "monetary_equivalent": "string"
         },
         "paginationKind": null
       },
       {
         "path": "/redemption/current",
         "method": "GET",
-        "purpose": "Return the active redemption for the current cart so the widget renders the correct initial state.",
+        "purpose": "Return the active redemption for the current cart so the widget can render the correct initial state without a form submission.",
         "requestShape": {
           "cart_external_id": "string",
-          "customer_id": "string"
+          "customer_external_id": "string"
         },
         "responseShape": {
           "redemption_id": "string|null",
@@ -454,9 +385,9 @@ LLD PLAN — authoritative spec for handler implementation
       {
         "path": "/redemption/apply",
         "method": "POST",
-        "purpose": "Apply a requested number of points as a Shopify discount on the current cart after validating the customer's available balance.",
+        "purpose": "Apply a requested number of points as a discount on the current cart after validating the customer's available balance.",
         "requestShape": {
-          "customer_id": "string",
+          "customer_external_id": "string",
           "cart_external_id": "string",
           "points_requested": "number",
           "currency": "string"
@@ -476,7 +407,7 @@ LLD PLAN — authoritative spec for handler implementation
         "purpose": "Cancel an active redemption, void the associated Shopify discount, and restore the customer's point balance.",
         "requestShape": {
           "redemption_id": "string",
-          "customer_id": "string"
+          "customer_external_id": "string"
         },
         "responseShape": {
           "restored_balance": "number",
@@ -489,14 +420,15 @@ LLD PLAN — authoritative spec for handler implementation
       {
         "path": "/customers/balances",
         "method": "GET",
-        "purpose": "Return a cursor-paginated list of all customer point balances for the merchant audit view.",
+        "purpose": "Return a cursor-paginated list of all customer point balances so the merchant can audit the system.",
         "requestShape": {
-          "cursor": "string|null",
+          "cursor_sort": "string|null",
+          "cursor_id": "string|null",
           "search_customer": "string|null",
           "page_size": "number"
         },
         "responseShape": {
-          "balances": "{ customer_external_id: number, available_points: number, lifetime_earned: number, lifetime_redeemed: number, updated_at: string }[]",
+          "items": "{ customer_external_id: string, available_points: number, lifetime_earned: number, lifetime_redeemed: number, updated_at: string }[]",
           "next_cursor": "string|null",
           "page_size": "number"
         },
@@ -516,7 +448,7 @@ LLD PLAN — authoritative spec for handler implementation
       {
         "path": "/settings",
         "method": "POST",
-        "purpose": "Save updated earn rate and redemption rate settings supplied by the merchant.",
+        "purpose": "Save updated earn rate and redemption rate settings.",
         "requestShape": {
           "points_per_dollar": "number",
           "points_to_discount_rate": "number"
@@ -532,47 +464,47 @@ LLD PLAN — authoritative spec for handler implementation
   "capabilityRecipes": {
     "credit-points-on-order-paid": {
       "triggeredBy": "webhook:orders/paid",
-      "description": "When an order is paid, compute points earned from the order total, write a credit entry to the ledger, and update the customer's balance snapshot \u2014 idempotent via INSERT-form claim on order_external_id.",
+      "description": "When an order is paid, compute points earned from the order total and configured earn rate, write a credit entry to the ledger, and update the customer's balance snapshot.",
       "inputs": [
         {
-          "name": "orderIdRaw",
+          "name": "orderId",
           "source": "webhook.payload",
           "fieldPath": "id",
           "type": "number",
           "nullable": false
         },
         {
-          "name": "totalPriceStr",
+          "name": "customerIdRaw",
+          "source": "webhook.payload",
+          "fieldPath": "customer.id",
+          "type": "number",
+          "nullable": true
+        },
+        {
+          "name": "totalPriceRaw",
           "source": "webhook.payload",
           "fieldPath": "total_price",
           "type": "string",
           "nullable": false
         },
         {
-          "name": "currency",
+          "name": "currencyRaw",
           "source": "webhook.payload",
           "fieldPath": "currency",
           "type": "string",
           "nullable": false
-        },
-        {
-          "name": "customerRaw",
-          "source": "webhook.payload",
-          "fieldPath": "customer",
-          "type": "object",
-          "nullable": true
         }
       ],
       "steps": [
         {
           "kind": "compute",
-          "purpose": "null-defend customer id from webhook payload (R3)",
+          "purpose": "null-defend the customer id (R3)",
           "bindResultTo": "customerId",
-          "expression": "customerRaw?.id ?? null"
+          "expression": "customerIdRaw ?? null"
         },
         {
           "kind": "decision",
-          "purpose": "skip orders without an authenticated customer (guest checkout)",
+          "purpose": "skip guest-checkout orders without a customer",
           "bindResultTo": null,
           "condition": "customerId === null",
           "ifTrue": [
@@ -582,9 +514,9 @@ LLD PLAN — authoritative spec for handler implementation
               "bindResultTo": null,
               "level": "info",
               "fields": {
-                "order_id": "$orderIdRaw"
+                "order_id": "$orderId"
               },
-              "message": "skipping earn: guest checkout"
+              "message": "skipping earn: guest checkout, no customer"
             },
             {
               "kind": "return",
@@ -595,73 +527,24 @@ LLD PLAN — authoritative spec for handler implementation
           "ifFalse": []
         },
         {
-          "kind": "compute",
-          "purpose": "load configured earn rate from platform config",
-          "bindResultTo": "pointsPerDollar",
-          "expression": "await config.get('loyalty_points_per_dollar', 1)",
-          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
-        },
-        {
-          "kind": "compute",
-          "purpose": "convert order total to minor units using currency-correct helper",
-          "bindResultTo": "totalMinorUnits",
-          "expression": "money.toMinorUnits(totalPriceStr, currency)",
-          "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
-        },
-        {
-          "kind": "compute",
-          "purpose": "compute points earned: floor(total_price_in_major_units * pointsPerDollar)",
-          "bindResultTo": "pointsEarned",
-          "expression": "Math.floor(money.fromMinorUnits(totalMinorUnits, currency) * pointsPerDollar)",
-          "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
-        },
-        {
-          "kind": "decision",
-          "purpose": "skip orders that yield zero points (e.g. fully-discounted order)",
-          "bindResultTo": null,
-          "condition": "pointsEarned <= 0",
-          "ifTrue": [
-            {
-              "kind": "log",
-              "purpose": "record zero-points skip",
-              "bindResultTo": null,
-              "level": "info",
-              "fields": {
-                "order_id": "$orderIdRaw"
-              },
-              "message": "skipping earn: zero points"
-            },
-            {
-              "kind": "return",
-              "purpose": "exit early \u2014 nothing to credit",
-              "bindResultTo": null
-            }
-          ],
-          "ifFalse": []
-        },
-        {
           "kind": "sql_insert",
-          "purpose": "INSERT-form atomic claim on earn_claim_log keyed by order_external_id \u2014 duplicate webhook delivery returns zero rows (R1 Pattern A)",
+          "purpose": "Atomic INSERT-form claim (R1, Pattern A) \u2014 one row per order; duplicate delivery returns zero rows via ON CONFLICT DO NOTHING",
           "bindResultTo": "claimed",
-          "template": "INSERT INTO earn_claim_log (order_external_id, customer_external_id, points_credited) VALUES (${orderId}, ${customerId}, ${pointsEarned}) ON CONFLICT (order_external_id) DO NOTHING RETURNING id",
+          "template": "INSERT INTO earn_idempotency (order_external_id, customer_external_id, points_earned) VALUES (${orderId}, ${customerId}, 0) ON CONFLICT (order_external_id) DO NOTHING RETURNING order_external_id",
           "bindings": [
             {
               "name": "orderId",
-              "source": "orderIdRaw"
+              "source": "orderId"
             },
             {
               "name": "customerId",
               "source": "customerId"
-            },
-            {
-              "name": "pointsEarned",
-              "source": "pointsEarned"
             }
           ]
         },
         {
           "kind": "decision",
-          "purpose": "duplicate order/paid delivery \u2014 claim returned zero rows; skip",
+          "purpose": "duplicate webhook delivery \u2014 claim returned zero rows; skip",
           "bindResultTo": null,
           "condition": "claimed.length === 0",
           "ifTrue": [
@@ -671,9 +554,9 @@ LLD PLAN — authoritative spec for handler implementation
               "bindResultTo": null,
               "level": "info",
               "fields": {
-                "order_id": "$orderIdRaw"
+                "order_id": "$orderId"
               },
-              "message": "skipping earn: duplicate webhook"
+              "message": "skipping earn: duplicate orders/paid webhook"
             },
             {
               "kind": "return",
@@ -684,13 +567,34 @@ LLD PLAN — authoritative spec for handler implementation
           "ifFalse": []
         },
         {
+          "kind": "compute",
+          "purpose": "read configured earn rate from config store",
+          "bindResultTo": "pointsPerDollar",
+          "expression": "await config.get('loyalty_points_per_dollar', 1)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "convert order total to minor units using money helper (touchesMoney)",
+          "bindResultTo": "totalMinor",
+          "expression": "money.toMinorUnits(totalPriceRaw, currencyRaw)",
+          "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "compute integer points earned: floor(dollars * rate)",
+          "bindResultTo": "pointsEarned",
+          "expression": "Math.floor(money.fromMinorUnits(totalMinor, currencyRaw) * pointsPerDollar)",
+          "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
+        },
+        {
           "kind": "sql_transaction",
-          "purpose": "atomically write ledger credit entry and upsert balance snapshot",
+          "purpose": "atomically write ledger entry, update idempotency record, and upsert balance snapshot",
           "bindResultTo": null,
           "steps": [
             {
               "kind": "sql_insert",
-              "purpose": "append earn entry to point_ledger",
+              "purpose": "append earn entry to ledger",
               "bindResultTo": null,
               "template": "INSERT INTO point_ledger (customer_external_id, order_external_id, entry_type, points_delta) VALUES (${customerId}, ${orderId}, 'earn', ${pointsEarned})",
               "bindings": [
@@ -700,7 +604,7 @@ LLD PLAN — authoritative spec for handler implementation
                 },
                 {
                   "name": "orderId",
-                  "source": "orderIdRaw"
+                  "source": "orderId"
                 },
                 {
                   "name": "pointsEarned",
@@ -709,10 +613,26 @@ LLD PLAN — authoritative spec for handler implementation
               ]
             },
             {
-              "kind": "sql_upsert",
-              "purpose": "upsert customer balance snapshot, incrementing available_points and lifetime_earned",
+              "kind": "sql_update",
+              "purpose": "stamp actual points_earned back onto idempotency row for audit",
               "bindResultTo": null,
-              "template": "INSERT INTO customer_balance_snapshots (customer_external_id, available_points, lifetime_earned, lifetime_redeemed, updated_at) VALUES (${customerId}, ${pointsEarned}, ${pointsEarned}, 0, now()) ON CONFLICT (customer_external_id) DO UPDATE SET available_points = customer_balance_snapshots.available_points + ${pointsEarned}, lifetime_earned = customer_balance_snapshots.lifetime_earned + ${pointsEarned}, updated_at = now()",
+              "template": "UPDATE earn_idempotency SET points_earned = ${pointsEarned} WHERE order_external_id = ${orderId}",
+              "bindings": [
+                {
+                  "name": "pointsEarned",
+                  "source": "pointsEarned"
+                },
+                {
+                  "name": "orderId",
+                  "source": "orderId"
+                }
+              ]
+            },
+            {
+              "kind": "sql_upsert",
+              "purpose": "upsert balance snapshot \u2014 increment available_points and lifetime_earned",
+              "bindResultTo": null,
+              "template": "INSERT INTO customer_balance_snapshots (customer_external_id, available_points, lifetime_earned, lifetime_redeemed) VALUES (${customerId}, ${pointsEarned}, ${pointsEarned}, 0) ON CONFLICT (customer_external_id) DO UPDATE SET available_points = customer_balance_snapshots.available_points + ${pointsEarned}, lifetime_earned = customer_balance_snapshots.lifetime_earned + ${pointsEarned}, updated_at = now()",
               "bindings": [
                 {
                   "name": "customerId",
@@ -728,41 +648,41 @@ LLD PLAN — authoritative spec for handler implementation
         },
         {
           "kind": "log",
-          "purpose": "confirm successful earn for ops visibility",
+          "purpose": "confirm successful earn for ops visibility (R8)",
           "bindResultTo": null,
           "level": "info",
           "fields": {
-            "order_id": "$orderIdRaw",
+            "order_id": "$orderId",
             "customer_id": "$customerId",
             "points_earned": "$pointsEarned"
           },
-          "message": "points credited for paid order"
+          "message": "loyalty earn credited"
         }
       ],
       "postconditions": [
-        "exactly one earn_claim_log row per order_external_id enforced by uniqueConstraint",
+        "exactly one earn_idempotency row per order_external_id",
         "exactly one point_ledger earn entry per order_external_id",
-        "customer_balance_snapshots row reflects the incremented balance"
+        "customer_balance_snapshots.available_points and lifetime_earned incremented by pointsEarned"
       ],
       "edgeCases": [
-        "Guest checkout (customer.id null in payload) \u2014 skipped before any DB write.",
-        "Fully-discounted order total yields zero points \u2014 skipped before claiming.",
-        "Duplicate orders/paid delivery for same order \u2014 earn_claim_log INSERT ON CONFLICT DO NOTHING returns zero rows; recipe exits before ledger write."
+        "Guest checkout (customer.id null in payload) \u2014 exit before any DB write.",
+        "Duplicate orders/paid delivery \u2014 earn_idempotency INSERT ON CONFLICT DO NOTHING returns zero rows; recipe exits without touching ledger or snapshot.",
+        "Order total is zero (100% discount order) \u2014 pointsEarned = 0; ledger entry still written for audit trail, snapshot delta is zero."
       ]
     },
     "reverse-points-on-refund": {
       "triggeredBy": "webhook:refunds/create",
-      "description": "When a refund is created, resolve the order's customer, compute the proportional points to reverse, write a debit entry, and update the snapshot, clamping to zero \u2014 idempotent via refund_external_id.",
+      "description": "When a refund is created, compute proportional points to reverse based on the refunded transaction amount, write a debit entry to the ledger, and clamp the customer's balance snapshot to zero if needed.",
       "inputs": [
         {
-          "name": "refundIdRaw",
+          "name": "refundId",
           "source": "webhook.payload",
           "fieldPath": "id",
           "type": "number",
           "nullable": false
         },
         {
-          "name": "orderIdRaw",
+          "name": "orderId",
           "source": "webhook.payload",
           "fieldPath": "order_id",
           "type": "number",
@@ -772,46 +692,96 @@ LLD PLAN — authoritative spec for handler implementation
           "name": "transactions",
           "source": "webhook.payload",
           "fieldPath": "transactions",
-          "type": "array",
+          "type": "object[]",
           "nullable": false
         }
       ],
       "steps": [
         {
           "kind": "compute",
-          "purpose": "null-defend refund id and order id (R3)",
-          "bindResultTo": "refundId",
-          "expression": "refundIdRaw ?? null"
+          "purpose": "null-defend transactions array (R3)",
+          "bindResultTo": "safeTransactions",
+          "expression": "transactions ?? []"
+        },
+        {
+          "kind": "compute",
+          "purpose": "extract the first refund transaction's amount and currency (kind='refund')",
+          "bindResultTo": "refundTxn",
+          "expression": "safeTransactions.find(t => t.kind === 'refund') ?? null"
         },
         {
           "kind": "decision",
-          "purpose": "skip if refund id is missing \u2014 malformed payload",
+          "purpose": "skip refunds with no monetary refund transaction (e.g. restock-only refunds)",
           "bindResultTo": null,
-          "condition": "refundId === null",
+          "condition": "refundTxn === null",
           "ifTrue": [
             {
               "kind": "log",
-              "purpose": "warn on malformed payload",
+              "purpose": "record skipped non-monetary refund",
               "bindResultTo": null,
-              "level": "warn",
+              "level": "info",
               "fields": {
-                "order_id": "$orderIdRaw"
+                "refund_id": "$refundId",
+                "order_id": "$orderId"
               },
-              "message": "skipping reversal: missing refund id"
+              "message": "skipping reversal: no refund transaction in payload"
             },
             {
               "kind": "return",
-              "purpose": "exit early \u2014 cannot proceed without refund id",
+              "purpose": "exit early \u2014 nothing to reverse",
               "bindResultTo": null
             }
           ],
           "ifFalse": []
         },
         {
+          "kind": "sql_select",
+          "purpose": "look up the original earn entry for this order to find the customer and original points earned",
+          "bindResultTo": "earnRows",
+          "template": "SELECT customer_external_id, points_delta FROM point_ledger WHERE order_external_id = ${orderId} AND entry_type = 'earn' LIMIT 1",
+          "bindings": [
+            {
+              "name": "orderId",
+              "source": "orderId"
+            }
+          ]
+        },
+        {
+          "kind": "decision",
+          "purpose": "skip if no earn entry exists for this order (order was placed before app installed)",
+          "bindResultTo": null,
+          "condition": "earnRows.length === 0",
+          "ifTrue": [
+            {
+              "kind": "log",
+              "purpose": "record skipped \u2014 no earn to reverse",
+              "bindResultTo": null,
+              "level": "info",
+              "fields": {
+                "refund_id": "$refundId",
+                "order_id": "$orderId"
+              },
+              "message": "skipping reversal: no earn entry found for order"
+            },
+            {
+              "kind": "return",
+              "purpose": "exit early \u2014 nothing to reverse",
+              "bindResultTo": null
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "extract customer id and original points earned from ledger row",
+          "bindResultTo": "earnInfo",
+          "expression": "({ customerId: earnRows[0].customer_external_id, originalPoints: earnRows[0].points_delta })"
+        },
+        {
           "kind": "sql_insert",
-          "purpose": "INSERT-form atomic claim on refund_reversal_log keyed by refund_external_id \u2014 duplicate delivery returns zero rows (R1 Pattern A)",
+          "purpose": "Atomic INSERT-form claim (R1, Pattern A) \u2014 one row per refund using resolved customer id; duplicate delivery returns zero rows",
           "bindResultTo": "claimed",
-          "template": "INSERT INTO refund_reversal_log (refund_external_id, order_external_id, customer_external_id, points_reversed) VALUES (${refundId}, ${orderId}, 0, 0) ON CONFLICT (refund_external_id) DO NOTHING RETURNING id",
+          "template": "INSERT INTO refund_idempotency (refund_external_id, order_external_id, customer_external_id, points_reversed) VALUES (${refundId}, ${orderId}, ${customerId}, 0) ON CONFLICT (refund_external_id) DO NOTHING RETURNING refund_external_id",
           "bindings": [
             {
               "name": "refundId",
@@ -819,13 +789,17 @@ LLD PLAN — authoritative spec for handler implementation
             },
             {
               "name": "orderId",
-              "source": "orderIdRaw"
+              "source": "orderId"
+            },
+            {
+              "name": "customerId",
+              "source": "earnInfo.customerId"
             }
           ]
         },
         {
           "kind": "decision",
-          "purpose": "duplicate refunds/create delivery \u2014 skip",
+          "purpose": "duplicate webhook delivery \u2014 claim returned zero rows",
           "bindResultTo": null,
           "condition": "claimed.length === 0",
           "ifTrue": [
@@ -837,7 +811,7 @@ LLD PLAN — authoritative spec for handler implementation
               "fields": {
                 "refund_id": "$refundId"
               },
-              "message": "skipping reversal: duplicate webhook"
+              "message": "skipping reversal: duplicate refunds/create webhook"
             },
             {
               "kind": "return",
@@ -849,98 +823,163 @@ LLD PLAN — authoritative spec for handler implementation
         },
         {
           "kind": "compute",
-          "purpose": "build Shopify order GID from numeric order id (R10)",
-          "bindResultTo": "orderGid",
-          "expression": "`gid://shopify/Order/${orderIdRaw}`"
-        },
-        {
-          "kind": "shopify_query",
-          "purpose": "resolve the order's customer id and total price for point reversal computation \u2014 payload does not carry customer (platformGap)",
-          "bindResultTo": "orderData",
-          "op": "customerByIdentifier",
-          "query": "query GetOrderCustomer($id: ID!) { order(id: $id) { id totalPriceSet { shopMoney { amount currencyCode } } customer { id legacyResourceId } } }",
-          "variables": {
-            "id": "$orderGid"
-          },
-          "paginationStrategy": "single",
-          "connectionPath": null,
-          "elementBinding": null,
-          "surface": "admin",
-          "example": "import { shopifyClientFor, ShopifyRateLimitError } from \"../lib/shopify.js\";\n\nconst shopify = await shopifyClientFor(req.platform!); // cron path: shopifyClientFor()\n\nconst data = await shopify.graphql<{\n  order: { id: string; name: string; totalPriceSet: { shopMoney: { amount: string; currencyCode: string } } } | null;\n}>(\n  `query GetOrder($id: ID!) {\n     order(id: $id) {\n       id\n       name\n       totalPriceSet { shopMoney { amount currencyCode } }\n     }\n   }`,\n  { id: `gid://shopify/Order/${orderId}` },\n);\n\nif (!data.order) return; // deleted / not visible\n\n// Money \u2014 Shopify returns decimal strings; persist as integer minor units.\nconst amountCents = Math.round(parseFloat(data.order.totalPriceSet.shopMoney.amount) * 100);\n"
-        },
-        {
-          "kind": "compute",
-          "purpose": "null-defend customer from order query result",
-          "bindResultTo": "customerId",
-          "expression": "orderData?.order?.customer?.legacyResourceId ? Number(orderData.order.customer.legacyResourceId) : null"
-        },
-        {
-          "kind": "decision",
-          "purpose": "skip if order has no customer (guest checkout or deleted customer)",
-          "bindResultTo": null,
-          "condition": "customerId === null",
-          "ifTrue": [
-            {
-              "kind": "sql_update",
-              "purpose": "remove the placeholder claim row since there is no customer to reverse points for",
-              "bindResultTo": null,
-              "template": "DELETE FROM refund_reversal_log WHERE id = ${claimId}",
-              "bindings": [
-                {
-                  "name": "claimId",
-                  "source": "claimed[0].id"
-                }
-              ]
-            },
-            {
-              "kind": "log",
-              "purpose": "record skip for guest order refund",
-              "bindResultTo": null,
-              "level": "info",
-              "fields": {
-                "refund_id": "$refundId",
-                "order_id": "$orderIdRaw"
-              },
-              "message": "skipping reversal: no customer on order"
-            },
-            {
-              "kind": "return",
-              "purpose": "exit early \u2014 no points to reverse",
-              "bindResultTo": null
-            }
-          ],
-          "ifFalse": []
-        },
-        {
-          "kind": "compute",
-          "purpose": "extract the refunded amount from transactions array \u2014 sum all transaction amounts of kind 'refund'",
-          "bindResultTo": "refundedAmountDecimal",
-          "expression": "transactions.filter(t => t.kind === 'refund').reduce((sum, t) => sum + parseFloat(t.amount || '0'), 0)"
-        },
-        {
-          "kind": "compute",
-          "purpose": "extract currency from first transaction, defaulting safely",
-          "bindResultTo": "refundCurrency",
-          "expression": "transactions[0]?.currency ?? 'USD'"
-        },
-        {
-          "kind": "compute",
-          "purpose": "load configured earn rate",
+          "purpose": "read configured earn rate",
           "bindResultTo": "pointsPerDollar",
           "expression": "await config.get('loyalty_points_per_dollar', 1)",
           "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
         },
         {
           "kind": "compute",
-          "purpose": "compute raw points to reverse: floor(refunded_amount * pointsPerDollar)",
+          "purpose": "convert refund amount to minor units using money helper",
+          "bindResultTo": "refundMinor",
+          "expression": "money.toMinorUnits(refundTxn.amount, refundTxn.currency)",
+          "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "compute raw points to reverse proportional to refunded amount",
           "bindResultTo": "rawPointsToReverse",
-          "expression": "Math.floor(refundedAmountDecimal * pointsPerDollar)"
+          "expression": "Math.min(Math.floor(money.fromMinorUnits(refundMinor, refundTxn.currency) * pointsPerDollar), earnInfo.originalPoints)",
+          "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
         },
         {
           "kind": "sql_select",
-          "purpose": "fetch current balance snapshot to clamp reversal",
-          "bindResultTo": "snapshot",
-          "template": "SELECT available_points FROM customer_balance_snapshots WHERE customer_external_id = ${customerId}",
+          "purpose": "read current balance snapshot to determine clamp",
+          "bindResultTo": "snapshotRows",
+          "template": "SELECT available_points FROM customer_balance_snapshots WHERE customer_external_id = ${customerId} LIMIT 1",
+          "bindings": [
+            {
+              "name": "customerId",
+              "source": "earnInfo.customerId"
+            }
+          ]
+        },
+        {
+          "kind": "compute",
+          "purpose": "clamp points to reverse to available balance (cannot go negative)",
+          "bindResultTo": "pointsToReverse",
+          "expression": "Math.min(rawPointsToReverse, snapshotRows.length > 0 ? Number(snapshotRows[0].available_points) : 0)"
+        },
+        {
+          "kind": "sql_transaction",
+          "purpose": "atomically write ledger debit, update idempotency row, and decrement balance snapshot",
+          "bindResultTo": null,
+          "steps": [
+            {
+              "kind": "sql_insert",
+              "purpose": "append refund_reversal entry to ledger (negative delta)",
+              "bindResultTo": null,
+              "template": "INSERT INTO point_ledger (customer_external_id, order_external_id, refund_external_id, entry_type, points_delta) VALUES (${customerId}, ${orderId}, ${refundId}, 'refund_reversal', ${negDelta})",
+              "bindings": [
+                {
+                  "name": "customerId",
+                  "source": "earnInfo.customerId"
+                },
+                {
+                  "name": "orderId",
+                  "source": "orderId"
+                },
+                {
+                  "name": "refundId",
+                  "source": "refundId"
+                },
+                {
+                  "name": "negDelta",
+                  "source": "-pointsToReverse"
+                }
+              ]
+            },
+            {
+              "kind": "sql_update",
+              "purpose": "stamp actual reversal back onto idempotency row for audit",
+              "bindResultTo": null,
+              "template": "UPDATE refund_idempotency SET points_reversed = ${pointsToReverse} WHERE refund_external_id = ${refundId}",
+              "bindings": [
+                {
+                  "name": "pointsToReverse",
+                  "source": "pointsToReverse"
+                },
+                {
+                  "name": "refundId",
+                  "source": "refundId"
+                }
+              ]
+            },
+            {
+              "kind": "sql_update",
+              "purpose": "decrement balance snapshot, clamped to 0 via GREATEST",
+              "bindResultTo": null,
+              "template": "UPDATE customer_balance_snapshots SET available_points = GREATEST(0, available_points - ${pointsToReverse}), updated_at = now() WHERE customer_external_id = ${customerId}",
+              "bindings": [
+                {
+                  "name": "pointsToReverse",
+                  "source": "pointsToReverse"
+                },
+                {
+                  "name": "customerId",
+                  "source": "earnInfo.customerId"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "log",
+          "purpose": "confirm successful reversal (R8)",
+          "bindResultTo": null,
+          "level": "info",
+          "fields": {
+            "refund_id": "$refundId",
+            "order_id": "$orderId",
+            "points_reversed": "$pointsToReverse"
+          },
+          "message": "loyalty reversal applied"
+        }
+      ],
+      "postconditions": [
+        "exactly one refund_idempotency row per refund_external_id",
+        "exactly one point_ledger refund_reversal entry per refund_external_id",
+        "customer_balance_snapshots.available_points decremented by pointsToReverse, clamped to >= 0",
+        "points reversed never exceed the original earn for that order"
+      ],
+      "edgeCases": [
+        "Duplicate refunds/create delivery \u2014 refund_idempotency INSERT ON CONFLICT DO NOTHING returns zero rows; recipe exits without touching ledger or snapshot.",
+        "Refund with no monetary transaction (restock-only) \u2014 no refund kind transaction in payload; recipe exits before claim.",
+        "Order placed before app was installed \u2014 no earn entry in ledger; recipe exits gracefully after earn-lookup decision, before writing the idempotency claim row.",
+        "Customer has already spent more points than this refund would reverse \u2014 pointsToReverse clamped to current available_points; ledger entry records the actual (clamped) delta."
+      ]
+    },
+    "widget-get-balance": {
+      "triggeredBy": "widget:GET:/balance",
+      "description": "Return the customer's current redeemable point balance and its monetary equivalent from the pre-aggregated snapshot.",
+      "inputs": [
+        {
+          "name": "customerExternalId",
+          "source": "request.query",
+          "fieldPath": "customer_external_id",
+          "type": "string",
+          "nullable": false
+        }
+      ],
+      "steps": [
+        {
+          "kind": "compute",
+          "purpose": "parse customer id to number for DB query",
+          "bindResultTo": "customerId",
+          "expression": "Number(customerExternalId)"
+        },
+        {
+          "kind": "compute",
+          "purpose": "read configured redemption rate",
+          "bindResultTo": "pointsToDiscountRate",
+          "expression": "await config.get('loyalty_points_to_discount_rate', 0.01)",
+          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "fetch customer balance snapshot",
+          "bindResultTo": "snapshotRows",
+          "template": "SELECT available_points FROM customer_balance_snapshots WHERE customer_external_id = ${customerId} LIMIT 1",
           "bindings": [
             {
               "name": "customerId",
@@ -950,240 +989,36 @@ LLD PLAN — authoritative spec for handler implementation
         },
         {
           "kind": "compute",
-          "purpose": "clamp points to reverse so balance cannot go negative",
-          "bindResultTo": "pointsToReverse",
-          "expression": "Math.min(rawPointsToReverse, snapshot[0]?.available_points ?? 0)"
-        },
-        {
-          "kind": "decision",
-          "purpose": "skip if zero points to reverse (customer has no balance or zero-amount refund)",
-          "bindResultTo": null,
-          "condition": "pointsToReverse <= 0",
-          "ifTrue": [
-            {
-              "kind": "sql_update",
-              "purpose": "update claim row with actual customer id and zero reversal",
-              "bindResultTo": null,
-              "template": "UPDATE refund_reversal_log SET customer_external_id = ${customerId}, points_reversed = 0 WHERE id = ${claimId}",
-              "bindings": [
-                {
-                  "name": "customerId",
-                  "source": "customerId"
-                },
-                {
-                  "name": "claimId",
-                  "source": "claimed[0].id"
-                }
-              ]
-            },
-            {
-              "kind": "log",
-              "purpose": "record zero reversal",
-              "bindResultTo": null,
-              "level": "info",
-              "fields": {
-                "refund_id": "$refundId",
-                "customer_id": "$customerId"
-              },
-              "message": "skipping reversal: zero points to reverse"
-            },
-            {
-              "kind": "return",
-              "purpose": "exit early \u2014 nothing to debit",
-              "bindResultTo": null
-            }
-          ],
-          "ifFalse": []
-        },
-        {
-          "kind": "sql_transaction",
-          "purpose": "atomically update claim log, write ledger reversal entry, and decrement balance snapshot",
-          "bindResultTo": null,
-          "steps": [
-            {
-              "kind": "sql_update",
-              "purpose": "finalize the claim row with actual customer id and points reversed",
-              "bindResultTo": null,
-              "template": "UPDATE refund_reversal_log SET customer_external_id = ${customerId}, points_reversed = ${pointsToReverse} WHERE id = ${claimId}",
-              "bindings": [
-                {
-                  "name": "customerId",
-                  "source": "customerId"
-                },
-                {
-                  "name": "pointsToReverse",
-                  "source": "pointsToReverse"
-                },
-                {
-                  "name": "claimId",
-                  "source": "claimed[0].id"
-                }
-              ]
-            },
-            {
-              "kind": "sql_insert",
-              "purpose": "append refund_reversal entry to point_ledger with negative delta",
-              "bindResultTo": null,
-              "template": "INSERT INTO point_ledger (customer_external_id, order_external_id, refund_external_id, entry_type, points_delta) VALUES (${customerId}, ${orderId}, ${refundId}, 'refund_reversal', ${negativePoints})",
-              "bindings": [
-                {
-                  "name": "customerId",
-                  "source": "customerId"
-                },
-                {
-                  "name": "orderId",
-                  "source": "orderIdRaw"
-                },
-                {
-                  "name": "refundId",
-                  "source": "refundId"
-                },
-                {
-                  "name": "negativePoints",
-                  "source": "pointsToReverse * -1"
-                }
-              ]
-            },
-            {
-              "kind": "sql_update",
-              "purpose": "decrement available_points on balance snapshot, clamped by compute step already",
-              "bindResultTo": null,
-              "template": "UPDATE customer_balance_snapshots SET available_points = available_points - ${pointsToReverse}, updated_at = now() WHERE customer_external_id = ${customerId}",
-              "bindings": [
-                {
-                  "name": "pointsToReverse",
-                  "source": "pointsToReverse"
-                },
-                {
-                  "name": "customerId",
-                  "source": "customerId"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "kind": "log",
-          "purpose": "confirm reversal for ops visibility",
-          "bindResultTo": null,
-          "level": "info",
-          "fields": {
-            "refund_id": "$refundId",
-            "customer_id": "$customerId",
-            "points_reversed": "$pointsToReverse"
-          },
-          "message": "points reversed for refund"
-        }
-      ],
-      "postconditions": [
-        "exactly one refund_reversal_log row per refund_external_id enforced by uniqueConstraint",
-        "customer_balance_snapshots.available_points is clamped to >= 0",
-        "point_ledger contains one refund_reversal entry with negative delta equal to actual points reversed"
-      ],
-      "edgeCases": [
-        "Duplicate refunds/create delivery for same refund \u2014 refund_reversal_log INSERT ON CONFLICT DO NOTHING returns zero rows; recipe exits before any write.",
-        "Refund on a guest order \u2014 Shopify order query returns null customer; claim row is deleted and recipe exits cleanly.",
-        "Refund amount exceeds customer's current balance (they already spent the points) \u2014 pointsToReverse is clamped to available_points so balance floors at zero.",
-        "Zero-amount refund or customer has no balance \u2014 pointsToReverse is zero; recipe logs and exits without ledger write."
-      ]
-    },
-    "widget-get-balance": {
-      "triggeredBy": "widget:GET:/balance",
-      "description": "Return the customer's current redeemable point balance and monetary equivalent for the cart widget.",
-      "inputs": [
-        {
-          "name": "customerId",
-          "source": "request.query",
-          "fieldPath": "customer_id",
-          "type": "string",
-          "nullable": false
-        }
-      ],
-      "steps": [
-        {
-          "kind": "compute",
-          "purpose": "parse and validate customer id",
-          "bindResultTo": "customerIdNum",
-          "expression": "customerId ? Number(customerId) : null"
-        },
-        {
-          "kind": "decision",
-          "purpose": "reject request if customer id is missing or invalid",
-          "bindResultTo": null,
-          "condition": "customerIdNum === null || isNaN(customerIdNum)",
-          "ifTrue": [
-            {
-              "kind": "response",
-              "purpose": "return 400 for missing customer id",
-              "bindResultTo": null,
-              "status": 400,
-              "body": {
-                "error": "customer_id is required"
-              }
-            }
-          ],
-          "ifFalse": []
-        },
-        {
-          "kind": "sql_select",
-          "purpose": "fetch customer balance snapshot",
-          "bindResultTo": "rows",
-          "template": "SELECT available_points, updated_at FROM customer_balance_snapshots WHERE customer_external_id = ${customerIdNum}",
-          "bindings": [
-            {
-              "name": "customerIdNum",
-              "source": "customerIdNum"
-            }
-          ]
-        },
-        {
-          "kind": "compute",
-          "purpose": "default to zero if no snapshot exists yet",
+          "purpose": "resolve available points defaulting to 0 for new customers",
           "bindResultTo": "availablePoints",
-          "expression": "rows[0]?.available_points ?? 0"
-        },
-        {
-          "kind": "compute",
-          "purpose": "load configured redemption rate",
-          "bindResultTo": "redemptionRate",
-          "expression": "await config.get('loyalty_points_to_discount_rate', 0.01)",
-          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+          "expression": "snapshotRows.length > 0 ? Number(snapshotRows[0].available_points) : 0"
         },
         {
           "kind": "compute",
           "purpose": "compute monetary equivalent as plain decimal string",
           "bindResultTo": "monetaryEquivalent",
-          "expression": "(availablePoints * redemptionRate).toFixed(2)"
-        },
-        {
-          "kind": "compute",
-          "purpose": "load shop currency for display context",
-          "bindResultTo": "shopCurrency",
-          "expression": "await config.get('loyalty_shop_currency', 'USD')",
-          "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
+          "expression": "String((availablePoints * pointsToDiscountRate).toFixed(2))"
         },
         {
           "kind": "response",
-          "purpose": "return balance and monetary equivalent",
+          "purpose": "return balance and monetary equivalent to widget",
           "bindResultTo": null,
           "status": 200,
           "body": {
             "available_points": "$availablePoints",
-            "monetary_equivalent": "$monetaryEquivalent",
-            "currency": "$shopCurrency"
+            "monetary_equivalent": "$monetaryEquivalent"
           }
         }
       ],
       "postconditions": [
-        "returns available_points >= 0 at all times",
-        "monetary_equivalent is a decimal string consistent with redemption rate"
+        "always returns a non-negative available_points value",
+        "monetary_equivalent is a plain decimal string computed from current snapshot"
       ],
       "edgeCases": [
-        "Customer has never earned points \u2014 snapshot row does not exist; available_points defaults to 0.",
-        "Missing customer_id in query \u2014 returns 400 before any DB read."
+        "Customer has never earned points (no snapshot row) \u2014 available_points returned as 0, monetary_equivalent as '0.00'."
       ]
     },
-    "widget-get-redemption-current": {
+    "widget-get-current-redemption": {
       "triggeredBy": "widget:GET:/redemption/current",
       "description": "Return the active redemption for the current cart so the widget can render the correct initial state.",
       "inputs": [
@@ -1195,9 +1030,9 @@ LLD PLAN — authoritative spec for handler implementation
           "nullable": false
         },
         {
-          "name": "customerId",
+          "name": "customerExternalId",
           "source": "request.query",
-          "fieldPath": "customer_id",
+          "fieldPath": "customer_external_id",
           "type": "string",
           "nullable": false
         }
@@ -1206,87 +1041,85 @@ LLD PLAN — authoritative spec for handler implementation
         {
           "kind": "compute",
           "purpose": "parse customer id to number",
-          "bindResultTo": "customerIdNum",
-          "expression": "customerId ? Number(customerId) : null"
-        },
-        {
-          "kind": "decision",
-          "purpose": "reject if required params missing",
-          "bindResultTo": null,
-          "condition": "!cartExternalId || customerIdNum === null || isNaN(customerIdNum)",
-          "ifTrue": [
-            {
-              "kind": "response",
-              "purpose": "return 400 for missing params",
-              "bindResultTo": null,
-              "status": 400,
-              "body": {
-                "error": "cart_external_id and customer_id are required"
-              }
-            }
-          ],
-          "ifFalse": []
+          "bindResultTo": "customerId",
+          "expression": "Number(customerExternalId)"
         },
         {
           "kind": "sql_select",
-          "purpose": "fetch active redemption for this cart and customer",
-          "bindResultTo": "rows",
-          "template": "SELECT id, points_applied, discount_value, discount_code, currency, status FROM point_redemptions WHERE cart_external_id = ${cartExternalId} AND customer_external_id = ${customerIdNum} AND status = 'active' LIMIT 1",
+          "purpose": "look up active redemption for this cart and customer",
+          "bindResultTo": "redemptionRows",
+          "template": "SELECT id, points_applied, discount_value_minor, currency, discount_code, status FROM point_redemptions WHERE cart_external_id = ${cartExternalId} AND customer_external_id = ${customerId} AND status = 'active' LIMIT 1",
           "bindings": [
             {
               "name": "cartExternalId",
               "source": "cartExternalId"
             },
             {
-              "name": "customerIdNum",
-              "source": "customerIdNum"
+              "name": "customerId",
+              "source": "customerId"
             }
           ]
         },
         {
-          "kind": "compute",
-          "purpose": "extract single row or null if no active redemption",
-          "bindResultTo": "redemption",
-          "expression": "rows[0] ?? null"
-        },
-        {
-          "kind": "compute",
-          "purpose": "format discount_value as decimal string using currency",
-          "bindResultTo": "discountValueStr",
-          "expression": "redemption ? money.format(redemption.discount_value, redemption.currency) : null",
-          "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
-        },
-        {
-          "kind": "response",
-          "purpose": "return active redemption or nulls when none",
+          "kind": "decision",
+          "purpose": "return null fields when no active redemption exists",
           "bindResultTo": null,
-          "status": 200,
-          "body": {
-            "redemption_id": "$redemption?.id ?? null",
-            "points_applied": "$redemption?.points_applied ?? null",
-            "discount_value": "$discountValueStr",
-            "discount_code": "$redemption?.discount_code ?? null",
-            "status": "$redemption?.status ?? null"
-          }
+          "condition": "redemptionRows.length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "return empty redemption state",
+              "bindResultTo": null,
+              "status": 200,
+              "body": {
+                "redemption_id": "null",
+                "points_applied": "null",
+                "discount_value": "null",
+                "discount_code": "null",
+                "status": "null"
+              }
+            }
+          ],
+          "ifFalse": [
+            {
+              "kind": "compute",
+              "purpose": "format discount value as decimal string using money helper",
+              "bindResultTo": "discountValueStr",
+              "expression": "money.format(Number(redemptionRows[0].discount_value_minor), redemptionRows[0].currency)",
+              "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
+            },
+            {
+              "kind": "response",
+              "purpose": "return active redemption details",
+              "bindResultTo": null,
+              "status": 200,
+              "body": {
+                "redemption_id": "$redemptionRows[0].id",
+                "points_applied": "$redemptionRows[0].points_applied",
+                "discount_value": "$discountValueStr",
+                "discount_code": "$redemptionRows[0].discount_code",
+                "status": "$redemptionRows[0].status"
+              }
+            }
+          ]
         }
       ],
       "postconditions": [
-        "returns at most one active redemption per cart",
-        "discount_value is a formatted decimal string or null"
+        "always returns a well-formed response with null fields when no active redemption exists"
       ],
       "edgeCases": [
-        "No active redemption for the cart \u2014 all response fields are null; status 200.",
-        "Cart has a cancelled redemption \u2014 only active status is returned; cancelled rows are ignored."
+        "Cart has no active redemption \u2014 all fields returned as null.",
+        "Customer queries a cart that belongs to another customer \u2014 query includes customer_external_id so cross-customer leakage is prevented."
       ]
     },
-    "widget-post-redemption-apply": {
+    "widget-apply-redemption": {
       "triggeredBy": "widget:POST:/redemption/apply",
-      "description": "Validate customer balance, create a Shopify discount, insert the redemption record and ledger debit atomically, and return the discount code.",
+      "description": "Validate the requested points against the customer's balance, atomically claim a pending redemption slot, create a Shopify discount code, activate the redemption with the returned discount details, persist the ledger debit, and return the result.",
       "inputs": [
         {
-          "name": "customerId",
+          "name": "customerExternalId",
           "source": "request.body",
-          "fieldPath": "customer_id",
+          "fieldPath": "customer_external_id",
           "type": "string",
           "nullable": false
         },
@@ -1315,94 +1148,41 @@ LLD PLAN — authoritative spec for handler implementation
       "steps": [
         {
           "kind": "compute",
-          "purpose": "parse and validate customer id",
-          "bindResultTo": "customerIdNum",
-          "expression": "customerId ? Number(customerId) : null"
+          "purpose": "parse customer id to number",
+          "bindResultTo": "customerId",
+          "expression": "Number(customerExternalId)"
+        },
+        {
+          "kind": "sql_select",
+          "purpose": "read current balance snapshot for validation",
+          "bindResultTo": "snapshotRows",
+          "template": "SELECT available_points FROM customer_balance_snapshots WHERE customer_external_id = ${customerId} LIMIT 1",
+          "bindings": [
+            {
+              "name": "customerId",
+              "source": "customerId"
+            }
+          ]
+        },
+        {
+          "kind": "compute",
+          "purpose": "resolve available points",
+          "bindResultTo": "availablePoints",
+          "expression": "snapshotRows.length > 0 ? Number(snapshotRows[0].available_points) : 0"
         },
         {
           "kind": "decision",
-          "purpose": "reject missing or invalid inputs",
+          "purpose": "reject if requested points exceed available balance or are not positive",
           "bindResultTo": null,
-          "condition": "customerIdNum === null || isNaN(customerIdNum) || !cartExternalId || !pointsRequested || pointsRequested <= 0",
+          "condition": "pointsRequested > availablePoints || pointsRequested <= 0",
           "ifTrue": [
             {
               "kind": "response",
-              "purpose": "return 400 for invalid inputs",
+              "purpose": "return 400 overage or invalid amount error",
               "bindResultTo": null,
               "status": 400,
               "body": {
-                "error": "customer_id, cart_external_id, and positive points_requested are required"
-              }
-            }
-          ],
-          "ifFalse": []
-        },
-        {
-          "kind": "sql_select",
-          "purpose": "check for existing active redemption on this cart to prevent double-redemption",
-          "bindResultTo": "existingRedemption",
-          "template": "SELECT id FROM point_redemptions WHERE cart_external_id = ${cartExternalId} AND customer_external_id = ${customerIdNum} AND status = 'active' LIMIT 1",
-          "bindings": [
-            {
-              "name": "cartExternalId",
-              "source": "cartExternalId"
-            },
-            {
-              "name": "customerIdNum",
-              "source": "customerIdNum"
-            }
-          ]
-        },
-        {
-          "kind": "decision",
-          "purpose": "reject if an active redemption already exists for this cart",
-          "bindResultTo": null,
-          "condition": "existingRedemption.length > 0",
-          "ifTrue": [
-            {
-              "kind": "response",
-              "purpose": "return 409 for duplicate redemption",
-              "bindResultTo": null,
-              "status": 409,
-              "body": {
-                "error": "active redemption already exists for this cart"
-              }
-            }
-          ],
-          "ifFalse": []
-        },
-        {
-          "kind": "sql_select",
-          "purpose": "fetch current available balance for validation",
-          "bindResultTo": "snapshotRows",
-          "template": "SELECT available_points FROM customer_balance_snapshots WHERE customer_external_id = ${customerIdNum}",
-          "bindings": [
-            {
-              "name": "customerIdNum",
-              "source": "customerIdNum"
-            }
-          ]
-        },
-        {
-          "kind": "compute",
-          "purpose": "extract available points, defaulting to zero",
-          "bindResultTo": "availablePoints",
-          "expression": "snapshotRows[0]?.available_points ?? 0"
-        },
-        {
-          "kind": "decision",
-          "purpose": "reject if requested points exceed available balance",
-          "bindResultTo": null,
-          "condition": "pointsRequested > availablePoints",
-          "ifTrue": [
-            {
-              "kind": "response",
-              "purpose": "return 422 for insufficient balance",
-              "bindResultTo": null,
-              "status": 422,
-              "body": {
-                "error": "insufficient points balance",
-                "available_points": "$availablePoints"
+                "error": "points_requested exceeds available balance or is not positive"
               }
             }
           ],
@@ -1410,153 +1190,231 @@ LLD PLAN — authoritative spec for handler implementation
         },
         {
           "kind": "compute",
-          "purpose": "load redemption rate from config",
-          "bindResultTo": "redemptionRate",
+          "purpose": "read redemption rate from config",
+          "bindResultTo": "pointsToDiscountRate",
           "expression": "await config.get('loyalty_points_to_discount_rate', 0.01)",
           "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
         },
         {
           "kind": "compute",
-          "purpose": "compute discount amount in major units as decimal string",
-          "bindResultTo": "discountAmountDecimal",
-          "expression": "(pointsRequested * redemptionRate).toFixed(2)"
-        },
-        {
-          "kind": "compute",
-          "purpose": "convert discount amount to minor units for storage",
-          "bindResultTo": "discountValueMinorUnits",
-          "expression": "money.toMinorUnits(discountAmountDecimal, currency)",
+          "purpose": "compute discount value in minor units using money helper",
+          "bindResultTo": "discountValueMinor",
+          "expression": "money.toMinorUnits(String((pointsRequested * pointsToDiscountRate).toFixed(2)), currency)",
           "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
         },
         {
           "kind": "compute",
-          "purpose": "generate unique discount code for this redemption",
+          "purpose": "format discount value as decimal string for Shopify mutation input",
+          "bindResultTo": "discountValueDecimal",
+          "expression": "money.format(discountValueMinor, currency)",
+          "example": "import { money } from \"../lib/money.js\";\n\n// Currency-aware conversion. Correct for every Shopify currency including\n// zero-decimal (JPY, KRW) and three-decimal (BHD, JOD).\n//\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\n\n// Aggregate amounts you've already converted to integer minor units:\nconst grand = money.sum([itemA, itemB, itemC]);\n\n// Take a percentage (tax / fee / discount):\nconst tax = money.percentage(grand, 8.5);\n\n// Format for display (no symbol, currency-correct decimal count):\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n"
+        },
+        {
+          "kind": "compute",
+          "purpose": "generate a unique single-use discount code",
           "bindResultTo": "discountCode",
-          "expression": "`PTS-${customerIdNum}-${Date.now()}`"
+          "expression": "`LOYALTY${customerId}${Date.now()}`"
         },
         {
           "kind": "compute",
-          "purpose": "build customer GID for Shopify discount mutation (R10)",
+          "purpose": "build the customer GID for Shopify discount scope (R10)",
           "bindResultTo": "customerGid",
-          "expression": "`gid://shopify/Customer/${customerIdNum}`"
+          "expression": "`gid://shopify/Customer/${customerId}`"
         },
         {
           "kind": "compute",
-          "purpose": "build ISO start time for discount",
+          "purpose": "build ISO timestamp for discount startsAt",
           "bindResultTo": "startsAt",
           "expression": "new Date().toISOString()"
         },
         {
+          "kind": "sql_insert",
+          "purpose": "Atomic INSERT-form claim (R1, Pattern A) \u2014 insert pending redemption row; duplicate concurrent request returns zero rows via ON CONFLICT DO NOTHING, preventing a second Shopify call",
+          "bindResultTo": "pendingClaim",
+          "template": "INSERT INTO point_redemptions (customer_external_id, cart_external_id, points_applied, discount_value_minor, currency, status) VALUES (${customerId}, ${cartExternalId}, ${pointsRequested}, ${discountValueMinor}, ${currency}, 'pending') ON CONFLICT (cart_external_id, customer_external_id, status) DO NOTHING RETURNING id",
+          "bindings": [
+            {
+              "name": "customerId",
+              "source": "customerId"
+            },
+            {
+              "name": "cartExternalId",
+              "source": "cartExternalId"
+            },
+            {
+              "name": "pointsRequested",
+              "source": "pointsRequested"
+            },
+            {
+              "name": "discountValueMinor",
+              "source": "discountValueMinor"
+            },
+            {
+              "name": "currency",
+              "source": "currency"
+            }
+          ]
+        },
+        {
+          "kind": "decision",
+          "purpose": "reject if concurrent request already claimed a pending slot for this cart",
+          "bindResultTo": null,
+          "condition": "pendingClaim.length === 0",
+          "ifTrue": [
+            {
+              "kind": "response",
+              "purpose": "return 409 conflict \u2014 one active or pending redemption per cart",
+              "bindResultTo": null,
+              "status": 409,
+              "body": {
+                "error": "an active redemption already exists for this cart"
+              }
+            }
+          ],
+          "ifFalse": []
+        },
+        {
+          "kind": "compute",
+          "purpose": "capture pending redemption id at outer scope for use in response and catch arm",
+          "bindResultTo": "pendingRedemptionId",
+          "expression": "pendingClaim[0].id"
+        },
+        {
+          "kind": "compute",
+          "purpose": "assemble the full DiscountCodeBasicInput object for the Shopify mutation",
+          "bindResultTo": "discountInput",
+          "expression": "({ title: `LOYALTY-${customerId}-${Date.now()}`, code: discountCode, startsAt: startsAt, appliesOncePerCustomer: true, usageLimit: 1, customerGets: { items: { all: true }, value: { discountAmount: { amount: discountValueDecimal, appliesOnEachItem: false } } }, customerSelection: { customers: { add: [customerGid] } } })"
+        },
+        {
           "kind": "try_catch",
-          "purpose": "create Shopify discount, then atomically claim + write ledger; on failure return error",
+          "purpose": "create Shopify discount, activate redemption row, and write ledger debit atomically; on failure void the pending row and return 500",
           "bindResultTo": null,
           "try": [
             {
               "kind": "shopify_mutation",
-              "purpose": "create single-use fixed-amount discount code scoped to this customer",
+              "purpose": "create single-use fixed-amount discount code in Shopify",
               "bindResultTo": "discountResult",
               "op": "discountCodeBasicCreate",
-              "mutation": "mutation CreatePointsDiscount($basicCodeDiscount: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) { codeDiscountNode { id codeDiscount { ... on DiscountCodeBasic { codes(first: 1) { nodes { code } } } } } userErrors { field message } } }",
+              "mutation": "mutation CreateLoyaltyDiscount($basicCodeDiscount: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) { codeDiscountNode { id codeDiscount { ... on DiscountCodeBasic { codes(first: 1) { nodes { code } } } } } userErrors { field message } } }",
               "variables": {
-                "basicCodeDiscount": "${ title: `Points Redemption - ${discountCode}`, code: discountCode, startsAt: startsAt, appliesOncePerCustomer: true, usageLimit: 1, customerGets: { items: { all: true }, value: { discountAmount: { amount: discountAmountDecimal, appliesOnEachItem: false } } }, customerSelection: { customers: { add: [customerGid] } } }"
+                "basicCodeDiscount": "$discountInput"
               },
               "userErrorsCheck": true,
               "example": "import { shopifyClientFor } from \"../lib/shopify.js\";\n\nconst shopify = await shopifyClientFor(req.platform!);\n\nconst result = await shopify.graphql<{\n  tagsAdd: { userErrors: { field: string[] | null; message: string }[] };\n}>(\n  `mutation AddTags($id: ID!, $tags: [String!]!) {\n     tagsAdd(id: $id, tags: $tags) {\n       userErrors { field message }\n     }\n   }`,\n  { id: `gid://shopify/Order/${orderId}`, tags: [\"vip\"] },\n);\n\n// userErrors are returned as DATA, not as a thrown exception. A successful\n// await is necessary but NOT sufficient \u2014 a non-empty userErrors[] means\n// Shopify rejected the mutation.\nif (result.tagsAdd.userErrors.length > 0) {\n  throw new Error(\n    `tagsAdd failed: ${result.tagsAdd.userErrors.map((e) => e.message).join(\"; \")}`,\n  );\n}\n"
             },
             {
               "kind": "compute",
-              "purpose": "extract discount node GID from mutation result (R10)",
-              "bindResultTo": "discountExternalId",
-              "expression": "discountResult.discountCodeBasicCreate.codeDiscountNode.id"
+              "purpose": "extract discount GID and code from mutation result",
+              "bindResultTo": "discountInfo",
+              "expression": "({ discountGid: discountResult.discountCodeBasicCreate.codeDiscountNode.id, discountCodeReturned: discountResult.discountCodeBasicCreate.codeDiscountNode.codeDiscount.codes.nodes[0].code })"
             },
             {
               "kind": "sql_transaction",
-              "purpose": "atomically insert redemption record, write ledger debit, and decrement snapshot",
+              "purpose": "atomically activate the redemption row with discount details, insert ledger debit, and decrement balance snapshot",
               "bindResultTo": null,
               "steps": [
                 {
-                  "kind": "sql_insert",
-                  "purpose": "insert point_redemptions row as the atomic claim \u2014 ON CONFLICT handles orphan-discount retry by status scoping",
-                  "bindResultTo": "newRedemption",
-                  "template": "INSERT INTO point_redemptions (customer_external_id, cart_external_id, discount_external_id, discount_code, points_applied, discount_value, currency, status) VALUES (${customerIdNum}, ${cartExternalId}, ${discountExternalId}, ${discountCode}, ${pointsRequested}, ${discountValueMinorUnits}, ${currency}, 'active') RETURNING id",
+                  "kind": "sql_update",
+                  "purpose": "activate the pending redemption row with Shopify discount details",
+                  "bindResultTo": null,
+                  "template": "UPDATE point_redemptions SET status = 'active', discount_external_id = ${discountGid}, discount_code = ${discountCodeReturned}, updated_at = now() WHERE id = ${pendingRedemptionId}",
                   "bindings": [
                     {
-                      "name": "customerIdNum",
-                      "source": "customerIdNum"
+                      "name": "discountGid",
+                      "source": "discountInfo.discountGid"
                     },
                     {
-                      "name": "cartExternalId",
-                      "source": "cartExternalId"
+                      "name": "discountCodeReturned",
+                      "source": "discountInfo.discountCodeReturned"
                     },
                     {
-                      "name": "discountExternalId",
-                      "source": "discountExternalId"
-                    },
-                    {
-                      "name": "discountCode",
-                      "source": "discountCode"
-                    },
-                    {
-                      "name": "pointsRequested",
-                      "source": "pointsRequested"
-                    },
-                    {
-                      "name": "discountValueMinorUnits",
-                      "source": "discountValueMinorUnits"
-                    },
-                    {
-                      "name": "currency",
-                      "source": "currency"
+                      "name": "pendingRedemptionId",
+                      "source": "pendingRedemptionId"
                     }
                   ]
                 },
                 {
                   "kind": "sql_insert",
-                  "purpose": "append redemption_debit entry to point_ledger",
+                  "purpose": "append redemption_debit entry to point ledger",
                   "bindResultTo": null,
-                  "template": "INSERT INTO point_ledger (customer_external_id, redemption_id, entry_type, points_delta) VALUES (${customerIdNum}, ${redemptionId}, 'redemption_debit', ${negativePoints})",
+                  "template": "INSERT INTO point_ledger (customer_external_id, redemption_id, entry_type, points_delta) VALUES (${customerId}, ${pendingRedemptionId}, 'redemption_debit', ${negPoints})",
                   "bindings": [
                     {
-                      "name": "customerIdNum",
-                      "source": "customerIdNum"
+                      "name": "customerId",
+                      "source": "customerId"
                     },
                     {
-                      "name": "redemptionId",
-                      "source": "newRedemption[0].id"
+                      "name": "pendingRedemptionId",
+                      "source": "pendingRedemptionId"
                     },
                     {
-                      "name": "negativePoints",
-                      "source": "pointsRequested * -1"
+                      "name": "negPoints",
+                      "source": "-pointsRequested"
                     }
                   ]
                 },
                 {
                   "kind": "sql_update",
-                  "purpose": "decrement available_points and increment lifetime_redeemed on snapshot",
+                  "purpose": "decrement balance snapshot by points applied, increment lifetime_redeemed",
                   "bindResultTo": null,
-                  "template": "UPDATE customer_balance_snapshots SET available_points = available_points - ${pointsRequested}, lifetime_redeemed = lifetime_redeemed + ${pointsRequested}, updated_at = now() WHERE customer_external_id = ${customerIdNum}",
+                  "template": "UPDATE customer_balance_snapshots SET available_points = available_points - ${pointsRequested}, lifetime_redeemed = lifetime_redeemed + ${pointsRequested}, updated_at = now() WHERE customer_external_id = ${customerId}",
                   "bindings": [
                     {
                       "name": "pointsRequested",
                       "source": "pointsRequested"
                     },
                     {
-                      "name": "customerIdNum",
-                      "source": "customerIdNum"
+                      "name": "customerId",
+                      "source": "customerId"
                     }
                   ]
                 }
               ]
+            },
+            {
+              "kind": "compute",
+              "purpose": "compute remaining balance after debit",
+              "bindResultTo": "remainingBalance",
+              "expression": "availablePoints - pointsRequested"
+            },
+            {
+              "kind": "response",
+              "purpose": "return successful redemption details",
+              "bindResultTo": null,
+              "status": 200,
+              "body": {
+                "redemption_id": "$pendingRedemptionId",
+                "points_applied": "$pointsRequested",
+                "discount_value": "$discountValueDecimal",
+                "discount_code": "$discountInfo.discountCodeReturned",
+                "remaining_balance": "$remainingBalance"
+              }
             }
           ],
           "catch": [
             {
+              "kind": "sql_update",
+              "purpose": "delete (logically void) the pending redemption row so the cart slot is freed for retry",
+              "bindResultTo": null,
+              "template": "UPDATE point_redemptions SET status = 'cancelled', failure_reason = ${reason}, updated_at = now() WHERE id = ${pendingRedemptionId}",
+              "bindings": [
+                {
+                  "name": "reason",
+                  "source": "applyError.message"
+                },
+                {
+                  "name": "pendingRedemptionId",
+                  "source": "pendingRedemptionId"
+                }
+              ]
+            },
+            {
               "kind": "log",
-              "purpose": "log apply failure for ops visibility",
+              "purpose": "log failure with context (R8)",
               "bindResultTo": null,
               "level": "error",
               "fields": {
-                "customer_id": "$customerIdNum",
+                "customer_id": "$customerId",
                 "cart_id": "$cartExternalId",
                 "error": "$applyError.message"
               },
@@ -1564,52 +1422,31 @@ LLD PLAN — authoritative spec for handler implementation
             },
             {
               "kind": "response",
-              "purpose": "return 500 on apply failure",
+              "purpose": "return 500 to widget",
               "bindResultTo": null,
               "status": 500,
               "body": {
-                "error": "failed to apply redemption",
-                "detail": "$applyError.message"
+                "error": "failed to apply redemption"
               }
             }
           ],
           "errorBinding": "applyError"
-        },
-        {
-          "kind": "compute",
-          "purpose": "compute remaining balance after debit",
-          "bindResultTo": "remainingBalance",
-          "expression": "availablePoints - pointsRequested"
-        },
-        {
-          "kind": "response",
-          "purpose": "return redemption confirmation with discount code",
-          "bindResultTo": null,
-          "status": 200,
-          "body": {
-            "redemption_id": "$newRedemption[0].id",
-            "points_applied": "$pointsRequested",
-            "discount_value": "$discountAmountDecimal",
-            "discount_code": "$discountCode",
-            "remaining_balance": "$remainingBalance"
-          }
         }
       ],
       "postconditions": [
-        "at most one active point_redemptions row per (cart_external_id, customer_external_id)",
-        "point_ledger contains one redemption_debit entry with negative delta equal to points_applied",
-        "customer_balance_snapshots.available_points decremented by points_applied"
+        "on success: one active point_redemptions row, one redemption_debit ledger entry, balance snapshot decremented by points_requested",
+        "balance never goes below zero \u2014 validated before any write",
+        "at most one pending or active redemption per cart per customer at any time \u2014 enforced by atomic INSERT ON CONFLICT on (cart_external_id, customer_external_id, status)"
       ],
       "edgeCases": [
-        "Requested points exceed available balance \u2014 rejected at validation step with 422 before Shopify call.",
-        "Active redemption already exists for this cart \u2014 rejected at duplicate check with 409.",
-        "Shopify discount creation succeeds but ledger transaction fails \u2014 applyError caught; discount exists in Shopify but redemption row was not committed. On retry the customer can re-apply; the orphaned discount is not reused (unique code per attempt). Merchant must manually deactivate orphaned discount if needed.",
-        "Zero or negative points_requested \u2014 rejected at input validation with 400."
+        "Concurrent double-submit \u2014 the pending INSERT ON CONFLICT DO NOTHING returns zero rows for the second request; it receives a 409 before any Shopify call is made, preventing duplicate discount creation.",
+        "Shopify discount creation succeeds but the subsequent DB transaction fails \u2014 the pending row is cancelled in the catch arm (freeing the slot); the balance was never debited so the customer retains their points. The orphaned Shopify discount code exists but was never activated in the DB; a retry will create a new code.",
+        "Requested points exactly equal to available balance \u2014 allowed; remaining_balance returns 0."
       ]
     },
-    "widget-post-redemption-cancel": {
+    "widget-cancel-redemption": {
       "triggeredBy": "widget:POST:/redemption/cancel",
-      "description": "Cancel an active redemption using the workflow helper: deactivate the Shopify discount, write a cancellation credit to the ledger, update the snapshot, and mark the row cancelled.",
+      "description": "Cancel an active redemption by voiding the Shopify discount, updating the redemption status to cancelled, writing a credit-reversal ledger entry, and restoring the customer's balance snapshot.",
       "inputs": [
         {
           "name": "redemptionId",
@@ -1619,9 +1456,9 @@ LLD PLAN — authoritative spec for handler implementation
           "nullable": false
         },
         {
-          "name": "customerId",
+          "name": "customerExternalId",
           "source": "request.body",
-          "fieldPath": "customer_id",
+          "fieldPath": "customer_external_id",
           "type": "string",
           "nullable": false
         }
@@ -1629,53 +1466,39 @@ LLD PLAN — authoritative spec for handler implementation
       "steps": [
         {
           "kind": "compute",
-          "purpose": "parse and validate customer id",
-          "bindResultTo": "customerIdNum",
-          "expression": "customerId ? Number(customerId) : null"
-        },
-        {
-          "kind": "decision",
-          "purpose": "reject missing inputs",
-          "bindResultTo": null,
-          "condition": "!redemptionId || customerIdNum === null || isNaN(customerIdNum)",
-          "ifTrue": [
-            {
-              "kind": "response",
-              "purpose": "return 400 for missing params",
-              "bindResultTo": null,
-              "status": 400,
-              "body": {
-                "error": "redemption_id and customer_id are required"
-              }
-            }
-          ],
-          "ifFalse": []
+          "purpose": "parse customer id to number",
+          "bindResultTo": "customerId",
+          "expression": "Number(customerExternalId)"
         },
         {
           "kind": "sql_select",
-          "purpose": "fetch the redemption row to confirm ownership and get discount_external_id",
+          "purpose": "fetch the active redemption row for the given id and customer to verify ownership and get fields needed for Shopify call",
           "bindResultTo": "redemptionRows",
-          "template": "SELECT id, customer_external_id, discount_external_id, points_applied, currency, status FROM point_redemptions WHERE id = ${redemptionId} LIMIT 1",
+          "template": "SELECT id, points_applied, discount_external_id, currency, discount_value_minor FROM point_redemptions WHERE id = ${redemptionId} AND customer_external_id = ${customerId} AND status = 'active' LIMIT 1",
           "bindings": [
             {
               "name": "redemptionId",
               "source": "redemptionId"
+            },
+            {
+              "name": "customerId",
+              "source": "customerId"
             }
           ]
         },
         {
           "kind": "decision",
-          "purpose": "return 404 if redemption not found",
+          "purpose": "exit if no active redemption found for this id and customer",
           "bindResultTo": null,
           "condition": "redemptionRows.length === 0",
           "ifTrue": [
             {
               "kind": "response",
-              "purpose": "return 404 for missing redemption",
+              "purpose": "return 404 \u2014 redemption not found or already cancelled",
               "bindResultTo": null,
               "status": 404,
               "body": {
-                "error": "redemption not found"
+                "error": "active redemption not found"
               }
             }
           ],
@@ -1683,144 +1506,201 @@ LLD PLAN — authoritative spec for handler implementation
         },
         {
           "kind": "compute",
-          "purpose": "extract redemption row",
-          "bindResultTo": "redemption",
-          "expression": "redemptionRows[0]"
+          "purpose": "extract redemption fields needed for downstream steps",
+          "bindResultTo": "redemptionInfo",
+          "expression": "({ pointsApplied: Number(redemptionRows[0].points_applied), discountGid: redemptionRows[0].discount_external_id, currency: redemptionRows[0].currency })"
         },
         {
-          "kind": "decision",
-          "purpose": "reject if redemption does not belong to this customer",
+          "kind": "try_catch",
+          "purpose": "void Shopify discount, then atomically mark cancelled and restore balance; record failure_reason if Shopify call fails leaving the row still active for retry",
           "bindResultTo": null,
-          "condition": "String(redemption.customer_external_id) !== String(customerIdNum)",
-          "ifTrue": [
+          "try": [
+            {
+              "kind": "shopify_mutation",
+              "purpose": "deactivate the Shopify discount code so it can no longer be applied at checkout",
+              "bindResultTo": "deactivateResult",
+              "op": "discountCodeDeactivate",
+              "mutation": "mutation DeactivateLoyaltyDiscount($id: ID!) { discountCodeDeactivate(id: $id) { codeDiscountNode { id } userErrors { field message } } }",
+              "variables": {
+                "id": "$redemptionInfo.discountGid"
+              },
+              "userErrorsCheck": true,
+              "example": "import { shopifyClientFor } from \"../lib/shopify.js\";\n\nconst shopify = await shopifyClientFor(req.platform!);\n\nconst result = await shopify.graphql<{\n  tagsAdd: { userErrors: { field: string[] | null; message: string }[] };\n}>(\n  `mutation AddTags($id: ID!, $tags: [String!]!) {\n     tagsAdd(id: $id, tags: $tags) {\n       userErrors { field message }\n     }\n   }`,\n  { id: `gid://shopify/Order/${orderId}`, tags: [\"vip\"] },\n);\n\n// userErrors are returned as DATA, not as a thrown exception. A successful\n// await is necessary but NOT sufficient \u2014 a non-empty userErrors[] means\n// Shopify rejected the mutation.\nif (result.tagsAdd.userErrors.length > 0) {\n  throw new Error(\n    `tagsAdd failed: ${result.tagsAdd.userErrors.map((e) => e.message).join(\"; \")}`,\n  );\n}\n"
+            },
+            {
+              "kind": "sql_claim",
+              "purpose": "Atomic UPDATE-form claim (R1, Pattern B) \u2014 mark redemption cancelled only if still active; Shopify call already succeeded so this transition is safe",
+              "bindResultTo": "claimedRedemption",
+              "template": "UPDATE point_redemptions SET status = 'cancelled', updated_at = now() WHERE id = ${redemptionId} AND customer_external_id = ${customerId} AND status = 'active' RETURNING id, points_applied, currency",
+              "bindings": [
+                {
+                  "name": "redemptionId",
+                  "source": "redemptionId"
+                },
+                {
+                  "name": "customerId",
+                  "source": "customerId"
+                }
+              ],
+              "zeroRowAction": "skip"
+            },
+            {
+              "kind": "decision",
+              "purpose": "handle race where another concurrent cancel already flipped the row",
+              "bindResultTo": null,
+              "condition": "claimedRedemption.length === 0",
+              "ifTrue": [
+                {
+                  "kind": "response",
+                  "purpose": "return 200 \u2014 idempotent: already cancelled by concurrent request",
+                  "bindResultTo": null,
+                  "status": 200,
+                  "body": {
+                    "restored_balance": "0",
+                    "status": "cancelled"
+                  }
+                }
+              ],
+              "ifFalse": []
+            },
+            {
+              "kind": "sql_transaction",
+              "purpose": "atomically write cancellation credit to ledger and restore balance snapshot",
+              "bindResultTo": null,
+              "steps": [
+                {
+                  "kind": "sql_insert",
+                  "purpose": "append cancellation_credit entry to ledger",
+                  "bindResultTo": null,
+                  "template": "INSERT INTO point_ledger (customer_external_id, redemption_id, entry_type, points_delta) VALUES (${customerId}, ${redemptionId}, 'cancellation_credit', ${pointsApplied})",
+                  "bindings": [
+                    {
+                      "name": "customerId",
+                      "source": "customerId"
+                    },
+                    {
+                      "name": "redemptionId",
+                      "source": "redemptionId"
+                    },
+                    {
+                      "name": "pointsApplied",
+                      "source": "redemptionInfo.pointsApplied"
+                    }
+                  ]
+                },
+                {
+                  "kind": "sql_update",
+                  "purpose": "restore balance snapshot \u2014 increment available_points, decrement lifetime_redeemed",
+                  "bindResultTo": null,
+                  "template": "UPDATE customer_balance_snapshots SET available_points = available_points + ${pointsApplied}, lifetime_redeemed = GREATEST(0, lifetime_redeemed - ${pointsApplied}), updated_at = now() WHERE customer_external_id = ${customerId}",
+                  "bindings": [
+                    {
+                      "name": "pointsApplied",
+                      "source": "redemptionInfo.pointsApplied"
+                    },
+                    {
+                      "name": "customerId",
+                      "source": "customerId"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "sql_select",
+              "purpose": "read restored balance to include in response",
+              "bindResultTo": "restoredRows",
+              "template": "SELECT available_points FROM customer_balance_snapshots WHERE customer_external_id = ${customerId} LIMIT 1",
+              "bindings": [
+                {
+                  "name": "customerId",
+                  "source": "customerId"
+                }
+              ]
+            },
+            {
+              "kind": "compute",
+              "purpose": "resolve restored balance value",
+              "bindResultTo": "restoredBalance",
+              "expression": "restoredRows.length > 0 ? Number(restoredRows[0].available_points) : 0"
+            },
             {
               "kind": "response",
-              "purpose": "return 403 for ownership mismatch",
+              "purpose": "return restored balance and cancelled status",
               "bindResultTo": null,
-              "status": 403,
+              "status": 200,
               "body": {
-                "error": "redemption does not belong to this customer"
+                "restored_balance": "$restoredBalance",
+                "status": "cancelled"
               }
             }
           ],
-          "ifFalse": []
-        },
-        {
-          "kind": "decision",
-          "purpose": "return 409 if redemption is already cancelled or expired",
-          "bindResultTo": null,
-          "condition": "redemption.status !== 'active'",
-          "ifTrue": [
+          "catch": [
+            {
+              "kind": "sql_update",
+              "purpose": "record failure_reason on redemption row \u2014 row is still 'active' so customer can retry (R4-style failure capture)",
+              "bindResultTo": null,
+              "template": "UPDATE point_redemptions SET failure_reason = ${reason}, updated_at = now() WHERE id = ${redemptionId} AND status = 'active'",
+              "bindings": [
+                {
+                  "name": "reason",
+                  "source": "cancelError.message"
+                },
+                {
+                  "name": "redemptionId",
+                  "source": "redemptionId"
+                }
+              ]
+            },
+            {
+              "kind": "log",
+              "purpose": "warn on cancellation failure for ops visibility (R8)",
+              "bindResultTo": null,
+              "level": "error",
+              "fields": {
+                "redemption_id": "$redemptionId",
+                "error": "$cancelError.message"
+              },
+              "message": "redemption cancel failed \u2014 row remains active for retry"
+            },
             {
               "kind": "response",
-              "purpose": "return 409 for non-active redemption",
+              "purpose": "return 500 \u2014 cancellation failed; discount may still be active",
               "bindResultTo": null,
-              "status": 409,
+              "status": 500,
               "body": {
-                "error": "redemption is not active",
-                "status": "$redemption.status"
+                "error": "cancellation failed \u2014 discount may still be active; contact support"
               }
             }
           ],
-          "ifFalse": []
-        },
-        {
-          "kind": "compute",
-          "purpose": "run cancel workflow: claim active\u2192cancelling, deactivate discount, write ledger credit, update snapshot, then complete",
-          "bindResultTo": "cancelResult",
-          "expression": "await workflow.attempt('point_redemptions', redemptionId, { from: 'active', to: 'cancelling' }, async (row) => { const discountGid = row.discount_external_id; await shopify.graphql(`mutation DeactivateDiscount($id: ID!) { discountCodeDeactivate(id: $id) { codeDiscountNode { id } userErrors { field message } } }`, { id: discountGid }); await sql`INSERT INTO point_ledger (customer_external_id, redemption_id, entry_type, points_delta) VALUES (${row.customer_external_id}, ${row.id}, 'cancellation_credit', ${row.points_applied})`; await sql`UPDATE customer_balance_snapshots SET available_points = available_points + ${row.points_applied}, lifetime_redeemed = GREATEST(lifetime_redeemed - ${row.points_applied}, 0), updated_at = now() WHERE customer_external_id = ${row.customer_external_id}`; await workflow.complete('point_redemptions', redemptionId); return row.points_applied; })",
-          "example": "import { workflow } from \"../lib/workflow.js\";\n\n// One-shot lifecycle: atomic claim \u2192 run callback \u2192 mark complete (or\n// persist failure_reason and re-throw on callback error). Returns\n// `null` immediately when the row is already claimed / in the wrong\n// state / missing \u2014 callback NEVER runs in that case.\nconst result = await workflow.attempt<RuleRun, void>(\n  \"rule_runs\",\n  runId,\n  { from: \"pending\" },\n  async (row) => {\n    // Side effects here. If this throws, helper persists status='failed'\n    // with err.message (truncated) and re-throws so the cron-runner sees it.\n    await processRow(row);\n  },\n);\nif (!result) return; // someone else claimed it\n\n// Primitives for non-canonical flows (multi-step, branching terminals):\nconst claimed = await workflow.claim<Approval>(\n  \"approvals\",\n  approvalId,\n  { from: \"draft\", to: \"submitted\" },\n);\nif (!claimed) return;\n// \u2026 do work \u2026\nawait workflow.complete(\"approvals\", approvalId, { to: \"approved\" });\n// or:\nawait workflow.fail(\"approvals\", approvalId, \"policy violation: \u2026\");\n\n// Stale sweeper \u2014 call from a low-frequency cron tick (every ~10 min):\nconst swept = await workflow.sweepStale(\"rule_runs\", { ttlMinutes: 30 });\nconsole.log(JSON.stringify({ event: \"sweep\", count: swept.count }));\n"
-        },
-        {
-          "kind": "decision",
-          "purpose": "return 409 if workflow claim found row already in non-active state (race condition)",
-          "bindResultTo": null,
-          "condition": "cancelResult === null",
-          "ifTrue": [
-            {
-              "kind": "response",
-              "purpose": "return 409 \u2014 another request already claimed the cancel",
-              "bindResultTo": null,
-              "status": 409,
-              "body": {
-                "error": "redemption already being cancelled or not active"
-              }
-            }
-          ],
-          "ifFalse": []
-        },
-        {
-          "kind": "sql_select",
-          "purpose": "fetch updated balance snapshot for response",
-          "bindResultTo": "updatedSnapshot",
-          "template": "SELECT available_points FROM customer_balance_snapshots WHERE customer_external_id = ${customerIdNum}",
-          "bindings": [
-            {
-              "name": "customerIdNum",
-              "source": "customerIdNum"
-            }
-          ]
-        },
-        {
-          "kind": "response",
-          "purpose": "return restored balance and cancelled status",
-          "bindResultTo": null,
-          "status": 200,
-          "body": {
-            "restored_balance": "$updatedSnapshot[0]?.available_points ?? 0",
-            "status": "cancelled"
-          }
+          "errorBinding": "cancelError"
         }
       ],
       "postconditions": [
-        "point_redemptions row status is 'cancelled' after successful run",
-        "point_ledger contains one cancellation_credit entry with positive delta equal to points_applied",
-        "customer_balance_snapshots.available_points incremented by points_applied"
+        "on success: redemption status is 'cancelled', one cancellation_credit ledger entry written, balance snapshot restored",
+        "Shopify discount is deactivated BEFORE the DB status flip \u2014 a Shopify failure leaves the row 'active' so the customer can retry"
       ],
       "edgeCases": [
-        "Concurrent cancel requests for same redemption \u2014 workflow.claim returns null for the losing request; returns 409.",
-        "Shopify discount deactivation fails \u2014 workflow.fail captures failure_reason; redemption row stays in 'cancelling' then fails; customer must retry.",
-        "Redemption already cancelled \u2014 status check before workflow.attempt returns 409."
-      ]
-    },
-    "sweep-point-redemptions": {
-      "triggeredBy": "cron:sweep_point_redemptions",
-      "description": "Sweep stale 'cancelling' point_redemptions rows that have been stuck running too long back to 'active' so the customer can retry cancellation.",
-      "inputs": [],
-      "steps": [
-        {
-          "kind": "compute",
-          "purpose": "sweep stale running rows on point_redemptions workflow table",
-          "bindResultTo": "swept",
-          "expression": "await workflow.sweepStale('point_redemptions', { ttlMinutes: 10, runningState: 'cancelling', timedOutState: 'active' })",
-          "example": "import { workflow } from \"../lib/workflow.js\";\n\n// One-shot lifecycle: atomic claim \u2192 run callback \u2192 mark complete (or\n// persist failure_reason and re-throw on callback error). Returns\n// `null` immediately when the row is already claimed / in the wrong\n// state / missing \u2014 callback NEVER runs in that case.\nconst result = await workflow.attempt<RuleRun, void>(\n  \"rule_runs\",\n  runId,\n  { from: \"pending\" },\n  async (row) => {\n    // Side effects here. If this throws, helper persists status='failed'\n    // with err.message (truncated) and re-throws so the cron-runner sees it.\n    await processRow(row);\n  },\n);\nif (!result) return; // someone else claimed it\n\n// Primitives for non-canonical flows (multi-step, branching terminals):\nconst claimed = await workflow.claim<Approval>(\n  \"approvals\",\n  approvalId,\n  { from: \"draft\", to: \"submitted\" },\n);\nif (!claimed) return;\n// \u2026 do work \u2026\nawait workflow.complete(\"approvals\", approvalId, { to: \"approved\" });\n// or:\nawait workflow.fail(\"approvals\", approvalId, \"policy violation: \u2026\");\n\n// Stale sweeper \u2014 call from a low-frequency cron tick (every ~10 min):\nconst swept = await workflow.sweepStale(\"rule_runs\", { ttlMinutes: 30 });\nconsole.log(JSON.stringify({ event: \"sweep\", count: swept.count }));\n"
-        },
-        {
-          "kind": "log",
-          "purpose": "record sweep results for ops visibility",
-          "bindResultTo": null,
-          "level": "info",
-          "fields": {
-            "swept_count": "$swept.length"
-          },
-          "message": "swept stale cancelling redemption rows"
-        }
-      ],
-      "postconditions": [
-        "no point_redemptions rows remain in 'cancelling' state longer than 10 minutes"
-      ],
-      "edgeCases": [
-        "No stale rows \u2014 swept is empty array; log records zero swept."
+        "Double-cancel concurrent requests \u2014 first request deactivates Shopify discount and flips status to 'cancelled'; second request finds no 'active' row in the initial SELECT and returns 404.",
+        "Shopify discount deactivate call fails \u2014 catch arm records failure_reason on the row which remains 'active'; the customer can retry the cancel flow.",
+        "Concurrent cancel race after Shopify call succeeds but before sql_claim \u2014 sql_claim WHERE status='active' returns zero rows; decision returns 200 idempotently."
       ]
     },
     "admin-get-customer-balances": {
       "triggeredBy": "admin:GET:/customers/balances",
-      "description": "Return a cursor-paginated list of customer balance snapshots ordered by available_points descending, with optional customer ID search.",
+      "description": "Return a cursor-paginated list of all customer point balances ordered by available_points descending, with optional customer search.",
       "inputs": [
         {
-          "name": "cursor",
+          "name": "cursorSort",
           "source": "request.query",
-          "fieldPath": "cursor",
+          "fieldPath": "cursor_sort",
+          "type": "string",
+          "nullable": true
+        },
+        {
+          "name": "cursorId",
+          "source": "request.query",
+          "fieldPath": "cursor_id",
           "type": "string",
           "nullable": true
         },
@@ -1836,204 +1716,203 @@ LLD PLAN — authoritative spec for handler implementation
           "source": "request.query",
           "fieldPath": "page_size",
           "type": "number",
-          "nullable": true
+          "nullable": false
         }
       ],
       "steps": [
         {
           "kind": "compute",
-          "purpose": "resolve effective page size, capping at 100",
-          "bindResultTo": "effectivePageSize",
-          "expression": "Math.min(Number(pageSize) || 25, 100)"
+          "purpose": "normalise page size, cap at 100",
+          "bindResultTo": "limit",
+          "expression": "Math.min(Math.max(Number(pageSize) || 25, 1), 100)"
         },
         {
           "kind": "compute",
-          "purpose": "decode cursor into (cursor_points, cursor_id) tuple or nulls",
-          "bindResultTo": "decodedCursor",
-          "expression": "cursor ? JSON.parse(Buffer.from(cursor, 'base64').toString('utf8')) : { cursor_points: null, cursor_id: null }"
+          "purpose": "parse cursor values for keyset pagination",
+          "bindResultTo": "cursor",
+          "expression": "({ hasCursor: cursorSort !== null && cursorSort !== undefined && cursorId !== null && cursorId !== undefined, sortVal: cursorSort !== null && cursorSort !== undefined ? Number(cursorSort) : null, idVal: cursorId !== null && cursorId !== undefined ? cursorId : null })"
+        },
+        {
+          "kind": "compute",
+          "purpose": "normalise optional search term, null when absent",
+          "bindResultTo": "search",
+          "expression": "(searchCustomer && searchCustomer.trim().length > 0) ? searchCustomer.trim() : null"
         },
         {
           "kind": "decision",
-          "purpose": "branch on whether cursor is present and whether search term is provided",
+          "purpose": "branch on whether search filter is active",
           "bindResultTo": null,
-          "condition": "decodedCursor.cursor_points !== null && !searchCustomer",
+          "condition": "search !== null",
           "ifTrue": [
             {
-              "kind": "sql_select",
-              "purpose": "cursor page without search: keyset pagination on (available_points DESC, id DESC)",
-              "bindResultTo": "rows",
-              "template": "SELECT id, customer_external_id, available_points, lifetime_earned, lifetime_redeemed, updated_at FROM customer_balance_snapshots WHERE (available_points, id::text) < (${cursorPoints}, ${cursorId}) ORDER BY available_points DESC, id DESC LIMIT ${limitPlusOne}",
-              "bindings": [
+              "kind": "decision",
+              "purpose": "branch on whether cursor is present (search + cursor)",
+              "bindResultTo": null,
+              "condition": "cursor.hasCursor",
+              "ifTrue": [
                 {
-                  "name": "cursorPoints",
-                  "source": "decodedCursor.cursor_points"
-                },
+                  "kind": "sql_select",
+                  "purpose": "cursor-paginated search query: fetch limit+1 rows for next-cursor detection",
+                  "bindResultTo": "rows",
+                  "template": "SELECT id, customer_external_id, available_points, lifetime_earned, lifetime_redeemed, updated_at FROM customer_balance_snapshots WHERE CAST(customer_external_id AS TEXT) ILIKE ${searchPattern} AND (available_points, id) < (${sortVal}, ${idVal}::uuid) ORDER BY available_points DESC, id DESC LIMIT ${fetchLimit}",
+                  "bindings": [
+                    {
+                      "name": "searchPattern",
+                      "source": "('%' || search || '%')"
+                    },
+                    {
+                      "name": "sortVal",
+                      "source": "cursor.sortVal"
+                    },
+                    {
+                      "name": "idVal",
+                      "source": "cursor.idVal"
+                    },
+                    {
+                      "name": "fetchLimit",
+                      "source": "limit + 1"
+                    }
+                  ]
+                }
+              ],
+              "ifFalse": [
                 {
-                  "name": "cursorId",
-                  "source": "decodedCursor.cursor_id"
-                },
-                {
-                  "name": "limitPlusOne",
-                  "source": "effectivePageSize + 1"
+                  "kind": "sql_select",
+                  "purpose": "first page search query: fetch limit+1 rows",
+                  "bindResultTo": "rows",
+                  "template": "SELECT id, customer_external_id, available_points, lifetime_earned, lifetime_redeemed, updated_at FROM customer_balance_snapshots WHERE CAST(customer_external_id AS TEXT) ILIKE ${searchPattern} ORDER BY available_points DESC, id DESC LIMIT ${fetchLimit}",
+                  "bindings": [
+                    {
+                      "name": "searchPattern",
+                      "source": "('%' || search || '%')"
+                    },
+                    {
+                      "name": "fetchLimit",
+                      "source": "limit + 1"
+                    }
+                  ]
                 }
               ]
             }
           ],
-          "ifFalse": []
-        },
-        {
-          "kind": "decision",
-          "purpose": "first page without search",
-          "bindResultTo": null,
-          "condition": "decodedCursor.cursor_points === null && !searchCustomer",
-          "ifTrue": [
+          "ifFalse": [
             {
-              "kind": "sql_select",
-              "purpose": "first page without search: keyset start",
-              "bindResultTo": "rows",
-              "template": "SELECT id, customer_external_id, available_points, lifetime_earned, lifetime_redeemed, updated_at FROM customer_balance_snapshots ORDER BY available_points DESC, id DESC LIMIT ${limitPlusOne}",
-              "bindings": [
+              "kind": "decision",
+              "purpose": "branch on whether cursor is present (no search)",
+              "bindResultTo": null,
+              "condition": "cursor.hasCursor",
+              "ifTrue": [
                 {
-                  "name": "limitPlusOne",
-                  "source": "effectivePageSize + 1"
+                  "kind": "sql_select",
+                  "purpose": "cursor-paginated full list query",
+                  "bindResultTo": "rows",
+                  "template": "SELECT id, customer_external_id, available_points, lifetime_earned, lifetime_redeemed, updated_at FROM customer_balance_snapshots WHERE (available_points, id) < (${sortVal}, ${idVal}::uuid) ORDER BY available_points DESC, id DESC LIMIT ${fetchLimit}",
+                  "bindings": [
+                    {
+                      "name": "sortVal",
+                      "source": "cursor.sortVal"
+                    },
+                    {
+                      "name": "idVal",
+                      "source": "cursor.idVal"
+                    },
+                    {
+                      "name": "fetchLimit",
+                      "source": "limit + 1"
+                    }
+                  ]
+                }
+              ],
+              "ifFalse": [
+                {
+                  "kind": "sql_select",
+                  "purpose": "first page full list query",
+                  "bindResultTo": "rows",
+                  "template": "SELECT id, customer_external_id, available_points, lifetime_earned, lifetime_redeemed, updated_at FROM customer_balance_snapshots ORDER BY available_points DESC, id DESC LIMIT ${fetchLimit}",
+                  "bindings": [
+                    {
+                      "name": "fetchLimit",
+                      "source": "limit + 1"
+                    }
+                  ]
                 }
               ]
             }
-          ],
-          "ifFalse": []
-        },
-        {
-          "kind": "decision",
-          "purpose": "first page with search",
-          "bindResultTo": null,
-          "condition": "decodedCursor.cursor_points === null && !!searchCustomer",
-          "ifTrue": [
-            {
-              "kind": "sql_select",
-              "purpose": "first page with customer search filter",
-              "bindResultTo": "rows",
-              "template": "SELECT id, customer_external_id, available_points, lifetime_earned, lifetime_redeemed, updated_at FROM customer_balance_snapshots WHERE customer_external_id::text ILIKE ${searchPattern} ORDER BY available_points DESC, id DESC LIMIT ${limitPlusOne}",
-              "bindings": [
-                {
-                  "name": "searchPattern",
-                  "source": "'%' + searchCustomer + '%'"
-                },
-                {
-                  "name": "limitPlusOne",
-                  "source": "effectivePageSize + 1"
-                }
-              ]
-            }
-          ],
-          "ifFalse": []
-        },
-        {
-          "kind": "decision",
-          "purpose": "cursor page with search",
-          "bindResultTo": null,
-          "condition": "decodedCursor.cursor_points !== null && !!searchCustomer",
-          "ifTrue": [
-            {
-              "kind": "sql_select",
-              "purpose": "cursor page with customer search filter",
-              "bindResultTo": "rows",
-              "template": "SELECT id, customer_external_id, available_points, lifetime_earned, lifetime_redeemed, updated_at FROM customer_balance_snapshots WHERE customer_external_id::text ILIKE ${searchPattern} AND (available_points, id::text) < (${cursorPoints}, ${cursorId}) ORDER BY available_points DESC, id DESC LIMIT ${limitPlusOne}",
-              "bindings": [
-                {
-                  "name": "searchPattern",
-                  "source": "'%' + searchCustomer + '%'"
-                },
-                {
-                  "name": "cursorPoints",
-                  "source": "decodedCursor.cursor_points"
-                },
-                {
-                  "name": "cursorId",
-                  "source": "decodedCursor.cursor_id"
-                },
-                {
-                  "name": "limitPlusOne",
-                  "source": "effectivePageSize + 1"
-                }
-              ]
-            }
-          ],
-          "ifFalse": []
+          ]
         },
         {
           "kind": "compute",
-          "purpose": "determine if there is a next page",
-          "bindResultTo": "hasNextPage",
-          "expression": "rows.length > effectivePageSize"
+          "purpose": "detect next page and trim to page size",
+          "bindResultTo": "page",
+          "expression": "({ hasNext: rows.length > limit, items: rows.slice(0, limit) })"
         },
         {
           "kind": "compute",
-          "purpose": "trim rows to page size",
-          "bindResultTo": "pageRows",
-          "expression": "hasNextPage ? rows.slice(0, effectivePageSize) : rows"
-        },
-        {
-          "kind": "compute",
-          "purpose": "build next_cursor from last returned row when there is a next page",
+          "purpose": "build next_cursor from last item if next page exists",
           "bindResultTo": "nextCursor",
-          "expression": "hasNextPage ? Buffer.from(JSON.stringify({ cursor_points: pageRows[pageRows.length - 1].available_points, cursor_id: String(pageRows[pageRows.length - 1].id) })).toString('base64') : null"
+          "expression": "page.hasNext && page.items.length > 0 ? JSON.stringify({ sort: String(page.items[page.items.length - 1].available_points), id: page.items[page.items.length - 1].id }) : null"
         },
         {
           "kind": "response",
-          "purpose": "return paginated balance list",
+          "purpose": "return paginated balances",
           "bindResultTo": null,
           "status": 200,
           "body": {
-            "balances": "$pageRows",
+            "items": "$page.items",
             "next_cursor": "$nextCursor",
-            "page_size": "$effectivePageSize"
+            "page_size": "$limit"
           }
         }
       ],
       "postconditions": [
-        "returned list has at most page_size rows",
-        "next_cursor is null when no further pages exist",
-        "rows are ordered by available_points DESC, id DESC"
+        "items ordered by available_points DESC then id DESC",
+        "next_cursor is null on the last page",
+        "page_size capped at 100"
       ],
       "edgeCases": [
-        "No customers have balances \u2014 pageRows is empty; next_cursor is null.",
-        "search_customer matches no rows \u2014 empty list with null next_cursor.",
-        "Malformed cursor string \u2014 JSON.parse throws; codegen catches as 400."
+        "Empty result set (no customers yet) \u2014 items returns [], next_cursor null.",
+        "search_customer is whitespace-only \u2014 treated as null, returns full unfiltered list."
       ]
     },
     "admin-get-settings": {
       "triggeredBy": "admin:GET:/settings",
-      "description": "Return the current earn rate and redemption rate settings from platform config.",
+      "description": "Return the current earn rate and redemption rate settings from the config store.",
       "inputs": [],
       "steps": [
         {
           "kind": "compute",
-          "purpose": "load both settings from config in one call",
+          "purpose": "read both settings from config store with safe defaults",
           "bindResultTo": "settings",
           "expression": "await config.getMany(['loyalty_points_per_dollar', 'loyalty_points_to_discount_rate'])",
           "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
         },
         {
+          "kind": "compute",
+          "purpose": "apply defaults for keys not yet set",
+          "bindResultTo": "resolved",
+          "expression": "({ pointsPerDollar: settings['loyalty_points_per_dollar'] ?? 1, pointsToDiscountRate: settings['loyalty_points_to_discount_rate'] ?? 0.01 })"
+        },
+        {
           "kind": "response",
-          "purpose": "return current settings with defaults if not yet configured",
+          "purpose": "return settings to admin panel",
           "bindResultTo": null,
           "status": 200,
           "body": {
-            "points_per_dollar": "$settings.loyalty_points_per_dollar ?? 1",
-            "points_to_discount_rate": "$settings.loyalty_points_to_discount_rate ?? 0.01"
+            "points_per_dollar": "$resolved.pointsPerDollar",
+            "points_to_discount_rate": "$resolved.pointsToDiscountRate"
           }
         }
       ],
       "postconditions": [
-        "returns numeric defaults of 1 (earn rate) and 0.01 (redemption rate) when not yet configured"
+        "always returns numeric values with safe defaults even on first install"
       ],
       "edgeCases": [
-        "Settings never saved \u2014 config.getMany returns partial or empty map; defaults are applied inline."
+        "Keys not yet set (fresh install) \u2014 defaults of 1 point per dollar and 0.01 discount rate per point are returned."
       ]
     },
     "admin-post-settings": {
       "triggeredBy": "admin:POST:/settings",
-      "description": "Validate and persist updated earn rate and redemption rate settings to platform config.",
+      "description": "Validate and persist updated earn rate and redemption rate settings to the config store.",
       "inputs": [
         {
           "name": "pointsPerDollar",
@@ -2053,33 +1932,33 @@ LLD PLAN — authoritative spec for handler implementation
       "steps": [
         {
           "kind": "compute",
-          "purpose": "validate earn rate is a positive number",
-          "bindResultTo": "earnValid",
-          "expression": "(typeof pointsPerDollar === 'number' && pointsPerDollar > 0) ? true : (() => { throw new Error('points_per_dollar must be a positive number') })()"
+          "purpose": "validate earn rate is a positive integer",
+          "bindResultTo": null,
+          "expression": "(typeof pointsPerDollar === 'number' && Number.isInteger(pointsPerDollar) && pointsPerDollar >= 1) ? true : (() => { throw new Error('points_per_dollar must be a positive integer >= 1') })()"
         },
         {
           "kind": "compute",
           "purpose": "validate redemption rate is a positive number",
-          "bindResultTo": "rateValid",
+          "bindResultTo": null,
           "expression": "(typeof pointsToDiscountRate === 'number' && pointsToDiscountRate > 0) ? true : (() => { throw new Error('points_to_discount_rate must be a positive number') })()"
         },
         {
           "kind": "compute",
-          "purpose": "persist earn rate to platform config",
+          "purpose": "persist earn rate to config store",
           "bindResultTo": null,
           "expression": "await config.set('loyalty_points_per_dollar', pointsPerDollar)",
           "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
         },
         {
           "kind": "compute",
-          "purpose": "persist redemption rate to platform config",
+          "purpose": "persist redemption rate to config store",
           "bindResultTo": null,
           "expression": "await config.set('loyalty_points_to_discount_rate', pointsToDiscountRate)",
           "example": "import { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\n// Writes (typical admin \"save settings\" route):\nawait config.set(\"points_per_dollar\", req.body.rate);\n\n// Read multiple keys for a settings-page pre-fill:\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\n\n// Read every key (admin \"list all settings\" page):\nconst all = await config.getAll();\n"
         },
         {
           "kind": "response",
-          "purpose": "return saved settings to confirm persistence",
+          "purpose": "return the saved settings values",
           "bindResultTo": null,
           "status": 200,
           "body": {
@@ -2089,12 +1968,12 @@ LLD PLAN — authoritative spec for handler implementation
         }
       ],
       "postconditions": [
-        "loyalty_points_per_dollar and loyalty_points_to_discount_rate keys updated in app_config",
-        "subsequent config.get calls return the new values"
+        "loyalty_points_per_dollar and loyalty_points_to_discount_rate written atomically via config.set",
+        "invalid inputs rejected with 500 before any write"
       ],
       "edgeCases": [
-        "Non-numeric or zero/negative value submitted \u2014 validation compute throws; express error handler returns 400.",
-        "Concurrent saves from two admin sessions \u2014 last-writer-wins semantics of config.set are correct for merchant settings."
+        "Non-integer or negative points_per_dollar \u2014 validation throws, no config written.",
+        "Concurrent settings saves \u2014 config.set is last-writer-wins; both saves complete, final state is the later write."
       ]
     }
   },
@@ -2103,43 +1982,43 @@ LLD PLAN — authoritative spec for handler implementation
   ],
   "platformGaps": [
     {
-      "gap": "The refunds/create webhook payload does not include the customer object or customer id \u2014 only order_id is available.",
-      "mitigation": "The reverse-points-on-refund recipe queries the Shopify admin API (order \u2192 customer.legacyResourceId) synchronously before computing the reversal.",
-      "uxImplication": null
+      "gap": "The refunds/create webhook payload does not include customer_external_id directly \u2014 it must be resolved from the parent order via the point_ledger table using order_id.",
+      "mitigation": "The reversal recipe looks up the customer_external_id from the point_ledger earn entry keyed by order_external_id, avoiding any additional Shopify API call.",
+      "uxImplication": "If no earn entry exists for the order (order pre-dates app install), the refund is silently skipped and no balance adjustment is made."
     },
     {
-      "gap": "Shopify does not provide a batch discount-deactivation mutation \u2014 each cancellation requires an individual discountCodeDeactivate call.",
-      "mitigation": "Each cancel-redemption workflow.attempt issues a single discountCodeDeactivate mutation; no bulk path exists.",
-      "uxImplication": null
+      "gap": "Shopify does not provide a native 'apply discount to cart server-side' API \u2014 discount codes must be manually entered by the customer or applied via theme integration.",
+      "mitigation": "The apply-redemption recipe creates a discount code and returns it to the widget; the widget surfaces the code string to the customer who copies or applies it at checkout.",
+      "uxImplication": "The customer must manually enter or click-to-copy the discount code at checkout rather than seeing it applied automatically, introducing a small friction step."
     },
     {
-      "gap": "When Shopify discount creation succeeds but the subsequent DB transaction fails, an orphaned discount code exists in Shopify with no matching redemption row.",
-      "mitigation": "On retry the apply recipe rejects any existing active redemption before creating a new discount; the orphaned discount from the prior failed attempt cannot be reused and must be manually deactivated by the merchant if it was already shared with the customer.",
-      "uxImplication": "Widget should inform the customer to refresh and retry if the apply step returns an error, rather than retrying automatically."
+      "gap": "If the Shopify discount creation (discountCodeBasicCreate) succeeds but the subsequent DB transaction fails, an orphaned discount code exists in Shopify that has not been debited from the customer's balance.",
+      "mitigation": "On failure the catch arm cancels the pending redemption row (freeing the cart slot); the customer's points were never debited so a retry creates a fresh discount. The orphaned Shopify code is harmless as it was never returned to the customer.",
+      "uxImplication": "In rare failure cases a customer may retry the apply flow; no points are lost and no double-debit occurs."
     }
   ],
   "emailSpec": null,
   "uxExpectations": {
-    "storefront": "The cart widget should feel instantaneous \u2014 show the points balance and monetary equivalent prominently, let the customer apply or cancel with a single tap, and reflect the discount code immediately without a page reload. Optimistically grey out the apply button while the POST is in flight.",
-    "admin": "The admin panel should prioritize the settings form (earn rate and redemption rate) as the primary configuration action, and the paginated customer balance table as the primary audit view \u2014 merchants should be able to spot high-balance customers at a glance.",
+    "storefront": "The cart widget should feel instant \u2014 balance and active redemption state load on mount from the pre-aggregated snapshot with no perceptible delay. The apply and cancel actions update the displayed balance optimistically and confirm via the response payload, giving the customer immediate feedback before they proceed to checkout.",
+    "admin": "The merchant dashboard should prioritise the customer balances audit table with live search-as-you-type by customer ID and a clear settings panel that shows the two rate levers with plain-language examples of what each rate produces (e.g. '10 points per $1 spent, 1 point = $0.01 discount').",
     "widgetShapes": [
-      "cart_aware",
-      "form_persist_state_check"
+      "form_persist_state_check",
+      "cart_aware"
     ],
     "adminShapes": [
       "settings_form",
       "paginated_table",
       "table_filters",
-      "empty_state_cta"
+      "kpi_stats_row"
     ]
   },
   "edgeCases": [
-    "Duplicate orders/paid webhook for the same order \u2014 earn_claim_log uniqueConstraint on order_external_id causes INSERT ON CONFLICT DO NOTHING to return zero rows; ledger and snapshot are never double-written.",
-    "Duplicate refunds/create webhook for the same refund \u2014 refund_reversal_log uniqueConstraint on refund_external_id gates the entire reversal pipeline before any Shopify query or ledger write.",
-    "A refund reduces earned points below the already-redeemed amount \u2014 the clamp in reverse-points-on-refund ensures available_points floors at zero; the ledger faithfully records only the clamped reversal delta, not the raw computed reversal.",
-    "Customer applies points then abandons cart without cancelling \u2014 point_redemptions row stays 'active'; the sweep cron flips aged 'active' rows to 'expired' via workflow.sweepStale so the merchant can identify them in the admin balance list, but the ledger debit remains (merchant policy decision to credit back is out of scope).",
-    "Concurrent redemption apply requests for the same cart from the same customer (double-tap) \u2014 the SELECT for existing active redemption plus the unique constraint on (cart_external_id, customer_external_id, status='active') means at most one succeeds; the second returns 409.",
-    "Merchant changes earn rate mid-day \u2014 already-credited earn_claim_log rows are immutable; only future orders earn at the new rate, preserving audit integrity."
+    "A customer earns points on an order and then a full refund is issued after the points have been redeemed \u2014 the refund reversal is clamped to the current available_points (which may be 0), so the balance cannot go negative and the ledger accurately records the clamped delta.",
+    "The merchant changes the earn rate or redemption rate mid-operation \u2014 earn events use the rate in effect at webhook receipt time; existing redemption discount values are already persisted in minor units and are unaffected by rate changes.",
+    "An active redemption's discount code is manually deactivated in the Shopify admin by the merchant without going through the cancel flow \u2014 the point_redemptions row remains 'active'; the points are not restored. The merchant must use the admin balances view to identify the stale row and manually adjust via a support process (no automated detection path).",
+    "A customer has multiple browser tabs open on the cart page and submits the apply-redemption form from two tabs simultaneously \u2014 the pending INSERT ON CONFLICT (cart_external_id, customer_external_id, status) DO NOTHING returns zero rows for the second request, which receives a 409 before any Shopify call is made, preventing duplicate discount creation.",
+    "The earn_idempotency or refund_idempotency PRIMARY KEY constraint is violated under normal operations only by duplicate webhook delivery \u2014 the ON CONFLICT DO NOTHING pattern prevents any visible error while the template's processed_webhooks dedup layer provides the outer guard.",
+    "A customer abandons a cart with an active redemption \u2014 the point_redemptions row remains 'active' with an old updated_at; merchants can identify abandoned redemptions by filtering the admin balances view for active-status rows with updated_at older than a configurable threshold (no automated sweep is implemented)."
   ]
 }
 

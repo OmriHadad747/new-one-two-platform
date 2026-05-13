@@ -199,12 +199,17 @@ class Generator(ABC):
             f"Fix ALL listed errors in this new attempt.\n\n"
         )
 
-    def generate(self, ctx: CodegenContext) -> Tuple[str, int, int]:
+    def generate(self, ctx: CodegenContext) -> Tuple[str, int, int, int, int]:
         """
         Full generation cycle: build prompts → invoke LLM → parse output.
 
-        Returns (parsed_artifact, input_tokens, output_tokens).
-        The token counts let the orchestrator build an accurate AgentTraceEntry.
+        Returns (parsed_artifact, input_tokens, output_tokens, cache_read_tokens,
+        cache_creation_tokens). `cache_read_tokens` are the prefix tokens
+        Anthropic served from cache at ~10% of normal input price; on
+        retries within the 5-min cache TTL the codegen system prompt
+        (typically 20-30k chars) reuses the cached block. Reported
+        separately from `input_tokens` so the CLI can show the actual cost
+        rather than the raw input total.
 
         This is the only entry point the orchestrator needs to call.
         Override ONLY when a generator has structured side-band output that
@@ -240,4 +245,10 @@ class Generator(ABC):
         # attempt's output is post-mortem-able (same convention as the
         # upstream agents). No-op outside an active `input_log` block.
         dump_output(result.content)
-        return self.parse(result.content), result.input_tokens, result.output_tokens
+        return (
+            self.parse(result.content),
+            result.input_tokens,
+            result.output_tokens,
+            result.cache_read_tokens,
+            result.cache_creation_tokens,
+        )

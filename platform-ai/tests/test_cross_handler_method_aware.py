@@ -23,8 +23,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 import pytest
 
-from subagents.e_codegen_agent.cross_admin_backend import validate_admin_backend_contract
-from subagents.e_codegen_agent.cross_widget_backend import validate_widget_backend_contract
+from subagents.f_codegen_agent.cross_admin_backend import validate_admin_backend_contract
+from subagents.f_codegen_agent.cross_widget_backend import validate_widget_backend_contract
 
 
 # ── Surface fixtures ──────────────────────────────────────────────────────────

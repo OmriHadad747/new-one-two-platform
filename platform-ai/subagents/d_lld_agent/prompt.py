@@ -522,6 +522,16 @@ Two flavours, picked by `kind`:
                        Column requirements:
                          constraints MUST be `NOT NULL DEFAULT '<initialState>'`
                          enum lists every state literal.
+                       REQUIRED COMPANION RECIPE — you MUST also emit a
+                       cron recipe with `triggeredBy: "cron:sweep_<table>"`
+                       whose single step is a `compute` calling
+                       `workflow.sweepStale('<table>')`. Schema validation
+                       rejects any workflow stateMachine without this
+                       sweeper (rows that crash mid-execution would
+                       otherwise stay 'running' forever). Cadence: every
+                       10 minutes — set `shopifyIntegration.cronSchedule`
+                       to `"*/10 * * * *"` if no other cron requires a
+                       different cadence.
 
 Common fields:
 
@@ -1575,8 +1585,8 @@ def build_system_prompt() -> str:
     agent's `admin_shapes` registry are all single sources of truth —
     bumping any of them automatically updates what the agent sees.
     """
-    from subagents.e_codegen_agent.storefront_agent.widget_shapes import widget_shapes_section
-    from subagents.e_codegen_agent.admin_agent.admin_shapes import admin_shapes_section
+    from subagents.f_codegen_agent.storefront_agent.widget_shapes import widget_shapes_section
+    from subagents.f_codegen_agent.admin_agent.admin_shapes import admin_shapes_section
 
     schema_json = json.dumps(LLDPlan.model_json_schema())
     return (

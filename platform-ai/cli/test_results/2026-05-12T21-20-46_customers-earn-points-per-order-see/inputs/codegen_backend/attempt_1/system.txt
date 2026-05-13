@@ -175,10 +175,23 @@ These are the parts NOT pre-decided in the LLD AST or step.example.
 ── triggeredBy → file + handler key ───────────────────────────
 
   "webhook:<topic>"          src/routes/webhook-handlers.ts
-                             webhookHandlers["<topic>"] = async (payload, req) => { … }
+                             Emit ONE object literal export with every
+                             topic as a quoted key (NOT bracket-assignment
+                             after declaration — static validation expects
+                             the literal form):
+                               export const webhookHandlers = {
+                                 "<topic1>": async (payload, req) => { … },
+                                 "<topic2>": async (payload, req) => { … },
+                               };
 
   "cron:<jobName>"           src/routes/cron.ts
-                             jobs["<jobName>"] = async (payload) => { … }
+                             Same shape, jobNames as bare identifier keys
+                             (snake_case, no quotes — the static
+                             validator's regex requires identifier keys):
+                               export const jobs = {
+                                 <jobName1>: async (payload) => { … },
+                                 <jobName2>: async (payload) => { … },
+                               };
 
   "widget:<METHOD>:<path>"   src/routes/widget.ts
                              widgetRouter.<method>("<path>", async (req, res) => { … })

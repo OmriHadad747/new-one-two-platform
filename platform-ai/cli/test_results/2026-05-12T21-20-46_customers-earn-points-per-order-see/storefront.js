@@ -1,0 +1,388 @@
+window.__PLATFORM_CATALOG__ = [];
+export function mount(container, host) {
+  const SLUG = "loyalty-points";
+  const KEY = `${SLUG}.guestToken`;
+  const { customerId } = host.context;
+
+  let guestToken = localStorage.getItem(KEY);
+  if (!customerId && !guestToken) {
+    guestToken = (crypto.randomUUID && crypto.randomUUID()) ||
+                 String(Date.now()) + Math.random().toString(36).slice(2);
+    localStorage.setItem(KEY, guestToken);
+  }
+
+  const customerExternalId = customerId || guestToken;
+
+  const style = document.createElement("style");
+  style.textContent = `
+    .app-${SLUG}-root { font: inherit; padding: 14px 0; box-sizing: border-box; }
+    .app-${SLUG}-card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; background: #fafafa; }
+    .app-${SLUG}-heading { margin: 0 0 8px; font-size: 1em; font-weight: 600; }
+    .app-${SLUG}-balance-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 4px; }
+    .app-${SLUG}-balance-label { font-size: 0.9em; color: #555; }
+    .app-${SLUG}-balance-value { font-size: 1em; font-weight: 700; color: #222; }
+    .app-${SLUG}-input-row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 10px; }
+    .app-${SLUG}-input-group { display: flex; flex-direction: column; flex: 1 1 120px; }
+    .app-${SLUG}-input-group label { font-size: 0.8em; color: #555; margin-bottom: 3px; }
+    .app-${SLUG}-input { padding: 7px 10px; border: 1px solid #ccc; border-radius: 5px; font: inherit; font-size: 0.95em; width: 100%; box-sizing: border-box; }
+    .app-${SLUG}-input[aria-invalid="true"] { border-color: #b00020; }
+    .app-${SLUG}-btn { padding: 8px 16px; border: none; border-radius: 5px; font: inherit; font-size: 0.9em; cursor: pointer; background: #222; color: #fff; white-space: nowrap; flex-shrink: 0; }
+    .app-${SLUG}-btn:disabled { opacity: 0.55; cursor: wait; }
+    .app-${SLUG}-btn-cancel { background: #fff; color: #b00020; border: 1px solid #b00020; }
+    .app-${SLUG}-btn-cancel:disabled { opacity: 0.55; cursor: wait; }
+    .app-${SLUG}-applied-box { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; font-size: 0.9em; }
+    .app-${SLUG}-applied-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .app-${SLUG}-code-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+    .app-${SLUG}-code { font-family: monospace; background: #fff; border: 1px dashed #aaa; border-radius: 4px; padding: 3px 8px; font-size: 0.9em; letter-spacing: 0.05em; }
+    .app-${SLUG}-copy-btn { font: inherit; font-size: 0.8em; padding: 3px 8px; border: 1px solid #888; border-radius: 4px; background: #fff; cursor: pointer; }
+    .app-${SLUG}-notice { font-size: 0.8em; color: #555; margin-top: 8px; line-height: 1.4; }
+    .app-${SLUG}-status { font-size: 0.85em; min-height: 1.1em; margin: 4px 0 0; }
+    .app-${SLUG}-status[data-tone="error"] { color: #b00020; }
+    .app-${SLUG}-status[data-tone="success"] { color: #2e7d32; }
+    .app-${SLUG}-loading { font-size: 0.9em; color: #888; padding: 10px 0; }
+    @media (max-width: 480px) {
+      .app-${SLUG}-input-row { flex-direction: column; }
+      .app-${SLUG}-btn { width: 100%; }
+    }
+  `;
+  container.appendChild(style);
+
+  const root = document.createElement("div");
+  root.className = `app-${SLUG}-root`;
+  container.appendChild(root);
+
+  function makeStatus() {
+    const p = document.createElement("p");
+    p.className = `app-${SLUG}-status`;
+    p.setAttribute("aria-live", "polite");
+    return p;
+  }
+
+  function renderLoading() {
+    root.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = `app-${SLUG}-loading`;
+    p.textContent = "Loading your points balance…";
+    root.appendChild(p);
+  }
+
+  function renderGuestMessage() {
+    root.innerHTML = "";
+    const card = document.createElement("div");
+    card.className = `app-${SLUG}-card`;
+    const p = document.createElement("p");
+    p.style.margin = "0";
+    p.style.fontSize = "0.9em";
+    p.textContent = "Sign in to your account to view and redeem loyalty points.";
+    card.appendChild(p);
+    root.appendChild(card);
+  }
+
+  function renderError(msg) {
+    root.innerHTML = "";
+    const p = document.createElement("p");
+    p.className = `app-${SLUG}-status`;
+    p.setAttribute("aria-live", "polite");
+    p.dataset.tone = "error";
+    p.textContent = msg;
+    root.appendChild(p);
+  }
+
+  function renderWidget(availablePoints, monetaryEquivalent, cartToken, cartCurrency, currentRedemption) {
+    root.innerHTML = "";
+
+    const card = document.createElement("div");
+    card.className = `app-${SLUG}-card`;
+
+    const heading = document.createElement("h3");
+    heading.className = `app-${SLUG}-heading`;
+    heading.textContent = "Loyalty Points";
+    card.appendChild(heading);
+
+    const balanceRow = document.createElement("div");
+    balanceRow.className = `app-${SLUG}-balance-row`;
+
+    const balLabel = document.createElement("span");
+    balLabel.className = `app-${SLUG}-balance-label`;
+    balLabel.textContent = "Your points balance:";
+
+    const balValue = document.createElement("span");
+    balValue.className = `app-${SLUG}-balance-value`;
+    balValue.textContent = `${availablePoints} pts`;
+    if (monetaryEquivalent) {
+      balValue.textContent = `${availablePoints} pts (${monetaryEquivalent})`;
+    }
+
+    balanceRow.appendChild(balLabel);
+    balanceRow.appendChild(balValue);
+    card.appendChild(balanceRow);
+
+    const status = makeStatus();
+
+    const hasActive = currentRedemption &&
+      currentRedemption.redemption_id &&
+      currentRedemption.status !== "cancelled";
+
+    if (hasActive) {
+      const appliedBox = document.createElement("div");
+      appliedBox.className = `app-${SLUG}-applied-box`;
+
+      const appliedRow = document.createElement("div");
+      appliedRow.className = `app-${SLUG}-applied-row`;
+
+      const appliedLabel = document.createElement("span");
+      appliedLabel.textContent = `${currentRedemption.points_applied} pts applied`;
+
+      const appliedValue = document.createElement("strong");
+      appliedValue.textContent = currentRedemption.discount_value || "";
+
+      appliedRow.appendChild(appliedLabel);
+      appliedRow.appendChild(appliedValue);
+      appliedBox.appendChild(appliedRow);
+
+      if (currentRedemption.discount_code) {
+        const codeRow = document.createElement("div");
+        codeRow.className = `app-${SLUG}-code-row`;
+
+        const codeLabel = document.createElement("span");
+        codeLabel.textContent = "Discount code:";
+
+        const codeEl = document.createElement("span");
+        codeEl.className = `app-${SLUG}-code`;
+        codeEl.textContent = currentRedemption.discount_code;
+
+        const copyBtn = document.createElement("button");
+        copyBtn.className = `app-${SLUG}-copy-btn`;
+        copyBtn.type = "button";
+        copyBtn.textContent = "Copy";
+        copyBtn.setAttribute("aria-label", "Copy discount code");
+        copyBtn.addEventListener("click", () => {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(currentRedemption.discount_code).then(() => {
+              copyBtn.textContent = "Copied!";
+            }).catch(() => {
+              copyBtn.textContent = "Copy failed";
+            });
+          } else {
+            copyBtn.textContent = "Copy manually";
+          }
+        });
+
+        codeRow.appendChild(codeLabel);
+        codeRow.appendChild(codeEl);
+        codeRow.appendChild(copyBtn);
+        appliedBox.appendChild(codeRow);
+
+        const notice = document.createElement("p");
+        notice.className = `app-${SLUG}-notice`;
+        notice.textContent = "Enter this code at checkout to apply your discount.";
+        appliedBox.appendChild(notice);
+      }
+
+      card.appendChild(appliedBox);
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.className = `app-${SLUG}-btn app-${SLUG}-btn-cancel`;
+      cancelBtn.type = "button";
+      cancelBtn.textContent = "Cancel redemption";
+      card.appendChild(cancelBtn);
+      card.appendChild(status);
+
+      cancelBtn.addEventListener("click", async () => {
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = "Cancelling…";
+        status.textContent = "";
+        status.dataset.tone = "";
+
+        try {
+          const result = await host.call("/redemption/cancel", {
+            redemption_id: currentRedemption.redemption_id,
+            customer_external_id: customerExternalId,
+          });
+          if (customerId && guestToken) {
+            localStorage.removeItem(KEY);
+            guestToken = null;
+          }
+          const restoredPoints = typeof result.restored_balance === "number"
+            ? result.restored_balance
+            : availablePoints + (currentRedemption.points_applied || 0);
+
+          renderWidget(restoredPoints, null, cartToken, cartCurrency, null);
+        } catch (_) {
+          cancelBtn.disabled = false;
+          cancelBtn.textContent = "Cancel redemption";
+          status.dataset.tone = "error";
+          status.textContent = "Could not cancel. Please try again.";
+        }
+      });
+
+    } else {
+      if (availablePoints <= 0) {
+        const noPoints = document.createElement("p");
+        noPoints.style.fontSize = "0.9em";
+        noPoints.style.color = "#888";
+        noPoints.style.margin = "0 0 8px";
+        noPoints.textContent = "You have no points to redeem yet. Points are earned with each order.";
+        card.appendChild(noPoints);
+        card.appendChild(status);
+        root.appendChild(card);
+        return;
+      }
+
+      const inputRow = document.createElement("div");
+      inputRow.className = `app-${SLUG}-input-row`;
+
+      const inputGroup = document.createElement("div");
+      inputGroup.className = `app-${SLUG}-input-group`;
+
+      const label = document.createElement("label");
+      label.htmlFor = `app-${SLUG}-points-input`;
+      label.textContent = `Points to redeem (max ${availablePoints})`;
+
+      const input = document.createElement("input");
+      input.type = "number";
+      input.id = `app-${SLUG}-points-input`;
+      input.className = `app-${SLUG}-input`;
+      input.name = "points_requested";
+      input.min = "1";
+      input.max = String(availablePoints);
+      input.value = String(availablePoints);
+      input.setAttribute("aria-label", `Points to redeem, maximum ${availablePoints}`);
+
+      inputGroup.appendChild(label);
+      inputGroup.appendChild(input);
+      inputRow.appendChild(inputGroup);
+
+      const applyBtn = document.createElement("button");
+      applyBtn.className = `app-${SLUG}-btn`;
+      applyBtn.type = "button";
+      applyBtn.textContent = "Apply points";
+      inputRow.appendChild(applyBtn);
+
+      card.appendChild(inputRow);
+      card.appendChild(status);
+
+      applyBtn.addEventListener("click", async () => {
+        status.textContent = "";
+        status.dataset.tone = "";
+        input.removeAttribute("aria-invalid");
+
+        const raw = parseInt(input.value, 10);
+        if (!raw || raw < 1) {
+          input.setAttribute("aria-invalid", "true");
+          status.dataset.tone = "error";
+          status.textContent = "Please enter a valid number of points.";
+          input.focus();
+          return;
+        }
+        if (raw > availablePoints) {
+          input.setAttribute("aria-invalid", "true");
+          status.dataset.tone = "error";
+          status.textContent = `You only have ${availablePoints} points available.`;
+          input.focus();
+          return;
+        }
+
+        applyBtn.disabled = true;
+        applyBtn.textContent = "Applying…";
+
+        try {
+          const result = await host.call("/redemption/apply", {
+            customer_external_id: customerExternalId,
+            cart_external_id: cartToken,
+            points_requested: raw,
+            currency: cartCurrency,
+          });
+          if (customerId && guestToken) {
+            localStorage.removeItem(KEY);
+            guestToken = null;
+          }
+
+          const newRedemption = {
+            redemption_id: result.redemption_id,
+            points_applied: result.points_applied,
+            discount_value: result.discount_value,
+            discount_code: result.discount_code,
+            status: "active",
+          };
+
+          renderWidget(
+            typeof result.remaining_balance === "number" ? result.remaining_balance : availablePoints - raw,
+            null,
+            cartToken,
+            cartCurrency,
+            newRedemption
+          );
+        } catch (_) {
+          applyBtn.disabled = false;
+          applyBtn.textContent = "Apply points";
+          status.dataset.tone = "error";
+          status.textContent = "Could not apply points. Please try again.";
+        }
+      });
+    }
+
+    root.appendChild(card);
+  }
+
+  async function init() {
+    if (!customerId) {
+      renderGuestMessage();
+      return;
+    }
+
+    renderLoading();
+
+    let cart = null;
+    try {
+      cart = await host.storefront("/cart.js");
+    } catch (_) {
+      renderError("Could not load cart information. Please refresh the page.");
+      return;
+    }
+
+    if (!cart || !cart.token) {
+      renderError("Cart not found. Please refresh the page.");
+      return;
+    }
+
+    const cartToken = cart.token;
+    const cartCurrency = cart.currency || "USD";
+
+    let availablePoints = 0;
+    let monetaryEquivalent = null;
+
+    try {
+      const balance = await host.call("/balance", {
+        customer_external_id: customerExternalId,
+      });
+      if (balance) {
+        availablePoints = typeof balance.available_points === "number" ? balance.available_points : 0;
+        monetaryEquivalent = balance.monetary_equivalent || null;
+      }
+    } catch (_) {
+      availablePoints = 0;
+    }
+
+    let currentRedemption = null;
+    try {
+      const redemptionState = await host.call("/redemption/current", {
+        cart_external_id: cartToken,
+        customer_external_id: customerExternalId,
+      });
+      if (redemptionState && redemptionState.redemption_id) {
+        currentRedemption = redemptionState;
+      }
+    } catch (_) {
+      currentRedemption = null;
+    }
+
+    renderWidget(availablePoints, monetaryEquivalent, cartToken, cartCurrency, currentRedemption);
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) init();
+  });
+
+  init();
+}

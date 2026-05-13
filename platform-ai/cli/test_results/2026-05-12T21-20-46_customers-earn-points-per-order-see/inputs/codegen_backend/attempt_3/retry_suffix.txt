@@ -1,8 +1,51 @@
 
 
 PREVIOUS ATTEMPT FAILED VALIDATION:
-- [src/routes/webhook-handlers.ts] missing handler for planned topics: ['orders/paid', 'refunds/create']
-- [src/routes/cron.ts] jobs map must include at least one entry
+- [src/routes/admin.ts:98:24] TS2532: Object is possibly 'undefined'.
+- [src/routes/admin.ts:99:15] TS2532: Object is possibly 'undefined'.
+- [src/routes/admin.ts:103:3] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/admin.ts:124:3] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/admin.ts:157:3] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/webhook-handlers.ts:4:10] TS2305: Module '"../lib/money.js"' has no exported member 'money'.
+- [src/routes/webhook-handlers.ts:130:19] TS2532: Object is possibly 'undefined'.
+- [src/routes/webhook-handlers.ts:131:23] TS2532: Object is possibly 'undefined'.
+- [src/routes/webhook-handlers.ts:174:40] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:5:10] TS2305: Module '"../lib/money.js"' has no exported member 'money'.
+- [src/routes/widget.ts:29:60] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:34:3] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:67:5] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:77:14] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:78:7] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:81:5] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:82:22] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:83:23] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:85:22] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:86:15] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:110:60] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:114:5] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:152:5] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:158:31] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:187:53] TS2558: Expected 0 type arguments, but got 1.
+- [src/routes/widget.ts:216:9] TS18046: 'discountResultRaw' is of type 'unknown'.
+- [src/routes/widget.ts:218:44] TS18046: 'discountResultRaw' is of type 'unknown'.
+- [src/routes/widget.ts:218:102] TS7006: Parameter 'e' implicitly has an 'any' type.
+- [src/routes/widget.ts:224:20] TS18046: 'discountResultRaw' is of type 'unknown'.
+- [src/routes/widget.ts:226:9] TS18046: 'discountResultRaw' is of type 'unknown'.
+- [src/routes/widget.ts:260:5] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:287:5] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:319:5] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:326:27] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:327:18] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:328:15] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:335:55] TS2558: Expected 0 type arguments, but got 1.
+- [src/routes/widget.ts:350:9] TS18046: 'deactivateResultRaw' is of type 'unknown'.
+- [src/routes/widget.ts:352:43] TS18046: 'deactivateResultRaw' is of type 'unknown'.
+- [src/routes/widget.ts:352:102] TS7006: Parameter 'e' implicitly has an 'any' type.
+- [src/routes/widget.ts:368:7] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:401:62] TS2532: Object is possibly 'undefined'.
+- [src/routes/widget.ts:403:5] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:425:5] TS2322: Type 'Response<any, Record<string, any>>' is not assignable to type 'void'.
+- [src/routes/widget.ts:4:10] TS2305: Module '"../lib/money.js"' has no exported member 'money'.
 
 Fix ALL listed errors in this new attempt.
 

@@ -797,14 +797,14 @@ class UxExpectations(_StrictModel):
         """Reject any shape name not present in the storefront agent's
         registry. The registry is the single source of truth — adding a
         new shape there makes it valid here automatically."""
-        from subagents.e_codegen_agent.storefront_agent.widget_shapes import is_known_shape
+        from subagents.f_codegen_agent.storefront_agent.widget_shapes import is_known_shape
 
         bad = [name for name in v if not is_known_shape(name)]
         if bad:
             raise ValueError(
                 f"unknown widgetShapes: {sorted(set(bad))}. "
                 "Allowed values come from "
-                "subagents.e_codegen_agent.storefront_agent.widget_shapes.WIDGET_SHAPES."
+                "subagents.f_codegen_agent.storefront_agent.widget_shapes.WIDGET_SHAPES."
             )
         return v
 
@@ -813,16 +813,16 @@ class UxExpectations(_StrictModel):
     def _check_admin_shapes(cls, v: List[str]) -> List[str]:
         """Reject any shape name not present in the admin agent's
         registry. Parallels widgetShapes — adding a new shape to
-        subagents.e_codegen_agent.admin_agent.admin_shapes.ADMIN_SHAPES makes it
+        subagents.f_codegen_agent.admin_agent.admin_shapes.ADMIN_SHAPES makes it
         valid here automatically."""
-        from subagents.e_codegen_agent.admin_agent.admin_shapes import is_known_shape
+        from subagents.f_codegen_agent.admin_agent.admin_shapes import is_known_shape
 
         bad = [name for name in v if not is_known_shape(name)]
         if bad:
             raise ValueError(
                 f"unknown adminShapes: {sorted(set(bad))}. "
                 "Allowed values come from "
-                "subagents.e_codegen_agent.admin_agent.admin_shapes.ADMIN_SHAPES."
+                "subagents.f_codegen_agent.admin_agent.admin_shapes.ADMIN_SHAPES."
             )
         return v
 

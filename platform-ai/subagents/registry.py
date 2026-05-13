@@ -18,14 +18,14 @@ from __future__ import annotations
 from typing import Dict
 
 from subagents.base import Generator
-from subagents.e_codegen_agent.backend_agent import BackendGenerator
-from subagents.e_codegen_agent.db_agent import DbGenerator
-from subagents.e_codegen_agent.storefront_agent import StorefrontGenerator
-from subagents.e_codegen_agent.admin_agent import AdminGenerator
+from subagents.f_codegen_agent.backend_agent import BackendGenerator
+from subagents.f_codegen_agent.db_agent import DbGenerator
+from subagents.f_codegen_agent.storefront_agent import StorefrontGenerator
+from subagents.f_codegen_agent.admin_agent import AdminGenerator
 
 GENERATORS: Dict[str, Generator] = {
-    # DbGenerator.name: DbGenerator(),
-    # StorefrontGenerator.name: StorefrontGenerator(),
+    DbGenerator.name: DbGenerator(),
+    StorefrontGenerator.name: StorefrontGenerator(),
     BackendGenerator.name: BackendGenerator(),
     # AdminGenerator.name: AdminGenerator(),
 }

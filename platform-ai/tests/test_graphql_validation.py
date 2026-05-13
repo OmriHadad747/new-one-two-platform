@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
-from subagents.e_codegen_agent.backend_agent import graphql_check as graphql_validation
-from subagents.e_codegen_agent.backend_agent.graphql_check import (
+from subagents.f_codegen_agent.backend_agent import graphql_check as graphql_validation
+from subagents.f_codegen_agent.backend_agent.graphql_check import (
     _ADMIN_HELPERS,
     _STOREFRONT_HELPERS,
     _extract_queries,

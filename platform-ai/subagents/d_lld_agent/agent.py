@@ -30,6 +30,7 @@ plus token totals.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
@@ -50,16 +51,7 @@ from subagents.d_lld_agent.prompt import build_system_prompt
 from subagents.d_lld_agent.schema import LLDPlan
 
 _MAX_ATTEMPTS = 3
-# LLD output is large — full database + httpRoutes + capabilityRecipes can
-# easily exceed 8K output tokens, especially on multi-trigger apps. 16K
-# matches the codegen agents' ceiling and leaves headroom for the schema's
-# discriminated-union recipe steps. Truncated output → empty extract_json
-# → "EOF while parsing" on attempt 1.
 _MAX_TOKENS = 32_000
-# Thinking is counted against `max_tokens` by Anthropic. Recipe writing is
-# structured (template + bindings), not free-reasoning, so a tighter budget
-# leaves more room for the actual JSON output. Bump back if recipes start
-# missing edge cases.
 _THINKING_BUDGET = 0
 
 
@@ -240,11 +232,14 @@ def run_lld_agent(
             parsed = LLDPlan.model_validate_json(raw_json)
         except ValidationError as err:
             last_errors = _format_pydantic_errors(err)
+            last_errors = _enrich_with_byte_context(last_errors, raw_json)
             if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
                 on_attempt_failed(attempt, last_errors)
             continue
         except json.JSONDecodeError as err:
-            last_errors = [f"output is not valid JSON: {err}"]
+            last_errors = _enrich_with_byte_context(
+                [f"output is not valid JSON: {err}"], raw_json
+            )
             if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
                 on_attempt_failed(attempt, last_errors)
             continue
@@ -296,6 +291,47 @@ def _format_pydantic_errors(err: ValidationError) -> List[str]:
         msg = e.get("msg", "validation error")
         out.append(f"{loc}: {msg}")
     return out
+
+
+# Match `column N` or `char N` from Pydantic / json error messages so we can
+# splice the offending byte window from the raw output into the retry note.
+_PARSE_COLUMN_RE = re.compile(r"\b(?:column|char)\s+(\d+)", re.IGNORECASE)
+
+
+def _enrich_with_byte_context(errors: List[str], raw_json: str) -> List[str]:
+    """
+    When an error message names a column / char offset into the raw model
+    output (Pydantic + json.JSONDecodeError both do), append a ±60-byte
+    window around that offset so the model can SEE its own slip on retry.
+
+    Without this the model receives only the column number ("column 13082")
+    and has to guess where it went wrong inside ~50k characters of its own
+    output — a single-character autoregressive slip then often survives the
+    retry. With the window it sees e.g. `},(` vs the expected `},"` and
+    fixes the typo in one pass.
+
+    Only enriches the first error string that names a column. Errors with
+    no column reference (most schema rule violations) pass through unchanged.
+    """
+    enriched: List[str] = []
+    annotated = False
+    for line in errors:
+        if annotated or not raw_json:
+            enriched.append(line)
+            continue
+        m = _PARSE_COLUMN_RE.search(line)
+        if not m:
+            enriched.append(line)
+            continue
+        # column/char counts are 1-based in error messages but indexed into
+        # the raw string. Treat as char offset; clamp to bounds.
+        pos = max(0, min(int(m.group(1)) - 1, len(raw_json) - 1))
+        start = max(0, pos - 60)
+        end = min(len(raw_json), pos + 60)
+        window = raw_json[start:end].replace("\n", "\\n")
+        enriched.append(f"{line}\n    near col {pos + 1}: ...{window}...")
+        annotated = True
+    return enriched
 
 
 # ── HLD signal helpers ────────────────────────────────────────────────────────

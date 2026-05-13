@@ -5,31 +5,9 @@
       "capability_id": "create-cart-discount",
       "ops": [
         {
-          "name": "customerByIdentifier",
-          "surface": "admin",
-          "note": "Resolve the customer's GID from their external id so the discount can be scoped to a single customer",
-          "args": [
-            {
-              "name": "identifier",
-              "required": true,
-              "type": "CustomerIdentifierInput!"
-            }
-          ],
-          "examples": [],
-          "inputTypesSdl": {
-            "CustomerIdentifierInput": "input CustomerIdentifierInput {\n  id: ID\n  customId: UniqueMetafieldValueInput\n  emailAddress: String\n  phoneNumber: String\n}",
-            "UniqueMetafieldValueInput": "input UniqueMetafieldValueInput {\n  namespace: String\n  key: String!\n  value: String!\n}"
-          },
-          "isConnection": false,
-          "kind": "query",
-          "returnTypeName": "Customer",
-          "returnTypeSdl": "type Customer implements CommentEventSubject & HasEvents & HasMetafieldDefinitions & HasMetafields & HasStoreCreditAccounts & LegacyInteroperability & Node {\n  addresses(first: Int): [MailingAddress!]!\n  addressesV2(first: Int, after: String, last: Int, before: String, reverse: Boolean): MailingAddressConnection!\n  amountSpent: MoneyV2!\n  canDelete: Boolean!\n  companyContactProfiles: [CompanyContact!]!\n  createdAt: DateTime!\n  dataSaleOptOut: Boolean!\n  defaultAddress: MailingAddress\n  defaultEmailAddress: CustomerEmailAddress\n  defaultPhoneNumber: CustomerPhoneNumber\n  displayName: String!\n  email: String\n  emailMarketingConsent: CustomerEmailMarketingConsentState\n  events(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: EventSortKeys, query: String): EventConnection!\n  firstName: String\n  hasTimelineComment: Boolean!\n  id: ID!\n  image: Image!\n  lastName: String\n  lastOrder: Order\n  legacyResourceId: UnsignedInt64!\n  lifetimeDuration: String!\n  locale: String!\n  market: Market\n  mergeable: CustomerMergeable!\n  metafield(namespace: String, key: String!): Metafield\n  metafieldDefinitions(namespace: String, pinnedStatus: MetafieldDefinitionPinnedStatus, first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: MetafieldDefinitionSortKeys, query: String): MetafieldDefinitionConnection!\n  metafields(namespace: String, keys: [String!], first: Int, after: String, last: Int, before: String, reverse: Boolean): MetafieldConnection!\n  multipassIdentifier: String\n  note: String\n  numberOfOrders: UnsignedInt64!\n  orders(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: OrderSortKeys, query: String): OrderConnection!\n  paymentMethods(showRevoked: Boolean, first: Int, after: String, last: Int, before: String, reverse: Boolean): CustomerPaymentMethodConnection!\n  phone: String\n  productSubscriberStatus: CustomerProductSubscriberStatus!\n  smsMarketingConsent: CustomerSmsMarketingConsentState\n  state: CustomerState!\n  statistics: CustomerStatistics!\n  storeCreditAccounts(first: Int, after: String, last: Int, before: String, query: String): StoreCreditAccountConnection!\n  subscriptionContracts(first: Int, after: String, last: Int, before: String, reverse: Boolean): SubscriptionContractConnection!\n  tags: [String!]!\n  taxExempt: Boolean!\n  taxExemptions: [TaxExemption!]!\n  unsubscribeUrl: URL!\n  updatedAt: DateTime!\n  validEmailAddress: Boolean!\n  verifiedEmail: Boolean!\n}",
-          "userErrorsField": null
-        },
-        {
           "name": "discountCodeBasicCreate",
           "surface": "admin",
-          "note": "Create a single-use fixed-amount discount code for the computed monetary value tied to the resolved customer",
+          "note": "creates a single-use fixed-amount discount code in Shopify scoped to the computed monetary value for the customer's cart redemption",
           "args": [
             {
               "name": "basicCodeDiscount",
@@ -246,7 +224,7 @@
         {
           "name": "discountCodeDeactivate",
           "surface": "admin",
-          "note": "Deactivate (void) the previously created discount so it cannot be applied at checkout after the redemption is cancelled",
+          "note": "deactivates (voids) the previously created discount code identified by the stored discount external id so it can no longer be applied at checkout",
           "args": [
             {
               "name": "id",
@@ -269,7 +247,7 @@
     {
       "trigger_event": "an order is paid",
       "topic": "orders/paid",
-      "note": "Delivers full order payload including order id, total price, and customer object needed to compute and credit earned points",
+      "note": "delivers order id, customer object, and total price fields needed to compute points earned and identify the customer",
       "description": "Occurs whenever an order is paid.",
       "payloadFields": [
         {
@@ -772,7 +750,7 @@
     {
       "trigger_event": "a refund is issued on an order",
       "topic": "refunds/create",
-      "note": "Delivers refund id, order id, and refund line items needed to compute proportional point reversal",
+      "note": "delivers refund id, order id, and refund line items needed to compute points to reverse and enforce idempotency by refund external id",
       "description": "Occurs whenever a new refund is created without errors on an order, independent from the movement of money.",
       "payloadFields": [
         {

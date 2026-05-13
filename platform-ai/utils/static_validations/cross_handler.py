@@ -2,8 +2,8 @@
 Shared infrastructure for cross-artifact handler validators.
 
 The widget and admin cross-handler validators
-(`subagents/e_codegen_agent/cross_widget_backend.py`,
-`subagents/e_codegen_agent/cross_admin_backend.py`) have identical shape: scan the
+(`subagents/f_codegen_agent/cross_widget_backend.py`,
+`subagents/f_codegen_agent/cross_admin_backend.py`) have identical shape: scan the
 client's `host.call(path, {fields})` / `bridge.call(path, {fields})`
 invocations, scan the handler's `<router>.<method>("/path", async (req,
 res) => {…})` route bodies, and cross-check field-name sets between

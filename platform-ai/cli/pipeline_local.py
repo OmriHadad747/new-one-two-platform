@@ -43,10 +43,10 @@ from subagents.c_ops_picker_agent.agent import (
     run_ops_picker_agent,
 )
 from subagents.base import CodegenContext
-from subagents.h_explenation_agent.explanation_agent import run_explanation_agent
-from subagents.g_revision_agent.revision_agent import run_revision_agent
-from subagents.f_codegen_v_agent.base import run_llm_validators
-from subagents.e_codegen_agent.orchestration import (
+from subagents.i_explenation_agent.explanation_agent import run_explanation_agent
+from subagents.h_revision_agent.revision_agent import run_revision_agent
+from subagents.g_codegen_v_agent.base import run_llm_validators
+from subagents.f_codegen_agent.orchestration import (
     _revision_locked_artifacts,
     run_codegen_parallel,
     validate_artifacts,
@@ -147,7 +147,7 @@ def _save_codegen_failure_local(
     is_admin_ui: bool,
     retry_log: List[Dict],
     final_errors: Dict[str, List[str]],
-    token_totals: Dict[str, Tuple[int, int]],
+    token_totals: Dict[str, Tuple[int, int, int, int]],
     plan: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """
@@ -186,7 +186,15 @@ def _save_codegen_failure_local(
         "max_retries": _MAX_CODEGEN_RETRIES,
         "final_errors": final_errors,
         "retry_log": retry_log,
-        "token_totals": {k: {"in": v[0], "out": v[1]} for k, v in token_totals.items()},
+        "token_totals": {
+            k: {
+                "in": v[0],
+                "out": v[1],
+                "cache_read": v[2] if len(v) > 2 else 0,
+                "cache_create": v[3] if len(v) > 3 else 0,
+            }
+            for k, v in token_totals.items()
+        },
         "artifact_keys": sorted(artifacts.keys()),
     }
     try:
@@ -367,7 +375,7 @@ def _phase_ops_picker(
     )
     from catalogs.shopify_webhooks import load_summary_md
     from subagents.c_ops_picker_agent.shopify_ops import get_op_names, load_summary
-    from subagents.e_codegen_agent.backend_agent.constants import WEBHOOK_TOPICS
+    from subagents.f_codegen_agent.backend_agent.constants import WEBHOOK_TOPICS
 
     admin_idx = load_summary("admin")
     storefront_idx = load_summary("storefront")
@@ -378,7 +386,7 @@ def _phase_ops_picker(
     # trigger's signalFields against what Shopify really sends, instead of
     # picking from a flat list of names. Platform-owned topics are filtered
     # out via _PLATFORM_OWNED_EXCLUSIONS (see
-    # subagents.e_codegen_agent.backend_agent.constants),
+    # subagents.f_codegen_agent.backend_agent.constants),
     # so the LLM never sees app/uninstalled, customers/data_request, etc.
     full_summary = load_summary_md()
     allowed = WEBHOOK_TOPICS
@@ -523,14 +531,17 @@ def _phase_codegen(
     prior_artifacts: Optional[Dict[str, str]] = None,
     prior_error_map: Optional[Dict[str, List[str]]] = None,
     prior_retry_log: Optional[List[Dict]] = None,
-    prior_token_totals: Optional[Dict[str, Tuple[int, int]]] = None,
-) -> Tuple[Dict[str, str], List[Dict], Dict[str, Tuple[int, int]]]:
+    prior_token_totals: Optional[Dict[str, Tuple[int, int, int, int]]] = None,
+) -> Tuple[Dict[str, str], List[Dict], Dict[str, Tuple[int, int, int, int]]]:
     """
     Run parallel codegen with static validation retries.
 
     Returns (artifacts, retry_log, token_totals) where:
       retry_log    — list of {attempt, errors} dicts for every failed round
-      token_totals — {agent_name: (total_in, total_out)} accumulated across all attempts
+      token_totals — {agent_name: (total_in, total_out, cache_read, cache_create)}
+                     accumulated across all attempts. Cache columns are 0 on
+                     attempt 1 (cold cache) and typically > 0 on retry
+                     attempts within the 5-min cache TTL.
 
     Resume path: when `prior_artifacts` / `prior_error_map` are passed, the
     first iteration starts from that state instead of the empty dicts. The
@@ -561,10 +572,10 @@ def _phase_codegen(
     }
     cumulative_errors: Dict[str, List[str]] = {}
     retry_log: List[Dict] = list(prior_retry_log or [])
-    token_totals: Dict[str, Tuple[int, int]] = dict(prior_token_totals or {})
+    token_totals: Dict[str, Tuple[int, int, int, int]] = dict(prior_token_totals or {})
 
     _CODEGEN_LABELS = {
-        "backend": "Handler",
+        "backend": "Backend",
         "db": "DB",
         "storefront": "Storefront",
         "admin_ui": "Admin UI",
@@ -626,11 +637,19 @@ def _phase_codegen(
             ms_agent: int,
             in_tok: int,
             out_tok: int,
+            cache_r: int,
+            cache_c: int,
             _attempt: int = attempt,
         ) -> None:
             retry_sfx = f"  retry {_attempt}" if _attempt > 1 else ""
             tok_str = (
-                _tok_note(in_tok, out_tok, extra=retry_sfx)
+                _tok_note(
+                    in_tok,
+                    out_tok,
+                    extra=retry_sfx,
+                    cache_read=cache_r,
+                    cache_create=cache_c,
+                )
                 if (in_tok or out_tok)
                 else retry_sfx.strip()
             )
@@ -651,18 +670,31 @@ def _phase_codegen(
                 on_done=_on_done,
             )
 
-        # Accumulate token totals across retries
-        for name, (in_t, out_t) in attempt_tokens.items():
-            prev_in, prev_out = token_totals.get(name, (0, 0))
-            token_totals[name] = (prev_in + in_t, prev_out + out_t)
+        # Accumulate token totals across retries. Each value is a 4-tuple
+        # (in, out, cache_read, cache_create) so the final summary can show
+        # how many input tokens were served from Anthropic's prompt cache
+        # on retry attempts within the 5-min TTL.
+        for name, (in_t, out_t, cr_t, cc_t) in attempt_tokens.items():
+            prev = token_totals.get(name, (0, 0, 0, 0))
+            # `prev` may be a 2-tuple if the codegen phase is being resumed
+            # from a pre-cache-stats state.json. Pad to 4 on the fly so the
+            # add path stays simple.
+            if len(prev) == 2:
+                prev = (prev[0], prev[1], 0, 0)
+            token_totals[name] = (
+                prev[0] + in_t,
+                prev[1] + out_t,
+                prev[2] + cr_t,
+                prev[3] + cc_t,
+            )
 
-        _spinner("Validation")
+        _spinner("Static Validation")
         t0 = time.monotonic()
         error_map = validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
         ms_val = int((time.monotonic() - t0) * 1000)
 
         if not error_map:
-            _agent_line("Validation", ok=True, ms=ms_val, notes="all artifacts pass")
+            _agent_line("Static Validation", ok=True, ms=ms_val, notes="all artifacts pass")
             _save_state(
                 run_dir,
                 checkpoint="codegen",
@@ -691,7 +723,7 @@ def _phase_codegen(
 
         failed_summary = ", ".join(error_map.keys())
         _agent_line(
-            "Validation",
+            "Static Validation",
             ok=False,
             ms=ms_val,
             notes=f"{len(error_map)} artifact(s) failed: {failed_summary}",
@@ -701,7 +733,7 @@ def _phase_codegen(
                 print(f"    {_DIM}• {gen_name}: {e}{_RESET}")
 
         if attempt < _MAX_CODEGEN_RETRIES:
-            _retry_line("Validation", notes=f"fixing {failed_summary}")
+            _retry_line("Static Validation", notes=f"fixing {failed_summary}")
 
     # All retries exhausted. Persist whatever the last attempt produced —
     # the artifacts live only in this stack frame and would otherwise be
@@ -721,12 +753,15 @@ def _phase_codegen(
     )
 
     # Persist partial state so the run is resumable. checkpoint stays at
-    # "arch" (the last phase that fully succeeded); halt_reason flags this
+    # "lld" (the last phase that fully succeeded); halt_reason flags this
     # as a codegen failure so --resume re-runs codegen and the crew's
     # batch planner re-runs only the failed/missing generators.
+    # ("arch" was the legacy single-phase architect name; the pipeline now
+    # has hld / ops-picker / lld / codegen, and "lld" is the right
+    # pre-codegen sentinel — anything below the codegen phase index.)
     _save_state(
         run_dir,
-        checkpoint="arch",
+        checkpoint="lld",
         halt_reason="codegen_failed",
         artifacts=artifacts,
         retry_log=retry_log,

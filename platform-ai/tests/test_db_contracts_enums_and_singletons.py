@@ -13,7 +13,7 @@ LLM adapter, no anthropic SDK.
 
 from __future__ import annotations
 
-from subagents.e_codegen_agent.backend_agent.validator import validate_backend_artifact
+from subagents.f_codegen_agent.backend_agent.validator import validate_backend_artifact
 
 
 # ── Finding 4 — singleton ─────────────────────────────────────────────────────

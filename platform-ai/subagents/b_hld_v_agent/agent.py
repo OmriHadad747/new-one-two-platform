@@ -32,7 +32,10 @@ from subagents.b_hld_v_agent.schema import HLDVOutput
 
 log = logging.getLogger(__name__)
 
-_MAX_OUTPUT_TOKENS = 3000
+# 7K = 3K headroom for up to 5 findings + the 4K thinking budget below
+# (Anthropic counts thinking against max_tokens; max_tokens MUST be
+# greater than thinking_budget or visible output gets truncated).
+_MAX_OUTPUT_TOKENS = 7000
 # Aligned with the HLD architect's thinking budget so Anthropic's prompt
 # cache can reuse the architect's cached system-prompt prefix on the
 # validator's call. Diverging this value invalidates the cache match

@@ -158,12 +158,13 @@ _BRIGHT_GREEN = "\033[92m"
 _AGENT_COLOR: Dict[str, str] = {
     "HLD": _MAGENTA,
     "HLD Check": _MAGENTA,
+    "LLD Check": _MAGENTA,
     "Ops": _CYAN,
-    "Handler": _BLUE,
+    "Backend": _BLUE,
     "DB": _CYAN,
     "Storefront": _YELLOW,
     "Admin UI": _YELLOW,
-    "Validation": _GREEN,
+    "Static Validation": _GREEN,
     "Validator": _MAGENTA,
     "Revision": _BLUE,
     "Explanation": _CYAN,
@@ -1308,7 +1309,7 @@ def _email_metadata_md_lines(meta: Dict[str, Any]) -> List[str]:
 
     Makes sidecar presence, declared variables, and starter content inspectable
     at a glance — matches the email-metadata sidecar contract documented
-    in subagents/e_codegen_agent/backend_agent/prompt.py. Empty/None
+    in subagents/f_codegen_agent/backend_agent/prompt.py. Empty/None
     metadata produces nothing.
     """
     if not meta:
@@ -1339,11 +1340,15 @@ def _print_token_summary(token_map: Dict[str, Tuple[int, int]]) -> None:
         return
     total_in = sum(v[0] for v in token_map.values())
     total_out = sum(v[1] for v in token_map.values())
+    # Token summary is a quiet recap — render every per-agent entry in DIM
+    # so the line reads as one uniform footer. Phase-level accent colours
+    # belong on the live progress rows above, not here. (The previous
+    # `_AGENT_COLOR.get(name.capitalize(), _DIM)` lookup leaked YELLOW for
+    # storefront and BLUE for backend because their canonical labels matched
+    # while hld/lld/ops_picker/db/lld_v fell through to DIM, producing a
+    # visually uneven footer.)
     parts = "  ".join(
-        _c(
-            f"{name}({_ktok(in_t)}+{_ktok(out_t)})",
-            _AGENT_COLOR.get(name.capitalize(), _DIM),
-        )
+        _c(f"{name}({_ktok(in_t)}+{_ktok(out_t)})", _DIM)
         for name, (in_t, out_t) in token_map.items()
         if in_t or out_t
     )
@@ -1682,9 +1687,10 @@ def main() -> None:
             _fail_db("HLD phase failed")
             raise
         all_tokens["hld"] = (hld_in, hld_out)
-        # Checkpoint: hld done. Codegen failure persistence (below) leaves
-        # checkpoint at "hld" with halt_reason=codegen_failed, so this is
-        # the same level resume picks up at after codegen blows up.
+        # Checkpoint: hld done. Codegen failure persistence (in
+        # pipeline_local._phase_codegen) leaves checkpoint at "lld" with
+        # halt_reason=codegen_failed, so resume from a codegen-failed run
+        # picks up AFTER lld (re-running codegen only).
         _save_state(
             run_dir,
             plan=plan,
@@ -1948,6 +1954,112 @@ def main() -> None:
             all_tokens={k: list(v) for k, v in all_tokens.items()},
             checkpoint="lld",
             halt_reason=None,
+        )
+
+    # ── LLD Validator + optional one-shot retry ───────────────────────────────
+    lld_v_findings: List[Dict[str, Any]] = []
+    if resume_state and resume_state.get("lld_v_findings") is not None:
+        lld_v_findings = resume_state["lld_v_findings"]
+    else:
+        from subagents.e_lld_v_agent.agent import run_lld_validator
+        from subagents.d_lld_agent.agent import run_lld_agent as _rerun_lld
+
+        _spinner("LLD Check")
+        _lld_v_t0 = time.monotonic()
+        try:
+            with input_log("lld_v", run_dir):
+                (
+                    lld_v_findings,
+                    lld_v_in,
+                    lld_v_out,
+                    lld_v_cr,
+                    lld_v_cc,
+                ) = run_lld_validator(plan, ops_picks, lld, prompt)
+        except Exception as _exc:
+            _log.warning("lld_v: failed (%s) — fail-open", _exc)
+            lld_v_findings, lld_v_in, lld_v_out, lld_v_cr, lld_v_cc = [], 0, 0, 0, 0
+        _lld_v_ms = int((time.monotonic() - _lld_v_t0) * 1000)
+        all_tokens["lld_v"] = (lld_v_in, lld_v_out)
+
+        _retryable_lld = list(lld_v_findings)
+        _sev_note = f"{len(lld_v_findings)} finding(s)" if lld_v_findings else "clean"
+        _agent_line(
+            "LLD Check",
+            True,
+            _lld_v_ms,
+            _tok_note(
+                lld_v_in, lld_v_out, _sev_note, cache_read=lld_v_cr, cache_create=lld_v_cc
+            ),
+        )
+
+        if lld_v_findings:
+            _SEV_COLOR = {"critical": _RED, "important": _YELLOW, "minor": _DIM}
+            for _f in lld_v_findings:
+                _sc = _SEV_COLOR.get(_f.get("severity", ""), _DIM)
+                _sev_label = _f.get("severity", "?")
+                _loc = _f.get("location", "")
+                _iss = _f.get("issue", "")[:120]
+                print(
+                    f"    {_c('•', _sc)} {_c('[' + _sev_label + ']', _sc)}"
+                    f"  {_c(_loc, _DIM)}  {_iss}"
+                )
+
+        if _retryable_lld:
+            # One-shot correction: feed every finding back to the LLD agent
+            # regardless of severity — mirrors the hld_v retry contract.
+            _hint = "\n".join(
+                f"- [{f['severity']}] {f['location']}: {f['issue']} Fix: {f['fix']}"
+                for f in _retryable_lld
+            )
+            _retry_line("LLD", f"retrying with {len(_retryable_lld)} finding(s)")
+            _spinner("LLD")
+
+            def _on_lld_retry_attempt_failed(attempt: int, errors: List[str]) -> None:
+                first = errors[0] if errors else "validation failed"
+                more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+                _agent_line(
+                    "LLD",
+                    ok=False,
+                    ms=None,
+                    notes=f"attempt {attempt} rejected: {first}{more}",
+                )
+                for _e in errors:
+                    print(f"    {_DIM}• {_e}{_RESET}")
+                _retry_line("LLD", notes=f"retry attempt {attempt + 1}")
+                _spinner("LLD")
+
+            try:
+                with input_log("lld", run_dir):
+                    lld, _r_in, _r_out, _r_cr, _r_cc = _rerun_lld(
+                        prompt=prompt,
+                        plan=plan,
+                        ops_picks=ops_picks,
+                        validator_hint=_hint,
+                        prior_plan=lld,
+                        on_attempt_failed=_on_lld_retry_attempt_failed,
+                    )
+                _r_in_prev, _r_out_prev = all_tokens.get("lld", (0, 0))
+                all_tokens["lld"] = (_r_in_prev + _r_in, _r_out_prev + _r_out)
+                _agent_line(
+                    "LLD",
+                    True,
+                    None,
+                    _tok_note(
+                        _r_in, _r_out, "corrected", cache_read=_r_cr, cache_create=_r_cc
+                    ),
+                )
+                _save_lld_json(run_dir, lld)
+            except Exception as _exc:
+                _log.warning(
+                    "lld_v retry: LLD re-run failed (%s) — keeping original", _exc
+                )
+                _agent_line("LLD", False, None, "retry failed — original kept")
+
+        _save_state(
+            run_dir,
+            lld=lld,
+            lld_v_findings=lld_v_findings,
+            all_tokens={k: list(v) for k, v in all_tokens.items()},
         )
 
     if stop_after == "lld":

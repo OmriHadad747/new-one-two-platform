@@ -589,9 +589,18 @@ INVARIANTS — every recipe must satisfy these
   ── Side-effect claims ──────────────────────────────────────
 
   R1. Every external side effect (shopify_mutation, email_send,
-      email_send_batch, files_upload, fetch_external) is preceded by an
-      sql_claim that owns the right to perform it. The claim's WHERE
-      clause carries the idempotency guard.
+      email_send_batch, files_upload, fetch_external) AND every
+      irreversible internal write (ledger insert, balance mutation)
+      is preceded by an ATOMIC CLAIM that owns the right to perform it.
+      Pick the pattern by what the claim represents — see "ATOMIC
+      IDEMPOTENCY CLAIMS" below. The claim is ATOMIC at the single-SQL-
+      statement level; SELECT-then-INSERT is NOT a claim (race window).
+      DESIGN BACKWARDS: identify the dedup key FIRST, declare a
+      uniqueConstraint on those columns, THEN write the recipe's claim
+      against that key. The cross-validator
+      `_on_conflict_targets_match_unique_constraint` rejects any
+      `ON CONFLICT (cols)` not backed by a declared uniqueConstraint or
+      PRIMARY KEY on the same table.
 
   R2. Every shopify_mutation declares userErrorsCheck=true. Codegen
       emits `if (result.<userErrorsField>.length > 0) throw new
@@ -689,6 +698,84 @@ INVARIANTS — every recipe must satisfy these
         BOTH are present (UPDATE rows by guestToken to set customer_id,
         DELETE leftover guest rows).
       - Persist using customerId when present, else guestToken.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ATOMIC IDEMPOTENCY CLAIMS — three patterns (R1)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Every claim is ONE SQL statement that returns rows iff the claim is
+fresh. Two statements joined by application logic (SELECT → decide →
+INSERT) are NOT a claim — concurrent webhook deliveries can both pass
+the SELECT and both INSERT. Pick the matching pattern below.
+
+Pattern A — INSERT-FORM CLAIM (the claim creates the row)
+─────────────────────────────────────────────────────────
+USE WHEN: the recipe writes a new ledger / job / event row and the
+dedup key lives on that new row (typical for webhook recipes that
+record an external event).
+
+REQUIRES: a `uniqueConstraint` on the table covering the dedup-key
+columns. Cross-validator rejects this pattern without one.
+
+SHAPE: `sql_insert` with `ON CONFLICT (<dedup_cols>) DO NOTHING
+RETURNING id` + `bindResultTo`, then a `decision` on the returned
+row count.
+
+  steps:
+    - kind: sql_insert
+      template: "INSERT INTO <t> (...) VALUES (...) ON CONFLICT (<dedup_cols>) DO NOTHING RETURNING id"
+      bindResultTo: "claimed"
+    - kind: decision
+      condition: "claimed.length === 0"
+      ifTrue:  [log "duplicate", return]   # webhook/cron
+      ifFalse: [<side effect steps>]
+
+When the follow-up side effect is a DB write that must be atomic with
+the claim (e.g. update a balance snapshot), wrap BOTH the insert and
+the decision-guarded write in a single `sql_transaction`. The decision
+fires inside the transaction so a duplicate delivery commits an empty
+transaction (atomic no-op).
+
+Pattern B — UPDATE-FORM CLAIM (the row exists; claim grabs state)
+─────────────────────────────────────────────────────────
+USE WHEN: an earlier write created the row and this claim establishes
+the right to advance its state (typical for stateMachine
+kind="observation", or for "process the next queued row" patterns).
+
+SHAPE: `sql_claim` with `UPDATE … SET <claim_col> = … WHERE … AND
+<claim_col> IS NULL RETURNING …`. Schema rejects sql_claim templates
+that don't start with `UPDATE` and don't include `RETURNING`.
+
+  - kind: sql_claim
+    template: "UPDATE <t> SET claimed_at = NOW() WHERE id = ${id} AND claimed_at IS NULL RETURNING ..."
+    zeroRowAction: "skip" | "throw"
+
+For observation state machines, the WHERE clause MUST also include the
+prior state (`AND status = ${prevState}`) so concurrent observers
+can't both transition the same row.
+
+Pattern C — WORKFLOW-FORM CLAIM (stateMachine.kind="workflow")
+─────────────────────────────────────────────────────────
+USE WHEN: the table is bound to a `kind="workflow"` stateMachine.
+Replaces hand-rolled sql_claim + try_catch + sql_update.
+
+SHAPE: single `compute` step wrapping `workflow.attempt(...)`. The
+helper internally claims `status: from → to`, runs your callback,
+and persists complete/fail terminally.
+
+  - kind: compute
+    expression: "await workflow.attempt('<table>', id, { from: '<prev>', to: '<next>' }, async (row) => { ... })"
+    bindResultTo: "result"
+
+`result` is `{ row, value } | null`; null means another worker claimed
+or the row was not in `<prev>` state.
+
+Choosing between patterns
+─────────────────────────────────────────────────────────
+  No prior row, new write on dedup key      → Pattern A
+  Prior row, state advancement              → Pattern B
+  stateMachine.kind="workflow" on the table → Pattern C
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1016,7 +1103,11 @@ return
 WORKED RECIPE — webhook handler demonstrating R1, R2, R3, R10, R12
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Scenario: an `orders/paid` webhook tags the buying customer with a "vip" tag. Idempotent (claim row before tag). Failure recorded with reason. Customer ID converted to GID for the GraphQL call.
+Scenario: an `orders/paid` webhook tags the buying customer with a "vip" tag. Idempotent via Pattern A (INSERT-form claim). Failure recorded with reason. Customer ID converted to GID for the GraphQL call.
+
+The supporting table `vip_tag_jobs` declares
+`uniqueConstraint: { columns: ["order_id"] }` so the recipe's
+`ON CONFLICT (order_id)` is backed by a real constraint.
 
 ```json
 "tag-vip-on-paid-order": {
@@ -1044,15 +1135,24 @@ Scenario: an `orders/paid` webhook tags the buying customer with a "vip" tag. Id
       "ifFalse": []
     },
     {
-      "kind": "sql_claim",
-      "purpose": "claim the right to tag this order's customer exactly once (R1)",
+      "kind": "sql_insert",
+      "purpose": "INSERT-form atomic claim — single-statement INSERT ... ON CONFLICT DO NOTHING RETURNING id (R1, Pattern A). Duplicate webhook delivery returns zero rows.",
       "template": "INSERT INTO vip_tag_jobs (order_id, customer_id, status) VALUES (${orderId}, ${customerId}, 'pending') ON CONFLICT (order_id) DO NOTHING RETURNING id",
       "bindings": [
         {"name": "orderId", "source": "orderId"},
         {"name": "customerId", "source": "customerId"}
       ],
-      "bindResultTo": "claimed",
-      "zeroRowAction": "skip"
+      "bindResultTo": "claimed"
+    },
+    {
+      "kind": "decision",
+      "purpose": "duplicate webhook delivery — atomic claim returned zero rows; skip",
+      "condition": "claimed.length === 0",
+      "ifTrue": [
+        {"kind": "log", "purpose": "record idempotent skip", "level": "info", "fields": {"order_id": "$orderId"}, "message": "skipping vip-tag: duplicate webhook"},
+        {"kind": "return", "purpose": "exit early — already processed"}
+      ],
+      "ifFalse": []
     },
     {
       "kind": "compute",
@@ -1101,18 +1201,20 @@ Scenario: an `orders/paid` webhook tags the buying customer with a "vip" tag. Id
     }
   ],
   "postconditions": [
-    "exactly one vip_tag_jobs row per order_id, status ∈ {completed, failed}",
+    "exactly one vip_tag_jobs row per order_id (enforced by uniqueConstraint), status ∈ {pending, completed, failed}",
     "successful runs append the 'vip' tag to the order's customer in Shopify"
   ],
   "edgeCases": [
     "Guest checkout (customer.id is null) — skip without claiming or calling Shopify.",
-    "Duplicate webhook delivery for the same order — claim's ON CONFLICT DO NOTHING returns zero rows; recipe exits via zeroRowAction=skip."
+    "Duplicate webhook delivery for the same order — atomic INSERT ... ON CONFLICT DO NOTHING returns zero rows; decision sees claimed.length === 0 and exits."
   ]
 }
 ```
 
 What this recipe demonstrates:
-  - R1: claim BEFORE the shopify_mutation; ON CONFLICT idempotency.
+  - R1 / Pattern A: sql_insert with ON CONFLICT DO NOTHING RETURNING id
+    IS the atomic claim. The vip_tag_jobs table declares
+    uniqueConstraint on (order_id) so the conflict target is real.
   - R2: shopify_mutation declares userErrorsCheck=true.
   - R3: webhook recipe's first step is null-defense via `?? null`.
   - R10: customer GID built in a compute step, raw BIGINT stored in DB.

@@ -96,12 +96,17 @@ function makeSession(shopDomain: string, accessToken: string): Session {
 // ─── Public helper interface ─────────────────────────────────────────────────
 
 export interface ShopifyHelper {
-  graphql(query: string, variables?: Record<string, unknown>): Promise<unknown>;
-  graphqlPaginate(
+  // Generic `<T>` parameters let callers type the response inline instead of
+  // hand-casting `unknown` at every callsite. Implementation still resolves
+  // to `unknown`; the generic is a structural-typing hint TypeScript uses to
+  // narrow the return — no runtime validation is implied. Default to
+  // `unknown` so untyped callsites still compile.
+  graphql<T = unknown>(query: string, variables?: Record<string, unknown>): Promise<T>;
+  graphqlPaginate<T = unknown>(
     query: string,
     variables: Record<string, unknown>,
     connectionPath: string,
-  ): AsyncGenerator<unknown[], void, unknown>;
+  ): AsyncGenerator<T[], void, unknown>;
   /**
    * Async generator over a Shopify bulk operation result.
    * Starts the operation, polls until COMPLETED, downloads the JSONL, and
@@ -111,8 +116,8 @@ export interface ShopifyHelper {
    * the operation is best-effort cancelled so the shop's bulk-op slot is
    * released.
    */
-  bulkQuery(query: string, opts?: { maxPollMs?: number }): AsyncGenerator<unknown, void, unknown>;
-  storefront(query: string, variables?: Record<string, unknown>): Promise<unknown>;
+  bulkQuery<T = unknown>(query: string, opts?: { maxPollMs?: number }): AsyncGenerator<T, void, unknown>;
+  storefront<T = unknown>(query: string, variables?: Record<string, unknown>): Promise<T>;
 }
 
 /**
@@ -374,7 +379,11 @@ export async function shopifyClientFor(platform?: ShopifyClientContext): Promise
       }
       return json.data;
     },
-  };
+    // The generic-T interface widens each method's return-type slot; the
+    // implementations still resolve to `unknown` at runtime. Cast here so
+    // callers can type the response inline via `shopify.graphql<T>(...)`
+    // without touching the impl bodies. No runtime behaviour changes.
+  } as ShopifyHelper;
 }
 
 // ─── Bulk-operation polling ──────────────────────────────────────────────────
