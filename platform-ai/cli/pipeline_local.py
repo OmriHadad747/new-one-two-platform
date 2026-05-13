@@ -396,17 +396,17 @@ def _phase_ops_picker(
         first = errors[0] if errors else "validation failed"
         more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
         _agent_line(
-            "Ops",
+            "Ops Picker",
             ok=False,
             ms=None,
             notes=f"attempt {attempt} rejected: {first}{more}",
         )
         for e in errors:
             print(f"    {_DIM}• {e}{_RESET}")
-        _retry_line("Ops", notes=f"retry attempt {attempt + 1}")
-        _spinner("Ops")
+        _retry_line("Ops Picker", notes=f"retry attempt {attempt + 1}")
+        _spinner("Ops Picker")
 
-    _spinner("Ops")
+    _spinner("Ops Picker")
     t0 = time.monotonic()
     try:
         with input_log("ops_picker", run_dir):
@@ -424,7 +424,7 @@ def _phase_ops_picker(
     except OpsPickerValidationError as err:
         ms = int((time.monotonic() - t0) * 1000)
         _agent_line(
-            "Ops",
+            "Ops Picker",
             ok=False,
             ms=ms,
             notes=f"failed after {err.attempts} attempt(s)  "
@@ -436,7 +436,7 @@ def _phase_ops_picker(
         sys.exit(1)
 
     ms = int((time.monotonic() - t0) * 1000)
-    _agent_line("Ops", ok=True, ms=ms, notes=_tok_note(in_tok, out_tok))
+    _agent_line("Ops Picker", ok=True, ms=ms, notes=_tok_note(in_tok, out_tok))
     return picks, in_tok, out_tok
 
 

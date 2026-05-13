@@ -27,5 +27,5 @@ GENERATORS: Dict[str, Generator] = {
     DbGenerator.name: DbGenerator(),
     StorefrontGenerator.name: StorefrontGenerator(),
     BackendGenerator.name: BackendGenerator(),
-    # AdminGenerator.name: AdminGenerator(),
+    AdminGenerator.name: AdminGenerator(),
 }

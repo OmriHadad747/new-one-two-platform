@@ -27,7 +27,10 @@ Model: claude-haiku (fast; purely classification + JSON extraction).
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, List, Tuple
+
+log = logging.getLogger(__name__)
 
 from pydantic import ValidationError
 
@@ -58,7 +61,11 @@ def run_product_agent(prompt: str) -> Tuple[Dict[str, Any], int, int]:
         When all `_MAX_ATTEMPTS` attempts fail validation. Carries the
         most-recent error list so the operator can debug the prompt.
     """
-    llm = get_llm(model=get_agent_model("product"), max_tokens=_MAX_TOKENS)
+    llm = get_llm(
+        model=get_agent_model("product"),
+        max_tokens=_MAX_TOKENS,
+        cache_ttl="1h",
+    )
     base_user = f"Merchant request: {prompt}"
     total_in = 0
     total_out = 0
@@ -66,7 +73,18 @@ def run_product_agent(prompt: str) -> Tuple[Dict[str, Any], int, int]:
 
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         retry_suffix = _format_retry_suffix(last_errors) if last_errors else ""
-        result = invoke(llm, PRODUCT_BASE, base_user, retry_suffix=retry_suffix)
+        # `cache_ttl="1h"` keeps the shared `_CORE_RULES` system-prompt prefix
+        # cached for an hour instead of the 5-min default. Costs 2× on the
+        # cache write (vs 1.25×) but pays off when the same merchant returns
+        # mid-conversation, or when the one-shot agent runs minutes after the
+        # analyze loop populated the same prefix. See models/adapter.py.
+        result = invoke(
+            llm,
+            PRODUCT_BASE,
+            base_user,
+            retry_suffix=retry_suffix,
+            cache_ttl="1h",
+        )
         total_in += result.input_tokens
         total_out += result.output_tokens
 
@@ -90,23 +108,68 @@ def run_product_agent(prompt: str) -> Tuple[Dict[str, Any], int, int]:
     raise ProductIntentValidationError(_MAX_ATTEMPTS, last_errors, total_in, total_out)
 
 
-def run_product_agent_analyze(history: List[Dict[str, Any]]) -> Dict[str, Any]:
+def run_product_agent_analyze(
+    history: List[Dict[str, Any]],
+) -> Tuple[Dict[str, Any], Dict[str, int]]:
     """
     Multi-turn product agent for the interactive /analyze endpoint.
 
     history: list of {"role": "user"|"assistant", "content": str}
 
-    Returns one of:
-      {"status": "needs_clarification", "question": "..."}
-      {"status": "ready", "summary": "...", "intent": {<ProductIntent>}}
+    Returns (response_dict, metrics_dict):
+      response_dict is one of:
+        {"status": "needs_clarification", "question": "...", "suggestions": [...]}
+        {"status": "ready", "summary": "...", "intent": {<ProductIntent>}}
+      metrics_dict carries the per-call token totals so the CLI can render
+      cache-hit ratios live during the clarification loop:
+        {"in": int, "out": int, "cache_read": int, "cache_create": int}
 
     Only the "ready" branch is schema-validated. A model output that
     looks "ready" but fails ProductIntent validation degrades to
     "needs_clarification" so the conversation can continue rather than
     hand a malformed intent to the rest of the pipeline.
     """
-    llm = get_llm(model=get_agent_model("product"), max_tokens=512)
-    result = invoke_conversation(llm, PRODUCT_ANALYZE_BASE, history)
+    # The `ready` response carries the full intent dict + a ≤200-word
+    # merchant-facing summary; 512 tokens truncates the JSON mid-string and
+    # makes extract_json fail. 4000 fits the longest realistic ready
+    # response with headroom for follow-up suggestions on a clarify turn.
+    # `cache_ttl="1h"` attaches the Anthropic beta header that makes the
+    # 1-hour `cache_control.ttl` we set in `invoke_conversation()` actually
+    # register — without it Anthropic silently ignores the marker.
+    llm = get_llm(
+        model=get_agent_model("product"),
+        max_tokens=4000,
+        cache_ttl="1h",
+    )
+    # `cache_ttl="1h"` — the analyze loop is the canonical merchant-pace
+    # conversation; turns may arrive minutes apart. The 1-hour cache
+    # covers walking-away-and-returning gaps that would otherwise force a
+    # cold cache rebuild on every resumed turn.
+    result = invoke_conversation(
+        llm, PRODUCT_ANALYZE_BASE, history, cache_ttl="1h"
+    )
+    metrics: Dict[str, int] = {
+        "in": result.input_tokens,
+        "out": result.output_tokens,
+        "cache_read": result.cache_read_tokens,
+        "cache_create": result.cache_creation_tokens,
+    }
+
+    # Truncation is the dominant cause of "couldn't parse the response" on
+    # this path: a `ready` response (full intent + 200-word summary) can
+    # cleanly exceed any tight max_tokens cap, and the resulting partial
+    # JSON fails extract_json silently. Detect it explicitly so the
+    # merchant sees something useful instead of the generic
+    # `_default_clarification_question()` fallback loop, and so the
+    # operator notices in the log.
+    truncated = result.stop_reason == "max_tokens"
+    if truncated:
+        log.warning(
+            "product_analyze: response truncated at max_tokens "
+            "(out=%d) — surfacing as clarification rather than silent fail-open",
+            result.output_tokens,
+        )
+
     try:
         raw = extract_json(result.content)
         parsed = json.loads(raw) if raw else None
@@ -114,27 +177,33 @@ def run_product_agent_analyze(history: List[Dict[str, Any]]) -> Dict[str, Any]:
         parsed = None
 
     if not isinstance(parsed, dict):
-        return _needs_clarification()
+        return _truncated_clarification() if truncated else _needs_clarification(), metrics
 
     status = parsed.get("status")
     if status == "ready":
         try:
             intent = ProductIntent.model_validate(parsed.get("intent") or {})
         except ValidationError:
-            return _needs_clarification()
-        return {
-            "status": "ready",
-            "summary": parsed.get("summary", ""),
-            "intent": intent.model_dump(mode="json"),
-        }
+            return _truncated_clarification() if truncated else _needs_clarification(), metrics
+        return (
+            {
+                "status": "ready",
+                "summary": parsed.get("summary", ""),
+                "intent": intent.model_dump(mode="json"),
+            },
+            metrics,
+        )
 
     # Anything other than "ready" — including missing status — falls back
     # to a clarification request the API endpoint can show the merchant.
-    return {
-        "status": "needs_clarification",
-        "question": parsed.get("question") or _default_clarification_question(),
-        "suggestions": parsed.get("suggestions") or [],
-    }
+    return (
+        {
+            "status": "needs_clarification",
+            "question": parsed.get("question") or _default_clarification_question(),
+            "suggestions": parsed.get("suggestions") or [],
+        },
+        metrics,
+    )
 
 
 # ── Internals ──────────────────────────────────────────────────────────
@@ -184,6 +253,27 @@ def _needs_clarification() -> Dict[str, Any]:
     return {
         "status": "needs_clarification",
         "question": _default_clarification_question(),
+        "suggestions": [],
+    }
+
+
+def _truncated_clarification() -> Dict[str, Any]:
+    """
+    Used when the model's response was cut off at max_tokens and the
+    partial JSON failed to parse. We can't recover the truncated content
+    on this turn, but surfacing the cause (instead of falling back to the
+    generic `_default_clarification_question`) breaks the silent-loop
+    failure mode where the same vague question fires repeatedly. The
+    operator sees the warning in the log; the merchant sees a question
+    that prompts them to compress their answer.
+    """
+    return {
+        "status": "needs_clarification",
+        "question": (
+            "I started to draft your app spec but ran out of room before "
+            "finishing. Could you state the most important requirement in "
+            "one short sentence so I can produce the spec?"
+        ),
         "suggestions": [],
     }
 

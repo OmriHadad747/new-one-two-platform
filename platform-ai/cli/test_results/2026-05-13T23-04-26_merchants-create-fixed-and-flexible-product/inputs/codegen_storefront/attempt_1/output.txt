@@ -1,0 +1,566 @@
+export function mount(container, host) {
+  const SLUG = "bundle";
+
+  const style = document.createElement("style");
+  style.textContent = `
+    .app-${SLUG}-root { font-family: inherit; box-sizing: border-box; }
+    .app-${SLUG}-root *, .app-${SLUG}-root *::before, .app-${SLUG}-root *::after { box-sizing: inherit; }
+    .app-${SLUG}-loading { padding: 16px; color: #666; font-size: 14px; }
+    .app-${SLUG}-error { padding: 12px 16px; background: #fff3f3; border: 1px solid #f5c6c6; border-radius: 6px; color: #c0392b; font-size: 14px; margin-bottom: 12px; }
+    .app-${SLUG}-header { margin-bottom: 16px; }
+    .app-${SLUG}-title { font-size: 18px; font-weight: 700; margin: 0 0 6px; }
+    .app-${SLUG}-desc { font-size: 14px; color: #555; margin: 0 0 12px; }
+    .app-${SLUG}-tiers { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .app-${SLUG}-tier { padding: 6px 12px; border-radius: 20px; border: 2px solid #ddd; background: #f9f9f9; font-size: 13px; color: #444; transition: border-color 0.2s, background 0.2s; }
+    .app-${SLUG}-tier.active { border-color: #2ecc71; background: #eafaf1; color: #1a7340; font-weight: 700; }
+    .app-${SLUG}-mode-badge { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 8px; border-radius: 10px; margin-bottom: 8px; }
+    .app-${SLUG}-mode-fixed { background: #e8f4fd; color: #1a6fa1; }
+    .app-${SLUG}-mode-flexible { background: #fef9e7; color: #9a6e00; }
+    .app-${SLUG}-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .app-${SLUG}-item { border: 2px solid #e0e0e0; border-radius: 8px; padding: 10px; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; background: #fff; position: relative; user-select: none; }
+    .app-${SLUG}-item:hover:not(.unavailable) { border-color: #aaa; }
+    .app-${SLUG}-item.selected { border-color: #3498db; box-shadow: 0 0 0 2px rgba(52,152,219,0.25); }
+    .app-${SLUG}-item.unavailable { opacity: 0.5; cursor: not-allowed; background: #f5f5f5; }
+    .app-${SLUG}-item-img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; margin-bottom: 8px; background: #eee; display: block; }
+    .app-${SLUG}-item-img-placeholder { width: 100%; aspect-ratio: 1; background: #eee; border-radius: 4px; margin-bottom: 8px; }
+    .app-${SLUG}-item-title { font-size: 12px; font-weight: 600; line-height: 1.3; margin: 0 0 3px; color: #222; }
+    .app-${SLUG}-item-variant { font-size: 11px; color: #777; margin: 0 0 4px; }
+    .app-${SLUG}-item-price { font-size: 12px; color: #333; margin: 0; }
+    .app-${SLUG}-item-badge { position: absolute; top: 6px; right: 6px; background: #3498db; color: #fff; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+    .app-${SLUG}-item-unavail-label { font-size: 10px; color: #e74c3c; font-weight: 600; margin: 2px 0 0; }
+    .app-${SLUG}-discount-bar { background: #eafaf1; border: 1px solid #a9dfbf; border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 14px; color: #1a7340; font-weight: 600; min-height: 40px; }
+    .app-${SLUG}-discount-bar.none { background: #f9f9f9; border-color: #ddd; color: #888; font-weight: 400; }
+    .app-${SLUG}-pagination { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 13px; color: #555; }
+    .app-${SLUG}-page-btn { padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px; }
+    .app-${SLUG}-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .app-${SLUG}-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .app-${SLUG}-atc-btn { padding: 12px 24px; background: #222; color: #fff; border: none; border-radius: 6px; font-size: 15px; font-weight: 700; cursor: pointer; transition: background 0.2s; }
+    .app-${SLUG}-atc-btn:hover:not(:disabled) { background: #3498db; }
+    .app-${SLUG}-atc-btn:disabled { background: #aaa; cursor: not-allowed; }
+    .app-${SLUG}-clear-btn { padding: 10px 16px; background: transparent; color: #555; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; cursor: pointer; }
+    .app-${SLUG}-clear-btn:hover { background: #f5f5f5; }
+    .app-${SLUG}-status { font-size: 13px; margin-top: 10px; }
+    .app-${SLUG}-discount-note { font-size: 12px; color: #888; margin-top: 8px; }
+    .app-${SLUG}-health-warn { padding: 10px 14px; background: #fff8e1; border: 1px solid #ffe082; border-radius: 6px; font-size: 13px; color: #7a5c00; margin-bottom: 12px; }
+    @media (max-width: 480px) {
+      .app-${SLUG}-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+      .app-${SLUG}-tiers { gap: 6px; }
+      .app-${SLUG}-atc-btn { width: 100%; }
+    }
+  `;
+  container.appendChild(style);
+
+  const root = document.createElement("div");
+  root.className = `app-${SLUG}-root`;
+  container.appendChild(root);
+
+  const statusEl = document.createElement("p");
+  statusEl.className = `app-${SLUG}-status`;
+  statusEl.setAttribute("aria-live", "polite");
+  statusEl.setAttribute("role", "status");
+
+  // --- State ---
+  let bundleData = null;
+  let tiers = [];
+  let items = [];
+  let totalItems = 0;
+  let currentPage = 1;
+  const PAGE_SIZE = 12;
+  let selectedVariantIds = [];
+  let productCache = {};
+  let validationDebounceTimer = null;
+  let currentEarnedTier = null;
+  let currentDiscountRate = null;
+  let isFixed = false;
+
+  // --- Read bundle_id from URL or data attribute ---
+  function getBundleId() {
+    const attr = container.dataset && container.dataset.bundleId;
+    if (attr) return attr;
+    const params = new URLSearchParams(location.search);
+    return params.get("bundle_id") || null;
+  }
+
+  function renderLoading() {
+    root.innerHTML = "";
+    const el = document.createElement("div");
+    el.className = `app-${SLUG}-loading`;
+    el.textContent = "Loading bundle…";
+    root.appendChild(el);
+  }
+
+  function renderConfigError() {
+    root.innerHTML = "";
+    const el = document.createElement("div");
+    el.className = `app-${SLUG}-error`;
+    el.textContent = "This widget requires backend configuration. Please contact the merchant.";
+    root.appendChild(el);
+  }
+
+  function renderError(msg) {
+    root.innerHTML = "";
+    const el = document.createElement("div");
+    el.className = `app-${SLUG}-error`;
+    el.textContent = msg;
+    root.appendChild(el);
+  }
+
+  function formatMoney(cents) {
+    return (cents / 100).toLocaleString(undefined, { style: "currency", currency: "USD" });
+  }
+
+  function buildProductFetchPromises(pageItems) {
+    const handles = [];
+    const seen = new Set();
+    pageItems.forEach(function(item) {
+      const handle = productHandleFromId(item.product_external_id);
+      if (handle && !seen.has(handle) && !productCache[handle]) {
+        seen.add(handle);
+        handles.push(handle);
+      }
+    });
+    return handles.map(function(handle) {
+      return host.storefront("/products/" + handle + ".js")
+        .then(function(p) { if (p && p.handle) productCache[p.handle] = p; })
+        .catch(function() {});
+    });
+  }
+
+  function productHandleFromId(productExternalId) {
+    if (!productExternalId) return null;
+    const cached = Object.values(productCache).find(function(p) {
+      return String(p.id) === String(productExternalId);
+    });
+    if (cached) return cached.handle;
+    return null;
+  }
+
+  function getVariantInfo(item) {
+    const variantId = String(item.variant_external_id);
+    for (const handle in productCache) {
+      const product = productCache[handle];
+      if (!product || !product.variants) continue;
+      const variant = product.variants.find(function(v) { return String(v.id) === variantId; });
+      if (variant) return { product: product, variant: variant };
+    }
+    return null;
+  }
+
+  function renderWidget() {
+    root.innerHTML = "";
+
+    const bundle = bundleData;
+    if (!bundle) { renderError("Bundle not found."); return; }
+
+    // Health warning
+    if (bundle.health_status && bundle.health_status !== "healthy" && bundle.health_status !== "ok") {
+      const warn = document.createElement("div");
+      warn.className = `app-${SLUG}-health-warn`;
+      warn.textContent = "This bundle has configuration issues and may not work correctly. Please contact support.";
+      root.appendChild(warn);
+    }
+
+    // Header
+    const header = document.createElement("div");
+    header.className = `app-${SLUG}-header`;
+
+    const modeBadge = document.createElement("span");
+    modeBadge.className = `app-${SLUG}-mode-badge ` + (isFixed ? `app-${SLUG}-mode-fixed` : `app-${SLUG}-mode-flexible`);
+    modeBadge.textContent = isFixed ? "Fixed Bundle" : "Flexible Bundle";
+    header.appendChild(modeBadge);
+
+    const titleEl = document.createElement("h2");
+    titleEl.className = `app-${SLUG}-title`;
+    titleEl.textContent = bundle.title || "Bundle";
+    header.appendChild(titleEl);
+
+    if (bundle.description) {
+      const desc = document.createElement("p");
+      desc.className = `app-${SLUG}-desc`;
+      desc.textContent = bundle.description;
+      header.appendChild(desc);
+    }
+
+    root.appendChild(header);
+
+    // Tiers
+    if (tiers.length > 0) {
+      const tiersEl = document.createElement("div");
+      tiersEl.className = `app-${SLUG}-tiers`;
+      tiersEl.setAttribute("aria-label", "Discount tiers");
+      const sorted = tiers.slice().sort(function(a, b) { return a.minimum_item_count - b.minimum_item_count; });
+      sorted.forEach(function(tier) {
+        const t = document.createElement("div");
+        t.className = `app-${SLUG}-tier`;
+        t.textContent = tier.minimum_item_count + "+ items: " + Math.round(tier.discount_rate * 100) + "% off";
+        if (currentEarnedTier && currentEarnedTier.id === tier.id) {
+          t.classList.add("active");
+          t.setAttribute("aria-current", "true");
+        }
+        tiersEl.appendChild(t);
+      });
+      root.appendChild(tiersEl);
+    }
+
+    // Discount bar
+    const discountBar = document.createElement("div");
+    discountBar.className = `app-${SLUG}-discount-bar`;
+    if (currentDiscountRate !== null && currentDiscountRate > 0) {
+      discountBar.textContent = "You earn " + Math.round(currentDiscountRate * 100) + "% off this bundle!";
+    } else {
+      discountBar.classList.add("none");
+      const minTier = tiers.length > 0
+        ? tiers.slice().sort(function(a, b) { return a.minimum_item_count - b.minimum_item_count; })[0]
+        : null;
+      if (minTier) {
+        discountBar.textContent = "Select " + minTier.minimum_item_count + "+ items to unlock a discount.";
+      } else {
+        discountBar.textContent = "Select items to add to your cart.";
+      }
+    }
+    root.appendChild(discountBar);
+
+    // Items grid
+    const grid = document.createElement("div");
+    grid.className = `app-${SLUG}-grid`;
+    grid.setAttribute("role", "list");
+
+    items.forEach(function(item) {
+      const variantId = String(item.variant_external_id);
+      const info = getVariantInfo(item);
+      const isAvailable = item.observed_availability === "available" || item.observed_availability === "in_stock";
+      const isSelected = selectedVariantIds.indexOf(variantId) !== -1;
+      const selectedCount = selectedVariantIds.filter(function(id) { return id === variantId; }).length;
+
+      const card = document.createElement("div");
+      card.className = `app-${SLUG}-item`;
+      card.setAttribute("role", "listitem");
+
+      if (!isAvailable) {
+        card.classList.add("unavailable");
+        card.setAttribute("aria-disabled", "true");
+      } else {
+        card.setAttribute("tabindex", "0");
+        card.setAttribute("aria-pressed", isSelected ? "true" : "false");
+        if (isFixed) {
+          card.setAttribute("aria-label", (info ? info.product.title : "Item") + " (included in bundle)");
+        } else {
+          card.setAttribute("aria-label", (info ? info.product.title : "Item") + (isSelected ? ", selected" : ", tap to select"));
+        }
+      }
+
+      if (isSelected) card.classList.add("selected");
+
+      // Image
+      if (info && info.product && info.product.featured_image) {
+        const img = document.createElement("img");
+        img.className = `app-${SLUG}-item-img`;
+        img.src = info.product.featured_image;
+        img.alt = info.product.title || "";
+        img.loading = "lazy";
+        card.appendChild(img);
+      } else {
+        const placeholder = document.createElement("div");
+        placeholder.className = `app-${SLUG}-item-img-placeholder`;
+        card.appendChild(placeholder);
+      }
+
+      // Title
+      const itemTitle = document.createElement("p");
+      itemTitle.className = `app-${SLUG}-item-title`;
+      itemTitle.textContent = info ? info.product.title : ("Item " + variantId.slice(-6));
+      card.appendChild(itemTitle);
+
+      // Variant title
+      if (info && info.variant && info.variant.title && info.variant.title !== "Default Title") {
+        const varTitle = document.createElement("p");
+        varTitle.className = `app-${SLUG}-item-variant`;
+        varTitle.textContent = info.variant.title;
+        card.appendChild(varTitle);
+      }
+
+      // Price
+      if (info && info.variant) {
+        const priceEl = document.createElement("p");
+        priceEl.className = `app-${SLUG}-item-price`;
+        priceEl.textContent = formatMoney(info.variant.price);
+        card.appendChild(priceEl);
+      }
+
+      // Unavailable label
+      if (!isAvailable) {
+        const unavailLabel = document.createElement("p");
+        unavailLabel.className = `app-${SLUG}-item-unavail-label`;
+        unavailLabel.textContent = "Unavailable";
+        card.appendChild(unavailLabel);
+      }
+
+      // Selected badge
+      if (isSelected && selectedCount > 0 && !isFixed) {
+        const badge = document.createElement("div");
+        badge.className = `app-${SLUG}-item-badge`;
+        badge.textContent = String(selectedCount);
+        badge.setAttribute("aria-hidden", "true");
+        card.appendChild(badge);
+      }
+
+      if (!isFixed && isAvailable) {
+        function handleSelect() {
+          const idx = selectedVariantIds.indexOf(variantId);
+          if (idx === -1) {
+            selectedVariantIds.push(variantId);
+          } else {
+            selectedVariantIds.splice(idx, 1);
+          }
+          triggerValidation();
+          renderWidget();
+        }
+        card.addEventListener("click", handleSelect);
+        card.addEventListener("keydown", function(e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleSelect();
+          }
+        });
+      }
+
+      grid.appendChild(card);
+    });
+
+    root.appendChild(grid);
+
+    // Pagination
+    const totalPages = Math.ceil(totalItems / PAGE_SIZE);
+    if (totalPages > 1) {
+      const pagEl = document.createElement("div");
+      pagEl.className = `app-${SLUG}-pagination`;
+
+      const prevBtn = document.createElement("button");
+      prevBtn.className = `app-${SLUG}-page-btn`;
+      prevBtn.textContent = "← Prev";
+      prevBtn.disabled = currentPage <= 1;
+      prevBtn.setAttribute("aria-label", "Previous page");
+      prevBtn.addEventListener("click", function() {
+        if (currentPage > 1) {
+          currentPage--;
+          loadPage(currentPage);
+        }
+      });
+
+      const pageInfo = document.createElement("span");
+      pageInfo.textContent = "Page " + currentPage + " of " + totalPages;
+
+      const nextBtn = document.createElement("button");
+      nextBtn.className = `app-${SLUG}-page-btn`;
+      nextBtn.textContent = "Next →";
+      nextBtn.disabled = currentPage >= totalPages;
+      nextBtn.setAttribute("aria-label", "Next page");
+      nextBtn.addEventListener("click", function() {
+        if (currentPage < totalPages) {
+          currentPage++;
+          loadPage(currentPage);
+        }
+      });
+
+      pagEl.appendChild(prevBtn);
+      pagEl.appendChild(pageInfo);
+      pagEl.appendChild(nextBtn);
+      root.appendChild(pagEl);
+    }
+
+    // Actions
+    const actions = document.createElement("div");
+    actions.className = `app-${SLUG}-actions`;
+
+    const minCount = tiers.length > 0
+      ? Math.min.apply(null, tiers.map(function(t) { return t.minimum_item_count; }))
+      : (isFixed ? items.length : 1);
+
+    const atcBtn = document.createElement("button");
+    atcBtn.className = `app-${SLUG}-atc-btn`;
+    atcBtn.textContent = isFixed ? "Add Bundle to Cart" : "Add to Cart";
+    atcBtn.disabled = isFixed
+      ? false
+      : selectedVariantIds.length < minCount;
+    actions.appendChild(atcBtn);
+
+    if (!isFixed && selectedVariantIds.length > 0) {
+      const clearBtn = document.createElement("button");
+      clearBtn.className = `app-${SLUG}-clear-btn`;
+      clearBtn.textContent = "Clear selection";
+      clearBtn.addEventListener("click", function() {
+        selectedVariantIds = [];
+        currentEarnedTier = null;
+        currentDiscountRate = null;
+        renderWidget();
+      });
+      actions.appendChild(clearBtn);
+    }
+
+    root.appendChild(actions);
+    root.appendChild(statusEl);
+
+    // Discount note
+    const discountNote = document.createElement("p");
+    discountNote.className = `app-${SLUG}-discount-note`;
+    discountNote.textContent = "Discount applied automatically at checkout via bundle pricing.";
+    root.appendChild(discountNote);
+
+    // Wire ATC
+    atcBtn.addEventListener("click", function() {
+      handleAddToCart(atcBtn);
+    });
+  }
+
+  function triggerValidation() {
+    if (validationDebounceTimer) clearTimeout(validationDebounceTimer);
+    if (isFixed || selectedVariantIds.length === 0) {
+      currentEarnedTier = null;
+      currentDiscountRate = null;
+      return;
+    }
+    validationDebounceTimer = setTimeout(function() {
+      runValidation();
+    }, 300);
+  }
+
+  async function runValidation() {
+    if (!bundleData || selectedVariantIds.length === 0) {
+      currentEarnedTier = null;
+      currentDiscountRate = null;
+      return;
+    }
+    try {
+      const result = await host.call("/bundle/validate", {
+        bundle_id: bundleData.id,
+        selected_variant_ids: selectedVariantIds.slice()
+      });
+      if (result) {
+        currentEarnedTier = result.earned_tier || null;
+        currentDiscountRate = (result.discount_rate !== undefined && result.discount_rate !== null) ? result.discount_rate : null;
+      }
+    } catch (_) {
+      // Silent — validation is best-effort for live discount preview
+    }
+    renderWidget();
+  }
+
+  async function handleAddToCart(btn) {
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = "Adding…";
+    statusEl.textContent = "";
+
+    const bundleId = bundleData.id;
+    const variantIds = isFixed
+      ? items.map(function(i) { return String(i.variant_external_id); })
+      : selectedVariantIds.slice();
+    const quantities = variantIds.map(function() { return 1; });
+
+    try {
+      const result = await host.call("/cart/add", {
+        bundle_id: bundleId,
+        selected_variant_ids: variantIds,
+        quantities: quantities
+      });
+
+      if (result && result.success) {
+        btn.textContent = "Added!";
+        const rate = result.applied_discount_rate;
+        if (rate !== null && rate !== undefined && rate > 0) {
+          statusEl.textContent = "Bundle added to cart with " + Math.round(rate * 100) + "% discount applied.";
+        } else {
+          statusEl.textContent = "Bundle added to cart successfully.";
+        }
+        if (!isFixed) {
+          selectedVariantIds = [];
+          currentEarnedTier = null;
+          currentDiscountRate = null;
+        }
+        setTimeout(function() {
+          btn.textContent = originalText;
+          btn.disabled = isFixed ? false : true;
+          renderWidget();
+        }, 2000);
+      } else {
+        btn.textContent = originalText;
+        btn.disabled = false;
+        const errs = (result && result.errors && result.errors.length > 0)
+          ? result.errors.join(" ")
+          : "Could not add bundle to cart. Please try again.";
+        statusEl.textContent = errs;
+      }
+    } catch (_) {
+      btn.textContent = originalText;
+      btn.disabled = false;
+      statusEl.textContent = "A network error occurred. Please try again.";
+    }
+  }
+
+  async function loadPage(page) {
+    renderLoading();
+    const bundleId = bundleData ? bundleData.id : getBundleId();
+    if (!bundleId) { renderConfigError(); return; }
+
+    let resp;
+    try {
+      resp = await host.call("/bundle", { bundle_id: bundleId, page: page, page_size: PAGE_SIZE });
+    } catch (_) {
+      renderError("Failed to load bundle items. Please refresh the page.");
+      return;
+    }
+
+    if (!resp || !resp.bundle) { renderError("Bundle not found."); return; }
+
+    bundleData = resp.bundle;
+    tiers = resp.tiers || [];
+    items = resp.items || [];
+    totalItems = resp.total || 0;
+    currentPage = resp.page || page;
+    isFixed = (bundleData.mode === "fixed");
+
+    // For fixed bundles, pre-select all available variants
+    if (isFixed) {
+      selectedVariantIds = items
+        .filter(function(i) { return i.observed_availability === "available" || i.observed_availability === "in_stock"; })
+        .map(function(i) { return String(i.variant_external_id); });
+    }
+
+    // Fetch product info for current page items
+    const fetches = buildProductFetchPromises(items);
+
+    // Also try to resolve products we don't have handles for yet via product_external_id search
+    const idFetches = items
+      .filter(function(item) { return !productHandleFromId(item.product_external_id); })
+      .map(function(item) {
+        return host.storefront("/search/suggest.json?q=" + encodeURIComponent(item.variant_external_id) + "&resources[type]=product&resources[limit]=1")
+          .then(function(res) {
+            if (res && res.resources && res.resources.results && res.resources.results.products) {
+              const products = res.resources.results.products;
+              if (products.length > 0 && products[0].handle) {
+                return host.storefront("/products/" + products[0].handle + ".js")
+                  .then(function(p) { if (p && p.handle) productCache[p.handle] = p; });
+              }
+            }
+          })
+          .catch(function() {});
+      });
+
+    await Promise.all(fetches.concat(idFetches));
+
+    renderWidget();
+  }
+
+  async function init() {
+    const bundleId = getBundleId();
+    if (!bundleId) {
+      renderConfigError();
+      return;
+    }
+
+    renderLoading();
+    await loadPage(1);
+  }
+
+  init();
+}

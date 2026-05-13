@@ -1,0 +1,706 @@
+{
+  "schema_version": "1",
+  "capabilities": [
+    {
+      "capability_id": "fetch-live-variant-availability",
+      "ops": [
+        {
+          "name": "nodes",
+          "surface": "storefront",
+          "note": "fetch real-time availability for a batch of variant GIDs in a single round-trip"
+        }
+      ]
+    },
+    {
+      "capability_id": "apply-bundle-discount-to-cart",
+      "ops": [
+        {
+          "name": "cartCreate",
+          "surface": "storefront",
+          "note": "create a new cart containing the selected bundle variant lines"
+        },
+        {
+          "name": "cartDiscountCodesUpdate",
+          "surface": "storefront",
+          "note": "apply the earned tier discount code to the newly created cart"
+        }
+      ]
+    }
+  ],
+  "webhooks": [
+    {
+      "trigger_event": "an order is paid",
+      "topic": "orders/paid",
+      "note": "delivers full order payload including line items, discount codes, and order total needed to record bundle purchase history",
+      "description": "Occurs whenever an order is paid.",
+      "payloadFields": [
+        {
+          "format": "uri",
+          "name": "admin_graphql_api_id",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "app_id",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "name": "billing_address",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "format": "ipv4",
+          "name": "browser_ip",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "buyer_accepts_marketing",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "name": "cancel_reason",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "format": "date-time",
+          "name": "cancelled_at",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "cart_token",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "checkout_token",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "client_details",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "format": "date-time",
+          "name": "closed_at",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "company",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "name": "confirmation_number",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "confirmed",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "format": "email",
+          "name": "contact_email",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "format": "date-time",
+          "name": "created_at",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "currency",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "current_shipping_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "current_subtotal_price",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "current_subtotal_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "current_total_additional_fees_set",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "name": "current_total_discounts",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "current_total_discounts_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "current_total_duties_set",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "name": "current_total_price",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "current_total_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "current_total_tax",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "current_total_tax_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "customer",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "customer_locale",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "device_id",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "items_type": "object",
+          "name": "discount_applications",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "items_type": "object",
+          "name": "discount_codes",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "duties_included",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "format": "email",
+          "name": "email",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "estimated_taxes",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "name": "financial_status",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "fulfillment_status",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "items_type": "object",
+          "name": "fulfillments",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "id",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "name": "landing_site",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "format": "uri",
+          "name": "landing_site_ref",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "line_item_groups",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "items_type": "object",
+          "name": "line_items",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "location_id",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "name": "merchant_business_entity_id",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "merchant_of_record_app_id",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "name": "name",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "note",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "items_type": "object",
+          "name": "note_attributes",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "number",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "name": "order_number",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "format": "uri",
+          "name": "order_status_url",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "original_total_additional_fees_set",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "name": "original_total_duties_set",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "items_type": "string",
+          "name": "payment_gateway_names",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "payment_terms",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "phone",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "po_number",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "presentment_currency",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "format": "date-time",
+          "name": "processed_at",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "reference",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "referring_site",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "refunds",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "returns",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "shipping_address",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "items_type": "object",
+          "name": "shipping_lines",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "source_identifier",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "source_name",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "format": "uri",
+          "name": "source_url",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "subtotal_price",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "subtotal_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "tags",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "tax_exempt",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "items_type": "object",
+          "name": "tax_lines",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "taxes_included",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "name": "test",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "name": "token",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_cash_rounding_payment_adjustment_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_cash_rounding_refund_adjustment_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_discounts",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_discounts_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_line_items_price",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_line_items_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_outstanding",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_price",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_shipping_price_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_tax",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_tax_set",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "name": "total_tip_received",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "total_weight",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "format": "date-time",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "user_id",
+          "nullable": true,
+          "type": "integer"
+        }
+      ],
+      "access_scopes": [
+        "orders",
+        "marketplace_orders"
+      ],
+      "related_resource": "Order"
+    },
+    {
+      "trigger_event": "a variant's inventory level reaches zero or recovers above zero",
+      "topic": "inventory_levels/update",
+      "note": "delivers inventory_item_id and available quantity so the system can evaluate whether the variant crossed the zero threshold in either direction",
+      "description": "Occurs whenever an inventory level is updated.",
+      "payloadFields": [
+        {
+          "format": "uri",
+          "name": "admin_graphql_api_id",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "available",
+          "nullable": true,
+          "type": "integer"
+        },
+        {
+          "name": "inventory_item_id",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "name": "location_id",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "format": "date-time",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "string"
+        }
+      ],
+      "access_scopes": [
+        "inventory"
+      ],
+      "related_resource": "InventoryLevel"
+    },
+    {
+      "trigger_event": "a product variant is permanently deleted",
+      "topic": "products/update",
+      "note": "fires when variants are removed from a product, delivering the updated variant list so the system can detect which variant GIDs are no longer present",
+      "description": "Occurs whenever a product is updated, ordered, or variants are added, removed or updated. Product webhooks will return a full variants payload for the first 100 records. For records 101 and higher, the payload won't include the full variant details, but the `variant_gids` field will still include a `admin_graphql_api_id` value for these variants. `variant_gids` are sorted by `updated_at`, with the gids for recently updated variants appearing first.",
+      "payloadFields": [
+        {
+          "format": "uri",
+          "name": "admin_graphql_api_id",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "body_html",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "category",
+          "nullable": true,
+          "type": "object"
+        },
+        {
+          "format": "date-time",
+          "name": "created_at",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "handle",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "has_variants_that_requires_components",
+          "nullable": false,
+          "type": "boolean"
+        },
+        {
+          "name": "id",
+          "nullable": false,
+          "type": "integer"
+        },
+        {
+          "name": "image",
+          "nullable": false,
+          "type": "object"
+        },
+        {
+          "items_type": "object",
+          "name": "images",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "items_type": "object",
+          "name": "media",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "items_type": "object",
+          "name": "options",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "product_type",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "format": "date-time",
+          "name": "published_at",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "published_scope",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "status",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "tags",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "name": "template_suffix",
+          "nullable": true,
+          "type": "string"
+        },
+        {
+          "name": "title",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "format": "date-time",
+          "name": "updated_at",
+          "nullable": false,
+          "type": "string"
+        },
+        {
+          "items_type": "object",
+          "name": "variant_gids",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "items_type": "object",
+          "name": "variants",
+          "nullable": false,
+          "type": "array"
+        },
+        {
+          "name": "vendor",
+          "nullable": false,
+          "type": "string"
+        }
+      ],
+      "access_scopes": [
+        "products"
+      ],
+      "related_resource": "Product"
+    }
+  ],
+  "unsatisfied": []
+}

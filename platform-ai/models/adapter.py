@@ -182,7 +182,9 @@ def dump_output(content: str) -> None:
                 for p in agent_dir.iterdir()
                 if p.is_dir() and p.name.startswith("attempt_")
             ),
-            key=lambda p: int(p.name.split("_", 1)[1]) if p.name.split("_", 1)[1].isdigit() else 0,
+            key=lambda p: (
+                int(p.name.split("_", 1)[1]) if p.name.split("_", 1)[1].isdigit() else 0
+            ),
         )
         if not attempts:
             return
@@ -200,10 +202,36 @@ def dump_output(content: str) -> None:
 _CACHE_MIN_CHARS = 4096
 
 
+def _cache_control(ttl: Optional[str] = None) -> dict:
+    """
+    Build the Anthropic `cache_control` dict for a content block.
+
+    Default (ttl=None) → 5-minute ephemeral cache. Write costs 1.25× base
+    input, read costs 0.1× base input. Right for tight back-to-back call
+    bursts (LLD generation + retry, codegen + retry).
+
+    ttl="1h" → 1-hour ephemeral cache. Write costs 2× base input (so 0.75×
+    more than 5-min), read costs 0.1× base input. Right for agents whose
+    next call may come after a merchant pause longer than 5 minutes
+    (product analyze loop).
+
+    No other values are accepted — keep callers honest. Anthropic supports
+    only these two TTLs today; new options can be added here when they ship.
+    """
+    if ttl is None:
+        return {"type": "ephemeral"}
+    if ttl == "1h":
+        return {"type": "ephemeral", "ttl": "1h"}
+    raise ValueError(
+        f"unsupported cache_ttl {ttl!r}; valid values are None (5-min default) or '1h'"
+    )
+
+
 def get_llm(
     max_tokens: int = 2048,
     model: Optional[str] = None,
     thinking_budget: Optional[int] = None,
+    cache_ttl: Optional[str] = None,
 ) -> ChatAnthropic:
     """
     Returns a configured ChatAnthropic instance.
@@ -215,6 +243,19 @@ def get_llm(
     Anthropic counts thinking tokens against max_tokens, so we increase max_tokens
     by thinking_budget to preserve the original visible-output budget.
     Extended thinking requires temperature=1 (the default) and a capable model.
+
+    cache_ttl: when "1h", attaches the `anthropic-beta: extended-cache-ttl-
+    2025-04-11` header so the API honors the 1-hour `cache_control.ttl`
+    marker we emit in `_cache_control()`. Without this header Anthropic
+    silently ignores the ttl field and may not register the cache write
+    at all — observed as `cache_create=0` on turn 1 + `cache_read=0` on
+    every following turn. None = default 5-minute ephemeral; no header
+    needed.
+
+    Caching is keyed (in part) on the request shape, so an LLM instance
+    constructed with the beta header is safe to reuse for non-1h calls
+    too — the header is a no-op when the cache_control marker is the
+    default ephemeral form.
     """
     settings = get_settings()
     resolved_model = model or "claude-haiku-4-5-20251001"
@@ -232,6 +273,14 @@ def get_llm(
     )
     if thinking_budget:
         kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+    if cache_ttl == "1h":
+        kwargs["default_headers"] = {
+            "anthropic-beta": "extended-cache-ttl-2025-04-11"
+        }
+    elif cache_ttl is not None:
+        raise ValueError(
+            f"unsupported cache_ttl {cache_ttl!r}; valid values are None or '1h'"
+        )
     return ChatAnthropic(**kwargs)
 
 
@@ -269,7 +318,9 @@ def _invoke_with_retry(llm: ChatAnthropic, messages: list) -> object:
             )
 
 
-def _system_message(system: Union[str, list[str]]) -> SystemMessage:
+def _system_message(
+    system: Union[str, list[str]], cache_ttl: Optional[str] = None
+) -> SystemMessage:
     """
     Build a SystemMessage with prompt caching marked when the system prompt is
     large enough to benefit.
@@ -277,8 +328,8 @@ def _system_message(system: Union[str, list[str]]) -> SystemMessage:
     String input (the common case):
       One cache breakpoint at the end of the system block when the prompt is
       above _CACHE_MIN_CHARS; plain text otherwise. Every identical system
-      prompt sent within the 5-minute TTL is served from the cache at ~10% of
-      the normal input-token price.
+      prompt sent within the TTL is served from the cache at ~10% of the
+      normal input-token price.
 
     List input (used when the caller wants a segmented system prompt):
       Useful when a stable shared prefix precedes caller-specific content — for
@@ -291,7 +342,10 @@ def _system_message(system: Union[str, list[str]]) -> SystemMessage:
       qualifies, the segments are merged and treated as a single system prompt
       (no separator inserted — callers embed their own whitespace at segment
       boundaries).
+
+    cache_ttl: see `_cache_control` for accepted values. None = 5-min default.
     """
+    cc = _cache_control(cache_ttl)
     segments = [system] if isinstance(system, str) else [s for s in system if s]
 
     if not segments:
@@ -302,9 +356,7 @@ def _system_message(system: Union[str, list[str]]) -> SystemMessage:
         if len(text) < _CACHE_MIN_CHARS:
             return SystemMessage(content=text)
         return SystemMessage(
-            content=[
-                {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
-            ]
+            content=[{"type": "text", "text": text, "cache_control": cc}]
         )
 
     cacheable = [len(s) >= _CACHE_MIN_CHARS for s in segments]
@@ -316,16 +368,14 @@ def _system_message(system: Union[str, list[str]]) -> SystemMessage:
         if len(merged) < _CACHE_MIN_CHARS:
             return SystemMessage(content=merged)
         return SystemMessage(
-            content=[
-                {"type": "text", "text": merged, "cache_control": {"type": "ephemeral"}}
-            ]
+            content=[{"type": "text", "text": merged, "cache_control": cc}]
         )
 
     blocks: list[dict] = []
     for seg, mark in zip(segments, cacheable):
         block: dict = {"type": "text", "text": seg}
         if mark:
-            block["cache_control"] = {"type": "ephemeral"}
+            block["cache_control"] = cc
         blocks.append(block)
     return SystemMessage(content=blocks)
 
@@ -348,7 +398,9 @@ def _extract_cache_metrics(usage: dict) -> tuple[int, int]:
     return int(cache_read), int(cache_create)
 
 
-def _build_user_message(stable: str, retry_suffix: str = "") -> HumanMessage:
+def _build_user_message(
+    stable: str, retry_suffix: str = "", cache_ttl: Optional[str] = None
+) -> HumanMessage:
     """
     Build a HumanMessage with optional prompt caching on the stable prefix.
 
@@ -357,13 +409,15 @@ def _build_user_message(stable: str, retry_suffix: str = "") -> HumanMessage:
     retry attempts (which send the same stable content + a new retry_suffix) hit
     the cache for the expensive portion — db schema, JIT sections, capabilities.
     The retry_suffix is always uncached because it changes between attempts.
+
+    cache_ttl: see `_cache_control` for accepted values.
     """
     if not retry_suffix and len(stable) < _CACHE_MIN_CHARS:
         return HumanMessage(content=stable)
 
     stable_block: dict = {"type": "text", "text": stable}
     if len(stable) >= _CACHE_MIN_CHARS:
-        stable_block["cache_control"] = {"type": "ephemeral"}
+        stable_block["cache_control"] = _cache_control(cache_ttl)
 
     if not retry_suffix:
         return HumanMessage(content=[stable_block])
@@ -401,6 +455,7 @@ def invoke(
     system: Union[str, list[str]],
     user: str,
     retry_suffix: str = "",
+    cache_ttl: Optional[str] = None,
 ) -> LLMResponse:
     """
     Calls the LLM with a system + user message pair.
@@ -420,19 +475,30 @@ def invoke(
     user prefix. This means the second and third retry calls hit the cache for
     the stable portion (db schema, JIT sections, capabilities) and only pay full
     price for the new retry_suffix.
+
+    cache_ttl: None (default, 5-min ephemeral cache, cheapest write) or "1h"
+    (1-hour ephemeral cache, 2× write cost but useful when calls may have
+    multi-minute gaps — e.g. the product analyze loop where the merchant
+    pauses between clarification turns).
     """
     # Dump before the network call so the prompt is captured even on failure.
     # No-op unless an input_log() block is active.
     _dump_inputs(system, user, retry_suffix)
     start = time.monotonic()
     response = _invoke_with_retry(
-        llm, [_system_message(system), _build_user_message(user, retry_suffix)]
+        llm,
+        [
+            _system_message(system, cache_ttl=cache_ttl),
+            _build_user_message(user, retry_suffix, cache_ttl=cache_ttl),
+        ],
     )
     latency_ms = int((time.monotonic() - start) * 1000)
 
     usage = getattr(response, "usage_metadata", None) or {}
     cache_read, cache_create = _extract_cache_metrics(usage)
-    stop_reason = (getattr(response, "response_metadata", None) or {}).get("stop_reason")
+    stop_reason = (getattr(response, "response_metadata", None) or {}).get(
+        "stop_reason"
+    )
     return LLMResponse(
         content=_extract_text_content(response.content),
         input_tokens=usage.get("input_tokens", 0) if usage else 0,
@@ -445,15 +511,20 @@ def invoke(
 
 
 def invoke_conversation(
-    llm: ChatAnthropic, system: Union[str, list[str]], messages: list[dict]
+    llm: ChatAnthropic,
+    system: Union[str, list[str]],
+    messages: list[dict],
+    cache_ttl: Optional[str] = None,
 ) -> LLMResponse:
     """
     Multi-turn conversation call.
     messages: list of {"role": "user"|"assistant", "content": str}
+
+    cache_ttl: see `invoke()`.
     """
     _dump_inputs(system, "", "", multi_turn_messages=messages)
     start = time.monotonic()
-    lc_messages: list = [_system_message(system)]
+    lc_messages: list = [_system_message(system, cache_ttl=cache_ttl)]
     for msg in messages:
         if msg["role"] == "user":
             lc_messages.append(HumanMessage(content=msg["content"]))
@@ -465,7 +536,9 @@ def invoke_conversation(
 
     usage = getattr(response, "usage_metadata", None) or {}
     cache_read, cache_create = _extract_cache_metrics(usage)
-    stop_reason = (getattr(response, "response_metadata", None) or {}).get("stop_reason")
+    stop_reason = (getattr(response, "response_metadata", None) or {}).get(
+        "stop_reason"
+    )
     return LLMResponse(
         content=_extract_text_content(response.content),
         input_tokens=usage.get("input_tokens", 0) if usage else 0,

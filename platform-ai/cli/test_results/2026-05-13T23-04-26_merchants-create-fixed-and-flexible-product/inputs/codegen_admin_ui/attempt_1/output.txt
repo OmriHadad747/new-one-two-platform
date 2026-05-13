@@ -1,0 +1,1046 @@
+export function mount(container, bridge) {
+  // ── helpers ─────────────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  const fmtDate = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "—" :
+      new Intl.DateTimeFormat(bridge.context.locale, { dateStyle: "medium" }).format(d);
+  };
+
+  const fmtMoneyAs = (minor, currency) =>
+    new Intl.NumberFormat(bridge.context.locale, {
+      style: "currency",
+      currency: currency || bridge.context.currency,
+    }).format((minor || 0) / 100);
+
+  const fmtPct = (r) =>
+    new Intl.NumberFormat(bridge.context.locale, {
+      style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1,
+    }).format(r || 0);
+
+  const fmtInt = (n) =>
+    new Intl.NumberFormat(bridge.context.locale).format(n || 0);
+
+  function region(key) {
+    return container.querySelector(`[data-region="${key}"]`);
+  }
+
+  // ── inject scoped styles ─────────────────────────────────────────────────
+  const style = document.createElement("style");
+  style.textContent = `
+    .bndl-tab-bar { display:flex; gap:0; border-bottom:1px solid var(--p-color-border); margin-bottom:var(--p-space-400); }
+    .bndl-tab { padding:var(--p-space-300) var(--p-space-400); cursor:pointer; background:none; border:none; border-bottom:2px solid transparent; font-size:var(--p-font-size-350); color:var(--p-color-text-secondary); font-family:var(--p-font-family-sans); }
+    .bndl-tab.active { color:var(--p-color-text); border-bottom-color:#008060; font-weight:var(--p-font-weight-semibold); }
+    .bndl-tab:hover:not(.active) { color:var(--p-color-text); }
+    .bndl-health-dot { width:8px; height:8px; border-radius:var(--p-border-radius-full); display:inline-block; margin-right:4px; }
+    .bndl-health-healthy { background:var(--p-color-bg-fill-success); }
+    .bndl-health-warned { background:var(--p-color-bg-fill-warning); }
+    .bndl-health-auto_disabled { background:var(--p-color-bg-fill-critical); }
+    .bndl-tier-row { display:flex; gap:var(--p-space-300); align-items:center; margin-bottom:var(--p-space-200); }
+    .bndl-tier-row .shell-input { width:100px; }
+    .bndl-tier-remove { background:none; border:none; cursor:pointer; color:var(--p-color-text-critical); font-size:var(--p-font-size-400); line-height:1; }
+    .bndl-section-heading { font-size:var(--p-font-size-400); font-weight:var(--p-font-weight-semibold); margin:var(--p-space-400) 0 var(--p-space-200); color:var(--p-color-text); }
+    .bndl-preview { background:var(--p-color-bg-surface-secondary); border-radius:var(--p-border-radius-200); padding:var(--p-space-300); margin-top:var(--p-space-300); }
+    .bndl-preview-row { display:flex; justify-content:space-between; font-size:var(--p-font-size-300); padding:var(--p-space-100) 0; border-bottom:1px solid var(--p-color-border); }
+    .bndl-preview-row:last-child { border-bottom:none; }
+    .bndl-chip { display:inline-flex; align-items:center; gap:4px; background:var(--p-color-bg-surface-secondary); border:1px solid var(--p-color-border); border-radius:var(--p-border-radius-full); padding:2px var(--p-space-200); font-size:var(--p-font-size-300); margin:2px; }
+    .bndl-chip button { background:none; border:none; cursor:pointer; color:var(--p-color-text-secondary); line-height:1; padding:0 2px; }
+    .bndl-chip-wrap { display:flex; flex-wrap:wrap; gap:4px; margin-top:var(--p-space-200); }
+    .bndl-avail-available { color:var(--p-color-text-success); }
+    .bndl-avail-out_of_stock { color:var(--p-color-text-critical); }
+    .bndl-avail-deleted { color:var(--p-color-text-critical); }
+    .bndl-info-banner { background:var(--p-color-bg-surface-secondary); border:1px solid var(--p-color-border); border-radius:var(--p-border-radius-200); padding:var(--p-space-300); margin-bottom:var(--p-space-400); font-size:var(--p-font-size-350); }
+    .bndl-row-actions { display:flex; gap:var(--p-space-200); }
+    .bndl-actions-toolbar { display:flex; align-items:center; gap:var(--p-space-300); flex-wrap:wrap; padding:var(--p-space-300) 0; }
+    .bndl-filter-row { display:flex; gap:var(--p-space-300); flex-wrap:wrap; align-items:center; }
+    .bndl-export-btn { margin-left:auto; }
+  `;
+  container.appendChild(style);
+
+  // ── state ────────────────────────────────────────────────────────────────
+  let activeTab = "bundles";
+
+  // bundles list
+  let bundleRows = [], bundleTotal = 0, bundlePage = 0;
+  const BUNDLE_PAGE_SIZE = 20;
+  let bundleStatusFilter = "";
+  let bundleHealthFilter = "";
+  let selectedBundleIds = new Set();
+  let bundlesLoading = false;
+
+  // bundle editor
+  let editorBundleId = null;
+  let editorTiers = [];
+  let editorItems = [];
+  let editorItemsTotal = 0;
+  let editorItemsPage = 0;
+  const ITEMS_PAGE_SIZE = 10;
+  let editorTiersTotal = 0;
+  let editorTiersPage = 0;
+  const TIERS_PAGE_SIZE = 50;
+  let editorLoading = false;
+  let editorSaving = false;
+
+  // purchase history
+  let historyRows = [], historyTotal = 0, historyPage = 0;
+  const HISTORY_PAGE_SIZE = 20;
+  let historyBundleFilter = "";
+  let historyDateFrom = "";
+  let historyDateTo = "";
+  let historyLoading = false;
+
+  // modal
+  let modal = null;
+
+  // ── scaffold ─────────────────────────────────────────────────────────────
+  container.innerHTML = `
+    <div class="shell-root">
+      <div class="shell-header">
+        <span class="shell-title">Product Bundles</span>
+        <button class="btn-primary" data-act="new-bundle">+ New Bundle</button>
+      </div>
+      <div data-region="fatal"></div>
+      <nav class="bndl-tab-bar" role="tablist">
+        <button class="bndl-tab active" data-tab="bundles" role="tab">Bundles</button>
+        <button class="bndl-tab" data-tab="editor" role="tab">Bundle Editor</button>
+        <button class="bndl-tab" data-tab="history" role="tab">Purchase History</button>
+      </nav>
+      <div data-region="tab-bundles">
+        <div class="shell-card">
+          <div data-region="bundles-toolbar"></div>
+          <div data-region="bundles-actions"></div>
+          <div data-region="bundles-list"></div>
+        </div>
+      </div>
+      <div data-region="tab-editor" style="display:none">
+        <div data-region="editor-content"></div>
+      </div>
+      <div data-region="tab-history" style="display:none">
+        <div class="shell-card">
+          <div data-region="history-toolbar"></div>
+          <div data-region="history-list"></div>
+        </div>
+      </div>
+    </div>`;
+
+  // ── tab navigation ────────────────────────────────────────────────────────
+  container.querySelectorAll(".bndl-tab").forEach((btn) => {
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  });
+
+  container.querySelector('[data-act="new-bundle"]').addEventListener("click", () => {
+    openCreateBundleModal();
+  });
+
+  function switchTab(tab) {
+    activeTab = tab;
+    container.querySelectorAll(".bndl-tab").forEach((b) => {
+      b.classList.toggle("active", b.dataset.tab === tab);
+    });
+    ["bundles", "editor", "history"].forEach((t) => {
+      const el = region(`tab-${t}`);
+      if (el) el.style.display = t === tab ? "" : "none";
+    });
+    if (tab === "history" && historyRows.length === 0 && !historyLoading) {
+      loadHistory();
+    }
+  }
+
+  // ── BUNDLES TAB ───────────────────────────────────────────────────────────
+  function renderBundlesToolbar() {
+    region("bundles-toolbar").innerHTML = `
+      <div class="bndl-filter-row" style="margin-bottom:var(--p-space-300);">
+        <select class="shell-select" data-act="status-filter">
+          <option value="">All statuses</option>
+          <option value="enabled">Enabled</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        <select class="shell-select" data-act="health-filter">
+          <option value="">All health</option>
+          <option value="healthy">Healthy</option>
+          <option value="warned">Warned</option>
+          <option value="auto_disabled">Auto-Disabled</option>
+        </select>
+      </div>`;
+    region("bundles-toolbar").querySelector('[data-act="status-filter"]').value = bundleStatusFilter;
+    region("bundles-toolbar").querySelector('[data-act="health-filter"]').value = bundleHealthFilter;
+    region("bundles-toolbar").querySelector('[data-act="status-filter"]').addEventListener("change", (e) => {
+      bundleStatusFilter = e.target.value;
+      bundlePage = 0;
+      selectedBundleIds.clear();
+      loadBundles();
+    });
+    region("bundles-toolbar").querySelector('[data-act="health-filter"]').addEventListener("change", (e) => {
+      bundleHealthFilter = e.target.value;
+      bundlePage = 0;
+      selectedBundleIds.clear();
+      loadBundles();
+    });
+  }
+
+  async function loadBundles() {
+    bundlesLoading = true;
+    renderBundlesToolbar();
+    renderBundlesActions();
+    renderBundlesList();
+    try {
+      const res = await bridge.call("/bundles", {
+        status_filter: bundleStatusFilter || null,
+        health_filter: bundleHealthFilter || null,
+        page: bundlePage,
+        page_size: BUNDLE_PAGE_SIZE,
+      });
+      bundleRows = res.items || [];
+      bundleTotal = res.total || 0;
+    } catch (_) {
+      if (bundleRows.length === 0) {
+        region("fatal").innerHTML = `<div class="shell-error-banner">Could not load bundles. Refresh to try again.</div>`;
+      } else {
+        bridge.notify("Could not load bundles", "error");
+      }
+    } finally {
+      bundlesLoading = false;
+      renderBundlesList();
+      renderBundlesActions();
+    }
+  }
+
+  function healthBadge(health) {
+    const map = {
+      healthy: ["badge-success", "Healthy"],
+      warned: ["badge-warning", "Warned"],
+      auto_disabled: ["badge-error", "Auto-Disabled"],
+    };
+    const [cls, label] = map[health] || ["badge-neutral", health || "—"];
+    return `<span class="badge ${cls}"><span class="bndl-health-dot bndl-health-${esc(health)}"></span>${esc(label)}</span>`;
+  }
+
+  function modeBadge(mode) {
+    if (mode === "fixed") return `<span class="badge badge-neutral">Fixed</span>`;
+    if (mode === "flexible") return `<span class="badge badge-neutral">Flexible</span>`;
+    return `<span class="badge badge-neutral">${esc(mode)}</span>`;
+  }
+
+  function renderBundlesActions() {
+    const r = region("bundles-actions");
+    if (!r) return;
+    if (selectedBundleIds.size === 0) { r.innerHTML = ""; return; }
+    r.innerHTML = `
+      <div class="bndl-actions-toolbar">
+        <span style="color:var(--p-color-text-secondary);font-size:var(--p-font-size-350);">${selectedBundleIds.size} of ${bundleRows.length} selected</span>
+        <button class="btn-primary" data-act="bulk-enable">Enable Selected</button>
+        <button class="btn-secondary" data-act="bulk-disable">Disable Selected</button>
+        <button class="btn-secondary" data-act="clear-sel">Clear Selection</button>
+      </div>`;
+    r.querySelector('[data-act="bulk-enable"]').addEventListener("click", () => runBulkStatus(true));
+    r.querySelector('[data-act="bulk-disable"]').addEventListener("click", () => runBulkStatus(false));
+    r.querySelector('[data-act="clear-sel"]').addEventListener("click", () => {
+      selectedBundleIds.clear();
+      renderBundlesActions();
+      renderBundlesList();
+    });
+  }
+
+  async function runBulkStatus(enabled) {
+    const btn = region("bundles-actions").querySelector(enabled ? '[data-act="bulk-enable"]' : '[data-act="bulk-disable"]');
+    if (btn) { btn.disabled = true; btn.textContent = enabled ? "Enabling…" : "Disabling…"; }
+    try {
+      const res = await bridge.call("/bundles/bulk-status", {
+        bundle_ids: [...selectedBundleIds],
+        enabled,
+      });
+      bridge.notify(`Updated ${res.updated_count} bundle(s)${res.skipped_count ? `, skipped ${res.skipped_count}` : ""}`, "success");
+      selectedBundleIds.clear();
+      await loadBundles();
+    } catch (_) {
+      bridge.notify("Could not update bundles", "error");
+      if (btn) { btn.disabled = false; btn.textContent = enabled ? "Enable Selected" : "Disable Selected"; }
+    }
+  }
+
+  function renderBundlesList() {
+    const r = region("bundles-list");
+    if (!r) return;
+    if (bundlesLoading && bundleRows.length === 0) {
+      r.innerHTML = `
+        <div class="shell-table-wrap"><table class="shell-table">
+          <thead><tr><th></th><th>Title</th><th>Mode</th><th>Health</th><th>Tiers</th><th>Created</th><th>Actions</th></tr></thead>
+          <tbody>${Array(5).fill('<tr><td colspan="7"><div class="shell-loading">&nbsp;</div></td></tr>').join("")}</tbody>
+        </table></div>`;
+      return;
+    }
+    const isFiltered = bundleStatusFilter !== "" || bundleHealthFilter !== "";
+    if (!bundlesLoading && bundleRows.length === 0) {
+      r.innerHTML = isFiltered
+        ? `<div class="shell-empty"><p>No bundles match the current filters.</p><button class="btn-secondary" data-act="clear-filters">Clear Filters</button></div>`
+        : `<div class="shell-empty"><h2 class="shell-section-title">No bundles yet</h2><p>Create your first bundle to start offering tiered discounts to customers.</p><button class="btn-primary" data-act="first-new">Create Your First Bundle</button></div>`;
+      if (isFiltered) {
+        r.querySelector('[data-act="clear-filters"]').addEventListener("click", () => {
+          bundleStatusFilter = ""; bundleHealthFilter = ""; bundlePage = 0;
+          selectedBundleIds.clear();
+          renderBundlesToolbar();
+          loadBundles();
+        });
+      } else {
+        r.querySelector('[data-act="first-new"]').addEventListener("click", openCreateBundleModal);
+      }
+      return;
+    }
+
+    const allChecked = bundleRows.length > 0 && bundleRows.every((b) => selectedBundleIds.has(b.id));
+    const startRow = bundlePage * BUNDLE_PAGE_SIZE + 1;
+    const endRow = Math.min(bundlePage * BUNDLE_PAGE_SIZE + bundleRows.length, bundleTotal);
+
+    r.innerHTML = `
+      <div class="shell-table-wrap"><table class="shell-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" data-act="select-all" ${allChecked ? "checked" : ""} aria-label="Select all on this page"/></th>
+            <th>Title</th><th>Mode</th><th>Health</th><th>Status</th><th>Tiers</th><th>Created</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${bundleRows.map((b) => `
+            <tr data-bundle-id="${esc(b.id)}">
+              <td><input type="checkbox" data-act="select-row" data-id="${esc(b.id)}" ${selectedBundleIds.has(b.id) ? "checked" : ""} aria-label="Select ${esc(b.title)}"/></td>
+              <td><strong>${esc(b.title)}</strong></td>
+              <td>${modeBadge(b.mode)}</td>
+              <td>${healthBadge(b.health_status)}</td>
+              <td><span class="badge ${b.enabled ? "badge-success" : "badge-neutral"}">${b.enabled ? "Enabled" : "Disabled"}</span></td>
+              <td>${fmtInt(b.tier_count)}</td>
+              <td>${fmtDate(b.created_at)}</td>
+              <td>
+                <div class="bndl-row-actions">
+                  <button class="btn-secondary" data-act="edit" data-id="${esc(b.id)}" data-title="${esc(b.title)}">Edit</button>
+                  <button class="btn-secondary" data-act="clone" data-id="${esc(b.id)}">Clone</button>
+                  <button class="btn-danger" data-act="delete" data-id="${esc(b.id)}" data-title="${esc(b.title)}">Delete</button>
+                </div>
+              </td>
+            </tr>`).join("")}
+        </tbody>
+      </table></div>
+      <nav class="shell-pagination" aria-label="Bundle list pagination">
+        <span style="font-size:var(--p-font-size-300);color:var(--p-color-text-secondary);">Showing ${fmtInt(startRow)}–${fmtInt(endRow)} of ${fmtInt(bundleTotal)}</span>
+        <div class="shell-pagination-btns">
+          <button class="btn-secondary" data-act="prev" ${bundlePage === 0 ? "disabled" : ""}>← Previous</button>
+          <button class="btn-secondary" data-act="next" ${endRow >= bundleTotal ? "disabled" : ""}>Next →</button>
+        </div>
+      </nav>`;
+
+    r.querySelector('[data-act="select-all"]').addEventListener("change", (e) => {
+      bundleRows.forEach((b) => {
+        if (e.target.checked) selectedBundleIds.add(b.id);
+        else selectedBundleIds.delete(b.id);
+      });
+      renderBundlesActions();
+      renderBundlesList();
+    });
+    r.querySelectorAll('[data-act="select-row"]').forEach((cb) => {
+      cb.addEventListener("change", (e) => {
+        if (e.target.checked) selectedBundleIds.add(e.target.dataset.id);
+        else selectedBundleIds.delete(e.target.dataset.id);
+        renderBundlesActions();
+        renderBundlesList();
+      });
+    });
+    r.querySelectorAll('[data-act="edit"]').forEach((btn) => {
+      btn.addEventListener("click", () => openEditorTab(btn.dataset.id));
+    });
+    r.querySelectorAll('[data-act="clone"]').forEach((btn) => {
+      btn.addEventListener("click", () => cloneBundle(btn, btn.dataset.id));
+    });
+    r.querySelectorAll('[data-act="delete"]').forEach((btn) => {
+      btn.addEventListener("click", () => confirmDeleteBundle({ id: btn.dataset.id, title: btn.dataset.title }));
+    });
+    r.querySelector('[data-act="prev"]')?.addEventListener("click", () => {
+      bundlePage--;
+      loadBundles();
+    });
+    r.querySelector('[data-act="next"]')?.addEventListener("click", () => {
+      bundlePage++;
+      loadBundles();
+    });
+  }
+
+  async function cloneBundle(btn, bundleId) {
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = "Cloning…";
+    try {
+      await bridge.call("/bundles/clone", { source_bundle_id: bundleId });
+      bridge.notify("Bundle cloned", "success");
+      await loadBundles();
+    } catch (_) {
+      bridge.notify("Could not clone bundle", "error");
+      btn.disabled = false; btn.textContent = orig;
+    }
+  }
+
+  // ── create bundle modal ───────────────────────────────────────────────────
+  function openCreateBundleModal() {
+    closeModal();
+    const previouslyFocused = document.activeElement;
+    const overlay = document.createElement("div");
+    overlay.className = "shell-confirm-overlay";
+    overlay.innerHTML = `
+      <div class="shell-confirm-dialog" role="dialog" aria-modal="true" style="min-width:400px;">
+        <h2 class="shell-confirm-title">New Bundle</h2>
+        <div class="shell-confirm-body">
+          <div class="shell-field">
+            <label class="shell-label" for="bndl-title">Title</label>
+            <input class="shell-input" id="bndl-title" name="title" type="text" required placeholder="e.g. Summer Bundle" />
+          </div>
+          <div class="shell-field">
+            <label class="shell-label" for="bndl-mode">Mode</label>
+            <select class="shell-select" id="bndl-mode" name="mode">
+              <option value="fixed">Fixed — customers get a pre-set group of items</option>
+              <option value="flexible">Flexible — customers pick items up to a quantity</option>
+            </select>
+          </div>
+          <div class="shell-field">
+            <label class="shell-label" for="bndl-desc">Description (optional)</label>
+            <textarea class="shell-textarea" id="bndl-desc" name="description" rows="2" placeholder="Describe this bundle…"></textarea>
+          </div>
+          <div class="bndl-info-banner" style="margin-top:var(--p-space-300);">
+            ⚠️ Before activating this bundle, create matching discount codes in Shopify Admin for each tier. Bundles without matching codes will not apply discounts at checkout.
+          </div>
+        </div>
+        <div class="shell-confirm-actions">
+          <button class="btn-secondary" data-act="cancel">Cancel</button>
+          <button class="btn-primary" data-act="save">Create Bundle</button>
+        </div>
+      </div>`;
+    container.appendChild(overlay);
+    const onKey = (e) => { if (e.key === "Escape") closeModal(); };
+    document.addEventListener("keydown", onKey);
+    modal = { el: overlay, onKey, previouslyFocused };
+    overlay.querySelector('[data-act="cancel"]').addEventListener("click", closeModal);
+    overlay.querySelector('[data-act="save"]').addEventListener("click", async () => {
+      const titleEl = overlay.querySelector('#bndl-title');
+      const modeEl = overlay.querySelector('#bndl-mode');
+      const descEl = overlay.querySelector('#bndl-desc');
+      if (!titleEl.value.trim()) {
+        titleEl.setAttribute("aria-invalid", "true");
+        titleEl.focus();
+        return;
+      }
+      const saveBtn = overlay.querySelector('[data-act="save"]');
+      saveBtn.disabled = true; saveBtn.textContent = "Creating…";
+      try {
+        const res = await bridge.call("/bundles/create", {
+          title: titleEl.value.trim(),
+          mode: modeEl.value,
+          description: descEl.value.trim() || null,
+        });
+        closeModal();
+        bridge.notify("Bundle created", "success");
+        await loadBundles();
+        openEditorTab(res.bundle_id);
+      } catch (_) {
+        saveBtn.disabled = false; saveBtn.textContent = "Create Bundle";
+        bridge.notify("Could not create bundle", "error");
+      }
+    });
+    requestAnimationFrame(() => {
+      overlay.querySelector('#bndl-title')?.focus();
+    });
+  }
+
+  // ── delete bundle modal ───────────────────────────────────────────────────
+  function confirmDeleteBundle(record) {
+    closeModal();
+    const previouslyFocused = document.activeElement;
+    const overlay = document.createElement("div");
+    overlay.className = "shell-confirm-overlay";
+    overlay.innerHTML = `
+      <div class="shell-confirm-dialog" role="dialog" aria-modal="true">
+        <h2 class="shell-confirm-title">Delete "${esc(record.title)}"?</h2>
+        <div class="shell-confirm-body">This will permanently remove the bundle and all its tiers and items. This cannot be undone.</div>
+        <div class="shell-confirm-actions">
+          <button class="btn-secondary" data-act="cancel" autofocus>Cancel</button>
+          <button class="btn-danger" data-act="confirm">Delete</button>
+        </div>
+      </div>`;
+    container.appendChild(overlay);
+    const onKey = (e) => { if (e.key === "Escape") closeModal(); };
+    document.addEventListener("keydown", onKey);
+    modal = { el: overlay, onKey, previouslyFocused };
+    requestAnimationFrame(() => overlay.querySelector('[data-act="cancel"]')?.focus());
+    overlay.querySelector('[data-act="cancel"]').addEventListener("click", closeModal);
+    overlay.querySelector('[data-act="confirm"]').addEventListener("click", async () => {
+      const btn = overlay.querySelector('[data-act="confirm"]');
+      btn.disabled = true; btn.textContent = "Deleting…";
+      try {
+        await bridge.call("/bundles/remove", { bundle_id: record.id });
+        closeModal();
+        bridge.notify("Bundle deleted", "success");
+        if (bundleRows.length === 1 && bundlePage > 0) bundlePage--;
+        selectedBundleIds.delete(record.id);
+        await loadBundles();
+      } catch (_) {
+        btn.disabled = false; btn.textContent = "Delete";
+        bridge.notify("Could not delete bundle", "error");
+      }
+    });
+  }
+
+  function closeModal() {
+    if (!modal) return;
+    document.removeEventListener("keydown", modal.onKey);
+    modal.el.remove();
+    modal.previouslyFocused?.focus?.();
+    modal = null;
+  }
+
+  // ── BUNDLE EDITOR TAB ─────────────────────────────────────────────────────
+  function openEditorTab(bundleId) {
+    editorBundleId = bundleId;
+    editorTiers = [];
+    editorItems = [];
+    editorItemsPage = 0;
+    editorTiersPage = 0;
+    switchTab("editor");
+    loadEditor();
+  }
+
+  async function loadEditor() {
+    if (!editorBundleId) {
+      region("editor-content").innerHTML = `
+        <div class="shell-card">
+          <div class="shell-empty">
+            <h2 class="shell-section-title">No bundle selected</h2>
+            <p>Select a bundle from the Bundles tab to edit it.</p>
+            <button class="btn-secondary" data-act="go-bundles">Go to Bundles</button>
+          </div>
+        </div>`;
+      region("editor-content").querySelector('[data-act="go-bundles"]')?.addEventListener("click", () => switchTab("bundles"));
+      return;
+    }
+    editorLoading = true;
+    renderEditorSkeleton();
+    try {
+      const [bundleRes, tiersRes, itemsRes] = await Promise.all([
+        bridge.call("/bundles", { status_filter: null, health_filter: null, page: 0, page_size: 1000 }),
+        bridge.call("/bundles/tiers", { bundle_id: editorBundleId, page: editorTiersPage, page_size: TIERS_PAGE_SIZE }),
+        bridge.call("/bundles/items", { bundle_id: editorBundleId, page: editorItemsPage, page_size: ITEMS_PAGE_SIZE }),
+      ]);
+      const found = (bundleRes.items || []).find((b) => b.id === editorBundleId);
+      if (!found) {
+        region("editor-content").innerHTML = `<div class="shell-card"><div class="shell-error-banner">Bundle not found.</div></div>`;
+        return;
+      }
+      editorTiers = (tiersRes.items || []).map((t) => ({
+        minimum_item_count: t.minimum_item_count,
+        discount_rate: t.discount_rate,
+      }));
+      editorTiersTotal = tiersRes.total || 0;
+      editorItems = itemsRes.items || [];
+      editorItemsTotal = itemsRes.total || 0;
+      editorLoading = false;
+      renderEditor(found);
+    } catch (_) {
+      region("editor-content").innerHTML = `<div class="shell-card"><div class="shell-error-banner">Could not load bundle. Refresh to try again.</div></div>`;
+      editorLoading = false;
+    }
+  }
+
+  function renderEditorSkeleton() {
+    region("editor-content").innerHTML = `
+      <div class="shell-card">
+        <div class="shell-loading" style="height:40px;margin-bottom:var(--p-space-400);">&nbsp;</div>
+        <div class="shell-loading" style="height:200px;">&nbsp;</div>
+      </div>`;
+  }
+
+  function renderEditor(bundle) {
+    const r = region("editor-content");
+    r.innerHTML = `
+      <div class="shell-card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:var(--p-space-300);">
+          <div>
+            <div class="shell-section-title">${esc(bundle.title)}</div>
+            <div style="margin-top:var(--p-space-100);display:flex;gap:var(--p-space-200);align-items:center;">
+              ${modeBadge(bundle.mode)}
+              ${healthBadge(bundle.health_status)}
+              <span class="badge ${bundle.enabled ? "badge-success" : "badge-neutral"}">${bundle.enabled ? "Enabled" : "Disabled"}</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:var(--p-space-200);flex-wrap:wrap;">
+            <button class="btn-secondary" data-act="toggle-enabled">${bundle.enabled ? "Disable Bundle" : "Enable Bundle"}</button>
+            <button class="btn-secondary" data-act="back-list">← Back to Bundles</button>
+          </div>
+        </div>
+
+        ${bundle.health_status === "auto_disabled" ? `<div class="shell-error-banner" style="margin-top:var(--p-space-400);">This bundle was auto-disabled due to variant availability issues. Review items below and re-enable once resolved.</div>` : ""}
+        ${bundle.health_status === "warned" ? `<div class="shell-warning-banner" style="margin-top:var(--p-space-400);">Some items in this bundle have availability issues. Review items below.</div>` : ""}
+
+        <div class="bndl-info-banner" style="margin-top:var(--p-space-400);">
+          📋 Ensure matching discount codes exist in Shopify Admin for each tier before enabling this bundle. <strong>Bundles without matching Shopify discount codes will not apply discounts at checkout.</strong>
+        </div>
+
+        <div data-region="editor-settings" style="margin-top:var(--p-space-400);"></div>
+        <div data-region="editor-tiers" style="margin-top:var(--p-space-400);"></div>
+        <div data-region="editor-items" style="margin-top:var(--p-space-400);"></div>
+      </div>`;
+
+    r.querySelector('[data-act="back-list"]').addEventListener("click", () => switchTab("bundles"));
+    r.querySelector('[data-act="toggle-enabled"]').addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true; btn.textContent = bundle.enabled ? "Disabling…" : "Enabling…";
+      try {
+        await bridge.call("/bundles/update", { bundle_id: bundle.id, enabled: !bundle.enabled });
+        bridge.notify(bundle.enabled ? "Bundle disabled" : "Bundle enabled", "success");
+        await loadBundles();
+        openEditorTab(bundle.id);
+      } catch (_) {
+        btn.disabled = false; btn.textContent = bundle.enabled ? "Disable Bundle" : "Enable Bundle";
+        bridge.notify("Could not update bundle", "error");
+      }
+    });
+
+    renderEditorSettings(bundle);
+    renderEditorTiers(bundle);
+    renderEditorItems(bundle);
+  }
+
+  function renderEditorSettings(bundle) {
+    const r = region("editor-settings");
+    if (!r) return;
+    r.innerHTML = `
+      <div class="bndl-section-heading">Bundle Settings</div>
+      <div class="shell-field">
+        <label class="shell-label" for="edit-title">Title</label>
+        <input class="shell-input" id="edit-title" type="text" value="${esc(bundle.title)}" />
+      </div>
+      <div class="shell-field">
+        <label class="shell-label" for="edit-mode">Mode</label>
+        <select class="shell-select" id="edit-mode">
+          <option value="fixed" ${bundle.mode === "fixed" ? "selected" : ""}>Fixed</option>
+          <option value="flexible" ${bundle.mode === "flexible" ? "selected" : ""}>Flexible</option>
+        </select>
+        <div class="shell-help">${bundle.mode === "fixed" ? "Fixed: customers receive a pre-set group of items." : "Flexible: customers pick items from the bundle up to a tier threshold."}</div>
+      </div>
+      <div style="margin-top:var(--p-space-300);">
+        <button class="btn-primary" data-act="save-settings">Save Settings</button>
+      </div>`;
+    r.querySelector('[data-act="save-settings"]').addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const title = r.querySelector('#edit-title').value.trim();
+      const mode = r.querySelector('#edit-mode').value;
+      if (!title) {
+        r.querySelector('#edit-title').setAttribute("aria-invalid", "true");
+        r.querySelector('#edit-title').focus();
+        return;
+      }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await bridge.call("/bundles/update", { bundle_id: bundle.id, title, mode });
+        bridge.notify("Bundle settings saved", "success");
+        await loadBundles();
+        openEditorTab(bundle.id);
+      } catch (_) {
+        btn.disabled = false; btn.textContent = "Save Settings";
+        bridge.notify("Could not save settings", "error");
+      }
+    });
+  }
+
+  function renderEditorTiers(bundle) {
+    const r = region("editor-tiers");
+    if (!r) return;
+    const tiers = [...editorTiers].sort((a, b) => a.minimum_item_count - b.minimum_item_count);
+
+    r.innerHTML = `
+      <div class="bndl-section-heading">Discount Tiers</div>
+      <p style="font-size:var(--p-font-size-300);color:var(--p-color-text-secondary);margin-bottom:var(--p-space-300);">Define how many items trigger each discount. Tiers are automatically ordered by item count.</p>
+      <div data-region="tiers-rows"></div>
+      <button class="btn-secondary" data-act="add-tier" style="margin-top:var(--p-space-200);">+ Add Tier</button>
+      <div data-region="tier-preview"></div>
+      <div style="margin-top:var(--p-space-300);">
+        <button class="btn-primary" data-act="save-tiers">Save Tiers</button>
+      </div>`;
+
+    function renderTiersRows() {
+      const tiersRows = r.querySelector('[data-region="tiers-rows"]');
+      tiersRows.innerHTML = editorTiers.length === 0
+        ? `<p style="color:var(--p-color-text-secondary);font-size:var(--p-font-size-350);">No tiers yet. Add a tier below.</p>`
+        : editorTiers.map((t, i) => `
+          <div class="bndl-tier-row" data-tier-index="${i}">
+            <div class="shell-field" style="margin-bottom:0;">
+              <label class="shell-label" for="tier-count-${i}">Min Items</label>
+              <input class="shell-input" id="tier-count-${i}" type="number" min="1" value="${esc(String(t.minimum_item_count))}" data-field="minimum_item_count" data-idx="${i}" style="width:90px;"/>
+            </div>
+            <div class="shell-field" style="margin-bottom:0;">
+              <label class="shell-label" for="tier-disc-${i}">Discount %</label>
+              <input class="shell-input" id="tier-disc-${i}" type="number" min="0" max="100" step="0.1" value="${esc(String((t.discount_rate * 100).toFixed(1)))}" data-field="discount_rate" data-idx="${i}" style="width:90px;"/>
+            </div>
+            <button class="bndl-tier-remove" data-act="remove-tier" data-idx="${i}" aria-label="Remove tier ${i + 1}">×</button>
+          </div>`).join("");
+
+      tiersRows.querySelectorAll('[data-act="remove-tier"]').forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = Number(btn.dataset.idx);
+          editorTiers.splice(idx, 1);
+          renderTiersRows();
+          renderTierPreview();
+        });
+      });
+      tiersRows.querySelectorAll('input[data-field]').forEach((inp) => {
+        inp.addEventListener("change", () => {
+          const idx = Number(inp.dataset.idx);
+          const field = inp.dataset.field;
+          if (field === "minimum_item_count") {
+            editorTiers[idx].minimum_item_count = Math.max(1, parseInt(inp.value, 10) || 1);
+          } else if (field === "discount_rate") {
+            editorTiers[idx].discount_rate = Math.min(100, Math.max(0, parseFloat(inp.value) || 0)) / 100;
+          }
+          renderTierPreview();
+        });
+      });
+    }
+
+    function renderTierPreview() {
+      const pv = r.querySelector('[data-region="tier-preview"]');
+      if (!pv) return;
+      const sorted = [...editorTiers].sort((a, b) => a.minimum_item_count - b.minimum_item_count);
+      if (sorted.length === 0) { pv.innerHTML = ""; return; }
+      pv.innerHTML = `
+        <div class="bndl-preview">
+          <div style="font-weight:var(--p-font-weight-semibold);font-size:var(--p-font-size-350);margin-bottom:var(--p-space-200);">Discount Ladder Preview</div>
+          ${sorted.map((t) => `
+            <div class="bndl-preview-row">
+              <span>${fmtInt(t.minimum_item_count)}+ items</span>
+              <span style="color:var(--p-color-text-success);font-weight:var(--p-font-weight-semibold);">${fmtPct(t.discount_rate)} off</span>
+            </div>`).join("")}
+        </div>`;
+    }
+
+    r.querySelector('[data-act="add-tier"]').addEventListener("click", () => {
+      editorTiers.push({ minimum_item_count: 2, discount_rate: 0.1 });
+      renderTiersRows();
+      renderTierPreview();
+    });
+
+    r.querySelector('[data-act="save-tiers"]').addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const sorted = [...editorTiers].sort((a, b) => a.minimum_item_count - b.minimum_item_count);
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await bridge.call("/bundles/tiers/save", {
+          bundle_id: bundle.id,
+          tiers: sorted.map((t) => ({ minimum_item_count: t.minimum_item_count, discount_rate: t.discount_rate })),
+        });
+        bridge.notify("Tiers saved", "success");
+        editorTiers = sorted;
+        renderTiersRows();
+        renderTierPreview();
+      } catch (_) {
+        bridge.notify("Could not save tiers", "error");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save Tiers";
+      }
+    });
+
+    renderTiersRows();
+    renderTierPreview();
+  }
+
+  function renderEditorItems(bundle) {
+    const r = region("editor-items");
+    if (!r) return;
+
+    function renderItemsTable() {
+      const startRow = editorItemsPage * ITEMS_PAGE_SIZE + 1;
+      const endRow = Math.min(editorItemsPage * ITEMS_PAGE_SIZE + editorItems.length, editorItemsTotal);
+      if (editorItems.length === 0) {
+        return `<div class="shell-empty"><p>No items in this bundle yet. Pick products or variants above.</p></div>`;
+      }
+
+      const availBadge = (av) => {
+        if (av === null || av === undefined) return `<span class="badge badge-neutral">—</span>`;
+        if (av === "available") return `<span class="badge badge-success">Available</span>`;
+        if (av === "out_of_stock") return `<span class="badge badge-error">Out of Stock</span>`;
+        if (av === "deleted") return `<span class="badge badge-error">Deleted</span>`;
+        return `<span class="badge badge-neutral">${esc(av)}</span>`;
+      };
+
+      return `
+        <div class="shell-table-wrap"><table class="shell-table">
+          <thead><tr><th>Variant ID</th><th>Product ID</th><th>Availability</th><th>Added</th></tr></thead>
+          <tbody>
+            ${editorItems.map((item) => `
+              <tr>
+                <td style="font-family:monospace;font-size:var(--p-font-size-300);">${esc(item.variant_external_id || "—")}</td>
+                <td style="font-family:monospace;font-size:var(--p-font-size-300);">${esc(item.product_external_id || "—")}</td>
+                <td>${availBadge(item.observed_availability)}</td>
+                <td>${fmtDate(item.added_at)}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table></div>
+        <nav class="shell-pagination">
+          <span style="font-size:var(--p-font-size-300);color:var(--p-color-text-secondary);">Showing ${fmtInt(startRow)}–${fmtInt(endRow)} of ${fmtInt(editorItemsTotal)}</span>
+          <div class="shell-pagination-btns">
+            <button class="btn-secondary" data-act="items-prev" ${editorItemsPage === 0 ? "disabled" : ""}>← Previous</button>
+            <button class="btn-secondary" data-act="items-next" ${endRow >= editorItemsTotal ? "disabled" : ""}>Next →</button>
+          </div>
+        </nav>`;
+    }
+
+    r.innerHTML = `
+      <div class="bndl-section-heading">Bundle Items</div>
+      <p style="font-size:var(--p-font-size-300);color:var(--p-color-text-secondary);margin-bottom:var(--p-space-300);">Select the variants to include in this bundle. Variant-level selection is preferred for availability tracking.</p>
+      <div style="display:flex;gap:var(--p-space-300);flex-wrap:wrap;margin-bottom:var(--p-space-300);">
+        <button class="btn-secondary" data-act="pick-variants">Pick Variants</button>
+        <button class="btn-secondary" data-act="pick-products">Pick by Product</button>
+      </div>
+      <div data-region="picked-chips" class="bndl-chip-wrap" style="margin-bottom:var(--p-space-300);"></div>
+      <div data-region="item-save-row" style="margin-bottom:var(--p-space-400);display:none;">
+        <button class="btn-primary" data-act="save-items">Save Item Selections</button>
+      </div>
+      <div data-region="items-table">${renderItemsTable()}</div>`;
+
+    const pickedVariants = new Map();
+    const pickedProducts = new Map();
+
+    function refreshChips() {
+      const chipWrap = r.querySelector('[data-region="picked-chips"]');
+      const saveRow = r.querySelector('[data-region="item-save-row"]');
+      const total = pickedVariants.size + pickedProducts.size;
+      if (total === 0) {
+        chipWrap.innerHTML = "";
+        saveRow.style.display = "none";
+        return;
+      }
+      saveRow.style.display = "";
+      chipWrap.innerHTML = [
+        ...[...pickedVariants.values()].map((p) => `<span class="bndl-chip"><span>Variant: ${esc(p.label)}</span><button data-rm-variant="${esc(p.id)}" aria-label="Remove ${esc(p.label)}">×</button></span>`),
+        ...[...pickedProducts.values()].map((p) => `<span class="bndl-chip"><span>Product: ${esc(p.label)}</span><button data-rm-product="${esc(p.id)}" aria-label="Remove ${esc(p.label)}">×</button></span>`),
+      ].join("");
+      chipWrap.querySelectorAll("[data-rm-variant]").forEach((b) => {
+        b.addEventListener("click", () => { pickedVariants.delete(b.dataset.rmVariant); refreshChips(); });
+      });
+      chipWrap.querySelectorAll("[data-rm-product]").forEach((b) => {
+        b.addEventListener("click", () => { pickedProducts.delete(b.dataset.rmProduct); refreshChips(); });
+      });
+    }
+
+    r.querySelector('[data-act="pick-variants"]').addEventListener("click", async () => {
+      const picked = await bridge.pickResource({
+        type: "variant",
+        multiple: 50,
+        selectionIds: [...pickedVariants.keys()].map((id) => ({ id })),
+      });
+      if (!picked) return;
+      pickedVariants.clear();
+      picked.forEach((p) => pickedVariants.set(p.id, { id: p.id, label: p.title || p.id }));
+      refreshChips();
+    });
+
+    r.querySelector('[data-act="pick-products"]').addEventListener("click", async () => {
+      const picked = await bridge.pickResource({
+        type: "product",
+        multiple: 50,
+        selectionIds: [...pickedProducts.keys()].map((id) => ({ id })),
+      });
+      if (!picked) return;
+      pickedProducts.clear();
+      picked.forEach((p) => pickedProducts.set(p.id, { id: p.id, label: p.title || p.id }));
+      refreshChips();
+    });
+
+    r.querySelector('[data-act="save-items"]').addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        const res = await bridge.call("/bundles/items/save", {
+          bundle_id: bundle.id,
+          variant_external_ids: [...pickedVariants.keys()],
+          product_external_ids: [...pickedProducts.keys()],
+        });
+        if (res.unavailable_variants && res.unavailable_variants.length > 0) {
+          bridge.notify(`Saved. ${res.unavailable_variants.length} variant(s) unavailable: ${res.unavailable_variants.slice(0, 3).join(", ")}`, "error");
+        } else {
+          bridge.notify(`Saved ${res.saved_count} item(s)`, "success");
+        }
+        pickedVariants.clear();
+        pickedProducts.clear();
+        refreshChips();
+        // refetch items
+        const itemsRes = await bridge.call("/bundles/items", { bundle_id: bundle.id, page: editorItemsPage, page_size: ITEMS_PAGE_SIZE });
+        editorItems = itemsRes.items || [];
+        editorItemsTotal = itemsRes.total || 0;
+        r.querySelector('[data-region="items-table"]').innerHTML = renderItemsTable();
+        wireItemsPagination();
+        await loadBundles();
+      } catch (_) {
+        bridge.notify("Could not save items", "error");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save Item Selections";
+      }
+    });
+
+    function wireItemsPagination() {
+      const tbl = r.querySelector('[data-region="items-table"]');
+      tbl.querySelector('[data-act="items-prev"]')?.addEventListener("click", async () => {
+        editorItemsPage--;
+        const res = await bridge.call("/bundles/items", { bundle_id: bundle.id, page: editorItemsPage, page_size: ITEMS_PAGE_SIZE });
+        editorItems = res.items || [];
+        editorItemsTotal = res.total || 0;
+        tbl.innerHTML = renderItemsTable();
+        wireItemsPagination();
+      });
+      tbl.querySelector('[data-act="items-next"]')?.addEventListener("click", async () => {
+        editorItemsPage++;
+        const res = await bridge.call("/bundles/items", { bundle_id: bundle.id, page: editorItemsPage, page_size: ITEMS_PAGE_SIZE });
+        editorItems = res.items || [];
+        editorItemsTotal = res.total || 0;
+        tbl.innerHTML = renderItemsTable();
+        wireItemsPagination();
+      });
+    }
+
+    wireItemsPagination();
+  }
+
+  // ── PURCHASE HISTORY TAB ──────────────────────────────────────────────────
+  function renderHistoryToolbar() {
+    region("history-toolbar").innerHTML = `
+      <div class="bndl-filter-row" style="margin-bottom:var(--p-space-300);">
+        <input class="shell-input" data-act="date-from" type="date" value="${esc(historyDateFrom)}" aria-label="From date" style="width:160px;" />
+        <input class="shell-input" data-act="date-to" type="date" value="${esc(historyDateTo)}" aria-label="To date" style="width:160px;" />
+        <button class="btn-secondary" data-act="clear-hist-filters">Clear</button>
+        <button class="btn-secondary bndl-export-btn" data-act="export-csv">Export CSV</button>
+      </div>`;
+
+    region("history-toolbar").querySelector('[data-act="date-from"]').addEventListener("change", (e) => {
+      historyDateFrom = e.target.value;
+      historyPage = 0;
+      loadHistory();
+    });
+    region("history-toolbar").querySelector('[data-act="date-to"]').addEventListener("change", (e) => {
+      historyDateTo = e.target.value;
+      historyPage = 0;
+      loadHistory();
+    });
+    region("history-toolbar").querySelector('[data-act="clear-hist-filters"]').addEventListener("click", () => {
+      historyDateFrom = ""; historyDateTo = ""; historyBundleFilter = ""; historyPage = 0;
+      renderHistoryToolbar();
+      loadHistory();
+    });
+    region("history-toolbar").querySelector('[data-act="export-csv"]').addEventListener("click", exportHistoryCSV);
+  }
+
+  async function loadHistory() {
+    historyLoading = true;
+    renderHistoryToolbar();
+    renderHistoryList();
+    try {
+      const res = await bridge.call("/purchase-history", {
+        bundle_id: historyBundleFilter || null,
+        date_from: historyDateFrom || null,
+        date_to: historyDateTo || null,
+        page: historyPage,
+        page_size: HISTORY_PAGE_SIZE,
+      });
+      historyRows = res.items || [];
+      historyTotal = res.total || 0;
+    } catch (_) {
+      bridge.notify("Could not load purchase history", "error");
+    } finally {
+      historyLoading = false;
+      renderHistoryList();
+    }
+  }
+
+  function renderHistoryList() {
+    const r = region("history-list");
+    if (!r) return;
+    if (historyLoading && historyRows.length === 0) {
+      r.innerHTML = `
+        <div class="shell-table-wrap"><table class="shell-table">
+          <thead><tr><th>Order ID</th><th>Bundle</th><th>Items</th><th>Discount Applied</th><th>Order Total</th><th>Order Date</th><th>Recorded</th></tr></thead>
+          <tbody>${Array(5).fill('<tr><td colspan="7"><div class="shell-loading">&nbsp;</div></td></tr>').join("")}</tbody>
+        </table></div>`;
+      return;
+    }
+    if (!historyLoading && historyRows.length === 0) {
+      r.innerHTML = `<div class="shell-empty"><p>No purchase history found for the selected filters.</p></div>`;
+      return;
+    }
+
+    const startRow = historyPage * HISTORY_PAGE_SIZE + 1;
+    const endRow = Math.min(historyPage * HISTORY_PAGE_SIZE + historyRows.length, historyTotal);
+
+    r.innerHTML = `
+      <div class="shell-table-wrap"><table class="shell-table">
+        <thead>
+          <tr>
+            <th>Order ID</th><th>Bundle ID</th><th>Items</th><th>Discount Applied</th><th>Order Total</th><th>Order Date</th><th>Recorded</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${historyRows.map((h) => `
+            <tr>
+              <td style="font-family:monospace;font-size:var(--p-font-size-300);">${esc(h.order_external_id || "—")}</td>
+              <td style="font-family:monospace;font-size:var(--p-font-size-300);">${esc(h.bundle_id || "—")}</td>
+              <td>${fmtInt(h.item_count)}</td>
+              <td style="color:var(--p-color-text-success);font-weight:var(--p-font-weight-semibold);">${fmtPct(h.discount_rate_applied)}</td>
+              <td>${fmtMoneyAs(h.order_total_minor_units, h.order_currency)}</td>
+              <td>${fmtDate(h.order_placed_at)}</td>
+              <td>${fmtDate(h.recorded_at)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table></div>
+      <nav class="shell-pagination" aria-label="History pagination">
+        <span style="font-size:var(--p-font-size-300);color:var(--p-color-text-secondary);">Showing ${fmtInt(startRow)}–${fmtInt(endRow)} of ${fmtInt(historyTotal)}</span>
+        <div class="shell-pagination-btns">
+          <button class="btn-secondary" data-act="hist-prev" ${historyPage === 0 ? "disabled" : ""}>← Previous</button>
+          <button class="btn-secondary" data-act="hist-next" ${endRow >= historyTotal ? "disabled" : ""}>Next →</button>
+        </div>
+      </nav>`;
+
+    r.querySelector('[data-act="hist-prev"]')?.addEventListener("click", () => { historyPage--; loadHistory(); });
+    r.querySelector('[data-act="hist-next"]')?.addEventListener("click", () => { historyPage++; loadHistory(); });
+  }
+
+  function exportHistoryCSV() {
+    if (historyRows.length === 0) {
+      bridge.notify("No rows to export", "error");
+      return;
+    }
+    const headers = ["Order ID", "Bundle ID", "Items", "Discount Applied", "Order Total", "Currency", "Order Date", "Recorded At"];
+    const lines = [
+      headers.join(","),
+      ...historyRows.map((h) => [
+        `"${String(h.order_external_id || "").replace(/"/g, '""')}"`,
+        `"${String(h.bundle_id || "").replace(/"/g, '""')}"`,
+        h.item_count,
+        (h.discount_rate_applied * 100).toFixed(1) + "%",
+        ((h.order_total_minor_units || 0) / 100).toFixed(2),
+        `"${String(h.order_currency || "").replace(/"/g, '""')}"`,
+        `"${h.order_placed_at || ""}"`,
+        `"${h.recorded_at || ""}"`,
+      ].join(",")),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "bundle-purchase-history.csv";
+    container.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // ── initial load ──────────────────────────────────────────────────────────
+  renderBundlesToolbar();
+  renderBundlesList();
+  loadBundles();
+  renderHistoryToolbar();
+}

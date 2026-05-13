@@ -88,6 +88,12 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 _HERE = Path(__file__).resolve().parent
 _GENERATOR_ROOT = _HERE.parent
+# Capture the user's invocation cwd BEFORE the os.chdir below — argparse
+# values like --prompt-file are relative to where the user launched the
+# command, not the generator root we chdir into for imports. Without this,
+# `./chat_local.py --prompt-file ./test_prompts/foo.txt` from inside cli/
+# would resolve foo.txt relative to platform-ai/ and 404.
+_INVOCATION_CWD = Path.cwd()
 os.chdir(_GENERATOR_ROOT)
 sys.path.insert(0, str(_GENERATOR_ROOT))
 sys.path.insert(0, str(_HERE))  # allow importing cli/db_local
@@ -152,14 +158,20 @@ _RED = "\033[31m"
 _MAGENTA = "\033[35m"
 _BLUE = "\033[34m"
 _BRIGHT_GREEN = "\033[92m"
+# 24-bit truecolour escape (supported by every modern terminal we target
+# — iTerm2, macOS Terminal.app, modern Linux/Windows terminals). Falls
+# back gracefully on non-truecolour terminals because the codes parse
+# but render as a close 256-colour approximation.
+_PASTEL_RED = "\033[38;2;255;120;130m"
 
 # Per-agent accent colours so the progress lines don't look like a grey
 # wall of text. Keys match the labels passed to `_spinner` / `_agent_line`.
 _AGENT_COLOR: Dict[str, str] = {
     "HLD": _MAGENTA,
     "HLD Check": _MAGENTA,
+    "LLD": _MAGENTA,
     "LLD Check": _MAGENTA,
-    "Ops": _CYAN,
+    "Ops Picker": _PASTEL_RED,
     "Backend": _BLUE,
     "DB": _CYAN,
     "Storefront": _YELLOW,
@@ -680,7 +692,19 @@ def _clarify(
     """
     while True:
         _info("thinking…")
-        response = run_product_agent_analyze(history)
+        response, metrics = run_product_agent_analyze(history)
+        # Per-turn token + cache hit. Rendered as a dim one-liner so the
+        # operator can see when caching kicks in: a 5-second pause between
+        # turns should show cache_read ≈ system-prompt size; a >5-min pause
+        # with the default ephemeral TTL would drop to cache_read=0 and
+        # cache_create ≈ system-prompt size. With the product agent's
+        # `cache_ttl="1h"` opt-in, that 5-min gap stays in cache.
+        in_t = metrics.get("in", 0)
+        out_t = metrics.get("out", 0)
+        cache_r = metrics.get("cache_read", 0)
+        cache_c = metrics.get("cache_create", 0)
+        _info(_tok_note(in_t, out_t, cache_read=cache_r, cache_create=cache_c))
+
         status = response.get("status")
 
         if status == "ready":
@@ -806,6 +830,12 @@ def _pick_components(intent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             return None
 
         elif cmd in ("", "g", "generate"):
+            # Echo the resolved choice so the merchant sees what their
+            # keypress did — symmetric with `_clarify` printing `→ <text>`
+            # when the merchant picks a numbered suggestion. Without this
+            # echo, pressing Enter alone looks like it did nothing until
+            # the next phase header appears.
+            _info("→ Generate")
             # Mandatory description when merchant adds a component the AI didn't suggest
             if has_widget and not ai_has_widget and not widget_desc:
                 _bot("You added Storefront Widget — what should it display?")
@@ -1334,8 +1364,14 @@ def _print_artifacts(artifacts: Dict[str, str]) -> None:
     _hr()
 
 
-def _print_token_summary(token_map: Dict[str, Tuple[int, int]]) -> None:
-    """Print a per-agent token breakdown and grand total."""
+def _print_token_summary(token_map: Dict[str, Tuple[int, ...]]) -> None:
+    """Print a per-agent token breakdown and grand total.
+
+    `token_map` values are positional tuples; the first two elements are
+    always (in_tokens, out_tokens). Codegen agents pack two more
+    (cache_read, cache_create); non-codegen agents stop at length 2.
+    Read positionally so both shapes work.
+    """
     if not token_map:
         return
     total_in = sum(v[0] for v in token_map.values())
@@ -1347,10 +1383,14 @@ def _print_token_summary(token_map: Dict[str, Tuple[int, int]]) -> None:
     # storefront and BLUE for backend because their canonical labels matched
     # while hld/lld/ops_picker/db/lld_v fell through to DIM, producing a
     # visually uneven footer.)
+    # Token-map entries are heterogeneous: non-codegen agents save 2-tuples
+    # (in, out); codegen agents save 4-tuples (in, out, cache_read,
+    # cache_create) so the cache hit ratio survives into the final
+    # summary. Read positionally to tolerate both shapes.
     parts = "  ".join(
-        _c(f"{name}({_ktok(in_t)}+{_ktok(out_t)})", _DIM)
-        for name, (in_t, out_t) in token_map.items()
-        if in_t or out_t
+        _c(f"{name}({_ktok(tokens[0])}+{_ktok(tokens[1])})", _DIM)
+        for name, tokens in token_map.items()
+        if len(tokens) >= 2 and (tokens[0] or tokens[1])
     )
     total_str = (
         f"{_c('Tokens', _DIM)}  "
@@ -1495,6 +1535,19 @@ def main() -> None:
             "RUN_IDs."
         ),
     )
+    parser.add_argument(
+        "--prompt-file",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Read the initial merchant prompt from a file instead of "
+            "stdin. Bypasses the TTY canonical-mode 1024-char line buffer "
+            "that truncates long pasted prompts. The file's full contents "
+            "(stripped of leading/trailing whitespace) become the first "
+            "user message; clarification still runs interactively from "
+            "there. Ignored on --resume."
+        ),
+    )
     args = parser.parse_args()
 
     # ── --list-resume: print and exit before doing anything else ──────────────
@@ -1551,10 +1604,38 @@ def main() -> None:
         total_start = time.monotonic()
     else:
         # ── Step 1: Chat until intent is ready ─────────────────────────────
-        first_message = _ask_user(f"\n{_BOLD}You{_RESET}  ")
-        if not first_message:
-            print("Nothing entered — exiting.")
-            return
+        # --prompt-file lets the merchant skip the interactive paste step
+        # entirely. Useful for long prompts that exceed the TTY's
+        # canonical-mode line buffer (~1024 chars on macOS / iTerm), which
+        # silently truncates pasted text mid-word.
+        if args.prompt_file:
+            # Resolve relative to the user's invocation cwd, not the
+            # generator root we chdir'd into at import time. Absolute paths
+            # pass through unchanged.
+            prompt_path = Path(args.prompt_file)
+            if not prompt_path.is_absolute():
+                prompt_path = _INVOCATION_CWD / prompt_path
+            try:
+                first_message = prompt_path.read_text().strip()
+            except OSError as exc:
+                print(f"  {_RED}Could not read --prompt-file: {exc}{_RESET}")
+                sys.exit(2)
+            if not first_message:
+                print(
+                    f"  {_RED}--prompt-file {args.prompt_file} is empty — "
+                    f"nothing to send.{_RESET}"
+                )
+                sys.exit(2)
+            _info(
+                f"Loaded prompt from {args.prompt_file} "
+                f"({len(first_message)} chars)"
+            )
+            print(f"\n{_BOLD}You{_RESET}  {first_message}")
+        else:
+            first_message = _ask_user(f"\n{_BOLD}You{_RESET}  ")
+            if not first_message:
+                print("Nothing entered — exiting.")
+                return
 
         history: List[Dict[str, str]] = [{"role": "user", "content": first_message}]
         intent, history = _clarify(history)
@@ -2130,20 +2211,50 @@ def main() -> None:
         prior_error_map = None
         prior_retry_log = None
         prior_token_totals = None
-        if resume_state and _resumed_halt == "codegen_failed":
-            prior_artifacts = resume_state.get("artifacts") or {}
-            prior_error_map = resume_state.get("codegen_error_map") or {}
-            prior_retry_log = resume_state.get("retry_log") or []
-            saved_tokens = resume_state.get("codegen_token_totals") or {}
-            prior_token_totals = {
-                k: tuple(v) if isinstance(v, list) else v
-                for k, v in saved_tokens.items()
-            }
-            _info(
-                f"Codegen resume: re-running "
-                f"{', '.join(prior_error_map.keys()) or 'missing'} "
-                f"(reusing {len(prior_artifacts)} clean artifact(s))"
-            )
+
+        if resume_state:
+            # Always carry forward any clean artifacts the prior run produced —
+            # `_phase_codegen` filters on artifacts presence + error_map to
+            # decide which generators run this attempt, so passing the saved
+            # bundle is the entire mechanism for "skip what already passed".
+            # Covers two scenarios on a single code path:
+            #
+            #   (a) halt_reason == "codegen_failed" — codegen got partway
+            #       through, some agents passed, others failed. error_map and
+            #       retry_log are also carried so the failed ones re-run with
+            #       their prior error feedback.
+            #
+            #   (b) halt_reason is None but checkpoint was rolled back below
+            #       the codegen phase (e.g. operator manually reset the
+            #       checkpoint to add storefront/admin_ui to a previously-
+            #       complete run). No error_map to carry, just the artifacts
+            #       — `_phase_codegen` will run only the generators whose
+            #       names aren't already in `artifacts`.
+            saved_artifacts = resume_state.get("artifacts") or {}
+            if saved_artifacts:
+                prior_artifacts = dict(saved_artifacts)
+                prior_retry_log = list(resume_state.get("retry_log") or [])
+                saved_tokens = resume_state.get("codegen_token_totals") or {}
+                prior_token_totals = {
+                    k: tuple(v) if isinstance(v, list) else v
+                    for k, v in saved_tokens.items()
+                }
+                if _resumed_halt == "codegen_failed":
+                    prior_error_map = resume_state.get("codegen_error_map") or {}
+                    failed_summary = (
+                        ", ".join(prior_error_map.keys()) or "missing"
+                    )
+                    _info(
+                        f"Codegen resume: re-running {failed_summary} "
+                        f"(reusing {len(prior_artifacts)} clean artifact(s))"
+                    )
+                else:
+                    _info(
+                        f"Codegen resume: reusing "
+                        f"{len(prior_artifacts)} prior artifact(s) "
+                        f"({', '.join(sorted(prior_artifacts.keys()))}); "
+                        f"running only missing generators"
+                    )
         try:
             artifacts, retry_log, codegen_tokens = _phase_codegen(
                 base_ctx,

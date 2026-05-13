@@ -51,7 +51,7 @@ from subagents.d_lld_agent.prompt import build_system_prompt
 from subagents.d_lld_agent.schema import LLDPlan
 
 _MAX_ATTEMPTS = 3
-_MAX_TOKENS = 32_000
+_MAX_TOKENS = 40_000
 _THINKING_BUDGET = 0
 
 
