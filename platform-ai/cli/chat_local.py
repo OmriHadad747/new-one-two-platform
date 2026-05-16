@@ -9,11 +9,13 @@ pipeline phase by phase. Use --stop-after to halt at a specific phase, or
 
 USAGE
 -----
-  python chat_local.py                        # full pipeline
-  python chat_local.py --stop-after hld       # HLD only, prints plan
-  python chat_local.py --stop-after codegen   # + codegen + static validation
-  python chat_local.py --stop-after validator # + LLM validator + revision pass
-  python chat_local.py --no-db                # skip writing the bundle to postgres
+  python chat_local.py                            # full pipeline
+  python chat_local.py --stop-after hld           # HLD only, prints plan
+  python chat_local.py --stop-after lld           # + LLD
+  python chat_local.py --stop-after pre-codegen   # + cross-agent alignment notes
+  python chat_local.py --stop-after codegen       # + codegen + static validation
+  python chat_local.py --stop-after validator     # + LLM validator + revision pass
+  python chat_local.py --no-db                    # skip writing the bundle to postgres
 
   # Iterate on the HLD agent — chat once, then resume with --stop-after hld
   # to skip the chat loop and re-run only the HLD step.
@@ -37,6 +39,9 @@ RESUME
     hld + codegen_failed
                → re-runs codegen, reusing artifacts that already passed
                  validation (only the failed/missing generators are billed)
+    pre-codegen → re-runs from codegen onwards, reusing the saved
+                 alignment notes (delete `alignment_notes` from
+                 state.json first to force a fresh pre-codegen pass)
     codegen    → re-runs from validator onwards
     validator + (kept_originals | revision_failed)
                → re-runs only the revision agent against the saved
@@ -126,7 +131,9 @@ from cli.pipeline_local import (
 
 TEST_RESULTS_DIR = _HERE / "test_results"
 
-StopAfter = Literal["hld", "ops-picker", "lld", "codegen", "validator", "full"]
+StopAfter = Literal[
+    "hld", "ops-picker", "lld", "pre-codegen", "codegen", "validator", "full"
+]
 
 # ── Display helpers ────────────────────────────────────────────────────────────
 #
@@ -906,6 +913,7 @@ _PHASE_ORDER: List[str] = [
     "hld",
     "ops-picker",
     "lld",
+    "pre-codegen",
     "codegen",
     "validator",
     "revision",
@@ -1493,13 +1501,21 @@ def main() -> None:
     )
     parser.add_argument(
         "--stop-after",
-        choices=["hld", "ops-picker", "lld", "codegen", "validator"],
+        choices=[
+            "hld",
+            "ops-picker",
+            "lld",
+            "pre-codegen",
+            "codegen",
+            "validator",
+        ],
         default=None,
         help=(
             "Stop after a specific phase: "
             "'hld' = HLD only, "
             "'ops-picker' = + ops picker (LLD stage 1), "
             "'lld' = + LLD (LLD stage 2 — full codegen spec), "
+            "'pre-codegen' = + pre-codegen alignment notes, "
             "'codegen' = + codegen + static validation, "
             "'validator' = + LLM validator + revision. "
             "Omit to run the full pipeline."
@@ -2178,6 +2194,169 @@ def main() -> None:
         platform_api_catalog=(plan.get("appContracts") or {}).get("widgetApiCatalog")
         or [],
     )
+
+    # Pre-codegen alignment phase — runs once between final LLD and the
+    # codegen fan-out. Lives in the shared orchestrator so CLI and the
+    # production crew take the same path. Fails open: empty notes is the
+    # normal "no alignment needed" answer.
+    #
+    # On resume we reuse the persisted notes whenever they exist (the
+    # phase already produced them) — we don't gate on _resumed_idx so an
+    # operator can rebuild the alignment in-place by deleting the field
+    # from state.json and resuming with --stop-after pre-codegen.
+    from subagents.f_codegen_agent.orchestration import run_pre_codegen_phase
+
+    _cached_alignment = (
+        resume_state.get("alignment_notes")
+        if resume_state and resume_state.get("alignment_notes") is not None
+        else None
+    )
+
+    if _cached_alignment is not None:
+        # Match the upstream-agent resume idiom (HLD / Ops Picker / LLD):
+        # one compact info line, no phase header, no inline dump — the
+        # findings were already inspected on the run that produced them.
+        # Token totals carry through state.json so the resume summary is
+        # accurate even without re-rendering them here.
+        if "pre_codegen" in (resume_state.get("all_tokens") or {}):
+            saved = resume_state["all_tokens"]["pre_codegen"]
+            all_tokens["pre_codegen"] = (
+                tuple(saved) if isinstance(saved, list) else saved
+            )
+        _info(
+            f"Pre-Codegen Alignment: reusing saved notes "
+            f"({len(_cached_alignment)} note(s)) — skipping LLM call"
+        )
+        with input_log("pre_codegen", run_dir):
+            alignment_notes, _pre_status, _ = run_pre_codegen_phase(
+                base_ctx,
+                cached_notes=_cached_alignment,
+                on_done=None,
+            )
+    else:
+        # Fresh run — give the phase its own visual separator and the
+        # full agent-line treatment with token + status output, plus the
+        # inline note dump so the operator can audit findings at a
+        # glance without opening state.json.
+        _phase_header("PRE-CODEGEN ALIGNMENT")
+
+        # `ok` is the only status whose 0 is truthful; everything else
+        # is a soft warning surfaced here so the operator notices
+        # without having to grep logs.
+        _PRECODEGEN_FAIL_OPEN_LABELS = {
+            "parse_error": "fail-open (response was not valid JSON)",
+            "schema_error": "fail-open (response did not match schema)",
+            "truncated": "fail-open (output truncated at max_tokens)",
+            "llm_error": "fail-open (LLM call raised)",
+        }
+
+        def _on_pre_codegen_done(
+            status: str,
+            note_count: int,
+            ms_pre: int,
+            in_tok: int,
+            out_tok: int,
+            cache_r: int,
+            cache_c: int,
+        ) -> None:
+            all_tokens["pre_codegen"] = (in_tok, out_tok)
+            if status == "ok":
+                notes_label = (
+                    f"{note_count} note(s)" if note_count else "no alignment needed"
+                )
+            elif status == "skipped_no_lld":
+                notes_label = "skipped (no LLD)"
+            else:
+                notes_label = _PRECODEGEN_FAIL_OPEN_LABELS.get(
+                    status, f"fail-open ({status})"
+                )
+            # Treat non-ok as a warning row so it stands out in the
+            # agent log without halting the pipeline.
+            ok_row = status in ("ok", "skipped_no_lld")
+            _agent_line(
+                "Pre-Codegen Alignment",
+                ok_row,
+                ms_pre,
+                _tok_note(
+                    in_tok,
+                    out_tok,
+                    notes_label,
+                    cache_read=cache_r,
+                    cache_create=cache_c,
+                ),
+            )
+
+        _spinner("Pre-Codegen Alignment")
+        with input_log("pre_codegen", run_dir):
+            alignment_notes, _pre_status, _ = run_pre_codegen_phase(
+                base_ctx,
+                cached_notes=None,
+                on_done=_on_pre_codegen_done,
+            )
+        for _n in alignment_notes:
+            _targets = ",".join(_n.get("target_agents") or [])
+            _concern = _n.get("concern", "?")
+            _instruction = (_n.get("instruction") or "")[:120]
+            print(
+                f"    {_c('•', _CYAN)} {_c('[' + _concern + ' → ' + _targets + ']', _DIM)}"
+                f"  {_instruction}"
+            )
+    # Always stamp checkpoint="pre-codegen" when the phase finishes (cached
+    # or live) so _phase_index() math lets resume continue from the right
+    # spot. We DELIBERATELY do NOT stamp checkpoint="done" when stopping
+    # here — the user explicitly asked that --stop-after pre-codegen leave
+    # the run resumable from this phase without manual state surgery.
+    #
+    # `pre_codegen_status` is the outcome taxonomy from
+    # subagents.f_codegen_agent.pre_codegen.agent.Status plus the two
+    # phase-level statuses ("cached", "skipped_no_lld"). Persisting it
+    # disambiguates `alignment_notes == []` after the fact — a clean
+    # empty run vs a fail-open hides under the same notes list.
+    _save_state(
+        run_dir,
+        alignment_notes=alignment_notes,
+        pre_codegen_status=_pre_status,
+        all_tokens={k: list(v) for k, v in all_tokens.items()},
+        checkpoint="pre-codegen",
+        halt_reason=None,
+    )
+
+    if stop_after == "pre-codegen":
+        # User-requested stop. Mark the phase, write the run report, exit
+        # cleanly. The checkpoint stays at "pre-codegen" (not "done") so a
+        # follow-up resume picks up at codegen without any state edit.
+        total_ms = int((time.monotonic() - total_start) * 1000)
+        _save_run_artifacts(
+            run_dir,
+            prompt,
+            {},
+            is_storefront,
+            is_admin_ui,
+            intent=intent,
+            plan=plan,
+            hld_v_findings=hld_v_findings,
+        )
+        print()
+        _summary_box(
+            "◆  PRE-CODEGEN STOP",
+            [
+                (
+                    "Status",
+                    _c(
+                        f"✓ {len(alignment_notes)} alignment note(s)"
+                        if alignment_notes
+                        else "✓ no alignment needed",
+                        _BRIGHT_GREEN,
+                        _BOLD,
+                    ),
+                ),
+                ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
+                ("Output", _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
+            ],
+        )
+        _print_token_summary(all_tokens)
+        print()
+        return
     # Restore handler side-bands when resuming so the bundle build / report
     # match the prior run.
     if resume_state and resume_state.get("backend_email_metadata") is not None:

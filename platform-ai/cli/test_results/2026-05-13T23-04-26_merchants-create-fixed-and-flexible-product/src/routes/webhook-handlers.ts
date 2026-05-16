@@ -12,7 +12,7 @@ export const webhookHandlers = {
     const lineItems = (payload as any)?.line_items;
     const discountCodes = (payload as any)?.discount_codes;
 
-    // Null-defend all payload fields
+    // Step: Null-defend all payload fields
     const safePayload = {
       orderId: orderId ?? null,
       orderCreatedAt: orderCreatedAt ?? null,
@@ -22,7 +22,7 @@ export const webhookHandlers = {
       discountCodes: discountCodes ?? [],
     };
 
-    // Skip if payload is malformed
+    // Step: Skip if payload is malformed
     if (safePayload.orderId === null) {
       console.warn(
         { requestId: req.platform!.requestId },
@@ -31,88 +31,109 @@ export const webhookHandlers = {
       return;
     }
 
-    // Convert order total to minor units
+    // Step: Convert order total to minor units
     const orderTotalMinorUnits = money.toMinorUnits(
       safePayload.totalPrice,
       safePayload.currency,
     );
 
-    // Extract bundle discount code entries
+    // Step: Extract bundle discount code entries
     const bundleCodeEntries = (safePayload.discountCodes ?? [])
       .filter((dc: any) => dc.code && dc.code.startsWith("BUNDLE_"))
       .map((dc: any) => {
         const parts = dc.code.split("_");
-        return { bundleId: parts[1], discountRate: parseInt(parts[2] ?? "0", 10) };
+        return {
+          bundleId: parts[1],
+          discountRate: parseInt(parts[2] ?? "0", 10),
+        };
       });
 
-    // Skip if no bundle discount codes
+    // Step: Skip if no bundle discount codes present
     if (bundleCodeEntries.length === 0) {
       console.log(
-        { requestId: req.platform!.requestId, order_id: safePayload.orderId },
+        {
+          requestId: req.platform!.requestId,
+          order_id: safePayload.orderId,
+        },
         "orders/paid: no bundle discount codes — skipping",
       );
       return;
     }
 
-    // Collect parsed bundle UUIDs
+    // Step: Collect parsed bundle UUIDs
     const parsedBundleIds = bundleCodeEntries
       .map((e: any) => e.bundleId)
       .filter((id: any) => id && id.length > 0);
 
-    // Fetch only bundle ids that actually exist
+    // Step: Fetch only bundle ids that actually exist
     const validBundleRows = await sql<{ id: string }[]>`
       SELECT id FROM bundles WHERE id = ANY(${parsedBundleIds}::uuid[])
     `;
 
-    // Build a Set of confirmed-existing bundle id strings
+    // Step: Build Set of confirmed-existing bundle id strings
     const validBundleIdSet = new Set(validBundleRows.map((r) => String(r.id)));
 
-    // Filter to confirmed bundle entries
+    // Step: Filter bundleCodeEntries to only confirmed DB entries
     const resolvedBundleEntries = bundleCodeEntries.filter((e: any) =>
       validBundleIdSet.has(String(e.bundleId)),
     );
 
-    // Skip if no entries resolved
+    // Step: Skip if no bundle code entries resolved
     if (resolvedBundleEntries.length === 0) {
       console.warn(
-        { requestId: req.platform!.requestId, order_id: safePayload.orderId },
+        {
+          requestId: req.platform!.requestId,
+          order_id: safePayload.orderId,
+        },
         "orders/paid: bundle discount codes present but no valid bundle ids resolved — skipping",
       );
       return;
     }
 
-    // Extract all line item variant ids
+    // Step: Extract all line item variant ids
     const allVariantIds = (safePayload.lineItems ?? [])
       .map((li: any) => li.variant_id)
       .filter((v: any) => v != null);
 
+    // Step: For each resolved bundle code entry
     const savedPurchases: any[] = [];
     const failedPurchases: any[] = [];
 
     for (const bundleEntry of resolvedBundleEntries) {
       try {
-        // Fetch all bundle items for this bundle
-        const bundleItemRows = await sql<{ variant_external_id: string | number }[]>`
+        // Step: Fetch all bundle items for this bundle
+        const bundleItemRows = await sql<{ variant_external_id: string }[]>`
           SELECT variant_external_id FROM bundle_items WHERE bundle_id = ${bundleEntry.bundleId}
         `;
 
-        // Intersect order line item variant ids with bundle's variant pool
+        // Step: Intersect order line item variant ids with this bundle's variant pool
         const selectedVariantIds = allVariantIds.filter((vid: any) =>
           bundleItemRows.some(
             (r) => String(r.variant_external_id) === String(vid),
           ),
         );
 
-        // INSERT ... ON CONFLICT DO NOTHING RETURNING id
+        // Step: INSERT ... ON CONFLICT DO NOTHING RETURNING id
         const claimedPurchase = await sql<{ id: string }[]>`
-          INSERT INTO bundle_purchase_records
-            (bundle_id, order_external_id, order_placed_at, variant_external_ids, item_count, discount_rate_applied, order_total_minor_units, order_currency)
-          VALUES
-            (${bundleEntry.bundleId}, ${safePayload.orderId}, ${safePayload.orderCreatedAt}, ${JSON.stringify(selectedVariantIds)}, ${selectedVariantIds.length}, ${bundleEntry.discountRate}, ${orderTotalMinorUnits}, ${safePayload.currency})
+          INSERT INTO bundle_purchase_records (
+            bundle_id, order_external_id, order_placed_at, variant_external_ids,
+            item_count, discount_rate_applied, order_total_minor_units, order_currency
+          )
+          VALUES (
+            ${bundleEntry.bundleId},
+            ${safePayload.orderId},
+            ${safePayload.orderCreatedAt},
+            ${JSON.stringify(selectedVariantIds)},
+            ${selectedVariantIds.length},
+            ${bundleEntry.discountRate},
+            ${orderTotalMinorUnits},
+            ${safePayload.currency}
+          )
           ON CONFLICT (order_external_id, bundle_id) DO NOTHING
           RETURNING id
         `;
 
+        // Step: Duplicate delivery check
         if (claimedPurchase.length === 0) {
           console.log(
             {
@@ -134,12 +155,12 @@ export const webhookHandlers = {
           );
           savedPurchases.push(bundleEntry);
         }
-      } catch (purchaseError) {
+      } catch (purchaseError: any) {
         failedPurchases.push({ item: bundleEntry, error: purchaseError });
-        continue;
       }
     }
 
+    // Step: Log partial failure summary
     if (failedPurchases.length > 0) {
       console.warn(
         {
@@ -152,17 +173,20 @@ export const webhookHandlers = {
     }
   },
 
-  "inventory_levels/update": async (payload: unknown, req: Request): Promise<void> => {
+  "inventory_levels/update": async (
+    payload: unknown,
+    req: Request,
+  ): Promise<void> => {
     const inventoryItemId = (payload as any)?.inventory_item_id;
     const available = (payload as any)?.available;
 
-    // Null-defend payload
+    // Step: Null-defend payload fields
     const safePayload = {
       inventoryItemId: inventoryItemId ?? null,
       available: available !== undefined ? available : null,
     };
 
-    // Skip if missing inventory_item_id
+    // Step: Skip if inventory item id is missing
     if (safePayload.inventoryItemId === null) {
       console.warn(
         { requestId: req.platform!.requestId },
@@ -171,7 +195,7 @@ export const webhookHandlers = {
       return;
     }
 
-    // Skip if available is null
+    // Step: Skip if available count is null
     if (safePayload.available === null) {
       console.log(
         {
@@ -183,15 +207,17 @@ export const webhookHandlers = {
       return;
     }
 
-    // Determine new availability
-    const newAvailability = safePayload.available > 0 ? "available" : "out_of_stock";
+    // Step: Determine new availability status
+    const newAvailability =
+      safePayload.available > 0 ? "available" : "out_of_stock";
 
-    // Look up variant from cache
-    const cachedVariant = await sql<{ variant_external_id: number }[]>`
-      SELECT variant_external_id FROM inventory_item_variant_map WHERE inventory_item_id = ${safePayload.inventoryItemId}
+    // Step: Look up variant_external_id from local cache
+    const cachedVariant = await sql<{ variant_external_id: string }[]>`
+      SELECT variant_external_id FROM inventory_item_variant_map
+      WHERE inventory_item_id = ${safePayload.inventoryItemId}
     `;
 
-    // If not cached, resolve from Shopify
+    // Step: If not cached, resolve variant from Shopify admin API
     if (cachedVariant.length === 0) {
       const inventoryItemGid = `gid://shopify/InventoryItem/${safePayload.inventoryItemId}`;
 
@@ -209,13 +235,17 @@ export const webhookHandlers = {
         { id: inventoryItemGid },
       );
 
+      // Step: Parse raw numeric variant id from GID
       const resolvedVariantId =
         shopifyInventoryItem?.inventoryItem?.variant?.id
           ? Number(
-              shopifyInventoryItem.inventoryItem.variant.id.split("/").pop(),
+              shopifyInventoryItem.inventoryItem.variant.id
+                .split("/")
+                .pop(),
             )
           : null;
 
+      // Step: Skip if Shopify could not resolve a variant
       if (resolvedVariantId === null) {
         console.warn(
           {
@@ -226,39 +256,49 @@ export const webhookHandlers = {
         );
         return;
       } else {
+        // Step: Cache the inventory_item -> variant mapping
         await sql`
           INSERT INTO inventory_item_variant_map (inventory_item_id, variant_external_id)
           VALUES (${safePayload.inventoryItemId}, ${resolvedVariantId})
-          ON CONFLICT (inventory_item_id) DO UPDATE SET variant_external_id = EXCLUDED.variant_external_id, resolved_at = now()
+          ON CONFLICT (inventory_item_id)
+          DO UPDATE SET variant_external_id = EXCLUDED.variant_external_id, resolved_at = now()
         `;
       }
     }
 
-    // Re-read cache after potential upsert
-    const variantRow = await sql<{ variant_external_id: number }[]>`
-      SELECT variant_external_id FROM inventory_item_variant_map WHERE inventory_item_id = ${safePayload.inventoryItemId}
+    // Step: Re-read cache to get definitive variant_external_id
+    const variantRow = await sql<{ variant_external_id: string }[]>`
+      SELECT variant_external_id FROM inventory_item_variant_map
+      WHERE inventory_item_id = ${safePayload.inventoryItemId}
     `;
 
+    // Step: Final guard — still no variant after resolution attempt
     if (variantRow.length === 0) {
       return;
     }
 
+    // Step: Extract the variant id from the resolved cache row
     const variantExternalId = variantRow[0]!.variant_external_id;
 
-    // Fetch all bundle_items for this variant
-    const affectedItems = await sql<{
-      id: string;
-      bundle_id: string;
-      observed_availability: string | null;
-    }[]>`
-      SELECT id, bundle_id, observed_availability FROM bundle_items WHERE variant_external_id = ${variantExternalId}
+    // Step: Fetch all bundle_items rows for this variant
+    const affectedItems = await sql<
+      {
+        id: string;
+        bundle_id: string;
+        observed_availability: string;
+      }[]
+    >`
+      SELECT id, bundle_id, observed_availability
+      FROM bundle_items
+      WHERE variant_external_id = ${variantExternalId}
     `;
 
+    // Step: Skip if no bundle items reference this variant
     if (affectedItems.length === 0) {
       return;
     }
 
-    // Filter to items that need a state transition
+    // Step: Filter to items that actually need a state transition
     const itemsToTransition = affectedItems.filter(
       (item) =>
         item.observed_availability !== null &&
@@ -266,6 +306,7 @@ export const webhookHandlers = {
         item.observed_availability !== newAvailability,
     );
 
+    // Step: Skip if all items already reflect new availability
     if (itemsToTransition.length === 0) {
       console.log(
         {
@@ -278,11 +319,12 @@ export const webhookHandlers = {
       return;
     }
 
+    // Step: For each affected bundle item
     const failedTransitions: any[] = [];
 
     for (const item of itemsToTransition) {
       try {
-        // Atomic claim — transition observed_availability
+        // Step: Atomic UPDATE-form claim
         const transitioned = await sql<{ id: string; bundle_id: string }[]>`
           UPDATE bundle_items
           SET observed_availability = ${newAvailability}
@@ -293,26 +335,35 @@ export const webhookHandlers = {
         `;
 
         if (transitioned.length === 0) {
-          // Another worker already transitioned this item
+          // Another worker already transitioned this item — skip
         } else {
-          // Evaluate bundle health
-          const allBundleItems = await sql<{ observed_availability: string | null }[]>`
+          // Step: Fetch all items for this bundle to evaluate health
+          const allBundleItems = await sql<
+            { observed_availability: string }[]
+          >`
             SELECT observed_availability FROM bundle_items WHERE bundle_id = ${item.bundle_id}
           `;
 
-          const bundleRow = await sql<{
-            id: string;
-            mode: string;
-            health_status: string;
-            enabled: boolean;
-          }[]>`
+          // Step: Fetch the bundle's mode and current health_status
+          const bundleRow = await sql<
+            {
+              id: string;
+              mode: string;
+              health_status: string;
+              enabled: boolean;
+            }[]
+          >`
             SELECT id, mode, health_status, enabled FROM bundles WHERE id = ${item.bundle_id}
           `;
 
+          // Step: Fetch the bundle's lowest tier
           const lowestTier = await sql<{ minimum_item_count: number }[]>`
-            SELECT minimum_item_count FROM bundle_tiers WHERE bundle_id = ${item.bundle_id} ORDER BY minimum_item_count ASC LIMIT 1
+            SELECT minimum_item_count FROM bundle_tiers
+            WHERE bundle_id = ${item.bundle_id}
+            ORDER BY minimum_item_count ASC LIMIT 1
           `;
 
+          // Step: Compute resolved health status
           const resolvedHealth = (() => {
             const b = bundleRow[0];
             if (!b) return null;
@@ -326,14 +377,23 @@ export const webhookHandlers = {
               (i) => i.observed_availability === "out_of_stock",
             );
             const minCount = lowestTier[0]?.minimum_item_count ?? 1;
-            if (b.mode === "fixed" && (hasDeleted || hasOos)) return "auto_disabled";
-            if (b.mode === "flexible" && (hasDeleted || availCount < minCount))
+            if (b.mode === "fixed" && (hasDeleted || hasOos))
+              return "auto_disabled";
+            if (
+              b.mode === "flexible" &&
+              (hasDeleted || availCount < minCount)
+            )
               return "auto_disabled";
             if (hasOos) return "warned";
             return "healthy";
           })();
 
-          if (resolvedHealth !== null && resolvedHealth !== bundleRow[0]?.health_status) {
+          // Step: Only write health changes when resolvedHealth differs
+          if (
+            resolvedHealth !== null &&
+            resolvedHealth !== bundleRow[0]?.health_status
+          ) {
+            // Step: Determine the health event kind
             const eventKind =
               resolvedHealth === "auto_disabled"
                 ? "auto_disabled"
@@ -341,8 +401,10 @@ export const webhookHandlers = {
                   ? "warned"
                   : "cleared";
 
+            // Step: Compose human-readable reason
             const healthReason = `variant ${variantExternalId} transitioned to ${newAvailability}; bundle mode=${bundleRow[0]?.mode}`;
 
+            // Step: Atomically update bundle health and insert health event
             await sql.begin(async (tx) => {
               await tx`
                 UPDATE bundles
@@ -358,12 +420,12 @@ export const webhookHandlers = {
             });
           }
         }
-      } catch (transitionError) {
+      } catch (transitionError: any) {
         failedTransitions.push({ item, error: transitionError });
-        continue;
       }
     }
 
+    // Step: Log partial failure summary
     if (failedTransitions.length > 0) {
       console.warn(
         {
@@ -376,11 +438,14 @@ export const webhookHandlers = {
     }
   },
 
-  "products/update": async (payload: unknown, req: Request): Promise<void> => {
+  "products/update": async (
+    payload: unknown,
+    req: Request,
+  ): Promise<void> => {
     const productId = (payload as any)?.id;
     const variantGids = (payload as any)?.variant_gids;
 
-    // Null-defend and extract present variant ids
+    // Step: Null-defend payload and extract present variant ids
     const safePayload = {
       productId: productId ?? null,
       presentVariantIds: new Set(
@@ -394,6 +459,7 @@ export const webhookHandlers = {
       ),
     };
 
+    // Step: Skip if product id is missing
     if (safePayload.productId === null) {
       console.warn(
         { requestId: req.platform!.requestId },
@@ -402,42 +468,50 @@ export const webhookHandlers = {
       return;
     }
 
-    // Find all bundle_items for this product that are not deleted
-    const trackedItems = await sql<{
-      id: string;
-      bundle_id: string;
-      variant_external_id: number;
-      observed_availability: string;
-    }[]>`
+    // Step: Find all bundle_items for this product not currently deleted
+    const trackedItems = await sql<
+      {
+        id: string;
+        bundle_id: string;
+        variant_external_id: string;
+        observed_availability: string;
+      }[]
+    >`
       SELECT id, bundle_id, variant_external_id, observed_availability
       FROM bundle_items
       WHERE product_external_id = ${safePayload.productId}
         AND observed_availability != 'deleted'
     `;
 
+    // Step: Exit if no tracked items for this product
     if (trackedItems.length === 0) {
       return;
     }
 
-    // Determine which variants were removed
+    // Step: Determine which tracked variants are no longer present
     const deletedItems = trackedItems.filter(
-      (item) => !safePayload.presentVariantIds.has(Number(item.variant_external_id)),
+      (item) =>
+        !safePayload.presentVariantIds.has(Number(item.variant_external_id)),
     );
 
+    // Step: Exit if no variants were removed
     if (deletedItems.length === 0) {
       return;
     }
 
+    // Step: For each deleted variant
     const failedDeletions: any[] = [];
 
     for (const deletedItem of deletedItems) {
       try {
-        // Atomic claim to transition to deleted
-        const claimedDeletion = await sql<{
-          id: string;
-          bundle_id: string;
-          variant_external_id: number;
-        }[]>`
+        // Step: Atomic UPDATE-form claim to transition to deleted
+        const claimedDeletion = await sql<
+          {
+            id: string;
+            bundle_id: string;
+            variant_external_id: string;
+          }[]
+        >`
           UPDATE bundle_items
           SET observed_availability = 'deleted'
           WHERE id = ${deletedItem.id}
@@ -447,24 +521,26 @@ export const webhookHandlers = {
         `;
 
         if (claimedDeletion.length === 0) {
-          // Already deleted — skip
+          // Item was already deleted — skip health check
         } else {
-          const allBundleItemsAfterDelete = await sql<{
-            observed_availability: string | null;
-          }[]>`
+          // Step: Fetch all items for this bundle after deletion
+          const allBundleItemsAfterDelete = await sql<
+            { observed_availability: string }[]
+          >`
             SELECT observed_availability FROM bundle_items WHERE bundle_id = ${deletedItem.bundle_id}
           `;
 
-          const bundleForDelete = await sql<{
-            id: string;
-            mode: string;
-            health_status: string;
-          }[]>`
+          // Step: Fetch the bundle's mode
+          const bundleForDelete = await sql<
+            { id: string; mode: string; health_status: string }[]
+          >`
             SELECT id, mode, health_status FROM bundles WHERE id = ${deletedItem.bundle_id}
           `;
 
+          // Step: A deleted variant always results in auto_disabled
           const deleteHealthStatus = "auto_disabled";
 
+          // Step: Only write if health_status is not already auto_disabled
           if (bundleForDelete[0]?.health_status !== "auto_disabled") {
             await sql.begin(async (tx) => {
               await tx`
@@ -474,17 +550,22 @@ export const webhookHandlers = {
               `;
               await tx`
                 INSERT INTO bundle_health_events (bundle_id, event_kind, affected_variant_external_id, reason)
-                VALUES (${deletedItem.bundle_id}, 'auto_disabled', ${deletedItem.variant_external_id}, ${`variant ${deletedItem.variant_external_id} permanently deleted from product ${safePayload.productId}`})
+                VALUES (
+                  ${deletedItem.bundle_id},
+                  'auto_disabled',
+                  ${deletedItem.variant_external_id},
+                  ${`variant ${deletedItem.variant_external_id} permanently deleted from product ${safePayload.productId}`}
+                )
               `;
             });
           }
         }
-      } catch (deleteError) {
+      } catch (deleteError: any) {
         failedDeletions.push({ item: deletedItem, error: deleteError });
-        continue;
       }
     }
 
+    // Step: Log partial failure summary
     if (failedDeletions.length > 0) {
       console.warn(
         {

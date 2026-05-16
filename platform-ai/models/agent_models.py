@@ -11,6 +11,7 @@ _DEFAULTS: dict[str, str] = {
     "ops_picker": "claude-sonnet-4-6",
     "lld": "claude-sonnet-4-6",
     "lld_v": "claude-sonnet-4-6",
+    "pre_codegen": "claude-sonnet-4-6",
     "db": "claude-sonnet-4-6",
     "storefront": "claude-sonnet-4-6",
     "admin_ui": "claude-sonnet-4-6",

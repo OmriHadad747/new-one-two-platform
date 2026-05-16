@@ -242,6 +242,7 @@ def _build_codegen_context(
         intent=base_ctx.intent,
         plan=base_ctx.plan,
         lld=base_ctx.lld,
+        alignment_notes=base_ctx.alignment_notes,
         platform_api_catalog=base_ctx.platform_api_catalog,
         previous_errors=previous_errors,
         prior_backend_code=base_ctx.prior_backend_code,
@@ -249,6 +250,115 @@ def _build_codegen_context(
         prior_db_sql=base_ctx.prior_db_sql,
         prior_admin_ui_code=base_ctx.prior_admin_ui_code,
     )
+
+
+# ── Pre-codegen alignment phase ───────────────────────────────────────────────
+
+
+def run_pre_codegen_phase(
+    base_ctx: CodegenContext,
+    *,
+    cached_notes: Optional[List[Dict[str, Any]]] = None,
+    on_done: Optional[
+        Callable[[str, int, int, int, int, int, int], None]
+    ] = None,
+) -> Tuple[List[Dict[str, Any]], str, Tuple[int, int, int, int]]:
+    """
+    Run the pre-codegen alignment agent exactly once and stash the result
+    on `base_ctx.alignment_notes`.
+
+    Shared entry point used by every shell (interactive CLI, production
+    crew) so the call shape is identical across deployments — see
+    `subagents.f_codegen_agent.pre_codegen` for the agent itself.
+
+    Parameters
+    ----------
+    base_ctx
+        The CodegenContext that will be passed to `run_codegen_parallel`.
+        Its `alignment_notes` field is mutated in place.
+
+    cached_notes
+        When the caller is resuming a prior run, pass the previously
+        persisted notes here to skip the LLM call entirely. The function
+        still returns a zeroed token tuple so callers can branch on it
+        uniformly. The returned status is `"cached"` on this path.
+
+    on_done
+        Optional callback invoked AFTER the agent returns:
+        `on_done(status, notes_count, ms, in_tok, out_tok, cache_read, cache_create)`.
+        Shells use this for inline progress/log lines. Errors are swallowed
+        — UI bookkeeping never blocks the pipeline.
+
+    Returns
+    -------
+    (notes, status, (in_tok, out_tok, cache_read, cache_create))
+        `notes` is the list of alignment-note dicts; empty when the agent
+        is skipped, cached-empty, or fails open. `status` tells the caller
+        which outcome they got — see `pre_codegen.agent.Status` for the
+        clean run / failure-mode taxonomy, plus the two phase-level
+        statuses (`"cached"`, `"skipped_no_lld"`) added here.
+
+    Failure handling
+    ----------------
+    Fail-open at every layer:
+      • Empty / missing LLD → status="skipped_no_lld", notes=[].
+      • LLM / parse / schema failure → status surfaced from
+        `run_pre_codegen` (parse_error / schema_error / truncated /
+        llm_error); notes=[] in all cases.
+      • Cached resume → status="cached", notes=<cached>.
+      • `on_done` exceptions are caught and logged; never propagated.
+    """
+    # Resume path — reuse the persisted notes without paying the LLM call.
+    if cached_notes is not None:
+        base_ctx.alignment_notes = list(cached_notes)
+        if on_done is not None:
+            try:
+                on_done("cached", len(cached_notes), 0, 0, 0, 0, 0)
+            except Exception:  # noqa: BLE001 — UI callback must not block.
+                log.exception("pre_codegen on_done callback raised on resume")
+        return list(cached_notes), "cached", (0, 0, 0, 0)
+
+    # No LLD → nothing to align. Cheap exit so legacy-plan shells get a
+    # no-op for free.
+    if not base_ctx.lld:
+        base_ctx.alignment_notes = []
+        if on_done is not None:
+            try:
+                on_done("skipped_no_lld", 0, 0, 0, 0, 0, 0)
+            except Exception:  # noqa: BLE001
+                log.exception("pre_codegen on_done callback raised on empty-LLD path")
+        return [], "skipped_no_lld", (0, 0, 0, 0)
+
+    # Lazy import keeps orchestration's load time independent of the
+    # pre_codegen agent (and avoids a circular import if any of the
+    # codegen agents ever decide to import orchestration directly).
+    from subagents.f_codegen_agent.pre_codegen import run_pre_codegen
+
+    # Callers are expected to wrap this call in their own `input_log`
+    # block (the same convention every other phase follows in chat_local.py
+    # — `with input_log("hld", run_dir): run_hld_agent(...)`). We do NOT
+    # re-enter the block here: pre_codegen runs sequentially on the
+    # caller's thread, so the contextvar set by the outer block is
+    # already visible to `invoke()`'s `_dump_inputs()`.
+    started = time.monotonic()
+    try:
+        notes, status, in_tok, out_tok, cache_r, cache_c = run_pre_codegen(
+            base_ctx.lld or {}, base_ctx.intent or {}
+        )
+    except Exception:  # noqa: BLE001 — fail-open is the whole point.
+        log.warning("pre_codegen: unexpected failure — fail-open", exc_info=True)
+        notes, status, in_tok, out_tok, cache_r, cache_c = [], "llm_error", 0, 0, 0, 0
+    ms = int((time.monotonic() - started) * 1000)
+
+    base_ctx.alignment_notes = notes
+
+    if on_done is not None:
+        try:
+            on_done(status, len(notes), ms, in_tok, out_tok, cache_r, cache_c)
+        except Exception:  # noqa: BLE001
+            log.exception("pre_codegen on_done callback raised")
+
+    return notes, status, (in_tok, out_tok, cache_r, cache_c)
 
 
 def run_codegen_parallel(

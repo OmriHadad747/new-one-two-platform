@@ -82,6 +82,13 @@ class CodegenContext:
     # codegens are migrated off the legacy arch plan. The e_db_agent
     # is the first to read it; backend/storefront/admin_ui still read `plan`.
     lld: Dict[str, Any] = field(default_factory=dict)
+    # Cross-agent alignment notes from the pre_codegen agent. Each note is
+    # a dict with `target_agents`, `concern`, `surfaces`, `instruction`,
+    # `rationale`. Codegen agents call
+    # `format_alignment_for(ctx.alignment_notes, self.name)` to render the
+    # subset that targets them into a prompt block. Empty list when the
+    # pre-codegen step is skipped or fails open.
+    alignment_notes: List[Dict[str, Any]] = field(default_factory=list)
     platform_api_catalog: List[Dict[str, str]] = field(default_factory=list)
     previous_errors: Optional[List[str]] = None
     prior_backend_code: Optional[Any] = None  # str | List[Dict[str, str]]

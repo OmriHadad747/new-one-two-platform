@@ -36,6 +36,7 @@ from subagents.base import CodegenContext, Generator
 from subagents.f_codegen_agent.admin_agent.admin_shapes import examples_for_admin
 from subagents.f_codegen_agent.admin_agent.prompt import ADMIN_BASE
 from subagents.f_codegen_agent.admin_agent.validator import validate_admin_ui_artifact
+from subagents.f_codegen_agent.pre_codegen import format_alignment_for
 
 
 class AdminGenerator(Generator):
@@ -57,13 +58,16 @@ class AdminGenerator(Generator):
         column_enums_block = _format_column_enums(ctx.lld)
         prior_block = _format_prior_admin_ui(ctx.prior_admin_ui_code)
         examples_block = _format_examples(ctx.lld, ctx.intent)
+        alignment_block = format_alignment_for(ctx.alignment_notes, self.name)
 
         # Message ordered by cache stability (most stable first), so a
         # future cache_control breakpoint between sections lets retries
         # of the same admin panel reuse the prefix:
         #   1. examples_block   — shape-matched examples (stable per app)
         #   2. catalog + LLD    — per-app
-        #   3. tail             — volatile request line
+        #   3. alignment block  — per-app (kept after catalog so rules
+        #                          reference fields already enumerated)
+        #   4. tail             — volatile request line
         return (
             f"App purpose: {ctx.intent.get('desiredOutcome', '')}\n"
             f"App category: {ctx.intent.get('appCategory', '')}\n\n"
@@ -77,6 +81,7 @@ class AdminGenerator(Generator):
             "Expect EXACTLY the responseShape shown when reading the result.\n"
             f"{catalog_block}\n"
             f"{ux_implications}"
+            f"{alignment_block}"
             f"{prior_block}"
             "Generate the admin panel ES module. Output ONLY raw JavaScript."
         )

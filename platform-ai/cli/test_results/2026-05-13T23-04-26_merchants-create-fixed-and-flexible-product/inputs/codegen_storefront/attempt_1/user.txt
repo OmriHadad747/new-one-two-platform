@@ -143,4 +143,22 @@ Backend limitations the widget UX must reflect:
   - The inventory_levels/update webhook delivers inventory_item_id but not variant_id; there is no direct mapping in the webhook payload.: First delivery for a previously unseen inventory item requires one extra Shopify API call; subsequent deliveries are served from cache with no extra latency.
   - Shopify's discount code mechanism requires a merchant-configured discount code in Shopify for each tier; the app cannot programmatically create automatic discounts on a per-cart basis via Storefront API alone.: Merchants must create matching discount codes in Shopify Admin before activating a bundle; the admin UI should surface clear setup instructions linking discount creation to bundle activation.
 
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CROSS-AGENT ALIGNMENT — HONOUR THESE RULES VERBATIM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The pre-codegen alignment agent surfaced these cross-agent constraints by reading the FULL LLD. Apply each one exactly in the code you generate. These rules override any conflicting default behaviour:
+
+  1. [unit] discount_rate and applied_discount_rate on widget routes are integer basis points (same unit as DB storage). storefront: when rendering the live discount label, divide by 100 to obtain a display percentage (e.g. 1000 → '10%'); never treat the value as a 0–1 ratio or a 0–100 percent. backend: emit the raw integer from the tiers row without conversion.
+     surfaces: httpRoutes.widget[1].responseShape.discount_rate, httpRoutes.widget[2].responseShape.applied_discount_rate, capabilityRecipes.widget-validate-bundle.steps[14], … (+1 more)
+
+  2. [id_shape] variant_external_id is stored as BIGINT (raw numeric Shopify REST id). The widget GET /bundle response must serialise variant_external_id and product_external_id as plain numeric strings (no 'gid://' prefix). The storefront must send those same plain numeric string ids in selected_variant_ids to /bundle/validate and /cart/add. The backend constructs GIDs internally when calling Shopify APIs by prepending 'gid://shopify/ProductVariant/' — it must never expect the storefront to supply GIDs.
+     surfaces: httpRoutes.widget[0].responseShape.items, httpRoutes.widget[1].requestShape.selected_variant_ids, httpRoutes.widget[2].requestShape.selected_variant_ids, … (+3 more)
+
+  3. [protocol] The /cart/add route re-runs full validation internally (pool membership check + live Storefront availability check + tier threshold check) before issuing any Shopify cart mutation. storefront must NOT skip calling /bundle/validate before /cart/add, but must also expect /cart/add to return its own validation errors (400) and handle them identically to /bundle/validate errors. Never assume a prior successful /bundle/validate makes the /cart/add call safe to fire without error handling.
+     surfaces: capabilityRecipes.widget-cart-add.steps[10], capabilityRecipes.widget-cart-add.steps[11], httpRoutes.widget[2].requestShape, … (+1 more)
+
+  4. [format] cart_external_id in the /cart/add response is the raw numeric tail of the Shopify cart GID (e.g. '12345678'), extracted by splitting 'gid://shopify/Cart/12345678' and taking the last segment. storefront: use this value as an opaque string identifier for redirect or tracking; do not reconstruct a GID from it. If the value is null (cart creation failed), surface the errors array instead of attempting a redirect.
+     surfaces: httpRoutes.widget[2].responseShape.cart_external_id, capabilityRecipes.widget-cart-add.steps[10]
 Generate the widget ES module. Output ONLY raw JavaScript.

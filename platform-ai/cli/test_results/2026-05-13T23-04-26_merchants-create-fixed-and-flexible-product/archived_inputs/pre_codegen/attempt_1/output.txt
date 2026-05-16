@@ -1,0 +1,140 @@
+{
+    "notes": [
+        {
+            "target_agents": [
+                "db",
+                "backend",
+                "admin_ui",
+                "storefront"
+            ],
+            "concern": "unit",
+            "surfaces": [
+                "database.tables[2].columns[3].purpose",
+                "httpRoutes.admin[9].responseShape.items",
+                "httpRoutes.widget[0].responseShape.tiers",
+                "httpRoutes.admin[8].requestShape.tiers",
+                "capabilityRecipes.admin-save-bundle-tiers.steps[2].expression"
+            ],
+            "instruction": "discount_rate is stored in the DB and transmitted on every API surface as integer basis points (e.g. 1000 = 10.00%). The admin_ui must send basis points when POSTing to /bundles/tiers/save and convert to percentage only for display (divide by 100). The storefront widget must divide by 100 before showing the discount percentage to the customer. Never store or transmit a decimal percentage.",
+            "rationale": "Prevents the admin sending 10 (percent) while the DB stores 1000 (basis points), silently applying a 0.10% discount instead of 10%."
+        },
+        {
+            "target_agents": [
+                "backend",
+                "admin_ui"
+            ],
+            "concern": "unit",
+            "surfaces": [
+                "database.tables[3].columns[7].purpose",
+                "httpRoutes.admin[9].responseShape.items",
+                "capabilityRecipes.record-bundle-purchase-on-order-paid.steps[2].expression"
+            ],
+            "instruction": "order_total_minor_units is stored and returned on /purchase-history as an integer count of currency minor units (e.g. cents for USD, yen for JPY). The admin_ui must NOT divide by 100 unconditionally to display it; instead use the accompanying order_currency (ISO 4217) field to determine the correct exponent before formatting for display.",
+            "rationale": "Prevents the admin UI from displaying JPY or BHD amounts with the wrong decimal shift, producing grossly incorrect order totals in the purchase history export."
+        },
+        {
+            "target_agents": [
+                "backend",
+                "admin_ui"
+            ],
+            "concern": "nullability",
+            "surfaces": [
+                "httpRoutes.admin[2].requestShape.description",
+                "capabilityRecipes.admin-update-bundle.inputs[3]",
+                "capabilityRecipes.admin-update-bundle.steps[3].expression"
+            ],
+            "instruction": "On PUT /bundles/update, an absent description field means 'preserve existing value'; sending description=null together with description_provided=true means 'clear the column to NULL'. The admin_ui must include the boolean field description_provided=true in the request body whenever it intends to clear the description, and must omit description_provided (or send false) when leaving the description unchanged.",
+            "rationale": "Prevents the admin UI from accidentally clearing merchant descriptions on partial edits that only intend to update the title or enabled flag."
+        },
+        {
+            "target_agents": [
+                "backend",
+                "storefront"
+            ],
+            "concern": "id_shape",
+            "surfaces": [
+                "httpRoutes.widget[0].responseShape.items",
+                "httpRoutes.widget[1].requestShape.selected_variant_ids",
+                "httpRoutes.widget[2].requestShape.selected_variant_ids",
+                "capabilityRecipes.widget-validate-bundle.steps[6].expression",
+                "capabilityRecipes.widget-cart-add.steps[8].expression"
+            ],
+            "instruction": "variant_external_id is stored and exchanged between backend and storefront widget as a raw numeric string (the Shopify REST integer id, e.g. '12345678'). The widget must send selected_variant_ids as an array of these raw numeric strings. The backend converts them to GIDs internally (gid://shopify/ProductVariant/{id}) before any Storefront API call; never send or receive GIDs across the widget HTTP boundary.",
+            "rationale": "Prevents the storefront sending full GIDs that the backend then double-wraps into invalid GIDs, breaking the live availability check and cart-add flow."
+        },
+        {
+            "target_agents": [
+                "backend",
+                "admin_ui"
+            ],
+            "concern": "id_shape",
+            "surfaces": [
+                "httpRoutes.admin[1].responseShape.bundle_id",
+                "httpRoutes.admin[0].responseShape.items",
+                "httpRoutes.admin[2].requestShape.bundle_id",
+                "database.tables[0].columns[0].sqlType"
+            ],
+            "instruction": "All bundle_id values crossing every admin HTTP boundary are UUID strings (e.g. '550e8400-e29b-41d4-a716-446655440000'). The admin_ui must store and re-send them as plain UUID strings; the backend must cast them to uuid type (::uuid) before DB queries. Never expose or accept numeric or GID forms for bundle_id.",
+            "rationale": "Prevents type-mismatch errors when the admin UI stores an id that was accidentally coerced to a number, breaking all subsequent bundle operations."
+        },
+        {
+            "target_agents": [
+                "backend",
+                "storefront"
+            ],
+            "concern": "protocol",
+            "surfaces": [
+                "capabilityRecipes.widget-cart-add.steps[10]",
+                "capabilityRecipes.widget-cart-add.steps[11]",
+                "httpRoutes.widget[1].path",
+                "httpRoutes.widget[2].path"
+            ],
+            "instruction": "The backend must re-run the full validation sequence (pool membership check + live Shopify availability check + tier threshold check) inside POST /cart/add before issuing any Shopify cart mutation, regardless of whether the storefront already called POST /bundle/validate. Never skip server-side validation in /cart/add on the assumption that /bundle/validate was already called.",
+            "rationale": "Prevents a TOCTOU race where a variant goes out of stock between the validate call and the cart-add call, resulting in an invalid cart being created in Shopify."
+        },
+        {
+            "target_agents": [
+                "backend",
+                "admin_ui"
+            ],
+            "concern": "format",
+            "surfaces": [
+                "httpRoutes.admin[9].responseShape.items",
+                "httpRoutes.admin[9].requestShape.date_from",
+                "httpRoutes.admin[9].requestShape.date_to",
+                "database.tables[3].columns[5].sqlType"
+            ],
+            "instruction": "date_from and date_to query parameters on GET /purchase-history must be sent by the admin_ui as ISO 8601 strings with timezone offset (e.g. '2024-01-01T00:00:00Z'). The backend casts them to TIMESTAMPTZ; bare date strings ('2024-01-01') without timezone are not guaranteed to cast correctly and must not be sent.",
+            "rationale": "Prevents ambiguous date-only strings from being interpreted in the server's local timezone, causing purchase history exports to silently omit or duplicate records at day boundaries."
+        },
+        {
+            "target_agents": [
+                "backend",
+                "admin_ui"
+            ],
+            "concern": "protocol",
+            "surfaces": [
+                "capabilityRecipes.record-bundle-purchase-on-order-paid.steps[3].expression",
+                "database.tables[3].columns[9].purpose",
+                "httpRoutes.admin[9].responseShape.items"
+            ],
+            "instruction": "The discount code format embedded in Shopify orders is BUNDLE_{bundleId}_{basisPoints} where bundleId is the raw UUID (no hyphens stripped) and basisPoints is the integer basis-point value of the tier's discount_rate. The admin_ui must pre-create Shopify discount codes using exactly this format (including hyphens in UUID) for the webhook recipe to correctly parse and record purchase history rows.",
+            "rationale": "Prevents the webhook recipe from failing to parse bundle UUIDs out of discount codes that were created with a different separator or UUID format, causing purchase records to be silently dropped."
+        },
+        {
+            "target_agents": [
+                "backend",
+                "admin_ui"
+            ],
+            "concern": "format",
+            "surfaces": [
+                "httpRoutes.admin[1].responseShape.bundle_id",
+                "httpRoutes.admin[3].responseShape.updated_at",
+                "database.tables[0].columns[6].sqlType",
+                "database.tables[0].columns[7].sqlType"
+            ],
+            "instruction": "Timestamp fields (created_at, updated_at, recorded_at, order_placed_at) are stored as TIMESTAMPTZ and must be serialised as ISO 8601 strings with UTC timezone offset (e.g. '2024-06-01T12:00:00.000Z') in all API responses. The admin_ui must parse them as UTC timestamps and must not assume a local timezone.",
+            "rationale": "Prevents the admin UI from displaying incorrect local-time values for creation/update timestamps when the server timezone differs from the merchant's browser timezone."
+        }
+    ]
+}

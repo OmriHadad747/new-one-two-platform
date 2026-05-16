@@ -32,6 +32,7 @@ from typing import Any, Dict, List
 from subagents.base import CodegenContext, Generator
 from subagents.f_codegen_agent.db_agent.prompt import DB_BASE
 from subagents.f_codegen_agent.db_agent.validator import validate_db_artifact
+from subagents.f_codegen_agent.pre_codegen import format_alignment_for
 
 _SQL_KEYWORDS = ("CREATE", "ALTER", "INSERT", "DROP", "GRANT", "REVOKE", "COMMENT")
 
@@ -75,11 +76,13 @@ class DbGenerator(Generator):
                 "Output ONLY raw SQL (no markdown fences)."
             )
 
+        alignment_block = format_alignment_for(ctx.alignment_notes, self.name)
         return (
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Triggers: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
             f"{tables_block}"
             f"{prior_block}"
+            f"{alignment_block}"
             f"{closing}"
         )
 

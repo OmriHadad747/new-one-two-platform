@@ -26,6 +26,7 @@ import re
 from typing import Any, Dict, List
 
 from subagents.base import CodegenContext, Generator
+from subagents.f_codegen_agent.pre_codegen import format_alignment_for
 from subagents.f_codegen_agent.storefront_agent.prompt import STOREFRONT_BASE
 from subagents.f_codegen_agent.storefront_agent.validator import validate_storefront_artifact
 from subagents.f_codegen_agent.storefront_agent.widget_shapes import examples_for_widget
@@ -52,13 +53,18 @@ class StorefrontGenerator(Generator):
         ajax_block = load_ajax_summary()
         examples_block = _format_examples(ctx.lld, ctx.intent)
 
+        alignment_block = format_alignment_for(ctx.alignment_notes, self.name)
+
         # Message ordered by cache stability (most stable first), so a
         # future cache_control breakpoint between sections lets retries
         # of the same widget reuse the prefix:
         #   1. ajax_block       — universal Shopify Ajax catalog
         #   2. examples_block   — shape-matched examples (stable per app)
         #   3. catalog + LLD    — per-app
-        #   4. tail             — volatile request line
+        #   4. alignment block  — per-app (kept after catalog so the rules
+        #                          reference fields the agent has already
+        #                          seen)
+        #   5. tail             — volatile request line
         return (
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
@@ -71,6 +77,7 @@ class StorefrontGenerator(Generator):
             "Expect EXACTLY the responseShape shown when reading the result.\n"
             f"{catalog_block}\n\n"
             f"{ux_implications}"
+            f"{alignment_block}"
             f"{prior_block}"
             "Generate the widget ES module. Output ONLY raw JavaScript."
         )

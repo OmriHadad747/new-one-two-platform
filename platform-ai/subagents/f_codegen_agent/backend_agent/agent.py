@@ -39,6 +39,7 @@ from subagents.base import (
 )
 from subagents.f_codegen_agent.backend_agent.prompt import BACKEND_BASE
 from subagents.f_codegen_agent.backend_agent.validator import validate_backend_artifact
+from subagents.f_codegen_agent.pre_codegen import format_alignment_for
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +90,10 @@ class BackendGenerator(Generator):
         prior = _format_prior_handler(ctx.prior_backend_code)
         if prior:
             sections += ["", prior]
+
+        alignment_block = format_alignment_for(ctx.alignment_notes, self.name)
+        if alignment_block:
+            sections += ["", alignment_block.rstrip()]
 
         sections += [
             "",
