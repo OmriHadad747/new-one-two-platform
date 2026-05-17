@@ -3,15 +3,15 @@ import { sql } from "../lib/db.js";
 import { paginate } from "../lib/paginate.js";
 import { shopifyClientFor } from "../lib/shopify.js";
 
-const widgetRouter = Router();
+export const widgetRouter = Router();
 
-// GET /bundle — initial render
+// GET /bundle — bundle configuration, ordered tiers, and paginated items
 widgetRouter.get("/bundle", async (req: Request, res: Response): Promise<void> => {
   const bundleId = req.query?.bundle_id as string;
   const page = req.query?.page;
   const pageSize = req.query?.page_size;
 
-  // Step: Fetch bundle header row (must be enabled)
+  // Fetch bundle header row — must be enabled
   const bundleRow = await sql<
     {
       id: string;
@@ -27,13 +27,13 @@ widgetRouter.get("/bundle", async (req: Request, res: Response): Promise<void> =
     WHERE id = ${bundleId} AND enabled = true
   `;
 
-  // Step: Return 404 if bundle not found or disabled
+  // Return 404 if bundle not found or disabled
   if (bundleRow.length === 0) {
     res.status(404).json({ error: "bundle not found or not active" });
     return;
   }
 
-  // Step: Fetch all tiers ordered by display_order (bounded inline)
+  // Fetch all tiers ordered by display_order ascending (bounded inline list)
   const tiers = await sql<
     {
       id: string;
@@ -49,7 +49,7 @@ widgetRouter.get("/bundle", async (req: Request, res: Response): Promise<void> =
     LIMIT 50
   `;
 
-  // Step: Select paginated bundle items
+  // Select paginated bundle items with observed availability
   const rows = await paginate(
     sql,
     sql`
@@ -58,7 +58,7 @@ widgetRouter.get("/bundle", async (req: Request, res: Response): Promise<void> =
       WHERE bundle_id = ${bundleId}
       ORDER BY added_at ASC
     `,
-    { page: Number(page), page_size: Number(pageSize) },
+    { page: page as any, page_size: pageSize as any },
   );
 
   res.status(200).json({
@@ -72,21 +72,19 @@ widgetRouter.get("/bundle", async (req: Request, res: Response): Promise<void> =
   return;
 });
 
-// POST /bundle/validate
+// POST /bundle/validate — validate customer's variant selection
 widgetRouter.post("/bundle/validate", async (req: Request, res: Response): Promise<void> => {
   const bundleId = req.body?.bundle_id;
   const selectedVariantIds: string[] = req.body?.selected_variant_ids ?? [];
 
-  // Step: Fetch bundle row — must be enabled
+  // Fetch bundle row — must be enabled
   const bundleRow = await sql<
     { id: string; mode: string; enabled: boolean; health_status: string }[]
   >`
-    SELECT id, mode, enabled, health_status
-    FROM bundles
-    WHERE id = ${bundleId} AND enabled = true
+    SELECT id, mode, enabled, health_status FROM bundles WHERE id = ${bundleId} AND enabled = true
   `;
 
-  // Step: Return invalid if bundle not active
+  // Return invalid if bundle not active
   if (bundleRow.length === 0) {
     res.status(200).json({
       valid: false,
@@ -97,26 +95,21 @@ widgetRouter.post("/bundle/validate", async (req: Request, res: Response): Promi
     return;
   }
 
-  // Step: Fetch bundle item pool
+  // Fetch bundle item pool
   const itemPool = await sql<
-    { variant_external_id: string; observed_availability: string }[]
+    { variant_external_id: string; observed_availability: string | null }[]
   >`
-    SELECT variant_external_id, observed_availability
-    FROM bundle_items
-    WHERE bundle_id = ${bundleId}
+    SELECT variant_external_id, observed_availability FROM bundle_items WHERE bundle_id = ${bundleId}
   `;
 
-  // Step: Fetch all tiers ordered by minimum_item_count descending
+  // Fetch all tiers ordered by minimum_item_count descending to find highest earned tier
   const tiers = await sql<
     { id: string; minimum_item_count: number; discount_rate: number }[]
   >`
-    SELECT id, minimum_item_count, discount_rate
-    FROM bundle_tiers
-    WHERE bundle_id = ${bundleId}
-    ORDER BY minimum_item_count DESC
+    SELECT id, minimum_item_count, discount_rate FROM bundle_tiers WHERE bundle_id = ${bundleId} ORDER BY minimum_item_count DESC
   `;
 
-  // Step: Check all selected variants belong to bundle's item pool
+  // Check all selected variants belong to the bundle's item pool
   const unknownVariants = selectedVariantIds.filter(
     (vid) =>
       !itemPool.some(
@@ -124,7 +117,7 @@ widgetRouter.post("/bundle/validate", async (req: Request, res: Response): Promi
       ),
   );
 
-  // Step: Return invalid if unknown variants
+  // Return invalid if any selected variant is not in the bundle pool
   if (unknownVariants.length > 0) {
     res.status(200).json({
       valid: false,
@@ -137,12 +130,12 @@ widgetRouter.post("/bundle/validate", async (req: Request, res: Response): Promi
     return;
   }
 
-  // Step: Build GIDs for Storefront API availability query
+  // Build GIDs for the selected variants for Storefront API availability query
   const selectedVariantGids = selectedVariantIds.map(
     (vid) => `gid://shopify/ProductVariant/${vid}`,
   );
 
-  // Step: Fetch live availability for selected variants from Storefront API
+  // Fetch live availability for selected variants from Storefront API
   const shopify = await shopifyClientFor(req.platform!);
 
   const liveNodes = await shopify.storefront<{
@@ -153,30 +146,30 @@ widgetRouter.post("/bundle/validate", async (req: Request, res: Response): Promi
     } | null>;
   }>(
     `query GetVariantAvailability($ids: [ID!]!) {
-       nodes(ids: $ids) {
-         ... on ProductVariant {
-           id
-           availableForSale
-           quantityAvailable
-         }
-       }
-     }`,
+      nodes(ids: $ids) {
+        ... on ProductVariant {
+          id
+          availableForSale
+          quantityAvailable
+        }
+      }
+    }`,
     { ids: selectedVariantGids },
   );
 
-  // Step: Build availability map from Storefront response
+  // Build a map of variantId -> availableForSale from Storefront response
   const availabilityMap = new Map(
     (liveNodes?.nodes ?? [])
-      .filter((n): n is NonNullable<typeof n> => n !== null && !!n.id)
-      .map((n) => [String(n.id.split("/").pop()), n.availableForSale]),
+      .filter((n) => n && n.id)
+      .map((n) => [String(n!.id.split("/").pop()), n!.availableForSale]),
   );
 
-  // Step: Identify out-of-stock variants in selection
+  // Identify selected variants that are out of stock according to live Shopify data
   const unavailableSelected = selectedVariantIds.filter(
     (vid) => availabilityMap.get(String(vid)) === false,
   );
 
-  // Step: Return invalid if any selected variant is out of stock
+  // Return invalid if any selected variant is out of stock live
   if (unavailableSelected.length > 0) {
     res.status(200).json({
       valid: false,
@@ -189,12 +182,12 @@ widgetRouter.post("/bundle/validate", async (req: Request, res: Response): Promi
     return;
   }
 
-  // Step: Determine highest earned discount tier
+  // Determine the highest earned discount tier based on selection count
   const earnedTier =
     tiers.find((t) => selectedVariantIds.length >= t.minimum_item_count) ??
     null;
 
-  // Step: Return invalid if no tier earned
+  // Return invalid if no tier is earned
   if (earnedTier === null) {
     res.status(200).json({
       valid: false,
@@ -207,6 +200,7 @@ widgetRouter.post("/bundle/validate", async (req: Request, res: Response): Promi
     return;
   }
 
+  // Return successful validation with earned tier
   res.status(200).json({
     valid: true,
     earned_tier: earnedTier,
@@ -216,22 +210,20 @@ widgetRouter.post("/bundle/validate", async (req: Request, res: Response): Promi
   return;
 });
 
-// POST /cart/add
+// POST /cart/add — add validated bundle selection to Shopify cart with discount
 widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void> => {
   const bundleId = req.body?.bundle_id;
   const selectedVariantIds: string[] = req.body?.selected_variant_ids ?? [];
   const quantities: number[] = req.body?.quantities ?? [];
 
-  // Step: Fetch bundle — must be enabled
+  // Fetch bundle — must be enabled
   const bundleRow = await sql<
     { id: string; mode: string; enabled: boolean; health_status: string }[]
   >`
-    SELECT id, mode, enabled, health_status
-    FROM bundles
-    WHERE id = ${bundleId} AND enabled = true
+    SELECT id, mode, enabled, health_status FROM bundles WHERE id = ${bundleId} AND enabled = true
   `;
 
-  // Step: Return error if bundle not active
+  // Return error if bundle is not active
   if (bundleRow.length === 0) {
     res.status(400).json({
       success: false,
@@ -242,26 +234,21 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
     return;
   }
 
-  // Step: Fetch bundle item pool
+  // Fetch bundle item pool
   const itemPool = await sql<
-    { variant_external_id: string; observed_availability: string }[]
+    { variant_external_id: string; observed_availability: string | null }[]
   >`
-    SELECT variant_external_id, observed_availability
-    FROM bundle_items
-    WHERE bundle_id = ${bundleId}
+    SELECT variant_external_id, observed_availability FROM bundle_items WHERE bundle_id = ${bundleId}
   `;
 
-  // Step: Fetch tiers ordered by minimum_item_count descending
+  // Fetch tiers ordered by minimum_item_count descending
   const tiers = await sql<
     { id: string; minimum_item_count: number; discount_rate: number }[]
   >`
-    SELECT id, minimum_item_count, discount_rate
-    FROM bundle_tiers
-    WHERE bundle_id = ${bundleId}
-    ORDER BY minimum_item_count DESC
+    SELECT id, minimum_item_count, discount_rate FROM bundle_tiers WHERE bundle_id = ${bundleId} ORDER BY minimum_item_count DESC
   `;
 
-  // Step: Validate selected variants belong to bundle pool
+  // Validate selected variants belong to bundle pool
   const unknownVariants = selectedVariantIds.filter(
     (vid) =>
       !itemPool.some(
@@ -269,6 +256,7 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
       ),
   );
 
+  // Return error if selection contains variants not in bundle
   if (unknownVariants.length > 0) {
     res.status(400).json({
       success: false,
@@ -279,40 +267,41 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
     return;
   }
 
-  // Step: Build GIDs for Storefront live availability check
+  // Build GIDs for Storefront live availability check
   const selectedVariantGids = selectedVariantIds.map(
     (vid) => `gid://shopify/ProductVariant/${vid}`,
   );
 
-  // Step: Live availability check via Storefront API
+  // Live availability check for selected variants via Storefront API
   const shopify = await shopifyClientFor(req.platform!);
 
   const liveNodes = await shopify.storefront<{
     nodes: Array<{ id: string; availableForSale: boolean } | null>;
   }>(
     `query GetVariantAvailability($ids: [ID!]!) {
-       nodes(ids: $ids) {
-         ... on ProductVariant {
-           id
-           availableForSale
-         }
-       }
-     }`,
+      nodes(ids: $ids) {
+        ... on ProductVariant {
+          id
+          availableForSale
+        }
+      }
+    }`,
     { ids: selectedVariantGids },
   );
 
-  // Step: Build availability map
+  // Build availability map from Storefront response
   const availabilityMap = new Map(
     (liveNodes?.nodes ?? [])
-      .filter((n): n is NonNullable<typeof n> => n !== null && !!n.id)
-      .map((n) => [String(n.id.split("/").pop()), n.availableForSale]),
+      .filter((n) => n && n.id)
+      .map((n) => [String(n!.id.split("/").pop()), n!.availableForSale]),
   );
 
-  // Step: Find out-of-stock variants
+  // Find out-of-stock variants in the selection
   const unavailableVariants = selectedVariantIds.filter(
     (vid) => availabilityMap.get(String(vid)) === false,
   );
 
+  // Return error if any selected variant is out of stock
   if (unavailableVariants.length > 0) {
     res.status(400).json({
       success: false,
@@ -325,11 +314,12 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
     return;
   }
 
-  // Step: Determine highest earned tier
+  // Determine highest earned tier
   const earnedTier =
     tiers.find((t) => selectedVariantIds.length >= t.minimum_item_count) ??
     null;
 
+  // Return error if selection does not meet any tier threshold
   if (earnedTier === null) {
     res.status(400).json({
       success: false,
@@ -342,7 +332,7 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
     return;
   }
 
-  // Step: Build CartInput object
+  // Build the CartInput object with lines array
   const cartInput = {
     lines: selectedVariantIds.map((vid, i) => ({
       merchandiseId: `gid://shopify/ProductVariant/${vid}`,
@@ -350,12 +340,12 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
     })),
   };
 
-  // Step: Build discount code string
+  // Build the discount code string encoding bundleId and earned discount rate
   const discountCode = `BUNDLE_${bundleId}_${earnedTier.discount_rate}`;
 
-  // Step: Create Shopify cart and apply discount code via Storefront API
+  // Create Shopify cart and apply discount code; return errors on failure
   try {
-    // Step: Create cart via Storefront API cartCreate mutation
+    // Create a new Shopify cart with the selected bundle lines via Storefront API
     const createdCart = await shopify.storefront<{
       cartCreate: {
         cart: { id: string; checkoutUrl: string } | null;
@@ -363,11 +353,17 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
       };
     }>(
       `mutation CartCreate($input: CartInput!) {
-         cartCreate(input: $input) {
-           cart { id checkoutUrl }
-           userErrors { field message }
-         }
-       }`,
+        cartCreate(input: $input) {
+          cart {
+            id
+            checkoutUrl
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }`,
       { input: cartInput },
     );
 
@@ -377,19 +373,30 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
       );
     }
 
-    // Step: Apply discount code to cart via Storefront API cartDiscountCodesUpdate mutation
+    // Apply the bundle discount code to the newly created cart via Storefront API
     const updatedCart = await shopify.storefront<{
       cartDiscountCodesUpdate: {
-        cart: { id: string; discountCodes: { code: string }[] } | null;
+        cart: {
+          id: string;
+          discountCodes: { code: string }[];
+        } | null;
         userErrors: { field: string[] | null; message: string }[];
       };
     }>(
       `mutation CartDiscountCodesUpdate($cartId: ID!, $discountCodes: [String!]!) {
-         cartDiscountCodesUpdate(cartId: $cartId, discountCodes: $discountCodes) {
-           cart { id discountCodes { code } }
-           userErrors { field message }
-         }
-       }`,
+        cartDiscountCodesUpdate(cartId: $cartId, discountCodes: $discountCodes) {
+          cart {
+            id
+            discountCodes {
+              code
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }`,
       {
         cartId: createdCart.cartCreate.cart!.id,
         discountCodes: [discountCode],
@@ -402,10 +409,11 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
       );
     }
 
-    // Step: Extract raw cart id from GID
-    const cartExternalId = createdCart?.cartCreate?.cart?.id
-      ? String(createdCart.cartCreate.cart.id.split("/").pop())
-      : null;
+    // Extract raw cart id from GID
+    const cartExternalId =
+      createdCart?.cartCreate?.cart?.id
+        ? String(createdCart.cartCreate.cart.id.split("/").pop())
+        : null;
 
     res.status(200).json({
       success: true,
@@ -433,5 +441,3 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
     return;
   }
 });
-
-export { widgetRouter };

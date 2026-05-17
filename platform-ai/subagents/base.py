@@ -245,8 +245,17 @@ class Generator(ABC):
             thinking_budget=thinking_budget,
         )
         retry_suffix = self._format_retry_suffix(ctx.previous_errors)
+        # 1-hour TTL: the codegen → static-validation → codegen_v →
+        # codegen-retry loop can span 10+ minutes; the default 5-min
+        # cache TTL evicts the system prompt + stable user prefix mid-
+        # run. 1h TTL costs 1.25× on cache_create but serves reads at
+        # the same 10% rate, so any retry within the hour pays back.
         result = invoke(
-            llm, self.system_prompt(), self.user_prompt(ctx), retry_suffix=retry_suffix
+            llm,
+            self.system_prompt(),
+            self.user_prompt(ctx),
+            retry_suffix=retry_suffix,
+            cache_ttl="1h",
         )
         # Persist the raw response next to the prompt files so each codegen
         # attempt's output is post-mortem-able (same convention as the

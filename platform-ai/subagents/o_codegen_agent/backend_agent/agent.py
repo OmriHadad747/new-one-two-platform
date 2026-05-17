@@ -153,11 +153,15 @@ class BackendGenerator(Generator):
             thinking_budget=thinking_budget,
         )
         retry_suffix = self._format_retry_suffix(ctx.previous_errors)
+        # 1-hour TTL — same rationale as Generator.generate(): backend
+        # may be re-invoked by static-retry then again by codegen_v
+        # 5-10+ minutes later. 1h TTL spans the whole pipeline.
         result = invoke(
             llm,
             self.system_prompt(),
             self.user_prompt(ctx),
             retry_suffix=retry_suffix,
+            cache_ttl="1h",
         )
         # Mirror Generator.generate() — persist the raw response next to the
         # prompt files for post-mortem. Without this, every backend retry

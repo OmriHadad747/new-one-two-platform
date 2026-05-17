@@ -1,0 +1,670 @@
+App purpose: Merchants create fixed and flexible product bundles with tiered discounts; customers select items on product pages and add them to cart with discount auto-applied.
+App category: storefront_backend_admin
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WORKED EXAMPLES — shape-matched by admin_shapes dispatcher
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// SHAPE: paginated_table
+//
+// (Everything below sits INSIDE mount(container, bridge); the anchor's
+//  scaffold + helpers from DATA FORMATTING apply.)
+//
+// Teaches: paginationKind dispatch. The control choice MUST match the
+// route's declared paginationKind — offset → page numbers + total;
+// cursor → Prev/Next with a stack, NO total; inline → no controls.
+//
+// CURSOR PAGINATION: two cursors, not one.
+//   pageCursor — the cursor that LOADED the visible page (this is
+//                what bridge.call sends every time).
+//   nextCursor — res.next_cursor from the last fetch (this is what
+//                the Next button uses; null on the last page).
+// Collapsing both into one variable reuses the next-page cursor as
+// if it were the current-page cursor — Prev re-loads the page the
+// merchant is already on.
+//
+// Catalog: GET /rows  paginationKind: "cursor"
+//          → { rows: [...], next_cursor }
+
+// State held in closure (anchor pattern).
+let rows = [], pageCursor = null, nextCursor = null;
+let cursorStack = [], loading = false;
+
+async function loadList() {
+  loading = true; renderList();
+  try {
+    const res = await bridge.call("/rows", { cursor: pageCursor });
+    rows = res.rows || [];
+    nextCursor = res.next_cursor || null;   // for the Next button
+  } catch (_) {
+    bridge.notify("Could not load list", "error");
+  } finally { loading = false; renderList(); }
+}
+
+function renderList() {
+  if (loading && rows.length === 0) {
+    // Initial-load skeleton — placeholder rows match the data table's
+    // column count + row height so swap-in doesn't shift the layout.
+    region("list").innerHTML = `
+      <div class="shell-table-wrap"><table class="shell-table">
+        <thead><tr><th>...</th><th>...</th><th>...</th></tr></thead>
+        <tbody>
+          ${Array(5).fill(
+            '<tr><td colspan="3"><div class="shell-loading">&nbsp;</div></td></tr>',
+          ).join("")}
+        </tbody>
+      </table></div>`;
+    return;
+  }
+  if (rows.length === 0) {
+    region("list").innerHTML = `<div class="shell-empty">No rows yet.</div>`;
+    return;
+  }
+  region("list").innerHTML = `
+    <div class="shell-table-wrap"><table class="shell-table">
+      <thead>...</thead>
+      <tbody>${rows.map((r) => `<tr>...</tr>`).join("")}</tbody>
+    </table></div>
+    <nav class="shell-pagination">
+      <div class="shell-pagination-btns">
+        <button class="btn-secondary" data-act="prev"
+          ${cursorStack.length === 0 ? "disabled" : ""}>← Previous</button>
+        <button class="btn-secondary" data-act="next"
+          ${nextCursor ? "" : "disabled"}>Next →</button>
+      </div>
+    </nav>`;
+  region("list").querySelector('[data-act="next"]')?.addEventListener("click", () => {
+    // Push the cursor that loaded the CURRENT page, then advance.
+    cursorStack.push(pageCursor);
+    pageCursor = nextCursor;
+    loadList();
+  });
+  region("list").querySelector('[data-act="prev"]')?.addEventListener("click", () => {
+    // Restore the cursor that loaded the previous page.
+    pageCursor = cursorStack.pop() ?? null;
+    loadList();
+  });
+}
+
+// paginationKind=offset variant — render page numbers + total, drive
+// off `total` returned by the GET; the offset on each request is
+// page*PAGE_SIZE. paginationKind=inline — drop the <nav> entirely and
+// render the bounded list directly.
+
+// SHAPE: table_filters
+//
+// (Everything below sits INSIDE mount(container, bridge); the anchor's
+//  scaffold + helpers from DATA FORMATTING apply. Requires
+//  paginated_table earlier in the same mount() body — cursor /
+//  cursorStack / loadList come from there.)
+//
+// Teaches: search + enum-dropdown filters above a paginated table.
+// Two non-obvious bits:
+//   1. The status dropdown options come from the LLD's COLUMN ENUM
+//      VOCABULARY block — NEVER hardcode statuses (they drift from
+//      the handler and render dead options).
+//   2. Any filter change resets the cursor / page to start — staying
+//      on page 5 of the prior filter set returns the wrong slice.
+//
+// Catalog: GET /rows  requestShape: { q, status, cursor }
+//          → { rows, next_cursor }   (paginationKind: "cursor")
+
+let q = "", statusFilter = "";
+let searchTimer = null;
+
+function renderToolbar() {
+  region("toolbar").innerHTML = `
+    <div class="shell-toolbar">
+      <input class="shell-search" data-act="search" placeholder="Search…" value="${esc(q)}" />
+      <select class="shell-select" data-act="status">
+        <option value="">All statuses</option>
+        ${/* ONE <option> per value in the LLD column enum for this table.status */ ""}
+      </select>
+    </div>`;
+  region("toolbar").querySelector('[data-act="search"]').addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {                // 250ms debounce
+      q = e.target.value.trim();
+      resetAndReload();
+    }, 250);
+  });
+  region("toolbar").querySelector('[data-act="status"]').addEventListener("change", (e) => {
+    statusFilter = e.target.value;
+    resetAndReload();
+  });
+}
+
+function resetAndReload() {
+  // Match the two-cursor model from paginated_table — `cursor` alone
+  // is the legacy single-variable name and is NOT declared once the
+  // updated paginated_table snippet is in scope.
+  pageCursor = null; nextCursor = null; cursorStack = [];
+  loadList();
+}
+
+// In loadList, pass q + statusFilter alongside the page cursor:
+//   await bridge.call("/rows", { q, status: statusFilter, cursor: pageCursor });
+
+// SHAPE: bulk_select_actions
+//
+// (Everything below sits INSIDE mount(container, bridge); the anchor's
+//  scaffold + helpers from DATA FORMATTING apply. Requires
+//  paginated_table earlier in the same mount() body — rows / loadList
+//  come from there.)
+//
+// Teaches: checkbox column + selection-aware action bar. Three
+// non-obvious bits:
+//   1. "Select all" toggles only the VISIBLE page, not the whole
+//      dataset — clarify in the action bar count ("3 of 142 selected
+//      on this page").
+//   2. Selection is keyed by `id`, not by row index — pagination /
+//      refetch reorders rows, but ids are stable.
+//   3. After a successful bulk action: clear selection, refetch.
+//
+// Catalog: POST /bulk-action  requestShape: { ids: "string[]", action: "string" }
+
+let selectedIds = new Set();
+
+function renderActionBar() {
+  if (selectedIds.size === 0) { region("actions").innerHTML = ""; return; }
+  region("actions").innerHTML = `
+    <div class="shell-toolbar">
+      <span>${selectedIds.size} of ${rows.length} selected on this page</span>
+      <button class="btn-primary" data-act="run">Apply action</button>
+      <button class="btn-secondary" data-act="clear">Clear</button>
+    </div>`;
+  region("actions").querySelector('[data-act="run"]').addEventListener("click", runBulk);
+  region("actions").querySelector('[data-act="clear"]').addEventListener("click", () => {
+    selectedIds.clear(); renderActionBar(); renderList();
+  });
+}
+
+// In renderList: prepend a <th><input type="checkbox" data-act="select-all" ...>
+// and per-row <td><input type="checkbox" data-id="${esc(r.id)}" ...>; the
+// click handler flips entries in `selectedIds`, then re-renders the bar.
+
+async function runBulk() {
+  try {
+    await bridge.call("/bulk-action", { ids: [...selectedIds], action: "tag" });
+    bridge.notify(`Applied to ${selectedIds.size} items`, "success");
+    selectedIds.clear(); renderActionBar();
+    await loadList();
+  } catch (_) {
+    bridge.notify("Could not apply action", "error");
+  }
+}
+
+// SHAPE: inline_edit
+//
+// (Everything below sits INSIDE mount(container, bridge); the anchor's
+//  scaffold + helpers from DATA FORMATTING apply.)
+//
+// Teaches: edit one cell on a row without opening a modal. Click the
+// cell → swap to <select>/<input> → save on change/blur → revert on
+// Escape. Three non-obvious bits:
+//   1. The displayed cell carries the row id AND the field name as
+//      data-attributes — click handler reads both, no closures over
+//      the loop variable.
+//   2. Save uses the field's CHANGE event (not blur) so Escape can
+//      restore without firing a save. Bind both: change → save,
+//      keydown(Escape) → cancel.
+//   3. Optimistic + rollback. Update rows[idx][field] locally first,
+//      render, then POST. On failure, restore from snapshot. The
+//      cell never sits in a "saving…" indeterminate state.
+//
+// Catalog: POST /items/update-field
+//          requestShape: { id, field, value }
+
+function onCellClick(td) {
+  const id = td.dataset.id;
+  const field = td.dataset.field;
+  const row = rows.find((r) => String(r.id) === id);
+  if (!row) return;
+  const snapshot = row[field];
+
+  // Look up enum options from the LLD's COLUMN ENUM VOCABULARY — the
+  // ONLY legal values for an enum column. The caller passes a lookup
+  // dict from the rendered db_contracts (e.g.
+  //   ENUM_VALUES_FOR.status = ["pending","completed","failed"]).
+  // Non-enum (free-text) columns fall through to a text input.
+  const options = ENUM_VALUES_FOR[field];
+  if (options && options.length) {
+    td.innerHTML = `
+      <select class="shell-select" data-act="edit">
+        ${options.map((v) => `
+          <option value="${esc(v)}" ${v === snapshot ? "selected" : ""}>${esc(v)}</option>`).join("")}
+      </select>`;
+  } else {
+    td.innerHTML = `
+      <input class="shell-input" type="text" data-act="edit"
+             value="${esc(snapshot ?? "")}" />`;
+  }
+  const control = td.querySelector('[data-act="edit"]');
+  control.focus();
+  if (control.tagName === "INPUT") control.select();
+
+  // Commit on BOTH change (select pick / Enter on input) AND blur
+  // (tab-out / click-away). Without blur, picking a value and clicking
+  // another cell loses the edit. `committed` guards against a double
+  // fire when both events trigger.
+  let committed = false;
+  async function commit() {
+    if (committed) return;
+    committed = true;
+    const value = control.value;
+    if (value === String(snapshot ?? "")) { renderList(); return; }   // no-op edit
+    row[field] = value;
+    renderList();
+    try {
+      await bridge.call("/items/update-field", { id, field, value });
+      bridge.notify("Updated", "success");
+    } catch (_) {
+      row[field] = snapshot;
+      renderList();
+      bridge.notify("Could not update", "error");
+    }
+  }
+  control.addEventListener("change", commit);
+  control.addEventListener("blur", commit);
+  control.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { committed = true; renderList(); }       // revert
+    else if (e.key === "Enter" && control.tagName === "INPUT") control.blur();
+  });
+}
+
+// In renderList, give each editable cell:
+//   <td data-id="${esc(r.id)}" data-field="status">${esc(r.status)}</td>
+// and wire region("list").addEventListener("click", (e) => {
+//   const td = e.target.closest("td[data-field]");
+//   if (td) onCellClick(td);
+// });
+
+// SHAPE: editor_modal
+//
+// (Everything below sits INSIDE mount(container, bridge); the anchor's
+//  scaffold + helpers from DATA FORMATTING apply.)
+//
+// Teaches: ONE modal scaffold reused for create AND edit. Differs only
+// in the initial values + which POST path is called. Uses the
+// shell-confirm-* classes the admin shell pre-injects. After a
+// successful save: close + bridge.notify + refetch the current page
+// (NOT page 1 — the merchant is mid-task).
+//
+// Focus management (required by UX QUALITY MINIMUM):
+//   - Capture document.activeElement BEFORE opening, restore on close
+//   - Focus the first interactive element on open so keyboard users
+//     can start typing and screen readers announce the dialog
+//
+// Catalog: POST /items         (create)
+//          POST /items/update  (update)
+
+let modal = null;     // currently-open modal element OR null
+
+function openEditor(record) {
+  closeModal();
+  const isEdit = record !== null;
+  const previouslyFocused = document.activeElement;   // restore on close
+  const overlay = document.createElement("div");
+  overlay.className = "shell-confirm-overlay";
+  overlay.innerHTML = `
+    <div class="shell-confirm-dialog" role="dialog" aria-modal="true">
+      <h2 class="shell-confirm-title">${isEdit ? "Edit item" : "New item"}</h2>
+      <div class="shell-confirm-body">
+        <form data-form="editor">${/* shell-field inputs per the requestShape */ ""}</form>
+      </div>
+      <div class="shell-confirm-actions">
+        <button class="btn-secondary" data-act="cancel">Cancel</button>
+        <button class="btn-primary" data-act="save">Save</button>
+      </div>
+    </div>`;
+  container.appendChild(overlay);
+  const form = overlay.querySelector("form");
+  if (isEdit) { /* hydrate inputs from record */ }
+  const onKey = (e) => { if (e.key === "Escape") closeModal(); };
+  document.addEventListener("keydown", onKey);
+  modal = { el: overlay, onKey, previouslyFocused };
+  overlay.querySelector('[data-act="cancel"]').addEventListener("click", closeModal);
+  overlay.querySelector('[data-act="save"]').addEventListener("click", async () => {
+    if (!form.reportValidity()) return;
+    const saveBtn = overlay.querySelector('[data-act="save"]');
+    saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+    try {
+      const payload = /* read inputs into object matching requestShape */ {};
+      if (isEdit) await bridge.call("/items/update", { id: record.id, ...payload });
+      else await bridge.call("/items", payload);
+      closeModal();
+      bridge.notify(isEdit ? "Item updated" : "Item added", "success");
+      await loadList();                          // refetch current page
+    } catch (_) {
+      saveBtn.disabled = false; saveBtn.textContent = "Save";
+      bridge.notify("Could not save", "error");
+    }
+  });
+  // Focus the first interactive after the overlay is in the DOM. Defer
+  // with rAF so layout has run — focusing a not-yet-laid-out element
+  // can fail silently on some browsers.
+  requestAnimationFrame(() => {
+    (form.querySelector("input, textarea, select")
+      || overlay.querySelector("button[data-act='save']")).focus();
+  });
+}
+
+function closeModal() {
+  if (!modal) return;
+  document.removeEventListener("keydown", modal.onKey);
+  modal.el.remove();
+  // Restore focus to the trigger element (typically the row's Edit
+  // button) so keyboard users land where they left off.
+  modal.previouslyFocused?.focus?.();
+  modal = null;
+}
+
+// SHAPE: confirm_modal
+//
+// (Everything below sits INSIDE mount(container, bridge); the anchor's
+//  scaffold + helpers from DATA FORMATTING apply. closeModal + the
+//  modal closure live in the editor_modal snippet — keep both shapes
+//  together in the same mount() body.)
+//
+// Teaches: destructive-action confirmation. Three non-obvious bits:
+//   1. Cancel is the focused default (autofocus) — protects against
+//      stray Enter keypresses on a destructive action.
+//   2. Capture previouslyFocused before opening; closeModal in
+//      editor_modal restores it on close so keyboard users land back
+//      on the row's Delete button.
+//   3. If the deleted row was the LAST on the current page, rewind
+//      pagination BEFORE refetching — otherwise the refetch returns
+//      an empty list even though earlier pages still have data. The
+//      rewind variable depends on the active paginationKind:
+//        offset → page--
+//        cursor → pageCursor = cursorStack.pop() ?? null
+//
+// Catalog: POST /items/delete  → { id }
+
+function confirmDelete(record) {
+  closeModal();
+  const previouslyFocused = document.activeElement;
+  const overlay = document.createElement("div");
+  overlay.className = "shell-confirm-overlay";
+  overlay.innerHTML = `
+    <div class="shell-confirm-dialog" role="dialog" aria-modal="true">
+      <h2 class="shell-confirm-title">Delete "${esc(record.label)}"?</h2>
+      <div class="shell-confirm-body">This cannot be undone.</div>
+      <div class="shell-confirm-actions">
+        <button class="btn-secondary" data-act="cancel" autofocus>Cancel</button>
+        <button class="btn-danger" data-act="confirm">Delete</button>
+      </div>
+    </div>`;
+  container.appendChild(overlay);
+  const onKey = (e) => { if (e.key === "Escape") closeModal(); };
+  document.addEventListener("keydown", onKey);
+  modal = { el: overlay, onKey, previouslyFocused };
+  // The autofocus attribute fires the moment the element enters the
+  // DOM. If a browser ignores autofocus inside dynamically-injected
+  // markup, the rAF fallback below guarantees the Cancel button is
+  // focused before the merchant's next keypress.
+  requestAnimationFrame(() => {
+    overlay.querySelector('[data-act="cancel"]').focus();
+  });
+  overlay.querySelector('[data-act="cancel"]').addEventListener("click", closeModal);
+  overlay.querySelector('[data-act="confirm"]').addEventListener("click", async () => {
+    const btn = overlay.querySelector('[data-act="confirm"]');
+    btn.disabled = true; btn.textContent = "Deleting…";
+    try {
+      await bridge.call("/items/delete", { id: record.id });
+      closeModal();
+      bridge.notify("Deleted", "success");
+      // Last-row-on-page rewind. Pick the path for the active
+      // paginationKind — the surrounding paginated_table snippet
+      // declares whichever of {page, pageCursor} is in scope.
+      if (rows.length === 1) {
+        // typeof guards both branches — `page` and `cursorStack` are
+        // declared by the paginated_table snippet's chosen mode.
+        // Reading an undeclared identifier directly is a ReferenceError;
+        // typeof returns "undefined" without throwing.
+        if (typeof page === "number" && page > 0) page--;
+        else if (typeof cursorStack !== "undefined" && cursorStack.length > 0)
+          pageCursor = cursorStack.pop() ?? null;
+      }
+      await loadList();
+    } catch (_) {
+      btn.disabled = false; btn.textContent = "Delete";
+      bridge.notify("Could not delete", "error");
+    }
+  });
+}
+
+// SHAPE: resource_picker
+//
+// (Everything below sits INSIDE mount(container, bridge); the anchor's
+//  scaffold + helpers from DATA FORMATTING apply.)
+//
+// Teaches: selecting Shopify resources inside an editor_modal field.
+//
+// TWO PATHS — pick the right one for the resource type:
+//
+//   1. Native (PREFERRED) — bridge.pickResource() opens Shopify's
+//      own ResourcePicker. Use for products / collections / variants.
+//      Zero Admin GraphQL spend, native merchant UX. The handler
+//      receives gids (gid://shopify/Product/123) and persists them
+//      verbatim.
+//
+//   2. Custom search (FALLBACK) — debounced /search backend call.
+//      Use ONLY for customer picking (App Bridge doesn't expose a
+//      native customer picker) or for app-internal records that
+//      aren't Shopify resources. Costs Admin GraphQL units on every
+//      keystroke, so 250ms debounce is mandatory.
+//
+// Persistence (both paths): store BOTH the external id (what the
+// handler keys on) AND the display label (what the merchant sees on
+// reload) so re-opening the editor doesn't re-search.
+
+// ── PATH 1: Native ResourcePicker (the common case) ─────────────────────
+async function pickProducts(host) {
+  const picked = await bridge.pickResource({
+    type: "product",
+    multiple: 10,                                     // cap at 10 picks
+    selectionIds: [...selected.values()].map((m) => ({ id: m.id })),
+  });
+  if (!picked) return;                                // merchant cancelled
+  selected.clear();
+  for (const p of picked) {
+    selected.set(p.id, { id: p.id, label: p.title || p.id });
+  }
+  renderChips(host);
+}
+
+// ── PATH 2: Custom search (customers, app-internal records) ─────────────
+let searchTimer = null;
+let selected = new Map();      // id → { id, label, image_url? }
+
+function renderCustomSearch(host) {
+  host.innerHTML = `
+    <input class="shell-input" data-act="q" placeholder="Search customers…" />
+    <div data-region="results"></div>
+    <div data-region="chips"></div>`;
+  host.querySelector('[data-act="q"]').addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    const q = e.target.value.trim();
+    if (!q) { host.querySelector('[data-region="results"]').innerHTML = ""; return; }
+    searchTimer = setTimeout(() => doSearch(host, q), 250);
+  });
+  renderChips(host);
+}
+
+async function doSearch(host, q) {
+  let res;
+  try { res = await bridge.call("/customers/search", { q }); }
+  catch (_) { bridge.notify("Search failed", "error"); return; }
+  const results = host.querySelector('[data-region="results"]');
+  results.innerHTML = (res.rows || []).map((r) => `
+    <button class="btn-secondary" data-id="${esc(r.external_id)}"
+            data-label="${esc(r.title)}"
+            style="display:block; text-align:left; width:100%;">
+      ${esc(r.title)}
+    </button>`).join("");
+  results.querySelectorAll("[data-id]").forEach((b) =>
+    b.addEventListener("click", () => {
+      selected.set(b.dataset.id, { id: b.dataset.id, label: b.dataset.label });
+      host.querySelector('[data-act="q"]').value = "";
+      results.innerHTML = "";
+      renderChips(host);
+    }));
+}
+
+// ── Shared chip render (both paths feed `selected`) ─────────────────────
+function renderChips(host) {
+  const chips = host.querySelector('[data-region="chips"]');
+  chips.innerHTML = [...selected.values()].map(({ id, label }) => `
+    <span class="badge badge-neutral" style="display:inline-flex; gap:6px;">
+      ${esc(label)}
+      <button data-rm="${esc(id)}" aria-label="Remove">×</button>
+    </span>`).join("");
+  chips.querySelectorAll("[data-rm]").forEach((b) =>
+    b.addEventListener("click", () => {
+      selected.delete(b.dataset.rm);
+      renderChips(host);
+    }));
+}
+
+// On editor_modal save, persist [...selected.keys()] as the ids and
+// the labels alongside (e.g. on the record's JSONB column) so
+// re-opening the editor can rehydrate `selected` without re-fetching.
+
+// SHAPE: empty_state_cta
+//
+// (Everything below sits INSIDE mount(container, bridge); the anchor's
+//  scaffold + helpers from DATA FORMATTING apply. References
+//  openEditor from editor_modal — keep both shapes in the same
+//  mount() body.)
+//
+// Teaches: first-run empty state with a primary action. Used WHEREVER
+// a paginated_table or list region could be empty on day one (FAQ
+// builder before any questions, Locator before any stores, Returns
+// before any requests).
+//
+// Distinction (matters for copy):
+//   - Empty (no data ever)      → "Add your first X" with btn-primary
+//   - Empty (after filtering)   → "No matches. Clear filters?" link
+// shell-empty styles the wrapper; the action lives inside it.
+//
+// One non-obvious bit: the CTA's click handler is the same one
+// triggered by the page header's "New X" button — share it.
+
+function renderEmpty(kind /* "first-run" | "filtered" */) {
+  if (kind === "filtered") {
+    region("list").innerHTML = `
+      <div class="shell-empty">
+        <p>No matches for the current filters.</p>
+        <button class="btn-secondary" data-act="clear-filters">Clear filters</button>
+      </div>`;
+    region("list").querySelector('[data-act="clear-filters"]').addEventListener("click", () => {
+      // Reset filter state and reload — see table_filters' resetAndReload.
+      q = ""; statusFilter = ""; renderToolbar(); resetAndReload();
+    });
+    return;
+  }
+  // First-run: same primary affordance as the header's "New X" button.
+  region("list").innerHTML = `
+    <div class="shell-empty">
+      <h2 class="shell-section-title">No questions yet</h2>
+      <p>Questions appear here once you add them. Start with the most common one your customers ask.</p>
+      <button class="btn-primary" data-act="new">Add your first question</button>
+    </div>`;
+  region("list").querySelector('[data-act="new"]').addEventListener("click", () => openEditor(null));
+}
+
+// Caller picks the kind based on whether ANY filter is active:
+//   const isFiltered = q !== "" || statusFilter !== "";
+//   renderEmpty(isFiltered ? "filtered" : "first-run");
+
+Quality brief — what makes a good version of this app:
+A polished bundle app handles variant-level product selection (not just product-level), shows live discount calculation as the customer adjusts their picks in flexible bundles, stores bundle purchase history keyed by timestamp and order ID to survive webhook retries, and lets the merchant reorder bundle tiers intuitively (e.g. 2 items 10%, 3 items 20%) without redundant entry. It must validate that flexible bundle picks respect variant availability and never offer a customer a tier if they haven't met the item count threshold. The storefront widget must render responsively on mobile and show clear copy distinguishing fixed vs flexible modes. The admin must let merchants clone bundles, bulk-enable/disable, and export purchase history. Edge case: if a bundled product is deleted or goes out of stock, the bundle should gracefully disable itself or warn the merchant rather than fail silently.
+
+UX expectations for this admin panel:
+The merchant dashboard should lead with a bundle list showing health status badges so degraded bundles are immediately visible; the editor should allow inline tier and item management with a live preview of the discount ladder, and auto-disabled bundles should surface the blocking variant names directly in the status badge tooltip.
+
+Status vocabulary — the handler stores these EXACT values in `bundle_items.observed_availability` (stateMachine kind="observation"):
+  ["available", "out_of_stock", "deleted"]
+  null on this column means 'never observed' — render as '—' or 'Not yet' in the table, NOT as an empty badge.
+When rendering filter dropdowns, status badges, or any UI that references a status value, use ONLY values from this list. Do NOT invent additional states; those render dead options the merchant cannot act on.
+
+Column enum vocabulary — the handler stores ONLY these literal values in each column:
+  bundles.mode: ["fixed", "flexible"]
+  bundles.health_status: ["healthy", "warned", "auto_disabled"]
+  bundle_items.observed_availability: ["available", "out_of_stock", "deleted"]
+  bundle_health_events.event_kind: ["auto_disabled", "warned", "cleared"]
+When rendering filter dropdowns, status badges, or any UI that branches on one of these column values, use ONLY values from the matching list. Do NOT invent additional values (e.g. a 'converted' filter when the column enum is ['pending','sent','failed']) — those render dead options the merchant cannot act on.
+
+Admin API catalog — the ONLY paths the panel may call via bridge.call().
+Use EXACTLY the requestShape shown when building the bridge.call() body.
+Expect EXACTLY the responseShape shown when reading the result.
+  GET /bundles
+    send:    bridge.call('/bundles', {'status_filter': 'string|null', 'health_filter': 'string|null', 'page': 'number', 'page_size': 'number'})
+    receive: {'items': '{id:string,title:string,mode:string,enabled:boolean,health_status:string,created_at:string,tier_count:number}[]', 'total': 'number', 'page': 'number', 'page_size': 'number'}
+    paginationKind: offset
+  POST /bundles/create
+    send:    bridge.call('/bundles/create', {'title': 'string', 'mode': 'string', 'description': 'string|null'})
+    receive: {'bundle_id': 'string', 'status': 'string'}
+  PUT /bundles/update
+    send:    bridge.call('/bundles/update', {'bundle_id': 'string', 'title': 'string|null', 'description': 'string|null', 'mode': 'string|null', 'enabled': 'boolean|null'})
+    receive: {'bundle_id': 'string', 'updated_at': 'string'}
+  POST /bundles/remove
+    send:    bridge.call('/bundles/remove', {'bundle_id': 'string'})
+    receive: {'success': 'boolean'}
+  POST /bundles/clone
+    send:    bridge.call('/bundles/clone', {'source_bundle_id': 'string'})
+    receive: {'new_bundle_id': 'string', 'status': 'string'}
+  POST /bundles/bulk-status
+    send:    bridge.call('/bundles/bulk-status', {'bundle_ids': 'string[]', 'enabled': 'boolean'})
+    receive: {'updated_count': 'number', 'skipped_count': 'number'}
+  GET /bundles/items
+    send:    bridge.call('/bundles/items', {'bundle_id': 'string', 'page': 'number', 'page_size': 'number'})
+    receive: {'items': '{id:string,bundle_id:string,variant_external_id:string,product_external_id:string,observed_availability:string,added_at:string}[]', 'total': 'number', 'page': 'number', 'page_size': 'number'}
+    paginationKind: offset
+  POST /bundles/items/save
+    send:    bridge.call('/bundles/items/save', {'bundle_id': 'string', 'variant_external_ids': 'string[]', 'product_external_ids': 'string[]'})
+    receive: {'saved_count': 'number', 'unavailable_variants': 'string[]'}
+    paginationKind: inline
+  GET /bundles/tiers
+    send:    bridge.call('/bundles/tiers', {'bundle_id': 'string', 'page': 'number', 'page_size': 'number'})
+    receive: {'items': '{id:string,bundle_id:string,minimum_item_count:number,discount_rate:number,display_order:number}[]', 'total': 'number', 'page': 'number', 'page_size': 'number'}
+    paginationKind: offset
+  POST /bundles/tiers/save
+    send:    bridge.call('/bundles/tiers/save', {'bundle_id': 'string', 'tiers': '{minimum_item_count:number,discount_rate:number}[]'})
+    receive: {'saved_count': 'number'}
+  GET /purchase-history
+    send:    bridge.call('/purchase-history', {'bundle_id': 'string|null', 'date_from': 'string|null', 'date_to': 'string|null', 'page': 'number', 'page_size': 'number'})
+    receive: {'items': '{id:string,bundle_id:string,order_external_id:string,order_placed_at:string,item_count:number,discount_rate_applied:number,order_total_minor_units:number,order_currency:string,recorded_at:string}[]', 'total': 'number', 'page': 'number', 'page_size': 'number'}
+    paginationKind: offset
+
+Backend limitations the admin UX must reflect:
+  - The inventory_levels/update webhook delivers inventory_item_id but not variant_id; there is no direct mapping in the webhook payload.: First delivery for a previously unseen inventory item requires one extra Shopify API call; subsequent deliveries are served from cache with no extra latency.
+  - Shopify's discount code mechanism requires a merchant-configured discount code in Shopify for each tier; the app cannot programmatically create automatic discounts on a per-cart basis via Storefront API alone.: Merchants must create matching discount codes in Shopify Admin before activating a bundle; the admin UI should surface clear setup instructions linking discount creation to bundle activation.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CROSS-AGENT ALIGNMENT — HONOUR THESE RULES VERBATIM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The pre-codegen alignment agent surfaced these cross-agent constraints by reading the FULL LLD. Apply each one exactly in the code you generate. These rules override any conflicting default behaviour:
+
+  1. [unit] discount_rate is stored and transmitted as integer basis points (0–10000), never as a 0–1 ratio or a 0–100 percent. backend: validate that each incoming discount_rate value is an integer in [0,10000] before INSERT/UPDATE; do not divide or multiply. admin_ui: when accepting merchant percent input (e.g. '10%'), multiply by 100 before sending; when rendering, divide by 100 for display only.
+     surfaces: database.tables[2].columns[3], httpRoutes.admin[8].requestShape.tiers, httpRoutes.admin[8].responseShape.items, … (+1 more)
+
+  2. [unit] order_total_minor_units is an integer count of the currency's smallest unit (cents for USD, yen for JPY, fils for BHD). backend: use the money.toMinorUnits helper to convert Shopify's decimal-string total_price before INSERT; never store a float. admin_ui: when displaying order totals from purchase-history, divide by the correct minor-unit multiplier for order_currency using a currency-aware formatter; never display the raw integer directly.
+     surfaces: database.tables[3].columns[7], httpRoutes.admin[9].responseShape.items
+
+  3. [nullability] On PUT /bundles/update, 'absent description' (field not sent) and 'explicit null description' (field sent as null) mean different things. admin_ui: to clear the description send {description: null, description_provided: true}; to leave it unchanged, omit description_provided entirely (or send false). backend: only update the description column when description_provided===true; otherwise COALESCE preserves the existing value.
+     surfaces: httpRoutes.admin[2].requestShape.description, httpRoutes.admin[2].requestShape.description_provided, capabilityRecipes.admin-update-bundle.steps[3], … (+1 more)
+
+  4. [id_shape] variant_external_id, product_external_id, and order_external_id are BIGINT columns. All admin API responses must serialise these as strings (JSON number precision is insufficient for 64-bit Shopify ids). admin_ui must treat them as opaque strings and never coerce to JS Number. Backend must cast to String before JSON serialisation.
+     surfaces: httpRoutes.admin[0].responseShape.items, httpRoutes.admin[6].responseShape.items, httpRoutes.admin[9].responseShape.items, … (+2 more)
+
+  5. [format] date_from and date_to query parameters for GET /purchase-history must be ISO 8601 strings that PostgreSQL can cast to TIMESTAMPTZ (e.g. '2024-01-15T00:00:00Z'). backend: cast them with ::timestamptz; return 400 if the cast fails. admin_ui: when constructing date filter requests from a date-picker, always format as full ISO 8601 UTC strings, not bare date strings like '2024-01-15' (which lack timezone and may shift the boundary by hours).
+     surfaces: httpRoutes.admin[9].requestShape.date_from, httpRoutes.admin[9].requestShape.date_to, capabilityRecipes.admin-list-purchase-history.inputs[1], … (+1 more)
+
+  6. [format] All bundle id fields in admin API responses are UUID strings (lowercase, hyphenated, RFC 4122 format, e.g. '550e8400-e29b-41d4-a716-446655440000'). backend: emit UUIDs as lowercase hyphenated strings. admin_ui: send bundle_id values back verbatim in subsequent request bodies; do not strip hyphens, uppercase, or parse as integers. The DB column is UUID type — the backend must cast incoming string params with ::uuid and return a 400 on malformed input.
+     surfaces: httpRoutes.admin[1].responseShape.bundle_id, httpRoutes.admin[0].responseShape.items, httpRoutes.admin[4].responseShape.new_bundle_id, … (+1 more)
+Generate the admin panel ES module. Output ONLY raw JavaScript.

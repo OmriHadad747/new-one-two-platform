@@ -41,16 +41,19 @@ RESUME
     pre-codegen → re-runs from codegen onwards, reusing the saved
                  alignment notes (delete `alignment_notes` from
                  state.json first to force a fresh pre-codegen pass)
-    codegen    → re-runs from validator onwards
-    validator + (kept_originals | revision_failed)
-               → re-runs only the revision agent against the saved
-                 validator issues — the validator LLM call is skipped
-                 entirely (this is the main token-saver)
+    codegen    → re-runs from codegen_v onwards
+    validator + kept_originals
+               → re-runs the codegen_v + per-agent retry using the
+                 saved codegen_v_findings + artifacts (the codegen_v
+                 LLM call is skipped — findings already paid for)
     validator (no halt) / revision
                → skips straight to explanation
-    done + (kept_originals | revision_failed)
+    done + kept_originals
                → run shipped with unresolved findings; --resume re-runs
-                 just the revision step
+                 the codegen_v retry phase
+    (`revision_failed` is a legacy halt_reason from the old revision
+    agent; treated as a resumable halt for back-compat with old state
+    files, but new runs only produce `kept_originals`.)
 
   Robustness: missing/corrupt/wrong-version state.json files are silently
   dropped from --list-resume; --resume fails with exit code 2 and a clear
@@ -1283,6 +1286,7 @@ def _save_run_artifacts(
     intent: Optional[Dict] = None,
     plan: Optional[Dict] = None,
     hld_v_findings: Optional[List] = None,
+    lld: Optional[Dict] = None,
 ) -> Path:
     """
     Persist the run's canonical artefacts to ``run_dir`` and return the dir.
@@ -1296,7 +1300,7 @@ def _save_run_artifacts(
     by the resume-state machinery) — no Markdown report duplicates them
     anymore.
     """
-    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
+    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan, lld)
     return run_dir
 
 
@@ -2420,41 +2424,39 @@ def main() -> None:
     if (
         resume_state
         and _resumed_idx >= _phase_index("validator")
-        and _resumed_halt not in ("kept_originals", "revision_failed")
+        and _resumed_halt != "kept_originals"
     ):
-        if resume_state.get("validator_tokens"):
-            tk = resume_state["validator_tokens"]
+        if resume_state.get("codegen_v_tokens"):
+            tk = resume_state["codegen_v_tokens"]
             all_tokens["validator"] = (int(tk.get("in", 0)), int(tk.get("out", 0)))
         if resume_state.get("artifacts"):
             artifacts = dict(resume_state["artifacts"])
-        # Trace files are no longer written; report.md falls back to whatever
-        # validator_issues / validator_tokens are already in state.json.
+        # Trace files are no longer written; report.md reads
+        # codegen_v_findings / codegen_v_tokens from state.json.
         validator_trace = None
         _info("Codegen Validator: reusing saved outcome (skipping LLM call)")
     elif (
         resume_state
         and _resumed_idx >= _phase_index("validator")
-        and _resumed_halt in ("kept_originals", "revision_failed")
+        and _resumed_halt == "kept_originals"
     ):
         # Re-run the validator-driven codegen retry against the saved
-        # pre-revision artifacts (NOT the broken merged output from a
-        # failed retry — we want a fresh attempt, not compounded damage).
+        # artifacts (the originals — state.artifacts holds them on the
+        # kept_originals branch, not the broken retry output).
         _phase_header("CODEGEN VALIDATOR (retry resume)")
-        pre = resume_state.get("pre_revision_artifacts") or resume_state.get(
-            "artifacts"
-        )
-        if not pre or not resume_state.get("validator_issues"):
+        pre = resume_state.get("artifacts")
+        if not pre or not resume_state.get("codegen_v_findings"):
             print(
                 f"\n  {_RED}Cannot resume validator retry — saved state is "
-                f"missing pre_revision_artifacts or validator_issues.{_RESET}"
+                f"missing artifacts or codegen_v_findings.{_RESET}"
             )
             _fail_db("Resume validator failed: incomplete saved state")
             sys.exit(2)
         resumed_validator = {
-            "issues": resume_state["validator_issues"],
-            "in_tokens": (resume_state.get("validator_tokens") or {}).get("in", 0),
-            "out_tokens": (resume_state.get("validator_tokens") or {}).get("out", 0),
-            "duration_ms": (resume_state.get("validator_tokens") or {}).get(
+            "issues": resume_state["codegen_v_findings"],
+            "in_tokens": (resume_state.get("codegen_v_tokens") or {}).get("in", 0),
+            "out_tokens": (resume_state.get("codegen_v_tokens") or {}).get("out", 0),
+            "duration_ms": (resume_state.get("codegen_v_tokens") or {}).get(
                 "duration_ms", 0
             ),
         }
@@ -2501,6 +2503,7 @@ def main() -> None:
             intent=intent,
             plan=plan,
             hld_v_findings=hld_v_findings,
+            lld=lld,
         )
         print()
         _summary_box(
@@ -2546,7 +2549,7 @@ def main() -> None:
     total_ms = int((time.monotonic() - total_start) * 1000)
 
     # ── Save report + generated files ─────────────────────────────────────────
-    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
+    _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan, lld)
     # No separate hld/lld/ops_picks json files — the canonical sources are
     # the per-attempt `inputs/<agent>/attempt_N/output.txt` plus the
     # `plan` / `lld` / `ops_picks` blocks already in state.json.
@@ -2592,10 +2595,13 @@ def main() -> None:
     # which historically read identically to a real success. Promote it to a
     # warning so the merchant sees that real findings were not addressed.
     unresolved_issues: List[Dict[str, Any]] = []
-    revision_outcome: Optional[str] = None
+    # Derive the validator-phase outcome from the trace's final_outcome
+    # (the new flow doesn't write a separate `revision_outcome` field;
+    # outcome is encoded in checkpoint + halt_reason).
+    final_outcome: Optional[str] = None
     if validator_trace:
-        revision_outcome = validator_trace.get("final_outcome")
-        if revision_outcome in ("kept_originals", "failed"):
+        final_outcome = validator_trace.get("final_outcome")
+        if final_outcome == "kept_originals":
             raw = validator_trace.get("validator", {}).get("issues") or []
             if isinstance(raw, list):
                 unresolved_issues = [i for i in raw if isinstance(i, dict)]
@@ -2624,15 +2630,12 @@ def main() -> None:
         if code:
             rows.append((label, _c(f"{len(code.strip().splitlines())} lines", _DIM)))
 
-    # Carry over halt_reason on completed runs that shipped with unresolved
-    # findings (kept_originals / revision_failed in revision_outcome). The
-    # lister keeps these visible so the merchant can resume just-revision
-    # later.
-    final_halt: Optional[str] = None
-    if revision_outcome == "kept_originals":
-        final_halt = "kept_originals"
-    elif revision_outcome == "failed":
-        final_halt = "revision_failed"
+    # Carry over halt_reason on completed runs that shipped with
+    # unresolved findings (kept_originals). The lister keeps these
+    # visible so the merchant can resume the validator phase later.
+    final_halt: Optional[str] = (
+        "kept_originals" if final_outcome == "kept_originals" else None
+    )
     _save_state(
         run_dir,
         checkpoint="done",
@@ -2652,9 +2655,8 @@ def main() -> None:
     # report.md and the revision_traces JSON the box already points at.
     if unresolved_issues:
         reason_label = {
-            "kept_originals": "revision returned no usable output — originals kept",
-            "failed": "revision retried twice and still failed static validation",
-        }.get(revision_outcome or "", "revision did not complete")
+            "kept_originals": "codegen retry left static errors — originals shipped",
+        }.get(final_outcome or "", "validator did not complete")
         print(
             f"  {_YELLOW}{_BOLD}⚠  Validator found {len(unresolved_issues)} "
             f"high-confidence issue(s) — {reason_label}.{_RESET}"

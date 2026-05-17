@@ -1,0 +1,9 @@
+
+
+PREVIOUS ATTEMPT FAILED VALIDATION:
+- [src/routes/widget.ts] shopify.graphql query at line 1:29: Unknown type 'CartInput'. Did you mean 'EmailInput', 'ImageInput', 'MoveInput', 'SEOInput', or 'UTMInput'?
+- [src/routes/widget.ts] shopify.graphql query at line 2:10: Cannot query field 'cartCreate' on type 'Mutation'. Did you mean 'marketCreate', 'pageCreate', 'blogCreate', 'fileCreate', or 'menuCreate'?
+- [src/routes/widget.ts] shopify.graphql query at line 2:10: Cannot query field 'cartDiscountCodesUpdate' on type 'Mutation'. Did you mean 'discountCodeAppUpdate', 'discountCodeBasicUpdate', 'discountCodeBxgyUpdate', 'discountCodeActivate', or 'discountCodeAppCreate'?
+
+Fix ALL listed errors in this new attempt.
+

@@ -173,7 +173,12 @@ def run_codegen_validator(
         thinking_budget=_THINKING_BUDGET,
     )
 
-    response = invoke(llm, system, user)
+    # 1-hour TTL — codegen_v often runs once, then again after a
+    # codegen retry that fixed its findings (within the same pipeline,
+    # 5-15 min total). Default 5-min TTL evicts the prefix in between;
+    # 1h spans the full pipeline so the system prompt + LLD + alignment
+    # block hits cache on the second call.
+    response = invoke(llm, system, user, cache_ttl="1h")
     in_tok = response.input_tokens
     out_tok = response.output_tokens
     cache_r = response.cache_read_tokens

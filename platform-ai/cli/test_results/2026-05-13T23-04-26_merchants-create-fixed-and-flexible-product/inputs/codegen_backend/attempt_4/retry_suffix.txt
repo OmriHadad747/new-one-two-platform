@@ -1,0 +1,7 @@
+
+
+PREVIOUS ATTEMPT FAILED VALIDATION:
+- [src/routes/webhook-handlers.ts:201:46] TS2345: Argument of type 'Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>' is not assignable to parameter of type 'ShopifyClientContext'.
+
+Fix ALL listed errors in this new attempt.
+

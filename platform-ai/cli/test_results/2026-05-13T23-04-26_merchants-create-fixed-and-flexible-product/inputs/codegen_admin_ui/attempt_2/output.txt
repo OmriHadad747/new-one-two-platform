@@ -1,4 +1,3 @@
-window.__PLATFORM_CATALOG__ = [];
 export function mount(container, bridge) {
   // ── helpers ──────────────────────────────────────────────────────────────
   function esc(s) {

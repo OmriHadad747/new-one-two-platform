@@ -70,6 +70,7 @@ def _save_generated_files(
     is_storefront: bool,
     is_admin_ui: bool,
     plan: Optional[Dict[str, Any]] = None,
+    lld: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Write generated artifacts as individual files within run_dir.
@@ -98,7 +99,18 @@ def _save_generated_files(
         # top-level artifact per generator, no subdirectory.
         (run_dir / "db.sql").write_text(migration)
 
-    contracts = ((plan or {}).get("appContracts") or {}) if plan else {}
+    # Build catalog rows for the `window.__PLATFORM_CATALOG__` prelude.
+    # Prefer the LLD's `httpRoutes` (current pipeline); fall back to the
+    # legacy `plan.appContracts.{widget,admin}ApiCatalog` for deploy-
+    # revision runs whose state still carries the old shape. Without the
+    # right source, the prelude ships as `[]` and the platform SDK
+    # silently defaults every call to POST.
+    legacy_contracts = (
+        ((plan or {}).get("appContracts") or {}) if plan else {}
+    )
+    lld_routes = (lld or {}).get("httpRoutes") or {}
+    widget_routes = lld_routes.get("widget") or legacy_contracts.get("widgetApiCatalog") or []
+    admin_routes = lld_routes.get("admin") or legacy_contracts.get("adminApiCatalog") or []
 
     def _prelude(catalog_rows: List[Dict[str, Any]]) -> str:
         slim = [
@@ -119,11 +131,11 @@ def _save_generated_files(
         return f"window.__PLATFORM_CATALOG__ = {encoded};\n"
 
     if is_storefront and artifacts.get("storefront"):
-        prelude = _prelude(contracts.get("widgetApiCatalog") or []) if plan else ""
+        prelude = _prelude(widget_routes)
         (run_dir / "storefront.js").write_text(prelude + artifacts["storefront"])
 
     if is_admin_ui and artifacts.get("admin_ui"):
-        prelude = _prelude(contracts.get("adminApiCatalog") or []) if plan else ""
+        prelude = _prelude(admin_routes)
         (run_dir / "admin_ui.js").write_text(prelude + artifacts["admin_ui"])
 
 
@@ -150,6 +162,7 @@ def _save_codegen_failure_local(
     final_errors: Dict[str, List[str]],
     token_totals: Dict[str, Tuple[int, int, int, int]],
     plan: Optional[Dict[str, Any]] = None,
+    lld: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """
     Persist the LAST-attempt artifacts and the full retry trail when codegen
@@ -173,7 +186,9 @@ def _save_codegen_failure_local(
     # with a Python traceback. We still want the partial state if some
     # writes succeeded.
     try:
-        _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
+        _save_generated_files(
+            run_dir, artifacts, is_storefront, is_admin_ui, plan, lld
+        )
     except OSError as exc:
         _log.warning(
             "could not persist failed-attempt artifacts to %s: %s", run_dir, exc
@@ -748,6 +763,7 @@ def _phase_codegen(
         error_map,
         token_totals,
         plan=base_ctx.plan,
+        lld=base_ctx.lld,
     )
 
     # Persist partial state so the run is resumable. checkpoint stays at
@@ -849,9 +865,8 @@ def _phase_validator(
             run_dir,
             checkpoint="validator",
             halt_reason=None,
-            validator_issues=[],
-            validator_tokens={"in": 0, "out": 0, "duration_ms": 0},
-            pre_revision_artifacts=dict(artifacts),
+            codegen_v_findings=[],
+            codegen_v_tokens={"in": 0, "out": 0, "duration_ms": 0},
         )
         return artifacts, 0, 0, None
     else:
@@ -880,9 +895,8 @@ def _phase_validator(
             run_dir,
             checkpoint="validator",
             halt_reason=None,
-            validator_issues=[],
-            validator_tokens={"in": val_in, "out": val_out, "duration_ms": ms},
-            pre_revision_artifacts=dict(artifacts),
+            codegen_v_findings=[],
+            codegen_v_tokens={"in": val_in, "out": val_out, "duration_ms": ms},
         )
         return artifacts, val_in, val_out, None
 
@@ -935,9 +949,8 @@ def _phase_validator(
 
     _save_state(
         run_dir,
-        validator_issues=issues,
-        validator_tokens={"in": val_in, "out": val_out, "duration_ms": ms},
-        pre_revision_artifacts=dict(artifacts),
+        codegen_v_findings=issues,
+        codegen_v_tokens={"in": val_in, "out": val_out, "duration_ms": ms},
     )
 
     # ── 3. Codegen retry with findings as previous_errors ─────────────
@@ -1012,11 +1025,12 @@ def _phase_validator(
             ),
         )
         trace["final_outcome"] = "resolved"
+        # Outcome is encoded in (checkpoint, halt_reason):
+        #   ("revision", None) → codegen_v findings resolved on retry
         _save_state(
             run_dir,
             checkpoint="revision",
             halt_reason=None,
-            revision_outcome="resolved",
             artifacts=dict(revised_artifacts),
         )
         return revised_artifacts, total_in, total_out, trace
@@ -1038,11 +1052,12 @@ def _phase_validator(
         for e in errs:
             print(f"    {_DIM}• [{gen_name}] {e[:120]}{_RESET}")
     trace["final_outcome"] = "kept_originals"
+    # Outcome is encoded in (checkpoint, halt_reason):
+    #   ("validator", "kept_originals") → retry left static errors; originals shipped
     _save_state(
         run_dir,
         checkpoint="validator",
-        halt_reason="revision_failed",
-        revision_outcome="kept_originals",
+        halt_reason="kept_originals",
         artifacts=dict(artifacts),
     )
     return artifacts, total_in, total_out, trace
