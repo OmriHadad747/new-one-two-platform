@@ -212,62 +212,6 @@ def run_codegen_validator(
     return findings, in_tok, out_tok, cache_r, cache_c
 
 
-def run_llm_validators(
-    artifacts: Dict[str, str],
-    ctx: CodegenContext,
-    is_storefront: bool,
-    is_admin_ui: bool,
-) -> Tuple[List[Dict[str, Any]], int, int, Dict[str, Any]]:
-    """
-    Legacy 4-tuple shim for the production crew path.
-
-    The crew (`crews/feature_generator/crew.py`) still routes findings
-    through the revision agent; the new per-agent retry path lives in
-    the CLI shell (`cli/pipeline_local.py`). Until the crew migrates,
-    this wrapper exposes `run_codegen_validator` under the legacy
-    function name and packs the result into the legacy 4-tuple shape
-    `(issues, in_tok, out_tok, per_validator)`.
-
-    The returned `issues` are adapted to the legacy dict shape (with
-    `question` / `confidence` keys) so `_revision_locked_artifacts`
-    keeps working unchanged. Remove when the crew swaps to the
-    per-agent retry path.
-    """
-    findings, in_tok, out_tok, _cache_r, _cache_c = run_codegen_validator(
-        artifacts, ctx, is_storefront, is_admin_ui
-    )
-    issues: List[Dict[str, Any]] = []
-    for f in findings:
-        artifact = f.get("artifact", "")
-        location = f.get("location", "")
-        issue = f.get("issue", "")
-        failure = f.get("failure_mode", "")
-        composed = (
-            f"[{location}] {issue} — {failure}" if location else f"{issue} — {failure}"
-        )
-        issues.append(
-            {
-                "question": f"codegen_v[{artifact}]",
-                "issue": composed,
-                "confidence": f.get("confidence", "high"),
-                "artifact": artifact,
-                "validator": "codegen_v",
-            }
-        )
-    # Provide a minimal per-validator map matching the legacy shape so
-    # the crew's `for name, result in per_validator.items()` loop
-    # doesn't crash. Only fields the crew reads are populated.
-    class _LegacyResult:
-        def __init__(self) -> None:
-            self.latency_ms = 0
-            self.input_tokens = in_tok
-            self.output_tokens = out_tok
-            self.findings = findings
-            self.error = None
-
-    return issues, in_tok, out_tok, {"codegen_v": _LegacyResult()}
-
-
 def group_findings_by_artifact(
     findings: List[Dict[str, Any]],
 ) -> Dict[str, List[str]]:

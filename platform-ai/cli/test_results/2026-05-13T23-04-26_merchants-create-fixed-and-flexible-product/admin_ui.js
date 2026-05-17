@@ -21,15 +21,40 @@ export function mount(container, bridge) {
     }).format(ratio);
   };
 
-  const fmtMoneyAs = (minor, currency) => new Intl.NumberFormat(bridge.context.locale, {
-    style: "currency",
-    currency: currency || bridge.context.currency,
-  }).format((minor || 0) / 100);
+  // Currency-aware minor-unit divisor. Zero-decimal currencies divide by 1,
+  // three-decimal currencies divide by 1000, standard by 100.
+  function minorUnitDivisor(currencyCode) {
+    const zero = ["BIF","CLP","DJF","GNF","ISK","JPY","KMF","KRW","MGA","PYG","RWF","UGX","VND","VUV","XAF","XOF","XPF"];
+    const three = ["BHD","IQD","JOD","KWD","LYD","OMR","TND"];
+    const c = (currencyCode || "").toUpperCase();
+    if (zero.includes(c)) return 1;
+    if (three.includes(c)) return 1000;
+    return 100;
+  }
+
+  const fmtMoneyAs = (minor, currency) => {
+    const cur = (currency || bridge.context.currency || "USD").toUpperCase();
+    const divisor = minorUnitDivisor(cur);
+    return new Intl.NumberFormat(bridge.context.locale, {
+      style: "currency",
+      currency: cur,
+    }).format((minor || 0) / divisor);
+  };
 
   const fmtInt = (n) => new Intl.NumberFormat(bridge.context.locale).format(n || 0);
 
   function region(name) {
     return container.querySelector(`[data-region="${name}"]`);
+  }
+
+  // Extract numeric Shopify ID from a GID string.
+  // e.g. "gid://shopify/ProductVariant/12345678" → "12345678"
+  // Returns the raw string if it is already a plain numeric string.
+  function gidToExternalId(gid) {
+    if (!gid) return "";
+    const str = String(gid);
+    const match = str.match(/\/(\d+)$/);
+    return match ? match[1] : str;
   }
 
   // ── styles ───────────────────────────────────────────────────────────────
@@ -67,21 +92,17 @@ export function mount(container, bridge) {
   const BUNDLE_PAGE_SIZE = 20;
   const HISTORY_PAGE_SIZE = 20;
 
-  // bundles list
   let bundles = [], bundlesTotal = 0, bundlesPage = 0;
   let bundleStatusFilter = "", bundleHealthFilter = "";
   let bundlesLoading = false;
   let selectedBundleIds = new Set();
 
-  // active tab
-  let activeTab = "bundles"; // "bundles" | "history"
+  let activeTab = "bundles";
 
-  // purchase history
   let historyRows = [], historyTotal = 0, historyPage = 0;
   let historyBundleFilter = "", historyDateFrom = "", historyDateTo = "";
   let historyLoading = false;
 
-  // modal state
   let modal = null;
 
   // ── scaffold ─────────────────────────────────────────────────────────────
@@ -212,13 +233,12 @@ export function mount(container, bridge) {
     bundlesLoading = true;
     renderBundlesList();
     try {
-      const params = {
+      const res = await bridge.call("/bundles", {
         page: bundlesPage,
         page_size: BUNDLE_PAGE_SIZE,
         status_filter: bundleStatusFilter || null,
         health_filter: bundleHealthFilter || null,
-      };
-      const res = await bridge.call("/bundles", params);
+      });
       bundles = res.items || [];
       bundlesTotal = res.total || 0;
     } catch (_) {
@@ -236,8 +256,8 @@ export function mount(container, bridge) {
     if (bundlesLoading && bundles.length === 0) {
       list.innerHTML = `
         <div class="shell-table-wrap"><table class="shell-table">
-          <thead><tr><th class="bnd-select-col"></th><th>Title</th><th>Mode</th><th>Health</th><th>Tiers</th><th>Created</th><th>Actions</th></tr></thead>
-          <tbody>${Array(5).fill(`<tr><td colspan="7"><div class="shell-loading">&nbsp;</div></td></tr>`).join("")}</tbody>
+          <thead><tr><th class="bnd-select-col"></th><th>Title</th><th>Mode</th><th>Health</th><th>Status</th><th>Tiers</th><th>Created</th><th>Actions</th></tr></thead>
+          <tbody>${Array(5).fill(`<tr><td colspan="8"><div class="shell-loading">&nbsp;</div></td></tr>`).join("")}</tbody>
         </table></div>`;
       return;
     }
@@ -285,7 +305,7 @@ export function mount(container, bridge) {
               <td>${fmtDate(b.created_at)}</td>
               <td>
                 <div class="bnd-row-actions">
-                  <button class="btn-secondary" data-act="edit" data-id="${esc(b.id)}" data-title="${esc(b.title)}">Edit</button>
+                  <button class="btn-secondary" data-act="edit" data-id="${esc(b.id)}">Edit</button>
                   <button class="btn-secondary" data-act="clone" data-id="${esc(b.id)}">Clone</button>
                   <button class="btn-danger" data-act="delete" data-id="${esc(b.id)}" data-title="${esc(b.title)}">Delete</button>
                 </div>
@@ -413,14 +433,14 @@ export function mount(container, bridge) {
     const isEdit = bundle !== null;
     const previouslyFocused = document.activeElement;
 
-    // editor-level state
-    let editorTiers = []; // [{minimum_item_count, discount_rate}] (discount_rate in basis pts)
-    let editorItemsMap = new Map(); // variantExternalId → {variantExternalId, productExternalId, label}
+    let editorTiers = [];
+    // Map keyed by numeric external ID string (e.g. "12345678"), value:
+    // { variantExternalId: string, productExternalId: string, label: string }
+    let editorItemsMap = new Map();
     let editorItemsLoading = false;
     let editorTiersLoading = false;
     let editorItemsPage = 0, editorItemsTotal = 0;
     let editorItemRows = [];
-    let activeEditorTab = "details";
 
     const overlay = document.createElement("div");
     overlay.className = "shell-confirm-overlay";
@@ -489,32 +509,27 @@ export function mount(container, bridge) {
     // tab switching
     overlay.querySelectorAll("[data-editor-tab]").forEach((tab) => {
       tab.addEventListener("click", () => {
-        activeEditorTab = tab.dataset.editorTab;
-        overlay.querySelectorAll("[data-editor-tab]").forEach((t) => t.classList.remove("active"));
+        const t = tab.dataset.editorTab;
+        overlay.querySelectorAll("[data-editor-tab]").forEach((x) => x.classList.remove("active"));
         tab.classList.add("active");
         ["details", "items", "tiers"].forEach((r) => {
-          editorRegion(r).style.display = r === activeEditorTab ? "" : "none";
+          editorRegion(r).style.display = r === t ? "" : "none";
         });
-        if (activeEditorTab === "items" && isEdit && editorItemRows.length === 0 && !editorItemsLoading) {
+        if (t === "items" && isEdit && editorItemRows.length === 0 && !editorItemsLoading) {
           loadEditorItems();
         }
-        if (activeEditorTab === "tiers" && isEdit && editorTiers.length === 0 && !editorTiersLoading) {
+        if (t === "tiers" && isEdit && editorTiers.length === 0 && !editorTiersLoading) {
           loadEditorTiers();
         }
-        if (activeEditorTab === "tiers" && !isEdit) {
-          renderEditorTiers();
-        }
-        if (activeEditorTab === "items" && !isEdit) {
-          renderEditorItems();
-        }
+        if (t === "tiers" && !isEdit) renderEditorTiers();
+        if (t === "items" && !isEdit) renderEditorItems();
       });
     });
 
-    // items tab
+    // ── items tab ────────────────────────────────────────────────────────
     function renderEditorItems() {
       const content = editorSubRegion("items-content");
 
-      // selected variants chips
       const chipsHtml = editorItemsMap.size > 0
         ? `<div class="bnd-chips">${[...editorItemsMap.values()].map((v) =>
             `<span class="bnd-chip">${esc(v.label)}<button data-rm="${esc(v.variantExternalId)}" aria-label="Remove ${esc(v.label)}">×</button></span>`
@@ -545,15 +560,22 @@ export function mount(container, bridge) {
         const picks = await bridge.pickResource({
           type: "variant",
           multiple: 50,
-          selectionIds: [...editorItemsMap.keys()].map((id) => ({ id })),
+          selectionIds: [...editorItemsMap.values()].map((v) => ({ id: v.gid })).filter((x) => x.id),
         });
         if (!picks) return;
         picks.forEach((p) => {
-          // id is gid, use as opaque string
-          editorItemsMap.set(p.id, {
-            variantExternalId: p.id,
-            productExternalId: p.id, // gid — bridge returns variant gid
-            label: p.title || p.id,
+          // Extract numeric BIGINT-safe string from GID for backend.
+          // GID example: "gid://shopify/ProductVariant/12345678"
+          const numericId = gidToExternalId(p.id);
+          // Derive product numeric ID from variant GID is not possible without
+          // extra lookup; send the same numeric variant ID as product_external_id
+          // placeholder — the backend uses variant_external_id as the primary key.
+          // Store gid for re-opening the picker with correct pre-selection.
+          editorItemsMap.set(numericId, {
+            variantExternalId: numericId,
+            productExternalId: numericId,
+            label: p.title || numericId,
+            gid: p.id,
           });
         });
         renderEditorItems();
@@ -622,7 +644,7 @@ export function mount(container, bridge) {
       }
     }
 
-    // tiers tab
+    // ── tiers tab ────────────────────────────────────────────────────────
     function renderEditorTiers() {
       const content = editorSubRegion("tiers-content");
       content.innerHTML = `
@@ -680,7 +702,9 @@ export function mount(container, bridge) {
             editorTiers[idx].minimum_item_count = Math.max(1, parseInt(e.target.value, 10) || 1);
           } else if (field === "discount_pct") {
             const pct = parseFloat(e.target.value) || 0;
-            editorTiers[idx].discount_rate = Math.round(Math.min(100, Math.max(0, pct)) * 100);
+            // Merchant enters percent (e.g. 10 = 10%); store as basis points (* 100)
+            // Clamped to [0, 10000] basis points per alignment rule.
+            editorTiers[idx].discount_rate = Math.round(Math.min(10000, Math.max(0, pct * 100)));
           }
           renderEditorTiers();
         });
@@ -698,7 +722,7 @@ export function mount(container, bridge) {
         });
         editorTiers = (res.items || []).map((t) => ({
           minimum_item_count: t.minimum_item_count,
-          discount_rate: t.discount_rate, // stored as basis points
+          discount_rate: t.discount_rate, // stored as basis points, use verbatim
         }));
       } catch (_) {
         bridge.notify("Could not load tiers", "error");
@@ -737,19 +761,22 @@ export function mount(container, bridge) {
           bundleId = res.bundle_id;
         } else {
           const descValue = descInput.value.trim();
-          const descProvided = true; // we always send description from edit
+          // Per alignment rule [3]: send description_provided:true to signal
+          // we intend to update the description (including clearing it).
           await bridge.call("/bundles/update", {
             bundle_id: bundleId,
             title: titleInput.value.trim(),
             description: descValue || null,
-            description_provided: descProvided,
+            description_provided: true,
             mode: null,
             enabled: enabledCb ? enabledCb.checked : null,
           });
         }
 
-        // save items if any selected
+        // save items if any selected in the picker
         if (editorItemsMap.size > 0) {
+          // variantExternalId and productExternalId are already numeric strings
+          // extracted from GIDs via gidToExternalId — safe for backend BIGINT cast.
           const variantIds = [...editorItemsMap.values()].map((v) => v.variantExternalId);
           const productIds = [...editorItemsMap.values()].map((v) => v.productExternalId);
           const itemsRes = await bridge.call("/bundles/items/save", {
@@ -758,17 +785,20 @@ export function mount(container, bridge) {
             product_external_ids: productIds,
           });
           if (itemsRes.unavailable_variants && itemsRes.unavailable_variants.length > 0) {
-            bridge.notify(`Saved. ${itemsRes.unavailable_variants.length} variant(s) unavailable: ${itemsRes.unavailable_variants.slice(0, 3).join(", ")}${itemsRes.unavailable_variants.length > 3 ? "…" : ""}`, "error");
+            bridge.notify(
+              `Saved. ${itemsRes.unavailable_variants.length} variant(s) unavailable: ${itemsRes.unavailable_variants.slice(0, 3).join(", ")}${itemsRes.unavailable_variants.length > 3 ? "…" : ""}`,
+              "error"
+            );
           }
         }
 
-        // save tiers if any
+        // save tiers if any defined
         if (editorTiers.length > 0) {
           await bridge.call("/bundles/tiers/save", {
             bundle_id: bundleId,
             tiers: editorTiers.map((t) => ({
               minimum_item_count: t.minimum_item_count,
-              discount_rate: t.discount_rate, // basis points
+              discount_rate: t.discount_rate, // basis points, verbatim
             })),
           });
         }
@@ -782,7 +812,7 @@ export function mount(container, bridge) {
       }
     });
 
-    // wire saved items pagination
+    // saved items pagination via event delegation on overlay
     overlay.addEventListener("click", (e) => {
       if (e.target.dataset.act === "items-prev" && editorItemsPage > 0) {
         editorItemsPage--; loadEditorItems();
@@ -797,7 +827,7 @@ export function mount(container, bridge) {
       if (first) first.focus();
     });
 
-    // initial tab render
+    // initial render for both tabs
     renderEditorTiers();
     renderEditorItems();
   }
@@ -833,22 +863,25 @@ export function mount(container, bridge) {
     region("history-toolbar").querySelector('[data-act="export-hist"]').addEventListener("click", exportHistoryCSV);
   }
 
+  // Build ISO 8601 UTC strings from date-picker bare date strings.
+  // e.g. "2024-01-15" → "2024-01-15T00:00:00Z"
+  function dateToISOStart(dateStr) {
+    if (!dateStr) return null;
+    return `${dateStr}T00:00:00Z`;
+  }
+  function dateToISOEnd(dateStr) {
+    if (!dateStr) return null;
+    return `${dateStr}T23:59:59Z`;
+  }
+
   async function loadHistory() {
     historyLoading = true;
     renderHistoryList();
-
-    const dateFromISO = historyDateFrom
-      ? new Date(historyDateFrom).toISOString()
-      : null;
-    const dateToISO = historyDateTo
-      ? new Date(historyDateTo + "T23:59:59Z").toISOString()
-      : null;
-
     try {
       const res = await bridge.call("/purchase-history", {
         bundle_id: historyBundleFilter || null,
-        date_from: dateFromISO,
-        date_to: dateToISO,
+        date_from: dateToISOStart(historyDateFrom),
+        date_to: dateToISOEnd(historyDateTo),
         page: historyPage,
         page_size: HISTORY_PAGE_SIZE,
       });
@@ -920,31 +953,38 @@ export function mount(container, bridge) {
     const btn = region("history-toolbar")?.querySelector('[data-act="export-hist"]');
     if (btn) { btn.disabled = true; btn.textContent = "Exporting…"; }
 
-    const dateFromISO = historyDateFrom ? new Date(historyDateFrom).toISOString() : null;
-    const dateToISO = historyDateTo ? new Date(historyDateTo + "T23:59:59Z").toISOString() : null;
-
     try {
-      // fetch up to 1000 rows for export
       const res = await bridge.call("/purchase-history", {
         bundle_id: historyBundleFilter || null,
-        date_from: dateFromISO,
-        date_to: dateToISO,
+        date_from: dateToISOStart(historyDateFrom),
+        date_to: dateToISOEnd(historyDateTo),
         page: 0,
         page_size: 1000,
       });
       const rows = res.items || [];
-      const header = ["Order ID", "Bundle ID", "Item Count", "Discount Applied %", "Order Total", "Currency", "Order Placed", "Recorded At"];
-      const csvRows = [header, ...rows.map((r) => [
-        r.order_external_id,
-        r.bundle_id,
-        r.item_count,
-        (r.discount_rate_applied / 100).toFixed(2),
-        (r.order_total_minor_units / 100).toFixed(2),
-        r.order_currency,
-        r.order_placed_at,
-        r.recorded_at,
-      ])];
-      const csv = csvRows.map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+      const header = ["Order ID", "Bundle ID", "Item Count", "Discount Applied %", "Order Total (major units)", "Currency", "Order Placed", "Recorded At"];
+      const csvRows = [header, ...rows.map((r) => {
+        const cur = (r.order_currency || bridge.context.currency || "USD").toUpperCase();
+        const divisor = minorUnitDivisor(cur);
+        const majorTotal = ((r.order_total_minor_units || 0) / divisor).toFixed(
+          // zero-decimal: 0 decimal places; three-decimal: 3; else 2
+          divisor === 1 ? 0 : divisor === 1000 ? 3 : 2
+        );
+        return [
+          r.order_external_id,
+          r.bundle_id,
+          r.item_count,
+          // discount_rate_applied is basis points; display as percent string
+          (r.discount_rate_applied / 100).toFixed(2),
+          majorTotal,
+          cur,
+          r.order_placed_at,
+          r.recorded_at,
+        ];
+      })];
+      const csv = csvRows.map((row) =>
+        row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")
+      ).join("\n");
       const blob = new Blob([csv], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -964,6 +1004,6 @@ export function mount(container, bridge) {
 
   // ── initial load ──────────────────────────────────────────────────────────
   renderBundlesToolbar();
-  renderBundlesList(); // show skeleton immediately
+  renderBundlesList();
   loadBundles();
 }

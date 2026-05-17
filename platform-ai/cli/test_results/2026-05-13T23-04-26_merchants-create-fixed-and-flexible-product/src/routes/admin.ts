@@ -6,8 +6,8 @@ const adminRouter = Router();
 
 // GET /bundles — paginated filterable list
 adminRouter.get("/bundles", async (req: Request, res: Response): Promise<void> => {
-  const statusFilter = req.query?.status_filter as string | undefined;
-  const healthFilter = req.query?.health_filter as string | undefined;
+  const statusFilter = (req.query?.status_filter as string) ?? null;
+  const healthFilter = (req.query?.health_filter as string) ?? null;
   const page = req.query?.page;
   const pageSize = req.query?.page_size;
 
@@ -25,8 +25,8 @@ adminRouter.get("/bundles", async (req: Request, res: Response): Promise<void> =
       FROM bundles b
       LEFT JOIN bundle_tiers bt ON bt.bundle_id = b.id
       WHERE
-        (${statusFilter ?? null}::boolean IS NULL OR b.enabled = ${statusFilter ?? null}::boolean)
-        AND (${healthFilter ?? null}::text IS NULL OR b.health_status = ${healthFilter ?? null}::text)
+        (${statusFilter}::boolean IS NULL OR b.enabled = ${statusFilter}::boolean)
+        AND (${healthFilter}::text IS NULL OR b.health_status = ${healthFilter}::text)
       GROUP BY b.id
       ORDER BY b.created_at DESC
     `,

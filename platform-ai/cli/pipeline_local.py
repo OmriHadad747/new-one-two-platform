@@ -2,9 +2,10 @@
 LLM pipeline phases for the local generator CLI.
 
 Owns the actual generation flow — architect, codegen + static validation,
-LLM validator + revision — plus the failure-persistence helpers tied to
-those phases (`_save_codegen_failure_local`, `_save_revision_failure_local`,
-`_save_revision_trace`) and the on-disk artifact writer (`_save_generated_files`).
+codegen validator (codegen_v) + per-agent retry — plus the failure-persistence
+helpers tied to those phases (`_save_codegen_failure_local`,
+`_save_revision_failure_local`) and the on-disk artifact writer
+(`_save_generated_files`).
 
 `chat_local.py` orchestrates: argparse, chat / clarification, component
 picking, run-dir + resume state management, output writing (md / arch.json),
@@ -58,7 +59,6 @@ _log = logging.getLogger(__name__)
 _HERE = Path(__file__).resolve().parent
 
 _MAX_CODEGEN_RETRIES = 3  # matches crew.py _MAX_RETRIES
-_REVISION_TRACES_SUBDIR = "revision_traces"
 
 
 # ── Artifact + failure persistence ────────────────────────────────────────────
@@ -202,16 +202,6 @@ def _save_codegen_failure_local(
         path.write_text(json.dumps(payload, indent=2))
     except OSError as exc:
         _log.warning("could not write %s: %s", path, exc)
-    return path
-
-
-def _save_revision_trace(
-    run_dir: Path, run_ts: str, slug: str, trace: Dict[str, Any]
-) -> Path:
-    trace_dir = run_dir / _REVISION_TRACES_SUBDIR
-    trace_dir.mkdir(parents=True, exist_ok=True)
-    path = trace_dir / f"{run_ts}_{slug}.json"
-    path.write_text(json.dumps(trace, indent=2))
     return path
 
 
@@ -734,7 +724,14 @@ def _phase_codegen(
                 print(f"    {_DIM}• {gen_name}: {e}{_RESET}")
 
         if attempt < _MAX_CODEGEN_RETRIES:
-            _retry_line("Static Validation", notes=f"fixing {failed_summary}")
+            # Emit one retry header per failing agent — same convention as
+            # HLD / LLD / Ops Picker (each upstream phase passes its own
+            # name to `_retry_line`, not the validator's name).
+            for gen_name in error_map:
+                _retry_line(
+                    _CODEGEN_LABELS.get(gen_name, gen_name),
+                    notes=f"retry attempt {attempt + 1}",
+                )
 
     # All retries exhausted. Persist whatever the last attempt produced —
     # the artifacts live only in this stack frame and would otherwise be
@@ -860,7 +857,7 @@ def _phase_validator(
     else:
         _spinner("Validator")
         t0 = time.monotonic()
-        with input_log("validator", run_dir):
+        with input_log("codegen_v", run_dir):
             issues, val_in, val_out, val_cache_r, val_cache_c = run_codegen_validator(
                 artifacts, base_ctx, is_storefront, is_admin_ui
             )
@@ -944,17 +941,26 @@ def _phase_validator(
     )
 
     # ── 3. Codegen retry with findings as previous_errors ─────────────
-    # Stamp `prior_<x>_code` so each codegen agent patches its previous
-    # output instead of regenerating from scratch.
+    # Stamp `prior_<x>_code` ONLY for artifacts that are actually being
+    # retried. Setting `prior_db_sql` for an artifact that isn't in
+    # `error_map` makes the DB static validator treat the unchanged
+    # db.sql as a "revision run" (CREATE TABLE → ALTER TABLE check),
+    # which falsely fails the post-retry validation and wastes a DB
+    # retry. Same logic for any artifact whose validator behaves
+    # differently when its prior_* is non-empty.
     retry_ctx = dataclasses.replace(
         base_ctx,
-        prior_backend_code=artifacts.get("backend") or base_ctx.prior_backend_code,
-        prior_db_sql=artifacts.get("db") or base_ctx.prior_db_sql,
+        prior_backend_code=(
+            artifacts.get("backend") if "backend" in error_map else base_ctx.prior_backend_code
+        ),
+        prior_db_sql=(
+            artifacts.get("db") if "db" in error_map else base_ctx.prior_db_sql
+        ),
         prior_storefront_code=(
-            artifacts.get("storefront") or base_ctx.prior_storefront_code
+            artifacts.get("storefront") if "storefront" in error_map else base_ctx.prior_storefront_code
         ),
         prior_admin_ui_code=(
-            artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code
+            artifacts.get("admin_ui") if "admin_ui" in error_map else base_ctx.prior_admin_ui_code
         ),
     )
 
@@ -1006,7 +1012,6 @@ def _phase_validator(
             ),
         )
         trace["final_outcome"] = "resolved"
-        _save_revision_trace(run_dir, run_ts, run_slug, trace)
         _save_state(
             run_dir,
             checkpoint="revision",
@@ -1033,7 +1038,6 @@ def _phase_validator(
         for e in errs:
             print(f"    {_DIM}• [{gen_name}] {e[:120]}{_RESET}")
     trace["final_outcome"] = "kept_originals"
-    _save_revision_trace(run_dir, run_ts, run_slug, trace)
     _save_state(
         run_dir,
         checkpoint="validator",

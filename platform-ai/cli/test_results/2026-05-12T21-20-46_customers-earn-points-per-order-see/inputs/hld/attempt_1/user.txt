@@ -1,7 +1,0 @@
-Merchant request: Customers earn points per order, see balance on cart page, and apply points as a discount before checkout.
-
-Product-agent intent (use as context — pick the archetype, capabilities,
-and contracts from the merchant's actual needs):
-{"triggerTypes": ["webhook", "widget"], "resources": ["Order", "Customer"], "desiredOutcome": "Customers earn points per order, see balance on cart page, and apply points as a discount before checkout.", "cronHint": null, "appCategory": "storefront_backend_admin", "qualityBrief": "A good version handles edge cases: preventing over-redemption (points can't exceed available balance), recalculating points correctly when orders are refunded, ensuring the discount appears before tax and shipping, and making the cart widget responsive on mobile. The admin settings should be simple \u2014 just two numbers (points per dollar and points-to-discount conversion). Show merchants actual customer point balances so they can audit the system."}
-
-Produce the HLD plan as JSON conforming to the appended schema.

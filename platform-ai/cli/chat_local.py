@@ -10,11 +10,10 @@ pipeline phase by phase. Use --stop-after to halt at a specific phase, or
 USAGE
 -----
   python chat_local.py                            # full pipeline
-  python chat_local.py --stop-after hld           # HLD only, prints plan
-  python chat_local.py --stop-after lld           # + LLD
+  python chat_local.py --stop-after hld           # HLD only (incl. hld_v)
+  python chat_local.py --stop-after lld           # + LLD (incl. lld_v)
   python chat_local.py --stop-after pre-codegen   # + cross-agent alignment notes
-  python chat_local.py --stop-after codegen       # + codegen + static validation
-  python chat_local.py --stop-after validator     # + LLM validator + revision pass
+  python chat_local.py --stop-after codegen       # + codegen + static + codegen_v
   python chat_local.py --no-db                    # skip writing the bundle to postgres
 
   # Iterate on the HLD agent — chat once, then resume with --stop-after hld
@@ -119,7 +118,6 @@ from subagents.a_product_agent.agent import run_product_agent_analyze
 from models.adapter import input_log
 from cli.pipeline_local import (
     _MAX_CODEGEN_RETRIES,
-    _REVISION_TRACES_SUBDIR,
     _phase_codegen,
     _phase_explanation,
     _phase_hld,
@@ -132,7 +130,7 @@ from cli.pipeline_local import (
 TEST_RESULTS_DIR = _HERE / "test_results"
 
 StopAfter = Literal[
-    "hld", "ops-picker", "lld", "pre-codegen", "codegen", "validator", "full"
+    "hld", "ops-picker", "lld", "pre-codegen", "codegen", "full"
 ]
 
 # ── Display helpers ────────────────────────────────────────────────────────────
@@ -182,7 +180,7 @@ _AGENT_COLOR: Dict[str, str] = {
     "Backend": _BLUE,
     "DB": _CYAN,
     "Storefront": _YELLOW,
-    "Admin UI": _YELLOW,
+    "Admin UI": _RED,
     "Static Validation": _GREEN,
     "Validator": _MAGENTA,
     "Revision": _BLUE,
@@ -1171,50 +1169,11 @@ def _slug(text: str, max_words: int = 6) -> str:
     return "-".join(words[:max_words])
 
 
-def _save_hld_json(
-    run_dir: Path,
-    prompt: str,
-    intent: Dict,
-    plan: Dict,
-    errors: List[str],
-    product_prompt: str = "",
-    hld_v_findings: Optional[List] = None,
-) -> Path:
-    payload: Dict[str, Any] = {
-        "prompt": prompt,
-        "intent": intent,
-        "plan": plan,
-        "validation_errors": errors,
-    }
-    if product_prompt:
-        payload["product_prompt"] = product_prompt
-    if hld_v_findings is not None:
-        payload["hld_v_findings"] = hld_v_findings
-    path = run_dir / "hld.json"
-    path.write_text(json.dumps(payload, indent=2))
-    return run_dir
-
-
-def _save_ops_picks_json(run_dir: Path, picks: Dict[str, Any]) -> Path:
-    """
-    Persist the ops-picker output as a sibling to hld.json. Same pattern
-    as `_save_hld_json` — the stop=ops report links to this file rather
-    than inlining the JSON.
-    """
-    path = run_dir / "ops_picks.json"
-    path.write_text(json.dumps(picks, indent=2))
-    return path
-
-
-def _save_lld_json(run_dir: Path, lld: Dict[str, Any]) -> Path:
-    """
-    Persist the LLD output as a sibling to hld.json + ops_picks.json.
-    The LLD plan contains the complete codegen spec — stop=lld report
-    links to this file rather than inlining the (large) JSON.
-    """
-    path = run_dir / "lld.json"
-    path.write_text(json.dumps(lld, indent=2))
-    return path
+# hld.json / ops_picks.json / lld.json file writers have been removed.
+# Source of truth for each agent's output is now
+# `inputs/<agent>/attempt_N/output.txt` (persisted by `dump_output` inside
+# the active `input_log` block). The same data is also embedded in
+# `state.json` under `plan` / `ops_picks` / `lld` for resume continuity.
 
 
 def _validator_revision_md_lines(trace: Dict[str, Any]) -> List[str]:
@@ -1248,9 +1207,11 @@ def _validator_revision_md_lines(trace: Dict[str, Any]) -> List[str]:
         for gen, errs in se.items():
             for e in errs:
                 lines.append(f"    - [{gen}] {e}")
-    trace_rel = f"{_REVISION_TRACES_SUBDIR}/{trace['run_ts']}_{trace['slug']}.json"
     lines.append("")
-    lines.append(f"**Full trace:** [{trace_rel}]({trace_rel})")
+    lines.append(
+        "**Full trace:** see `inputs/codegen_v/attempt_N/output.txt` "
+        "and the codegen retry attempt dirs."
+    )
     lines.append("")
     return lines
 
@@ -1336,8 +1297,6 @@ def _save_run_artifacts(
     anymore.
     """
     _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
-    if plan:
-        _save_hld_json(run_dir, prompt, intent or {}, plan, [], "", hld_v_findings)
     return run_dir
 
 
@@ -1507,17 +1466,16 @@ def main() -> None:
             "lld",
             "pre-codegen",
             "codegen",
-            "validator",
         ],
         default=None,
         help=(
             "Stop after a specific phase: "
-            "'hld' = HLD only, "
+            "'hld' = HLD only (incl. hld_v), "
             "'ops-picker' = + ops picker (LLD stage 1), "
-            "'lld' = + LLD (LLD stage 2 — full codegen spec), "
+            "'lld' = + LLD (incl. lld_v), "
             "'pre-codegen' = + pre-codegen alignment notes, "
-            "'codegen' = + codegen + static validation, "
-            "'validator' = + LLM validator + revision. "
+            "'codegen' = + codegen + static validation + codegen_v "
+            "(+ per-agent retry on findings). "
             "Omit to run the full pipeline."
         ),
     )
@@ -1911,13 +1869,10 @@ def main() -> None:
             hld_v_findings=hld_v_findings,
             all_tokens={k: list(v) for k, v in all_tokens.items()},
         )
-        # Always persist hld.json after the HLD phase completes — same
-        # pattern as ops_picks.json / lld.json. Without this, mid-pipeline
-        # runs would have the HLD only inside state.json with no standalone
-        # artifact on disk for inspection.
-        _save_hld_json(
-            run_dir, prompt, intent, plan, [], product_prompt, hld_v_findings
-        )
+        # HLD plan is persisted into state.json (`plan`, `hld_v_findings`)
+        # and the agent's `inputs/hld/attempt_N/output.txt`. No separate
+        # hld.json file is written — those redundant files have been
+        # retired in favour of the per-attempt outputs.
 
     if stop_after == "hld":
         # User-requested stop. Mark the run done so it stops appearing in
@@ -1976,7 +1931,6 @@ def main() -> None:
             _fail_db("Ops Picker phase failed")
             raise
         all_tokens["ops_picker"] = (ops_in, ops_out)
-        _save_ops_picks_json(run_dir, ops_picks)
         _save_state(
             run_dir,
             ops_picks=ops_picks,
@@ -2044,7 +1998,6 @@ def main() -> None:
             _fail_db("LLD phase failed")
             raise
         all_tokens["lld"] = (lld_in, lld_out)
-        _save_lld_json(run_dir, lld)
         _save_state(
             run_dir,
             lld=lld,
@@ -2145,7 +2098,6 @@ def main() -> None:
                         _r_in, _r_out, "corrected", cache_read=_r_cr, cache_create=_r_cc
                     ),
                 )
-                _save_lld_json(run_dir, lld)
             except Exception as _exc:
                 _log.warning(
                     "lld_v retry: LLD re-run failed (%s) — keeping original", _exc
@@ -2453,88 +2405,50 @@ def main() -> None:
         # checkpoint=codegen written by _phase_codegen on success.
         _save_state(run_dir, all_tokens={k: list(v) for k, v in all_tokens.items()})
 
-    if stop_after == "codegen":
-        # User-requested stop — mark done so the run drops out of the
-        # resume list (same reasoning as stop_after=hld).
-        _save_state(run_dir, checkpoint="done", halt_reason=None)
-        total_ms = int((time.monotonic() - total_start) * 1000)
-        _save_run_artifacts(
-            run_dir,
-            prompt,
-            artifacts,
-            is_storefront,
-            is_admin_ui,
-            intent=intent,
-            plan=plan,
-            hld_v_findings=hld_v_findings,
-        )
-        print()
-        _summary_box(
-            "◆  CODEGEN STOP",
-            [
-                ("Status", _c("✓ static validation passed", _BRIGHT_GREEN, _BOLD)),
-                ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
-                ("Output", _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
-            ],
-        )
-        _print_artifacts(artifacts)
-        _print_token_summary(all_tokens)
-        print()
-        return
-
-    # ── Phase: LLM Validator + Revision ───────────────────────────────────────
-    # Resume rules for this combined phase:
-    #   1. checkpoint >= "validator" with NO halt          → skip entirely
+    # ── Phase: Codegen Validator (codegen_v) ──────────────────────────────────
+    # Folded into the codegen phase — same convention as hld_v inside hld and
+    # lld_v inside lld. Findings route back to the originating codegen agent
+    # via _phase_codegen's error_map mechanism, so the affected agent patches
+    # its file using its prior code + its findings (no separate revision agent).
+    #
+    # Resume rules:
+    #   1. checkpoint >= "validator" with NO halt   → skip entirely
     #   2. checkpoint == "validator" AND halt in
-    #      {kept_originals, revision_failed}                → skip validator,
-    #      re-run revision with saved issues + pre-revision artifacts
-    #   3. checkpoint == "revision" (resolved or resolved_on_retry)
-    #                                                       → skip entirely
+    #      {kept_originals, revision_failed}         → re-run with saved issues
+    #   3. checkpoint == "revision" (success)         → skip entirely
     validator_trace = None
     if (
         resume_state
         and _resumed_idx >= _phase_index("validator")
         and _resumed_halt not in ("kept_originals", "revision_failed")
     ):
-        # Validator+revision already settled successfully (no unresolved
-        # findings). Reuse artifacts + tokens, no LLM calls.
         if resume_state.get("validator_tokens"):
             tk = resume_state["validator_tokens"]
             all_tokens["validator"] = (int(tk.get("in", 0)), int(tk.get("out", 0)))
-        # Use the merged artifacts from the prior run if revision swapped
-        # storefront / admin_ui in.
         if resume_state.get("artifacts"):
             artifacts = dict(resume_state["artifacts"])
-        # Try to recover the prior revision trace so the resumed report.md
-        # carries the same Validator + Revision section as the original.
-        # Best-effort: if the trace file is missing/unreadable we just skip
-        # that section (the run still completes).
-        trace_path = run_dir / _REVISION_TRACES_SUBDIR / f"{run_ts}_{run_slug}.json"
-        if trace_path.is_file():
-            try:
-                validator_trace = json.loads(trace_path.read_text())
-            except (OSError, json.JSONDecodeError):
-                validator_trace = None
-        _info("Validator + Revision: reusing saved outcome (skipping LLM call)")
+        # Trace files are no longer written; report.md falls back to whatever
+        # validator_issues / validator_tokens are already in state.json.
+        validator_trace = None
+        _info("Codegen Validator: reusing saved outcome (skipping LLM call)")
     elif (
         resume_state
         and _resumed_idx >= _phase_index("validator")
         and _resumed_halt in ("kept_originals", "revision_failed")
     ):
-        # Resume only the revision step. Feed it the saved validator issues
-        # and the pre-revision artifacts (NOT the broken merged output from
-        # the failed revision — we want a fresh attempt at fixing the same
-        # problem, not to compound prior damage).
-        _phase_header("VALIDATOR + REVISION (revision-only resume)")
+        # Re-run the validator-driven codegen retry against the saved
+        # pre-revision artifacts (NOT the broken merged output from a
+        # failed retry — we want a fresh attempt, not compounded damage).
+        _phase_header("CODEGEN VALIDATOR (retry resume)")
         pre = resume_state.get("pre_revision_artifacts") or resume_state.get(
             "artifacts"
         )
         if not pre or not resume_state.get("validator_issues"):
             print(
-                f"\n  {_RED}Cannot resume revision — saved state is missing "
-                f"pre_revision_artifacts or validator_issues.{_RESET}"
+                f"\n  {_RED}Cannot resume validator retry — saved state is "
+                f"missing pre_revision_artifacts or validator_issues.{_RESET}"
             )
-            _fail_db("Resume revision failed: incomplete saved state")
+            _fail_db("Resume validator failed: incomplete saved state")
             sys.exit(2)
         resumed_validator = {
             "issues": resume_state["validator_issues"],
@@ -2554,17 +2468,11 @@ def main() -> None:
             run_slug,
             resumed_validator=resumed_validator,
         )
-        # The validator wasn't actually called on this resume path, so the
-        # values returned in val_in/val_out are *revision* tokens — fresh
-        # spend the merchant just paid. The validator's prior cost is
-        # already in the loaded all_tokens snapshot. Track the new revision
-        # spend under a separate key so per-agent reporting stays accurate
-        # (and a follow-up resume reads the cumulative cost from state).
         prior_rev_in, prior_rev_out = all_tokens.get("revision", (0, 0))
         all_tokens["revision"] = (prior_rev_in + val_in, prior_rev_out + val_out)
         _save_state(run_dir, all_tokens={k: list(v) for k, v in all_tokens.items()})
     else:
-        _phase_header("VALIDATOR + REVISION")
+        _phase_header("CODEGEN VALIDATOR")
         artifacts, val_in, val_out, validator_trace = _phase_validator(
             base_ctx,
             artifacts,
@@ -2576,14 +2484,13 @@ def main() -> None:
         )
         if val_in or val_out:
             all_tokens["validator"] = (val_in, val_out)
-        # Persist the rolled-up token totals so a resume after revision
-        # success doesn't lose them.
         _save_state(run_dir, all_tokens={k: list(v) for k, v in all_tokens.items()})
 
-    if stop_after == "validator":
-        # User-requested stop — mark done so the run drops out of the
-        # resume list (same reasoning as stop_after=hld).
-        _save_state(run_dir, checkpoint="done")
+    if stop_after == "codegen":
+        # User-requested stop. Codegen + codegen_v are now one phase, just
+        # like hld + hld_v and lld + lld_v. Mark done so the run drops out
+        # of the resume list.
+        _save_state(run_dir, checkpoint="done", halt_reason=None)
         total_ms = int((time.monotonic() - total_start) * 1000)
         _save_run_artifacts(
             run_dir,
@@ -2597,9 +2504,12 @@ def main() -> None:
         )
         print()
         _summary_box(
-            "◆  VALIDATOR STOP",
+            "◆  CODEGEN STOP",
             [
-                ("Status", _c("✓ semantic check passed", _BRIGHT_GREEN, _BOLD)),
+                (
+                    "Status",
+                    _c("✓ static + codegen_v passed", _BRIGHT_GREEN, _BOLD),
+                ),
                 ("Duration", _c(f"{total_ms / 1000:.1f}s", _CYAN)),
                 ("Output", _c(str(run_dir.relative_to(_HERE)) + "/", _BLUE)),
             ],
@@ -2637,8 +2547,9 @@ def main() -> None:
 
     # ── Save report + generated files ─────────────────────────────────────────
     _save_generated_files(run_dir, artifacts, is_storefront, is_admin_ui, plan)
-    # Always persist the canonical HLD output alongside the report.
-    _save_hld_json(run_dir, prompt, intent, plan, [], "", hld_v_findings)
+    # No separate hld/lld/ops_picks json files — the canonical sources are
+    # the per-attempt `inputs/<agent>/attempt_N/output.txt` plus the
+    # `plan` / `lld` / `ops_picks` blocks already in state.json.
     merchant_facing = explanation.get("merchantFacing", "")
     lines = _md_pipeline_header("full", prompt, total_ms, all_tokens)
     lines += [

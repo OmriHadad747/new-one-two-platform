@@ -355,7 +355,7 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
 
   // Step: Create Shopify cart and apply discount code via Storefront API
   try {
-    // Step: Create cart via Storefront API
+    // Step: Create cart via Storefront API cartCreate mutation
     const createdCart = await shopify.storefront<{
       cartCreate: {
         cart: { id: string; checkoutUrl: string } | null;
@@ -377,7 +377,7 @@ widgetRouter.post("/cart/add", async (req: Request, res: Response): Promise<void
       );
     }
 
-    // Step: Apply discount code to cart via Storefront API
+    // Step: Apply discount code to cart via Storefront API cartDiscountCodesUpdate mutation
     const updatedCart = await shopify.storefront<{
       cartDiscountCodesUpdate: {
         cart: { id: string; discountCodes: { code: string }[] } | null;

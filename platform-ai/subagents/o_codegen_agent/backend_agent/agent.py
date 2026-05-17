@@ -140,7 +140,7 @@ class BackendGenerator(Generator):
         cache_creation_tokens) so the codegen orchestration can attribute
         cache reads on retries within the 5-min TTL.
         """
-        from models.adapter import get_llm, invoke
+        from models.adapter import dump_output, get_llm, invoke
         from models.agent_models import get_agent_model
 
         thinking_budget = (
@@ -159,6 +159,10 @@ class BackendGenerator(Generator):
             self.user_prompt(ctx),
             retry_suffix=retry_suffix,
         )
+        # Mirror Generator.generate() — persist the raw response next to the
+        # prompt files for post-mortem. Without this, every backend retry
+        # leaves `inputs/codegen_backend/attempt_N/` missing output.txt.
+        dump_output(result.content)
 
         ctx.backend_email_metadata = _extract_email_metadata(result.content)
         ctx.backend_raw_response = result.content

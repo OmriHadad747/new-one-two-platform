@@ -52,7 +52,10 @@ from subagents.a_product_agent.agent import (
 from subagents.u_explenation_agent.explanation_agent import run_explanation_agent
 from subagents.base import CodegenContext
 from subagents.s_revision_agent.revision_agent import run_revision_agent
-from subagents.q_codegen_v_agent.agent import run_llm_validators
+from subagents.q_codegen_v_agent.agent import (
+    group_findings_by_artifact,
+    run_codegen_validator,
+)
 from subagents.registry import GENERATORS
 # Codegen primitives live in subagents/o_codegen_agent/orchestration.py — the
 # canonical toolkit shared by every codegen consumer (this crew, the CLI's
@@ -62,7 +65,6 @@ from subagents.o_codegen_agent.orchestration import (
     _BACKEND_OPEN_ARTIFACTS,
     _DB_BROKEN_ARTIFACTS,
     _MAX_RETRIES,
-    _revision_locked_artifacts,
     run_codegen_parallel,
     validate_artifacts,
 )
@@ -563,40 +565,32 @@ def _phase_validator(
     agent_trace: List[AgentTraceEntry],
 ) -> Dict[str, str]:
     """
-    Optional Agent 4b: LLM semantic validators (LLM_VALIDATION_ENABLED=true).
+    Optional Agent 4b: codegen validator (LLM_VALIDATION_ENABLED=true).
 
-    Runs the parallel validators in subagents/q_codegen_v_agent (agent_rules,
-    bug_finder) against the generated artifacts. Only HIGH-confidence findings
-    trigger a revision pass. (quality_brief_coverage is frozen — see
-    g_codegen_v_agent/base.py for the un-freeze recipe.)
+    Runs `subagents.q_codegen_v_agent` against the emitted artifacts and
+    routes findings BACK to the codegen agent that produced the broken
+    artifact — same retry path the static validator already uses
+    (`run_codegen_parallel` with `error_map` + `prior_<x>_code` on the
+    ctx). No separate revision agent in this flow; each codegen agent
+    patches its own file using its own prompt + cached examples.
 
-    Locking strategy (see _revision_locked_artifacts) — driven solely by each
-    finding's `artifact` field:
-      artifact == "db"      → unlock both (migration itself is broken).
-      artifact == "backend"        → lock migration, fix handler.
-      artifact in {storefront,
-                   admin_ui}       → lock both backends, fix the frontend.
-      artifact == "plan"           → can't be fixed in this loop (revision
-                                      doesn't re-run the architect). Logged
-                                      as WARN and dropped before revision;
-                                      if every finding is plan-level the
-                                      run short-circuits and returns the
-                                      original artifacts so the operator
-                                      can re-run the architect.
+    Plan-level findings (`artifact == "plan"`) are logged as warnings
+    and dropped — there's no codegen agent to re-run the architect.
 
-    After each revision attempt the output is statically validated. If both attempts
-    produce structurally invalid code the job is failed (not silently swapped back).
-    Trade-off: a double revision failure is rare and always indicates a structural bug
-    (React code, import statements, etc.) — silently shipping that is worse than failing.
+    Failure mode: if the per-agent retry produces output that still
+    fails static validation, log + ship originals (kept_originals).
+    The codegen-time retry loop already does N attempts before this
+    runs, so a post-validator regression is rare and "ship working
+    code" beats "fail the job because the fix attempt drifted".
     """
     from config import get_settings
 
     if not get_settings().llm_validation_enabled:
         return artifacts
 
-    _emit(request, "validator", "running", "Checking semantic alignment…")
+    _emit(request, "validator", "running", "Hunting runtime-crashing bugs…")
     t0 = _now_ms()
-    issues, val_in, val_out, per_validator = run_llm_validators(
+    findings, val_in, val_out, _cache_r, _cache_c = run_codegen_validator(
         artifacts, base_ctx, is_storefront, is_admin_ui
     )
     agent_trace.append(
@@ -607,184 +601,128 @@ def _phase_validator(
             outputTokens=val_out,
         )
     )
-    # Per-validator visibility: log latency / tokens / error per slot so a
-    # silent fail-open (e.g. provider outage on one validator) shows up in
-    # job logs even when the other slots succeeded with no findings.
-    for name, result in per_validator.items():
-        log.info(
-            "job=%s validator=%s latency=%dms in_tok=%d out_tok=%d findings=%d%s",
-            request.jobId,
-            name,
-            result.latency_ms,
-            result.input_tokens,
-            result.output_tokens,
-            len(result.findings),
-            f" error={result.error}" if result.error else "",
-        )
+    log.info(
+        "job=%s codegen_v: latency=%dms in_tok=%d out_tok=%d findings=%d",
+        request.jobId,
+        _now_ms() - t0,
+        val_in,
+        val_out,
+        len(findings),
+    )
 
-    if not issues:
-        _emit(request, "validator", "completed", "Semantic check passed")
+    if not findings:
+        _emit(request, "validator", "completed", "No runtime bugs found")
         return artifacts
 
-    # Plan-level findings can't be fixed inside the codegen loop — the
-    # revision agent edits backend / db / storefront / admin, never the
-    # architect output. Surface them loudly as warnings (so they show up in
-    # job logs) and drop them from the actionable set passed to revision.
-    # If every finding was plan-level, skip revision entirely: there is
-    # nothing the loop can act on, and forcing revision to run against
-    # arbitrary frontend code (the prior `_revision_locked_artifacts`
-    # default) would just churn unrelated artifacts.
-    plan_issues = [i for i in issues if i.get("artifact") == "plan"]
-    actionable_issues = [i for i in issues if i.get("artifact") != "plan"]
-    for plan_issue in plan_issues:
+    # Plan-level findings can't be acted on in this loop — no codegen
+    # agent re-runs the architect. Log loudly + drop them.
+    plan_findings = [f for f in findings if f.get("artifact") == "plan"]
+    for pf in plan_findings:
         log.warning(
             "job=%s plan-level finding (not auto-fixable, re-run architect): "
-            "%s — %s",
+            "[%s] %s",
             request.jobId,
-            plan_issue.get("question", "?"),
-            plan_issue.get("issue", ""),
+            pf.get("location", "?"),
+            pf.get("issue", ""),
         )
-    if not actionable_issues:
+
+    error_map = group_findings_by_artifact(findings)
+    if not error_map:
         _emit(
             request,
             "validator",
             "completed",
-            f"{len(plan_issues)} plan-level issue(s) — revision skipped "
-            "(re-run architect to fix)",
+            f"{len(plan_findings)} plan-level finding(s) — codegen retry skipped",
         )
         return artifacts
-    issues = actionable_issues
 
-    issue_summary = "; ".join(f"{i['question']}: {i['issue']}" for i in issues)
-    log.info(
-        "job=%s llm_validators: %d high-confidence issue(s): %s",
-        request.jobId,
-        len(issues),
-        issue_summary,
-    )
+    for f in findings:
+        if f.get("artifact") != "plan":
+            log.info(
+                "job=%s codegen_v[%s] %s — %s",
+                request.jobId,
+                f.get("artifact", "?"),
+                f.get("location", "?"),
+                f.get("issue", ""),
+            )
+
+    affected = sorted(error_map.keys())
     _emit(
         request,
         "validator",
         "completed",
-        f"{len(issues)} semantic issue(s) found — revising…",
+        f"{len(findings)} finding(s) — retrying: {', '.join(affected)}",
     )
 
-    # Build context from the fresh codegen output so the revision agent works from
-    # the actual code it needs to fix, not from a (possibly absent) prior bundle.
-    revision_ctx = dataclasses.replace(
+    # Stamp `prior_<x>_code` ONLY for artifacts that are actually being
+    # retried. Setting `prior_db_sql` for an unchanged db.sql makes the
+    # DB static validator treat it as a "revision run" (CREATE TABLE →
+    # ALTER TABLE check), falsely failing the post-retry validation.
+    retry_ctx = dataclasses.replace(
         base_ctx,
-        prior_backend_code=artifacts.get("backend") or base_ctx.prior_backend_code,
-        prior_db_sql=artifacts.get("db") or base_ctx.prior_db_sql,
-        prior_storefront_code=artifacts.get("storefront") or base_ctx.prior_storefront_code,
-        prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
-    )
-    _LOCKED = _revision_locked_artifacts(issues)
-    log.info(
-        "job=%s revision locking: questions=%s locked=%s unlocked=%s",
-        request.jobId,
-        sorted(i["question"] for i in issues),
-        sorted(_LOCKED),
-        sorted({"backend", "db", "storefront", "admin_ui"} - _LOCKED),
-    )
-
-    _emit(request, "revision", "running", f"Fixing {len(issues)} semantic issue(s)…")
-    rev_t0 = _now_ms()
-    revised, rev_in, rev_out = run_revision_agent(
-        revision_ctx,
-        is_storefront=is_storefront,
-        is_admin_ui=is_admin_ui,
-        validation_issues=issues,
-        locked_artifacts=_LOCKED,
-    )
-    agent_trace.append(
-        AgentTraceEntry(
-            agent="revision",
-            latencyMs=_now_ms() - rev_t0,
-            inputTokens=rev_in,
-            outputTokens=rev_out,
-        )
+        prior_backend_code=(
+            artifacts.get("backend") if "backend" in error_map else base_ctx.prior_backend_code
+        ),
+        prior_db_sql=(
+            artifacts.get("db") if "db" in error_map else base_ctx.prior_db_sql
+        ),
+        prior_storefront_code=(
+            artifacts.get("storefront") if "storefront" in error_map else base_ctx.prior_storefront_code
+        ),
+        prior_admin_ui_code=(
+            artifacts.get("admin_ui") if "admin_ui" in error_map else base_ctx.prior_admin_ui_code
+        ),
     )
 
-    # Only accept frontend artifacts — backend/db are locked.
-    frontend_revised = {k: v for k, v in revised.items() if k not in _LOCKED}
-    if not frontend_revised:
-        log.warning(
-            "job=%s revision_agent: returned no frontend artifacts — keeping originals",
-            request.jobId,
-        )
-        _emit(
-            request, "revision", "completed", "Revision incomplete — keeping originals"
-        )
-        return artifacts
-
-    # Statically validate the revised frontend artifacts before accepting them.
-    merged = {**artifacts, **frontend_revised}
-    all_errors = validate_artifacts(merged, revision_ctx, is_storefront, is_admin_ui)
-    static_errors: Dict[str, List[str]] = {
-        k: v for k, v in all_errors.items() if k in frontend_revised
-    }
-
-    if not static_errors:
-        _emit(request, "revision", "completed", "Semantic issues resolved")
-        return merged
-
-    # First revision failed static validation — retry once with the errors fed back.
-    log.warning(
-        "job=%s revision_agent: static validation failed on attempt 1 — retrying. errors=%s",
-        request.jobId,
-        {k: v for k, v in static_errors.items()},
-    )
-    rev2_t0 = _now_ms()
-    revised2, rev2_in, rev2_out = run_revision_agent(
-        revision_ctx,
-        is_storefront=is_storefront,
-        is_admin_ui=is_admin_ui,
-        validation_issues=issues,
-        locked_artifacts=_LOCKED,
-        static_errors=static_errors,
-    )
-    agent_trace.append(
-        AgentTraceEntry(
-            agent="revision",
-            latencyMs=_now_ms() - rev2_t0,
-            inputTokens=rev2_in,
-            outputTokens=rev2_out,
-        )
-    )
-
-    frontend_revised2 = {k: v for k, v in revised2.items() if k not in _LOCKED}
-    merged2 = {**artifacts, **frontend_revised2}
-    all_errors2 = validate_artifacts(merged2, revision_ctx, is_storefront, is_admin_ui)
-    static_errors2: Dict[str, List[str]] = {
-        k: v for k, v in all_errors2.items() if k in frontend_revised2
-    }
-
-    if not static_errors2:
-        _emit(
-            request, "revision", "completed", "Semantic issues resolved (static retry)"
-        )
-        return merged2
-
-    # Both revision attempts produced statically invalid code — fail the job.
-    bad = {**frontend_revised, **frontend_revised2}
-    failure_path = _save_revision_failure(request.jobId, bad, static_errors2)
-    error_detail = "; ".join(
-        f"{k}: {', '.join(errs)}" for k, errs in static_errors2.items()
-    )
-    log.error(
-        "job=%s revision_agent: static validation failed after 2 attempts — failing job. "
-        "saved=%s errors=%s",
-        request.jobId,
-        failure_path,
-        error_detail,
-    )
-    _fail_and_abort(
+    _emit(
         request,
         "revision",
-        "Revision produced structurally invalid code — generation failed",
-        f"Revision agent emitted invalid artifacts after 2 attempts: {error_detail}",
-        error_code="REVISION_STATIC_VALIDATION_FAILED",
+        "running",
+        f"Codegen retry on {', '.join(affected)}…",
     )
+    retry_t0 = _now_ms()
+    revised_artifacts, retry_tokens = run_codegen_parallel(
+        retry_ctx,
+        is_storefront=is_storefront,
+        is_admin_ui=is_admin_ui,
+        error_map=error_map,
+        cumulative_errors=dict(error_map),
+        artifacts=dict(artifacts),
+    )
+    retry_ms = _now_ms() - retry_t0
+
+    for name, tokens in retry_tokens.items():
+        in_tok, out_tok = tokens[0], tokens[1]
+        agent_trace.append(
+            AgentTraceEntry(
+                agent=name,
+                latencyMs=retry_ms,
+                inputTokens=in_tok,
+                outputTokens=out_tok,
+            )
+        )
+
+    # Re-validate post-retry. If new static errors appeared, ship the
+    # originals (better than shipping broken code).
+    post_errors = validate_artifacts(
+        revised_artifacts, retry_ctx, is_storefront, is_admin_ui
+    )
+    if not post_errors:
+        _emit(request, "revision", "completed", "Findings fixed via codegen retry")
+        return revised_artifacts
+
+    log.warning(
+        "job=%s codegen retry left static errors — keeping originals. errors=%s",
+        request.jobId,
+        post_errors,
+    )
+    _emit(
+        request,
+        "revision",
+        "completed",
+        "Codegen retry left static errors — keeping originals",
+    )
+    return artifacts
 
 
 def _phase_explanation(

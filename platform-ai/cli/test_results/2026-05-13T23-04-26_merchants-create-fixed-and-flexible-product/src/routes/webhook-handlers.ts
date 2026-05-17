@@ -4,7 +4,7 @@ import { money } from "../lib/money.js";
 import { shopifyClientFor } from "../lib/shopify.js";
 
 export const webhookHandlers = {
-  "orders/paid": async (payload: unknown, req: Request): Promise<void> => {
+  "orders/paid": async (payload: unknown, _req: Request): Promise<void> => {
     const orderId = (payload as any)?.id;
     const orderCreatedAt = (payload as any)?.created_at;
     const totalPrice = (payload as any)?.total_price;
@@ -25,7 +25,7 @@ export const webhookHandlers = {
     // Step: Skip if payload is malformed
     if (safePayload.orderId === null) {
       console.warn(
-        { requestId: req.platform!.requestId },
+        {},
         "orders/paid webhook missing order id — skipping",
       );
       return;
@@ -51,10 +51,7 @@ export const webhookHandlers = {
     // Step: Skip if no bundle discount codes present
     if (bundleCodeEntries.length === 0) {
       console.log(
-        {
-          requestId: req.platform!.requestId,
-          order_id: safePayload.orderId,
-        },
+        { order_id: safePayload.orderId },
         "orders/paid: no bundle discount codes — skipping",
       );
       return;
@@ -81,10 +78,7 @@ export const webhookHandlers = {
     // Step: Skip if no bundle code entries resolved
     if (resolvedBundleEntries.length === 0) {
       console.warn(
-        {
-          requestId: req.platform!.requestId,
-          order_id: safePayload.orderId,
-        },
+        { order_id: safePayload.orderId },
         "orders/paid: bundle discount codes present but no valid bundle ids resolved — skipping",
       );
       return;
@@ -137,7 +131,6 @@ export const webhookHandlers = {
         if (claimedPurchase.length === 0) {
           console.log(
             {
-              requestId: req.platform!.requestId,
               order_id: safePayload.orderId,
               bundle_id: bundleEntry.bundleId,
             },
@@ -146,7 +139,6 @@ export const webhookHandlers = {
         } else {
           console.log(
             {
-              requestId: req.platform!.requestId,
               order_id: safePayload.orderId,
               bundle_id: bundleEntry.bundleId,
               item_count: selectedVariantIds.length,
@@ -164,7 +156,6 @@ export const webhookHandlers = {
     if (failedPurchases.length > 0) {
       console.warn(
         {
-          requestId: req.platform!.requestId,
           order_id: safePayload.orderId,
           failed_count: failedPurchases.length,
         },
@@ -175,7 +166,7 @@ export const webhookHandlers = {
 
   "inventory_levels/update": async (
     payload: unknown,
-    req: Request,
+    _req: Request,
   ): Promise<void> => {
     const inventoryItemId = (payload as any)?.inventory_item_id;
     const available = (payload as any)?.available;
@@ -189,7 +180,7 @@ export const webhookHandlers = {
     // Step: Skip if inventory item id is missing
     if (safePayload.inventoryItemId === null) {
       console.warn(
-        { requestId: req.platform!.requestId },
+        {},
         "inventory_levels/update: missing inventory_item_id — skipping",
       );
       return;
@@ -198,10 +189,7 @@ export const webhookHandlers = {
     // Step: Skip if available count is null
     if (safePayload.available === null) {
       console.log(
-        {
-          requestId: req.platform!.requestId,
-          inventory_item_id: safePayload.inventoryItemId,
-        },
+        { inventory_item_id: safePayload.inventoryItemId },
         "inventory_levels/update: available is null — skipping to avoid incorrect availability transition",
       );
       return;
@@ -221,7 +209,7 @@ export const webhookHandlers = {
     if (cachedVariant.length === 0) {
       const inventoryItemGid = `gid://shopify/InventoryItem/${safePayload.inventoryItemId}`;
 
-      const shopify = await shopifyClientFor(req.platform!);
+      const shopify = await shopifyClientFor();
 
       const shopifyInventoryItem = await shopify.graphql<{
         inventoryItem: { id: string; variant: { id: string } | null } | null;
@@ -248,10 +236,7 @@ export const webhookHandlers = {
       // Step: Skip if Shopify could not resolve a variant
       if (resolvedVariantId === null) {
         console.warn(
-          {
-            requestId: req.platform!.requestId,
-            inventory_item_id: safePayload.inventoryItemId,
-          },
+          { inventory_item_id: safePayload.inventoryItemId },
           "inventory_levels/update: cannot resolve variant — skipping",
         );
         return;
@@ -310,7 +295,6 @@ export const webhookHandlers = {
     if (itemsToTransition.length === 0) {
       console.log(
         {
-          requestId: req.platform!.requestId,
           variant_id: variantExternalId,
           new_availability: newAvailability,
         },
@@ -429,7 +413,6 @@ export const webhookHandlers = {
     if (failedTransitions.length > 0) {
       console.warn(
         {
-          requestId: req.platform!.requestId,
           variant_id: variantExternalId,
           failed_count: failedTransitions.length,
         },
@@ -440,7 +423,7 @@ export const webhookHandlers = {
 
   "products/update": async (
     payload: unknown,
-    req: Request,
+    _req: Request,
   ): Promise<void> => {
     const productId = (payload as any)?.id;
     const variantGids = (payload as any)?.variant_gids;
@@ -462,7 +445,7 @@ export const webhookHandlers = {
     // Step: Skip if product id is missing
     if (safePayload.productId === null) {
       console.warn(
-        { requestId: req.platform!.requestId },
+        {},
         "products/update: missing product id — skipping",
       );
       return;
@@ -523,22 +506,12 @@ export const webhookHandlers = {
         if (claimedDeletion.length === 0) {
           // Item was already deleted — skip health check
         } else {
-          // Step: Fetch all items for this bundle after deletion
-          const allBundleItemsAfterDelete = await sql<
-            { observed_availability: string }[]
-          >`
-            SELECT observed_availability FROM bundle_items WHERE bundle_id = ${deletedItem.bundle_id}
-          `;
-
-          // Step: Fetch the bundle's mode
+          // Step: Fetch the bundle's mode and health
           const bundleForDelete = await sql<
             { id: string; mode: string; health_status: string }[]
           >`
             SELECT id, mode, health_status FROM bundles WHERE id = ${deletedItem.bundle_id}
           `;
-
-          // Step: A deleted variant always results in auto_disabled
-          const deleteHealthStatus = "auto_disabled";
 
           // Step: Only write if health_status is not already auto_disabled
           if (bundleForDelete[0]?.health_status !== "auto_disabled") {
@@ -569,7 +542,6 @@ export const webhookHandlers = {
     if (failedDeletions.length > 0) {
       console.warn(
         {
-          requestId: req.platform!.requestId,
           product_id: safePayload.productId,
           failed_count: failedDeletions.length,
         },
