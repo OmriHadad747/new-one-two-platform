@@ -17,6 +17,7 @@ _DEFAULTS: dict[str, str] = {
     "admin_ui": "claude-sonnet-4-6",
     "backend": "claude-sonnet-4-6",
     "bug_finder": "claude-sonnet-4-6",
+    "codegen_v": "claude-sonnet-4-6",
     "agent_rules": "claude-haiku-4-5-20251001",
     "revision": "claude-sonnet-4-6",
     "explanation": "claude-haiku-4-5-20251001",

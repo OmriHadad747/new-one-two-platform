@@ -18,8 +18,8 @@ from unittest.mock import patch
 
 import pytest
 
-from subagents.f_codegen_agent.backend_agent import typecheck as typecheck_validation
-from subagents.f_codegen_agent.backend_agent.typecheck import (
+from subagents.o_codegen_agent.backend_agent import typecheck as typecheck_validation
+from subagents.o_codegen_agent.backend_agent.typecheck import (
     _DEFAULT_TEMPLATE_ROOT,
     _parse_findings,
     validate_backend_typecheck,
@@ -145,7 +145,7 @@ def test_template_owned_errors_are_filtered_out(tmp_path: Path, caplog) -> None:
         # Generator-owned — must appear
         f"{tmp_path}/src/routes/widget.ts(5,5): error TS2304: real generator bug.\n"
     )
-    with caplog.at_level("ERROR", logger="subagents.f_codegen_agent.backend_agent.typecheck"):
+    with caplog.at_level("ERROR", logger="subagents.o_codegen_agent.backend_agent.typecheck"):
         findings = _parse_findings(output, tmp_path)
 
     # Only the generator-owned error survives

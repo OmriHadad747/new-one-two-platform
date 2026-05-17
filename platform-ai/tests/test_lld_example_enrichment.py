@@ -19,7 +19,7 @@ Coverage:
 
 from __future__ import annotations
 
-from subagents.d_lld_agent.agent import _enrich_with_runtime_examples
+from subagents.i_lld_agent.agent import _enrich_with_runtime_examples
 
 
 def _enrich(steps, *, route=None, ops_surface=None):

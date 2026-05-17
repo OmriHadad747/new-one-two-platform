@@ -13,7 +13,7 @@ LLM adapter, no anthropic SDK.
 
 from __future__ import annotations
 
-from subagents.f_codegen_agent.backend_agent.validator import validate_backend_artifact
+from subagents.o_codegen_agent.backend_agent.validator import validate_backend_artifact
 
 
 # ── Finding 4 — singleton ─────────────────────────────────────────────────────
@@ -21,7 +21,7 @@ from subagents.f_codegen_agent.backend_agent.validator import validate_backend_a
 # test_architect_plan_rejects_singleton_with_id_column was removed when the
 # legacy architect plan validator was retired alongside the architect
 # agent. The singleton-with-id-column rule now belongs to the LLD schema
-# validator in `subagents/d_lld_agent/schema.py`; equivalent coverage
+# validator in `subagents/i_lld_agent/schema.py`; equivalent coverage
 # should land there (or in d_lld_agent's own test surface), not in this
 # legacy file.
 
@@ -82,7 +82,7 @@ _QUEUE_CONTRACTS = [
 # test_architect_plan_rejects_default_outside_enum was removed alongside
 # `validate_architect_plan` — the "DEFAULT must be a member of the column
 # enum" rule now belongs in the LLD schema validator
-# (`subagents/d_lld_agent/schema.py`). Coverage should land there.
+# (`subagents/i_lld_agent/schema.py`). Coverage should land there.
 
 
 def test_handler_validator_flags_insert_with_unknown_status_literal() -> None:

@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import re
 
-from subagents.f_codegen_agent.backend_agent.constants import TEMPLATE_OWNED_TABLES
-from subagents.f_codegen_agent.backend_agent.validator import FORBIDDEN_HANDLER_PATTERNS
+from subagents.o_codegen_agent.backend_agent.constants import TEMPLATE_OWNED_TABLES
+from subagents.o_codegen_agent.backend_agent.validator import FORBIDDEN_HANDLER_PATTERNS
 
 
 def _template_table_rule() -> tuple[str, str]:

@@ -36,18 +36,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from models.adapter import input_log
-from subagents.a_hld_agent.agent import HLDValidationError, run_hld_agent
-from subagents.d_lld_agent.agent import LLDValidationError, run_lld_agent
-from subagents.c_ops_picker_agent.agent import (
+from subagents.c_hld_agent.agent import HLDValidationError, run_hld_agent
+from subagents.i_lld_agent.agent import LLDValidationError, run_lld_agent
+from subagents.g_ops_picker_agent.agent import (
     OpsPickerValidationError,
     run_ops_picker_agent,
 )
 from subagents.base import CodegenContext
-from subagents.i_explenation_agent.explanation_agent import run_explanation_agent
-from subagents.h_revision_agent.revision_agent import run_revision_agent
-from subagents.g_codegen_v_agent.base import run_llm_validators
-from subagents.f_codegen_agent.orchestration import (
-    _revision_locked_artifacts,
+from subagents.u_explenation_agent.explanation_agent import run_explanation_agent
+from subagents.q_codegen_v_agent.agent import (
+    group_findings_by_artifact,
+    run_codegen_validator,
+)
+from subagents.o_codegen_agent.orchestration import (
     run_codegen_parallel,
     validate_artifacts,
 )
@@ -374,8 +375,8 @@ def _phase_ops_picker(
         _tok_note,
     )
     from catalogs.shopify_webhooks import load_summary_md
-    from subagents.c_ops_picker_agent.shopify_ops import get_op_names, load_summary
-    from subagents.f_codegen_agent.backend_agent.constants import WEBHOOK_TOPICS
+    from subagents.g_ops_picker_agent.shopify_ops import get_op_names, load_summary
+    from subagents.o_codegen_agent.backend_agent.constants import WEBHOOK_TOPICS
 
     admin_idx = load_summary("admin")
     storefront_idx = load_summary("storefront")
@@ -386,7 +387,7 @@ def _phase_ops_picker(
     # trigger's signalFields against what Shopify really sends, instead of
     # picking from a flat list of names. Platform-owned topics are filtered
     # out via _PLATFORM_OWNED_EXCLUSIONS (see
-    # subagents.f_codegen_agent.backend_agent.constants),
+    # subagents.o_codegen_agent.backend_agent.constants),
     # so the LLM never sees app/uninstalled, customers/data_request, etc.
     full_summary = load_summary_md()
     allowed = WEBHOOK_TOPICS
@@ -801,30 +802,30 @@ def _phase_validator(
     resumed_validator: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, str], int, int, Optional[Dict[str, Any]]]:
     """
-    Run LLM validator + optional revision pass.
+    Run the codegen validator and, if it finds bugs, re-invoke the
+    affected codegen agents with their findings as `previous_errors` +
+    their prior code as `prior_<x>_code`.
 
-    The revision agent fixes only storefront / admin_ui (handler and migration are
-    locked as read-only context). Revision output is statically validated; if both
-    attempts fail the run exits with an error and saves the bad artifacts.
+    No separate revision agent — fixes happen via the same retry path
+    the static validator already uses (`_phase_codegen` with
+    `prior_artifacts` + `prior_error_map`). Each codegen agent patches
+    its own file using its own prompt + cached examples, so we don't
+    pay the cost of a separate revision agent re-learning what each
+    codegen agent already knows.
 
-    Returns (artifacts, total_in_tokens, total_out_tokens, trace). `trace` is None
-    when no revision was attempted (validator skipped or passed on first pass); a
-    dict otherwise, always persisted to test_results/revision_traces/ keyed by
-    run_ts + slug so the report .md can link to it.
+    Returns (artifacts, total_in_tokens, total_out_tokens, trace).
+    `trace` is None when no retry was attempted (validator skipped or
+    found nothing); otherwise it is a dict persisted to
+    test_results/revision_traces/.
 
-    Resume path: when `resumed_validator` is passed, the LLM validator call is
-    skipped entirely — we trust the saved issues from the previous run and go
-    straight to revision. This is the cost-saver: validator tokens already paid,
-    don't pay them again. Required keys: `issues`, `in_tokens`, `out_tokens`,
-    `duration_ms`. Token counts are reported back so the run summary still shows
-    the original cost; they are NOT re-added to `total_in/out` here because the
-    caller credits them separately for resumed runs.
+    Resume path: when `resumed_validator` is passed, the validator LLM
+    call is skipped — we trust the saved findings from the previous run
+    and go straight to the codegen retry.
     """
     from config import get_settings
 
     from cli.chat_local import (
         _DIM,
-        _RED,
         _RESET,
         _agent_line,
         _info,
@@ -833,15 +834,16 @@ def _phase_validator(
         _tok_note,
     )
 
+    # ── 1. Validator pass ─────────────────────────────────────────────
+    val_cache_r = 0
+    val_cache_c = 0
     if resumed_validator is not None:
-        # Skip the validator LLM call — reuse saved issues. Falls through to
-        # the revision branch below using `issues` from saved state.
         issues = resumed_validator.get("issues") or []
         val_in = int(resumed_validator.get("in_tokens", 0))
         val_out = int(resumed_validator.get("out_tokens", 0))
         ms = int(resumed_validator.get("duration_ms", 0))
         _info(
-            f"Validator: reusing {len(issues)} saved issue(s) from prior run "
+            f"Validator: reusing {len(issues)} saved finding(s) from prior run "
             f"(no LLM call)"
         )
     elif not get_settings().llm_validation_enabled:
@@ -859,28 +861,23 @@ def _phase_validator(
         _spinner("Validator")
         t0 = time.monotonic()
         with input_log("validator", run_dir):
-            issues, val_in, val_out, per_validator = run_llm_validators(
+            issues, val_in, val_out, val_cache_r, val_cache_c = run_codegen_validator(
                 artifacts, base_ctx, is_storefront, is_admin_ui
             )
         ms = int((time.monotonic() - t0) * 1000)
-        # Surface per-validator latency / errors so a silent fail-open is
-        # visible in the local CLI run, not just the production logs. Only
-        # available when we actually invoked the validator — resumed runs
-        # skip this since the per-validator breakdown wasn't persisted.
-        for name, result in per_validator.items():
-            suffix = f" error={result.error}" if result.error else ""
-            _info(
-                f"  ↳ {name}: {result.latency_ms}ms "
-                f"in={result.input_tokens} out={result.output_tokens} "
-                f"findings={len(result.findings)}{suffix}"
-            )
 
     if not issues:
         _agent_line(
             "Validator",
             ok=True,
             ms=ms,
-            notes=_tok_note(val_in, val_out, extra="semantic check passed"),
+            notes=_tok_note(
+                val_in,
+                val_out,
+                extra="no runtime bugs found",
+                cache_read=val_cache_r,
+                cache_create=val_cache_c,
+            ),
         )
         _save_state(
             run_dir,
@@ -892,45 +889,39 @@ def _phase_validator(
         )
         return artifacts, val_in, val_out, None
 
-    issue_summary = ", ".join(i["question"] for i in issues)
+    # ── 2. Findings → per-agent error_map ─────────────────────────────
+    error_map = group_findings_by_artifact(issues)
+
+    issue_summary = ", ".join(sorted(error_map.keys())) or "no actionable artifact"
     _agent_line(
         "Validator",
         ok=True,
         ms=ms,
         notes=_tok_note(
-            val_in, val_out, extra=f"{len(issues)} issue(s): {issue_summary}"
+            val_in,
+            val_out,
+            extra=f"{len(issues)} finding(s) — retrying: {issue_summary}",
+            cache_read=val_cache_r,
+            cache_create=val_cache_c,
         ),
     )
-    # Print each issue fully, wrapped at terminal width with indented
-    # continuation lines. The previous [:80] cap silently truncated
-    # issue messages mid-sentence, hiding the actual diagnosis.
     term_w = max(60, shutil.get_terminal_size((100, 20)).columns)
-    initial_indent = "    • "
-    subsequent_indent = "      "
     for iss in issues:
-        header = f"{iss.get('question', '?')}: {iss.get('issue', '')}"
+        header = (
+            f"[{iss.get('artifact', '?')}] {iss.get('location', '?')}: "
+            f"{iss.get('issue', '')}"
+        )
         wrapped = textwrap.fill(
             header,
             width=term_w,
-            initial_indent=initial_indent,
-            subsequent_indent=subsequent_indent,
+            initial_indent="    • ",
+            subsequent_indent="      ",
             break_long_words=False,
             break_on_hyphens=False,
         )
         print(f"{_DIM}{wrapped}{_RESET}")
 
-    # Build context from the fresh codegen output so the revision agent works from
-    # the actual code it needs to fix, not from a (possibly absent) prior bundle.
-    revision_ctx = dataclasses.replace(
-        base_ctx,
-        prior_backend_code=artifacts.get("backend") or base_ctx.prior_backend_code,
-        prior_db_sql=artifacts.get("db") or base_ctx.prior_db_sql,
-        prior_storefront_code=artifacts.get("storefront") or base_ctx.prior_storefront_code,
-        prior_admin_ui_code=artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code,
-    )
-    _LOCKED = _revision_locked_artifacts(issues)
-
-    # Accumulate a trace that gets persisted no matter which branch we exit on.
+    # Trace shape kept for report.md / state.json compatibility.
     trace: Dict[str, Any] = {
         "run_ts": run_ts,
         "slug": run_slug,
@@ -940,16 +931,11 @@ def _phase_validator(
             "out_tokens": val_out,
             "issues": issues,
         },
-        "locked_artifacts": sorted(_LOCKED),
         "pre_artifacts": dict(artifacts),
         "attempts": [],
         "final_outcome": None,
     }
 
-    # Persist the validator findings + pre-revision artifacts up front. If
-    # the process is killed mid-revision (or revision punts), --resume picks
-    # this up and re-runs only revision against the saved issues, NOT the
-    # validator — that's the point of trusting saved issues.
     _save_state(
         run_dir,
         validator_issues=issues,
@@ -957,199 +943,105 @@ def _phase_validator(
         pre_revision_artifacts=dict(artifacts),
     )
 
-    def _finalize(
-        outcome: str, *, final_artifacts: Optional[Dict[str, str]] = None
-    ) -> None:
-        trace["final_outcome"] = outcome
-        _save_revision_trace(run_dir, run_ts, run_slug, trace)
-        # halt_reason is set only for outcomes the user can resume from.
-        # 'resolved' / 'resolved_on_retry' are clean successes — checkpoint
-        # advances to 'revision' and resume goes straight to explanation.
-        if outcome in ("resolved", "resolved_on_retry"):
-            cp, halt = "revision", None
-        elif outcome == "kept_originals":
-            cp, halt = "validator", "kept_originals"
-        else:  # "failed"
-            cp, halt = "validator", "revision_failed"
-        patch: Dict[str, Any] = {
-            "checkpoint": cp,
-            "halt_reason": halt,
-            "revision_outcome": outcome,
-        }
-        if final_artifacts is not None:
-            patch["artifacts"] = final_artifacts
-        _save_state(run_dir, **patch)
+    # ── 3. Codegen retry with findings as previous_errors ─────────────
+    # Stamp `prior_<x>_code` so each codegen agent patches its previous
+    # output instead of regenerating from scratch.
+    retry_ctx = dataclasses.replace(
+        base_ctx,
+        prior_backend_code=artifacts.get("backend") or base_ctx.prior_backend_code,
+        prior_db_sql=artifacts.get("db") or base_ctx.prior_db_sql,
+        prior_storefront_code=(
+            artifacts.get("storefront") or base_ctx.prior_storefront_code
+        ),
+        prior_admin_ui_code=(
+            artifacts.get("admin_ui") or base_ctx.prior_admin_ui_code
+        ),
+    )
 
-    _spinner("Revision")
+    _spinner("Validator-driven codegen retry")
     t0 = time.monotonic()
-    with input_log("revision", run_dir):
-        revised, rev_in, rev_out = run_revision_agent(
-            revision_ctx,
-            is_storefront=is_storefront,
-            is_admin_ui=is_admin_ui,
-            validation_issues=issues,
-            locked_artifacts=_LOCKED,
-        )
-    ms = int((time.monotonic() - t0) * 1000)
+    revised_artifacts, retry_log, retry_tokens = _phase_codegen(
+        retry_ctx,
+        is_storefront,
+        is_admin_ui,
+        run_dir,
+        prior_artifacts=dict(artifacts),
+        prior_error_map=error_map,
+    )
+    retry_ms = int((time.monotonic() - t0) * 1000)
 
-    total_in = val_in + rev_in
-    total_out = val_out + rev_out
+    # Sum retry tokens across all agents that re-ran.
+    retry_in = sum(t[0] for t in retry_tokens.values())
+    retry_out = sum(t[1] for t in retry_tokens.values())
+    total_in = val_in + retry_in
+    total_out = val_out + retry_out
 
-    frontend_revised = {k: v for k, v in revised.items() if k not in _LOCKED}
+    # Re-validate post-retry to confirm static-check still passes.
+    post_errors = validate_artifacts(
+        revised_artifacts, retry_ctx, is_storefront, is_admin_ui
+    )
+
     trace["attempts"].append(
         {
             "attempt": 1,
-            "duration_ms": ms,
-            "in_tokens": rev_in,
-            "out_tokens": rev_out,
-            "returned_artifacts": sorted(frontend_revised.keys()),
-            "post": frontend_revised,
-            "static_errors": {},
-            "outcome": None,
+            "duration_ms": retry_ms,
+            "in_tokens": retry_in,
+            "out_tokens": retry_out,
+            "agents_retried": sorted(error_map.keys()),
+            "retry_log": retry_log,
+            "post_static_errors": post_errors or {},
+            "outcome": "accepted" if not post_errors else "static_errors_after_retry",
         }
     )
 
-    if not frontend_revised:
+    if not post_errors:
         _agent_line(
-            "Revision",
-            ok=False,
-            ms=ms,
+            "Validator",
+            ok=True,
+            ms=retry_ms,
             notes=_tok_note(
-                rev_in,
-                rev_out,
-                extra="no frontend artifacts returned — keeping originals",
+                retry_in,
+                retry_out,
+                extra="findings fixed via codegen retry",
             ),
         )
-        trace["attempts"][-1]["outcome"] = "no_output"
-        _finalize("kept_originals", final_artifacts=dict(artifacts))
-        return artifacts, total_in, total_out, trace
-
-    # Statically validate the revised frontend artifacts before accepting them.
-    merged = {**artifacts, **frontend_revised}
-    all_errors = validate_artifacts(merged, revision_ctx, is_storefront, is_admin_ui)
-    static_errors: Dict[str, List[str]] = {
-        k: v for k, v in all_errors.items() if k in frontend_revised
-    }
-
-    if not static_errors:
-        _agent_line(
-            "Revision",
-            ok=True,
-            ms=ms,
-            notes=_tok_note(rev_in, rev_out, extra="semantic issues resolved"),
+        trace["final_outcome"] = "resolved"
+        _save_revision_trace(run_dir, run_ts, run_slug, trace)
+        _save_state(
+            run_dir,
+            checkpoint="revision",
+            halt_reason=None,
+            revision_outcome="resolved",
+            artifacts=dict(revised_artifacts),
         )
-        trace["attempts"][-1]["outcome"] = "accepted"
-        _finalize("resolved", final_artifacts=dict(merged))
-        return merged, total_in, total_out, trace
+        return revised_artifacts, total_in, total_out, trace
 
-    # First revision failed static validation — retry once with errors fed back.
-    trace["attempts"][-1]["static_errors"] = static_errors
-    trace["attempts"][-1]["outcome"] = "retrying"
+    # Retry succeeded structurally but new static errors appeared — flag
+    # and ship the originals. The fail-open path: better to keep working
+    # code than to ship something that doesn't compile.
     _agent_line(
-        "Revision",
+        "Validator",
         ok=False,
-        ms=ms,
+        ms=retry_ms,
         notes=_tok_note(
-            rev_in,
-            rev_out,
-            extra=f"static validation failed ({len(static_errors)} artifact(s)) — retrying",
+            retry_in,
+            retry_out,
+            extra="codegen retry left static errors — keeping originals",
         ),
     )
-    for gen_name, errs in static_errors.items():
+    for gen_name, errs in post_errors.items():
         for e in errs:
-            print(f"    {_DIM}• [{gen_name}] {e[:80]}{_RESET}")
-
-    _spinner("Revision (static retry)")
-    t0 = time.monotonic()
-    # Reusing agent="revision" — _dump_inputs counts existing attempt_* dirs
-    # so this lands in inputs/revision/attempt_2/ alongside attempt_1/.
-    with input_log("revision", run_dir):
-        revised2, rev2_in, rev2_out = run_revision_agent(
-            revision_ctx,
-            is_storefront=is_storefront,
-            is_admin_ui=is_admin_ui,
-            validation_issues=issues,
-            locked_artifacts=_LOCKED,
-            static_errors=static_errors,
-        )
-    ms2 = int((time.monotonic() - t0) * 1000)
-
-    total_in += rev2_in
-    total_out += rev2_out
-
-    frontend_revised2 = {k: v for k, v in revised2.items() if k not in _LOCKED}
-    merged2 = {**artifacts, **frontend_revised2}
-    all_errors2 = validate_artifacts(merged2, revision_ctx, is_storefront, is_admin_ui)
-    static_errors2: Dict[str, List[str]] = {
-        k: v for k, v in all_errors2.items() if k in frontend_revised2
-    }
-
-    trace["attempts"].append(
-        {
-            "attempt": 2,
-            "duration_ms": ms2,
-            "in_tokens": rev2_in,
-            "out_tokens": rev2_out,
-            "returned_artifacts": sorted(frontend_revised2.keys()),
-            "post": frontend_revised2,
-            "static_errors": static_errors2,
-            "outcome": None,
-        }
+            print(f"    {_DIM}• [{gen_name}] {e[:120]}{_RESET}")
+    trace["final_outcome"] = "kept_originals"
+    _save_revision_trace(run_dir, run_ts, run_slug, trace)
+    _save_state(
+        run_dir,
+        checkpoint="validator",
+        halt_reason="revision_failed",
+        revision_outcome="kept_originals",
+        artifacts=dict(artifacts),
     )
-
-    if not static_errors2:
-        _agent_line(
-            "Revision",
-            ok=True,
-            ms=ms2,
-            notes=_tok_note(
-                rev2_in, rev2_out, extra="semantic issues resolved (static retry)"
-            ),
-        )
-        trace["attempts"][-1]["outcome"] = "accepted"
-        _finalize("resolved_on_retry", final_artifacts=dict(merged2))
-        return merged2, total_in, total_out, trace
-
-    # Both revision attempts produced structurally invalid code — fail the run.
-    trace["attempts"][-1]["outcome"] = "failed"
-    # Don't pass final_artifacts here — we want the next --resume to start
-    # from the pre-revision artifacts (saved separately as
-    # `pre_revision_artifacts`), NOT the broken merged2 bundle. Re-running
-    # revision against the broken output would compound the damage.
-    _finalize("failed")
-    bad = {**frontend_revised, **frontend_revised2}
-    path = _save_revision_failure_local(run_dir, bad, static_errors2)
-    # Also dump the final merged bundle as proper files at the run-dir root
-    # — same shape as a successful run, so the merchant can open the broken
-    # widget.js / admin_ui.js in their editor instead of fishing them out
-    # of a JSON blob.
-    _save_generated_files(
-        run_dir, merged2, is_storefront, is_admin_ui, plan=revision_ctx.plan
-    )
-    _agent_line(
-        "Revision",
-        ok=False,
-        ms=ms2,
-        notes=_tok_note(
-            rev2_in, rev2_out, extra="static validation failed after 2 attempts"
-        ),
-    )
-    print(
-        f"\n  {_RED}Revision agent produced structurally invalid code after 2 attempts.{_RESET}"
-    )
-    for gen_name, errs in static_errors2.items():
-        for e in errs:
-            print(f"    • [{gen_name}] {e}")
-    print(f"  {_DIM}Failure summary: {path.relative_to(_HERE)}{_RESET}")
-    print(
-        f"  {_DIM}Final-attempt artifacts saved to: "
-        f"{run_dir.relative_to(_HERE)}/{_RESET}"
-    )
-    print(
-        f"  {_DIM}Resume with:  python chat_local.py --resume "
-        f"{run_dir.name}{_RESET}"
-    )
-    sys.exit(1)
+    return artifacts, total_in, total_out, trace
 
 
 def _phase_explanation(

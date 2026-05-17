@@ -115,7 +115,7 @@ _log.basicConfig(
 )
 
 from subagents.base import CodegenContext
-from subagents._product_agent.agent import run_product_agent_analyze
+from subagents.a_product_agent.agent import run_product_agent_analyze
 from models.adapter import input_log
 from cli.pipeline_local import (
     _MAX_CODEGEN_RETRIES,
@@ -1347,7 +1347,7 @@ def _email_metadata_md_lines(meta: Dict[str, Any]) -> List[str]:
 
     Makes sidecar presence, declared variables, and starter content inspectable
     at a glance — matches the email-metadata sidecar contract documented
-    in subagents/f_codegen_agent/backend_agent/prompt.py. Empty/None
+    in subagents/o_codegen_agent/backend_agent/prompt.py. Empty/None
     metadata produces nothing.
     """
     if not meta:
@@ -1802,8 +1802,8 @@ def main() -> None:
     if resume_state and resume_state.get("hld_v_findings") is not None:
         hld_v_findings = resume_state["hld_v_findings"]
     else:
-        from subagents.b_hld_v_agent.agent import run_hld_validator
-        from subagents.a_hld_agent.agent import run_hld_agent
+        from subagents.e_hld_v_agent.agent import run_hld_validator
+        from subagents.c_hld_agent.agent import run_hld_agent
 
         _spinner("HLD Check")
         _hld_v_t0 = time.monotonic()
@@ -2024,7 +2024,7 @@ def main() -> None:
     # ops_picks (just name/surface/note). Re-enrich on load so the LLD
     # always sees the full per-op detail (`load_op_details` is lru_cached
     # and idempotent — re-enriching an already-enriched op is a no-op).
-    from subagents.c_ops_picker_agent.agent import _enrich_with_op_details
+    from subagents.g_ops_picker_agent.agent import _enrich_with_op_details
 
     ops_picks = _enrich_with_op_details(ops_picks)
 
@@ -2058,8 +2058,8 @@ def main() -> None:
     if resume_state and resume_state.get("lld_v_findings") is not None:
         lld_v_findings = resume_state["lld_v_findings"]
     else:
-        from subagents.e_lld_v_agent.agent import run_lld_validator
-        from subagents.d_lld_agent.agent import run_lld_agent as _rerun_lld
+        from subagents.k_lld_v_agent.agent import run_lld_validator
+        from subagents.i_lld_agent.agent import run_lld_agent as _rerun_lld
 
         _spinner("LLD Check")
         _lld_v_t0 = time.monotonic()
@@ -2204,7 +2204,7 @@ def main() -> None:
     # phase already produced them) — we don't gate on _resumed_idx so an
     # operator can rebuild the alignment in-place by deleting the field
     # from state.json and resuming with --stop-after pre-codegen.
-    from subagents.f_codegen_agent.orchestration import run_pre_codegen_phase
+    from subagents.o_codegen_agent.orchestration import run_pre_codegen_phase
 
     _cached_alignment = (
         resume_state.get("alignment_notes")
@@ -2308,7 +2308,7 @@ def main() -> None:
     # the run resumable from this phase without manual state surgery.
     #
     # `pre_codegen_status` is the outcome taxonomy from
-    # subagents.f_codegen_agent.pre_codegen.agent.Status plus the two
+    # subagents.m_pre_codegen_agent.agent.Status plus the two
     # phase-level statuses ("cached", "skipped_no_lld"). Persisting it
     # disambiguates `alignment_notes == []` after the fact — a clean
     # empty run vs a fail-open hides under the same notes list.

@@ -1,5 +1,5 @@
 """
-Tests for subagents.c_ops_picker_agent.shopify_ops — load + slice + validate helpers used to
+Tests for subagents.g_ops_picker_agent.shopify_ops — load + slice + validate helpers used to
 plumb the Shopify GraphQL catalog through the architect (full index) and
 handler (sliced to architect-approved ops).
 """
@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from subagents.c_ops_picker_agent import shopify_ops as catalog_mod
-from subagents.c_ops_picker_agent.shopify_ops import (
+from subagents.g_ops_picker_agent import shopify_ops as catalog_mod
+from subagents.g_ops_picker_agent.shopify_ops import (
     load_summary,
     slice_summary,
     validate_op_names,

@@ -2,7 +2,7 @@
 Tests for _revision_locked_artifacts — decides which artifacts the revision
 agent may edit based on which LLM-validator findings fired.
 
-The new validator layer (subagents/g_codegen_v_agent) emits a uniform Finding shape
+The new validator layer (subagents/q_codegen_v_agent) emits a uniform Finding shape
 where every entry carries an `artifact` field. The locking policy reads only
 that field — no Q-key categories.
 
@@ -33,7 +33,7 @@ for _mod in [
 ]:
     sys.modules.setdefault(_mod, MagicMock())
 
-from subagents.f_codegen_agent.orchestration import _revision_locked_artifacts  # noqa: E402
+from subagents.o_codegen_agent.orchestration import _revision_locked_artifacts  # noqa: E402
 
 
 def _f(artifact: str, validator: str = "agent_rules") -> Dict:

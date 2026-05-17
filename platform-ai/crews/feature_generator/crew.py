@@ -45,20 +45,20 @@ from contract.validators import (
     TechnicalExplanation,
     AgentTraceEntry,
 )
-from subagents._product_agent.agent import (
+from subagents.a_product_agent.agent import (
     ProductIntentValidationError,
     run_product_agent,
 )
-from subagents.i_explenation_agent.explanation_agent import run_explanation_agent
+from subagents.u_explenation_agent.explanation_agent import run_explanation_agent
 from subagents.base import CodegenContext
-from subagents.h_revision_agent.revision_agent import run_revision_agent
-from subagents.g_codegen_v_agent.base import run_llm_validators
+from subagents.s_revision_agent.revision_agent import run_revision_agent
+from subagents.q_codegen_v_agent.agent import run_llm_validators
 from subagents.registry import GENERATORS
-# Codegen primitives live in subagents/f_codegen_agent/orchestration.py — the
+# Codegen primitives live in subagents/o_codegen_agent/orchestration.py — the
 # canonical toolkit shared by every codegen consumer (this crew, the CLI's
 # pipeline_local, and any future driver). Keep crew.py focused on the
 # production-API shell: progress events, contract publishing, deadline.
-from subagents.f_codegen_agent.orchestration import (
+from subagents.o_codegen_agent.orchestration import (
     _BACKEND_OPEN_ARTIFACTS,
     _DB_BROKEN_ARTIFACTS,
     _MAX_RETRIES,
@@ -565,7 +565,7 @@ def _phase_validator(
     """
     Optional Agent 4b: LLM semantic validators (LLM_VALIDATION_ENABLED=true).
 
-    Runs the parallel validators in subagents/g_codegen_v_agent (agent_rules,
+    Runs the parallel validators in subagents/q_codegen_v_agent (agent_rules,
     bug_finder) against the generated artifacts. Only HIGH-confidence findings
     trigger a revision pass. (quality_brief_coverage is frozen — see
     g_codegen_v_agent/base.py for the un-freeze recipe.)
