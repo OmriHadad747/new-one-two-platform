@@ -681,6 +681,10 @@ def _phase_validator(
         f"Codegen retry on {', '.join(affected)}…",
     )
     retry_t0 = _now_ms()
+    # `prior_findings_map` mirrors `error_map` so codegen_v findings ride
+    # along as DO NOT REVERT guardrails on every attempt. Dedup against
+    # the current round's NEW ERRORS happens inside `run_codegen_parallel`,
+    # so attempt 1 still shows them once (as NEW ERRORS).
     revised_artifacts, retry_tokens = run_codegen_parallel(
         retry_ctx,
         is_storefront=is_storefront,
@@ -688,6 +692,7 @@ def _phase_validator(
         error_map=error_map,
         cumulative_errors=dict(error_map),
         artifacts=dict(artifacts),
+        prior_findings_map=dict(error_map),
     )
     retry_ms = _now_ms() - retry_t0
 

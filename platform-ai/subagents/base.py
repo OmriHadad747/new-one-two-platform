@@ -100,6 +100,17 @@ class CodegenContext:
     )
     prior_admin_ui_code: Optional[str] = None
 
+    # Carry-forward guardrails from a validator that does NOT re-run every
+    # attempt (today: the codegen_v LLM bug-finder). Unlike `previous_errors`
+    # — which lists this round's NEW errors and is fixed away as the next
+    # validation pass clears it — entries here MUST stay fixed across every
+    # subsequent attempt. The retry suffix renders them under
+    # `DO NOT REVERT — prior findings`, so when fixing a new static error
+    # would tempt the model to undo a prior codegen_v fix, the rule is
+    # explicit. Populated by callers when they invoke `_phase_codegen`
+    # after `q_codegen_v_agent` produces findings.
+    prior_findings: Optional[List[str]] = None
+
     # OUTPUT slot — see docstring. Written by BackendGenerator.generate().
     backend_email_metadata: Optional[Dict[str, Any]] = None
     # OUTPUT slot — raw LLM response (pre-parse) so the artifact validator can
@@ -191,20 +202,61 @@ class Generator(ABC):
 
     # ── Concrete template method ───────────────────────────────────────────────
 
-    def _format_retry_suffix(self, errors: Optional[List[str]]) -> str:
+    def _format_retry_suffix(
+        self,
+        errors: Optional[List[str]],
+        prior_findings: Optional[List[str]] = None,
+    ) -> str:
         """
-        Render previous validation errors as the retry suffix passed to invoke().
+        Render the retry suffix passed to invoke(). Two sections + a policy.
 
-        This is intentionally separate from user_prompt() so the stable prompt
-        content can be cached — see generate() and adapter._build_user_message().
+        Kept separate from user_prompt() so the stable prompt content can be
+        cached — see generate() and adapter._build_user_message().
+
+        Sections (each omitted when empty):
+
+          NEW ERRORS         — this round's validation errors. They go away
+                               once the next validation pass clears them.
+          DO NOT REVERT      — carry-forward findings (today: codegen_v
+                               LLM bug-finder). They persist across every
+                               attempt until the validator that raised them
+                               re-runs and reports a different set.
+
+        Policy: the trap this prompt prevents is the model silencing a new
+        TS error by undoing a prior runtime fix (e.g. re-introducing
+        `req.platform!` inside a webhook handler to satisfy
+        `shopifyClientFor`'s typed signature). The policy gives three
+        concrete alternatives so revert isn't the path of least resistance.
         """
-        if not errors:
+        if not errors and not prior_findings:
             return ""
-        lines = "\n".join(f"- {e}" for e in errors)
-        return (
-            f"\n\nPREVIOUS ATTEMPT FAILED VALIDATION:\n{lines}\n\n"
-            f"Fix ALL listed errors in this new attempt.\n\n"
+
+        sections: List[str] = []
+        if errors:
+            lines = "\n".join(f"- {e}" for e in errors)
+            sections.append(f"NEW ERRORS (fix these):\n{lines}")
+        if prior_findings:
+            lines = "\n".join(f"- {f}" for f in prior_findings)
+            sections.append(
+                "DO NOT REVERT — prior findings already addressed in an earlier "
+                "attempt (must stay fixed):\n" + lines
+            )
+
+        policy = (
+            "RETRY POLICY:\n"
+            "1. Fix every NEW ERROR.\n"
+            "2. NEVER revert anything under DO NOT REVERT. If satisfying a new\n"
+            "   error appears to require reverting a prior fix, the prior fix is\n"
+            "   not the bug — your approach is. Pick a different fix:\n"
+            "     - widen or refactor a type (e.g. accept `Request | ShopifyClientContext`)\n"
+            "     - construct the expected shape from available data\n"
+            "       (e.g. build a `ShopifyClientContext` from `payload.shop_domain`)\n"
+            "     - cast at the call site only (`fn(x as Y)`) when no data is available\n"
+            "3. Patch, don't rewrite. Touch the smallest region needed."
         )
+
+        body = "\n\n".join(sections)
+        return f"\n\nPREVIOUS ATTEMPT FAILED VALIDATION:\n\n{body}\n\n{policy}\n\n"
 
     def generate(self, ctx: CodegenContext) -> Tuple[str, int, int, int, int]:
         """
@@ -244,7 +296,9 @@ class Generator(ABC):
             max_tokens=self.max_tokens,
             thinking_budget=thinking_budget,
         )
-        retry_suffix = self._format_retry_suffix(ctx.previous_errors)
+        retry_suffix = self._format_retry_suffix(
+            ctx.previous_errors, ctx.prior_findings
+        )
         # 1-hour TTL: the codegen → static-validation → codegen_v →
         # codegen-retry loop can span 10+ minutes; the default 5-min
         # cache TTL evicts the system prompt + stable user prefix mid-

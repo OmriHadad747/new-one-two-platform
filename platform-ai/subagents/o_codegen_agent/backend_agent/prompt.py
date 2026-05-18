@@ -166,6 +166,16 @@ Express routers mounted by the template's server.ts:
   Middleware rejects unauthenticated requests before they hit your
   route. Use `req.platform!.<field>` after destructuring.
 
+  AVAILABLE ON: /widget and /admin route handlers only.
+  NOT AVAILABLE on webhook handlers or cron handlers — the
+  verify-platform middleware is NOT in the webhook or cron pipeline.
+  Reading `req.platform!.<anything>` inside a webhook/cron handler
+  throws `TypeError: Cannot read properties of undefined` at runtime
+  on every delivery. Never reference `req.platform` from a webhook
+  or cron handler — neither in logs nor as an argument to helpers
+  like `shopifyClientFor`. See "Handler signatures" + "Logging" for
+  the webhook/cron-safe patterns.
+
 Local helpers — import from `../lib/<name>.js`. Full APIs are documented
 in each step's `example` snippet; the list below is for orientation only.
 
@@ -205,11 +215,16 @@ in each step's `example` snippet; the list below is for orientation only.
             NEVER write to cron_queue directly. See step.example.
 
 Logging — structured stdout (Cloud Logging captures JSON):
-  console.log({ requestId: req.platform!.requestId, …fields }, "<msg>");
-  console.warn / console.error in the same shape.
-  In cron jobs, omit `requestId`; include `jobName` + `dedup_key` when
-  relevant. Never log full Shopify payloads or email bodies — log IDs
-  and summaries.
+  Route handlers (/widget, /admin):
+    console.log({ requestId: req.platform!.requestId, …fields }, "<msg>");
+  Webhook handlers (NO req.platform — see note above):
+    console.log({ topic: "<topic>", …fields }, "<msg>");
+    Include `payload.id` (or whichever id field the topic provides) when
+    relevant, never the full payload.
+  Cron handlers:
+    console.log({ jobName: "<jobName>", dedup_key, …fields }, "<msg>");
+  console.warn / console.error in the same shape. Never log full Shopify
+  payloads or email bodies — log IDs and summaries.
 
 ALLOWED IMPORTS — anything else fails static validation:
   (a) Node 20 builtins (assert, buffer, crypto, events, fs, http, https,
@@ -264,6 +279,13 @@ so register the path as written (e.g. "/balance", not "/widget/balance").
                     invokes `handler(envelope.payload, req)`. Type `payload`
                     inline against the topic's payloadFields (use
                     `(payload as { … })` casts at point of use).
+                    NO req.platform — verify-platform middleware does not
+                    run on /webhook. Log with `{ topic, ...fields }`
+                    (never `req.platform!.requestId`). For Shopify access
+                    in a webhook, follow the recipe step's `example` —
+                    it shows the correct call form for the webhook
+                    context (`shopifyClientFor` is overloaded for the
+                    no-platform case; do NOT pass `req` to it).
 
   Cron handler:     (payload: unknown) => Promise<void>
                     No req.platform; cast `payload` to the shape the
@@ -485,12 +507,23 @@ bind substitution.
 
   log
     Fields: level ∈ {"info","warn","error"}, message, fields
-    Emit:
+    Emit per handler type (req.platform exists ONLY on route handlers):
+      Route handler:
         console.<level>(
           { requestId: req.platform!.requestId, <field>: <bind>, … },
           "<message>",
         );
-    In cron, replace `requestId` with `jobName`.
+      Webhook handler:
+        console.<level>(
+          { topic: "<topic>", <field>: <bind>, … },
+          "<message>",
+        );
+      Cron handler:
+        console.<level>(
+          { jobName: "<jobName>", <field>: <bind>, … },
+          "<message>",
+        );
+    Reading `req.platform` from a webhook/cron handler crashes at runtime.
 
   response
     Fields: status, body?

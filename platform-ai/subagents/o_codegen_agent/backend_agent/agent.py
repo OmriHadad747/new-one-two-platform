@@ -152,7 +152,9 @@ class BackendGenerator(Generator):
             max_tokens=self.max_tokens,
             thinking_budget=thinking_budget,
         )
-        retry_suffix = self._format_retry_suffix(ctx.previous_errors)
+        retry_suffix = self._format_retry_suffix(
+            ctx.previous_errors, ctx.prior_findings
+        )
         # 1-hour TTL — same rationale as Generator.generate(): backend
         # may be re-invoked by static-retry then again by codegen_v
         # 5-10+ minutes later. 1h TTL spans the whole pipeline.

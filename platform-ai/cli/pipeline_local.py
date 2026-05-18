@@ -538,6 +538,7 @@ def _phase_codegen(
     prior_error_map: Optional[Dict[str, List[str]]] = None,
     prior_retry_log: Optional[List[Dict]] = None,
     prior_token_totals: Optional[Dict[str, Tuple[int, int, int, int]]] = None,
+    prior_findings_map: Optional[Dict[str, List[str]]] = None,
 ) -> Tuple[Dict[str, str], List[Dict], Dict[str, Tuple[int, int, int, int]]]:
     """
     Run parallel codegen with static validation retries.
@@ -673,6 +674,7 @@ def _phase_codegen(
                 error_map=error_map,
                 cumulative_errors=cumulative_errors,
                 artifacts=artifacts,
+                prior_findings_map=prior_findings_map,
                 on_done=_on_done,
             )
 
@@ -979,6 +981,11 @@ def _phase_validator(
 
     _spinner("Validator-driven codegen retry")
     t0 = time.monotonic()
+    # `prior_error_map` drives WHICH agents re-run this round, and (on
+    # attempt 1) becomes their NEW ERRORS to fix. `prior_findings_map`
+    # is the carry-forward guardrail: if the codegen_v fix introduces a
+    # new static error on attempt 2+, the same findings still ride
+    # along under DO NOT REVERT so the model can't silently undo them.
     revised_artifacts, retry_log, retry_tokens = _phase_codegen(
         retry_ctx,
         is_storefront,
@@ -986,6 +993,7 @@ def _phase_validator(
         run_dir,
         prior_artifacts=dict(artifacts),
         prior_error_map=error_map,
+        prior_findings_map=error_map,
     )
     retry_ms = int((time.monotonic() - t0) * 1000)
 
@@ -1014,24 +1022,199 @@ def _phase_validator(
     )
 
     if not post_errors:
+        # ── Regression safety net (one extra codegen_v pass) ───────────
+        # Re-run codegen_v on the revised artifacts to catch fixes that
+        # were silently reverted by the inner static-retry loop (e.g.
+        # attempt N fixes `req.platform` in webhooks; attempt N+1's TS-
+        # error retry undoes it). Cached prompt prefix means this call
+        # is mostly cache reads at ~10% of normal cost.
+        _spinner("Validator (regression check)")
+        t0 = time.monotonic()
+        with input_log("codegen_v", run_dir):
+            (
+                post_findings,
+                post_val_in,
+                post_val_out,
+                post_cache_r,
+                post_cache_c,
+            ) = run_codegen_validator(
+                revised_artifacts, retry_ctx, is_storefront, is_admin_ui
+            )
+        post_ms = int((time.monotonic() - t0) * 1000)
+        total_in += post_val_in
+        total_out += post_val_out
+
+        if not post_findings:
+            _agent_line(
+                "Validator (regression check)",
+                ok=True,
+                ms=post_ms,
+                notes=_tok_note(
+                    post_val_in,
+                    post_val_out,
+                    extra="clean — no regressions",
+                    cache_read=post_cache_r,
+                    cache_create=post_cache_c,
+                ),
+            )
+            _agent_line(
+                "Validator",
+                ok=True,
+                ms=retry_ms,
+                notes=_tok_note(
+                    retry_in,
+                    retry_out,
+                    extra="findings fixed via codegen retry",
+                ),
+            )
+            trace["final_outcome"] = "resolved"
+            # Outcome is encoded in (checkpoint, halt_reason):
+            #   ("revision", None) → codegen_v findings resolved on retry
+            _save_state(
+                run_dir,
+                checkpoint="revision",
+                halt_reason=None,
+                artifacts=dict(revised_artifacts),
+            )
+            return revised_artifacts, total_in, total_out, trace
+
+        # Regression detected — one more retry round, capped here.
+        regression_error_map = group_findings_by_artifact(post_findings)
         _agent_line(
-            "Validator",
-            ok=True,
-            ms=retry_ms,
+            "Validator (regression check)",
+            ok=False,
+            ms=post_ms,
             notes=_tok_note(
-                retry_in,
-                retry_out,
-                extra="findings fixed via codegen retry",
+                post_val_in,
+                post_val_out,
+                extra=(
+                    f"{len(post_findings)} regression(s) — "
+                    f"final retry: {', '.join(sorted(regression_error_map.keys())) or '(none actionable)'}"
+                ),
+                cache_read=post_cache_r,
+                cache_create=post_cache_c,
             ),
         )
-        trace["final_outcome"] = "resolved"
-        # Outcome is encoded in (checkpoint, halt_reason):
-        #   ("revision", None) → codegen_v findings resolved on retry
+        for f in post_findings:
+            print(
+                f"    {_DIM}• [{f.get('artifact', '?')}] "
+                f"{f.get('location', '?')}: {f.get('issue', '')[:140]}{_RESET}"
+            )
+
+        if not regression_error_map:
+            # Only plan-level findings — nothing to act on. Ship revised.
+            trace["final_outcome"] = "resolved"
+            _save_state(
+                run_dir,
+                checkpoint="revision",
+                halt_reason=None,
+                artifacts=dict(revised_artifacts),
+            )
+            return revised_artifacts, total_in, total_out, trace
+
+        regression_ctx = dataclasses.replace(
+            retry_ctx,
+            prior_backend_code=(
+                revised_artifacts.get("backend")
+                if "backend" in regression_error_map
+                else retry_ctx.prior_backend_code
+            ),
+            prior_db_sql=(
+                revised_artifacts.get("db")
+                if "db" in regression_error_map
+                else retry_ctx.prior_db_sql
+            ),
+            prior_storefront_code=(
+                revised_artifacts.get("storefront")
+                if "storefront" in regression_error_map
+                else retry_ctx.prior_storefront_code
+            ),
+            prior_admin_ui_code=(
+                revised_artifacts.get("admin_ui")
+                if "admin_ui" in regression_error_map
+                else retry_ctx.prior_admin_ui_code
+            ),
+        )
+
+        _spinner("Final retry")
+        t0 = time.monotonic()
+        final_artifacts, final_retry_log, final_tokens = _phase_codegen(
+            regression_ctx,
+            is_storefront,
+            is_admin_ui,
+            run_dir,
+            prior_artifacts=dict(revised_artifacts),
+            prior_error_map=regression_error_map,
+            prior_findings_map=regression_error_map,
+        )
+        final_ms = int((time.monotonic() - t0) * 1000)
+        final_in = sum(t[0] for t in final_tokens.values())
+        final_out = sum(t[1] for t in final_tokens.values())
+        total_in += final_in
+        total_out += final_out
+
+        final_static_errors = validate_artifacts(
+            final_artifacts, regression_ctx, is_storefront, is_admin_ui
+        )
+        trace["attempts"].append(
+            {
+                "attempt": 2,
+                "duration_ms": final_ms,
+                "in_tokens": final_in,
+                "out_tokens": final_out,
+                "agents_retried": sorted(regression_error_map.keys()),
+                "retry_log": final_retry_log,
+                "post_static_errors": final_static_errors or {},
+                "outcome": (
+                    "accepted"
+                    if not final_static_errors
+                    else "static_errors_after_final_retry"
+                ),
+                "regression_findings": post_findings,
+            }
+        )
+
+        if not final_static_errors:
+            _agent_line(
+                "Final retry",
+                ok=True,
+                ms=final_ms,
+                notes=_tok_note(
+                    final_in, final_out, extra="regressions fixed"
+                ),
+            )
+            trace["final_outcome"] = "resolved_after_regression"
+            _save_state(
+                run_dir,
+                checkpoint="revision",
+                halt_reason=None,
+                artifacts=dict(final_artifacts),
+            )
+            return final_artifacts, total_in, total_out, trace
+
+        # Final retry left static errors — keep the post-retry artifacts
+        # (they passed static once and most fixes likely landed). Surface
+        # the unresolved regressions in the trace.
+        _agent_line(
+            "Final retry",
+            ok=False,
+            ms=final_ms,
+            notes=_tok_note(
+                final_in,
+                final_out,
+                extra="static errors after final retry — keeping post-retry artifacts",
+            ),
+        )
+        for gen_name, errs in final_static_errors.items():
+            for e in errs:
+                print(f"    {_DIM}• [{gen_name}] {e[:120]}{_RESET}")
+        trace["final_outcome"] = "regression_unresolved"
         _save_state(
             run_dir,
-            checkpoint="revision",
-            halt_reason=None,
+            checkpoint="validator",
+            halt_reason="regression_unresolved",
             artifacts=dict(revised_artifacts),
+            codegen_v_findings=post_findings,
         )
         return revised_artifacts, total_in, total_out, trace
 

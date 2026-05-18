@@ -236,8 +236,15 @@ def _build_codegen_context(
     base_ctx: CodegenContext,
     *,
     previous_errors: Optional[List[str]],
+    prior_findings: Optional[List[str]] = None,
 ) -> CodegenContext:
-    """Build the per-generator CodegenContext for one invocation."""
+    """Build the per-generator CodegenContext for one invocation.
+
+    `prior_findings` are carry-forward guardrails — usually codegen_v
+    findings the caller wants protected across every attempt of this
+    `_phase_codegen` invocation. They land in the retry suffix's
+    DO NOT REVERT section; see `Generator._format_retry_suffix`.
+    """
     return CodegenContext(
         intent=base_ctx.intent,
         plan=base_ctx.plan,
@@ -249,6 +256,7 @@ def _build_codegen_context(
         prior_storefront_code=base_ctx.prior_storefront_code,
         prior_db_sql=base_ctx.prior_db_sql,
         prior_admin_ui_code=base_ctx.prior_admin_ui_code,
+        prior_findings=prior_findings,
     )
 
 
@@ -369,6 +377,7 @@ def run_codegen_parallel(
     error_map: Dict[str, List[str]],
     cumulative_errors: Dict[str, List[str]],
     artifacts: Dict[str, str],
+    prior_findings_map: Optional[Dict[str, List[str]]] = None,
     on_start: Optional[Callable[[str], None]] = None,
     on_done: Optional[Callable[[str, int, int, int, int, int], None]] = None,
 ) -> Tuple[Dict[str, str], Dict[str, Tuple[int, int, int, int]]]:
@@ -386,6 +395,13 @@ def run_codegen_parallel(
     across all prior attempts — it's what gets passed to the model as
     previous_errors so later retries have the full history, not just the
     most recent failures.
+
+    prior_findings_map is keyed by generator name and holds carry-forward
+    guardrails — typically codegen_v findings the caller wants protected
+    from regression across every attempt of this invocation. The list
+    lands in the retry suffix's DO NOT REVERT section; the policy text
+    instructs the model to fix new errors without undoing prior fixes.
+    None on the static-validation-only path (initial codegen round).
 
     Returns (artifacts, per_agent_tokens) — tokens dict only contains keys for
     generators that actually ran on this invocation. Each tuple is
@@ -406,13 +422,27 @@ def run_codegen_parallel(
     # (currently just BackendGenerator's backend_email_metadata) after the
     # future resolves. The per-call ctx is distinct from base_ctx — base_ctx
     # lives for the whole pipeline; these are one-shot per generator call.
-    ctx_by_gen: Dict[str, CodegenContext] = {
-        gen.name: _build_codegen_context(
+    # Dedup prior_findings against this round's previous_errors so the
+    # retry suffix doesn't list the same line under NEW ERRORS and
+    # DO NOT REVERT at the same time. On attempt 1 of the validator-
+    # driven retry, codegen_v findings appear in both buckets (caller
+    # passes them as `prior_error_map` to drive which agents run, AND as
+    # `prior_findings_map` to keep them protected on attempts 2+); the
+    # dedup leaves attempt 1's suffix with only NEW ERRORS, and lets
+    # attempt 2's suffix carry them under DO NOT REVERT once they've
+    # rolled out of the current error set.
+    ctx_by_gen: Dict[str, CodegenContext] = {}
+    for gen in to_run:
+        prev = _build_prev_errors(gen.name, cumulative_errors, error_map)
+        prior = list((prior_findings_map or {}).get(gen.name) or [])
+        if prev and prior:
+            prev_set = set(prev)
+            prior = [p for p in prior if p not in prev_set]
+        ctx_by_gen[gen.name] = _build_codegen_context(
             base_ctx,
-            previous_errors=_build_prev_errors(gen.name, cumulative_errors, error_map),
+            previous_errors=prev,
+            prior_findings=prior or None,
         )
-        for gen in to_run
-    }
 
     # Wrap each generator call to emit start/done callbacks with wall-clock
     # timing. Callbacks run on whichever thread finished — safe for the CLI's
