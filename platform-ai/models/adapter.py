@@ -54,6 +54,31 @@ class LLMResponse:
     stop_reason: Optional[str] = None
 
 
+@dataclass
+class StructuredLLMResponse:
+    """
+    Response shape for `invoke_structured()` — the API decoded a tool call
+    whose arguments match the caller-supplied JSON Schema. The model can
+    no longer drift on output shape (object-vs-array confusion, missing
+    required fields, wrong enum value) because the schema is enforced at
+    decode time, not after the fact.
+
+    `structured_output` is the parsed tool-arguments dict; pass it directly
+    to `Pydantic.model_validate(...)`. Semantic validators (e.g. cross-
+    field invariants like "paginationKind required when responseShape has
+    object-list values") still run on the Pydantic model — tool use
+    enforces shape, not semantics.
+    """
+
+    structured_output: dict
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    stop_reason: Optional[str] = None
+
+
 # ── Input tracing ─────────────────────────────────────────────────────────────
 #
 # Opt-in capture of every LLM call's exact system+user prompt to disk. Off by
@@ -116,6 +141,7 @@ def _dump_inputs(
     retry_suffix: str,
     *,
     multi_turn_messages: Optional[list[dict]] = None,
+    uncached_suffix: str = "",
 ) -> None:
     """
     Write the prompt about to be sent to the LLM, if input_log is active.
@@ -155,6 +181,10 @@ def _dump_inputs(
 
         if retry_suffix:
             (attempt_dir / "retry_suffix.txt").write_text(retry_suffix)
+        if uncached_suffix:
+            # Separate file so post-mortem can tell which bytes were the
+            # mutating-but-not-retry chunk (today: codegen prior_code).
+            (attempt_dir / "uncached_suffix.txt").write_text(uncached_suffix)
     except Exception as exc:  # pragma: no cover — observability must not raise
         log.warning("input-trace dump failed (agent=%s): %s", state.agent, exc)
 
@@ -292,7 +322,11 @@ def _invoke_with_retry(llm: ChatAnthropic, messages: list) -> object:
       - APITimeoutError  (read timeout — transient network or slow generation)
       - APIStatusError   with status 429 / 529 (rate-limited or overloaded)
 
-    Raises the original exception after all retries are exhausted.
+    Raises the original exception after all retries are exhausted. Non-
+    retryable HTTP errors (400 / 401 / 403) log the response body before
+    re-raising — without the body, the only signal is "HTTP 400" with no
+    indication of which schema field / cache_control marker / tool block
+    Anthropic rejected.
     """
     for attempt, delay in enumerate([0] + _RETRY_DELAYS, start=1):
         if delay:
@@ -309,6 +343,22 @@ def _invoke_with_retry(llm: ChatAnthropic, messages: list) -> object:
             )
         except APIStatusError as exc:
             if exc.status_code not in _RETRYABLE_STATUS or attempt > len(_RETRY_DELAYS):
+                # Non-retryable — surface the actual Anthropic error body
+                # so the operator can see WHICH part of the request was
+                # rejected (e.g. tool input_schema constraints, missing
+                # required field, oversized payload). Default LangChain
+                # propagation swallows this into "HTTP 400" alone.
+                body = None
+                try:
+                    body = exc.response.text if exc.response is not None else None
+                except Exception:  # noqa: BLE001
+                    body = None
+                log.error(
+                    "Anthropic %s rejected request (request_id=%s) body=%s",
+                    exc.status_code,
+                    getattr(exc, "request_id", "?"),
+                    (body or "<no body>")[:2000],
+                )
                 raise
             log.warning(
                 "Anthropic overloaded/rate-limited (%s) — retrying in %ds (attempt %d)…",
@@ -399,30 +449,55 @@ def _extract_cache_metrics(usage: dict) -> tuple[int, int]:
 
 
 def _build_user_message(
-    stable: str, retry_suffix: str = "", cache_ttl: Optional[str] = None
+    stable: str,
+    retry_suffix: str = "",
+    cache_ttl: Optional[str] = None,
+    uncached_suffix: str = "",
 ) -> HumanMessage:
     """
     Build a HumanMessage with optional prompt caching on the stable prefix.
 
-    When retry_suffix is absent and the content is short: plain string (no overhead).
-    When the stable prefix is large enough: mark it with cache_control so that
-    retry attempts (which send the same stable content + a new retry_suffix) hit
-    the cache for the expensive portion — db schema, JIT sections, capabilities.
-    The retry_suffix is always uncached because it changes between attempts.
+    Three text blocks, in order:
+
+      1. `stable`           — truly stable content (intent, LLD JSON, alignment
+                              notes, emit instruction). Marked with
+                              cache_control when ≥ _CACHE_MIN_CHARS so retry
+                              attempts read the heavy bytes from cache.
+      2. `uncached_suffix`  — content that varies per attempt within the same
+                              agent (today: the codegen agents' PRIOR CODE
+                              block, which is attempt N's bundle injected
+                              into attempt N+1). Putting this here keeps the
+                              `stable` block byte-identical across retries,
+                              so the cache prefix never invalidates.
+      3. `retry_suffix`     — per-attempt validation findings + policy
+                              text. Also uncached.
+
+    Why this exists: when mutating content lives inside the cached `stable`
+    block, the cache marker is at the END of the mutating block — meaning
+    every change downstream of the marker invalidates the cache for the
+    whole user prefix. Splitting the mutating piece out lets the cache
+    breakpoint land BEFORE it, so the stable bytes keep hitting cache on
+    every retry. Empirically this brings codegen retry cache-hit ratio
+    from ~10% to ~50-70% on backend / storefront / admin_ui.
 
     cache_ttl: see `_cache_control` for accepted values.
     """
-    if not retry_suffix and len(stable) < _CACHE_MIN_CHARS:
+    has_suffix = bool(retry_suffix or uncached_suffix)
+    if not has_suffix and len(stable) < _CACHE_MIN_CHARS:
         return HumanMessage(content=stable)
 
+    blocks: list[dict] = []
     stable_block: dict = {"type": "text", "text": stable}
     if len(stable) >= _CACHE_MIN_CHARS:
         stable_block["cache_control"] = _cache_control(cache_ttl)
+    blocks.append(stable_block)
 
-    if not retry_suffix:
-        return HumanMessage(content=[stable_block])
+    if uncached_suffix:
+        blocks.append({"type": "text", "text": uncached_suffix})
+    if retry_suffix:
+        blocks.append({"type": "text", "text": retry_suffix})
 
-    return HumanMessage(content=[stable_block, {"type": "text", "text": retry_suffix}])
+    return HumanMessage(content=blocks)
 
 
 def _extract_text_content(raw_content: object) -> str:
@@ -456,6 +531,7 @@ def invoke(
     user: str,
     retry_suffix: str = "",
     cache_ttl: Optional[str] = None,
+    uncached_suffix: str = "",
 ) -> LLMResponse:
     """
     Calls the LLM with a system + user message pair.
@@ -483,13 +559,18 @@ def invoke(
     """
     # Dump before the network call so the prompt is captured even on failure.
     # No-op unless an input_log() block is active.
-    _dump_inputs(system, user, retry_suffix)
+    _dump_inputs(system, user, retry_suffix, uncached_suffix=uncached_suffix)
     start = time.monotonic()
     response = _invoke_with_retry(
         llm,
         [
             _system_message(system, cache_ttl=cache_ttl),
-            _build_user_message(user, retry_suffix, cache_ttl=cache_ttl),
+            _build_user_message(
+                user,
+                retry_suffix,
+                cache_ttl=cache_ttl,
+                uncached_suffix=uncached_suffix,
+            ),
         ],
     )
     latency_ms = int((time.monotonic() - start) * 1000)
@@ -508,6 +589,225 @@ def invoke(
         cache_creation_tokens=cache_create,
         stop_reason=stop_reason,
     )
+
+
+def invoke_structured(
+    llm: ChatAnthropic,
+    system: Union[str, list[str]],
+    user: str,
+    *,
+    tool_name: str,
+    tool_description: str,
+    tool_input_schema: dict,
+    retry_suffix: str = "",
+    cache_ttl: Optional[str] = None,
+    uncached_suffix: str = "",
+) -> StructuredLLMResponse:
+    """
+    Structured-output variant of `invoke()`. The model MUST reply with a
+    single tool call to `tool_name` whose `arguments` match
+    `tool_input_schema`. Returns the parsed tool-arguments dict in
+    `.structured_output`.
+
+    Why this exists
+    ---------------
+    Free-form JSON is sampled token-by-token without any schema constraint;
+    on long outputs (LLD, codegen_v findings) the model can drift on the
+    output SHAPE — emitting `[{...}, {...}]` where the schema declares
+    `{"k1": {...}, "k2": {...}}`, missing required fields, or picking a
+    string outside an enum. We then catch the drift post-hoc via Pydantic
+    and burn a retry attempt patching it.
+
+    Tool use is decoded against the schema directly. The API will not
+    sample a `[` after a `"type": "object"` opening, will not skip a
+    required field, will not invent an enum value. Shape drift becomes
+    impossible. Semantic validators (cross-field invariants) still run on
+    the Pydantic model — only structural shape is enforced here.
+
+    Schema source
+    -------------
+    Pass `MyPydanticModel.model_json_schema()` for `tool_input_schema`.
+    Pydantic emits a JSON Schema with `$defs` references which Anthropic's
+    tool input_schema accepts natively. No preprocessing needed.
+
+    Caching
+    -------
+    System prompt and stable user prefix are cached exactly as in
+    `invoke()`. Retry suffix stays uncached. Tools themselves are part of
+    the request shape; sending the same `tool_input_schema` across calls
+    keeps the cache prefix valid.
+
+    Tracing
+    -------
+    `input_log` captures the prompt before the call (same as `invoke()`).
+    Callers should follow with `dump_structured_output(response.structured_output)`
+    to write the tool arguments as JSON next to the prompt files.
+    """
+    _dump_inputs(system, user, retry_suffix, uncached_suffix=uncached_suffix)
+
+    tools = [
+        {
+            "name": tool_name,
+            "description": tool_description,
+            "input_schema": tool_input_schema,
+        }
+    ]
+    # `tool_choice={"type": "auto"}` is the ONLY choice compatible with
+    # extended thinking — Anthropic rejects `any` and the named-tool
+    # form (`{"type": "tool", "name": ...}`) with HTTP 400
+    # "Thinking may not be enabled when tool_choice forces tool use"
+    # whenever a `thinking_budget` is set. Every JSON-emitting agent
+    # we converted uses thinking, so this is the only viable form.
+    #
+    # `auto` does not technically force a tool call — the model could
+    # in principle reply with free-form text. In practice, with one
+    # tool defined and a prompt that explicitly instructs the model to
+    # call it, Sonnet calls the tool ~always. We still defend below
+    # by falling back to `extract_json` on the text content when no
+    # tool_use block surfaces, so the agent gets a parsed dict either
+    # way.
+    bound = llm.bind_tools(tools, tool_choice={"type": "auto"})
+
+    start = time.monotonic()
+    response = _invoke_with_retry(
+        bound,
+        [
+            _system_message(system, cache_ttl=cache_ttl),
+            _build_user_message(
+                user,
+                retry_suffix,
+                cache_ttl=cache_ttl,
+                uncached_suffix=uncached_suffix,
+            ),
+        ],
+    )
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    structured = _extract_tool_args(response, tool_name)
+
+    usage = getattr(response, "usage_metadata", None) or {}
+    cache_read, cache_create = _extract_cache_metrics(usage)
+    stop_reason = (getattr(response, "response_metadata", None) or {}).get(
+        "stop_reason"
+    )
+    return StructuredLLMResponse(
+        structured_output=structured,
+        input_tokens=usage.get("input_tokens", 0) if usage else 0,
+        output_tokens=usage.get("output_tokens", 0) if usage else 0,
+        latency_ms=latency_ms,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_create,
+        stop_reason=stop_reason,
+    )
+
+
+def _extract_tool_args(response: object, tool_name: str) -> dict:
+    """
+    Pull the tool-call arguments out of a LangChain AIMessage. langchain-
+    anthropic exposes them in two complementary places (per version):
+
+      • `response.tool_calls`  — a list of {"name", "args", "id"} dicts,
+                                  normalised across providers.
+      • `response.content`     — the raw block list; tool calls appear as
+                                  `{"type": "tool_use", "name", "input", "id"}`.
+
+    Preferred path: the normalised `.tool_calls` attribute. Fallback path:
+    walk the raw content for a `tool_use` block.
+
+    Last-resort fallback: when neither path yields a tool call (the model
+    replied with free-form text instead of using the tool — possible with
+    `tool_choice="auto"`, which is the only form compatible with extended
+    thinking), try to parse the visible text as JSON via `extract_json`.
+    That puts the caller back on the same footing as a pre-tool-use
+    `invoke()` call: the dict still flows through Pydantic, and any
+    shape drift surfaces as a normal `ValidationError` for the retry
+    loop to address. Only when text-based JSON extraction also fails do
+    we raise — that's a real "model refused to comply at all" case.
+    """
+    tool_calls = getattr(response, "tool_calls", None)
+    if tool_calls:
+        for call in tool_calls:
+            name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
+            if name == tool_name:
+                args = call.get("args") if isinstance(call, dict) else getattr(call, "args", None)
+                if isinstance(args, dict):
+                    return args
+
+    content = getattr(response, "content", None)
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                if block.get("name") == tool_name:
+                    args = block.get("input")
+                    if isinstance(args, dict):
+                        return args
+
+    # Text fallback — `tool_choice=auto` lets the model emit free text
+    # instead of calling the tool. Try to recover JSON from there.
+    import json as _json
+
+    text = _extract_text_content(content if content is not None else "")
+    if text:
+        try:
+            parsed = _json.loads(extract_json(text))
+            if isinstance(parsed, dict):
+                log.warning(
+                    "invoke_structured: model emitted text instead of a "
+                    "tool call for %r — recovered JSON via extract_json "
+                    "fallback. The agent runs but loses tool-decode shape "
+                    "enforcement on this attempt.",
+                    tool_name,
+                )
+                return parsed
+        except (ValueError, _json.JSONDecodeError):
+            pass
+
+    stop_reason = (getattr(response, "response_metadata", None) or {}).get(
+        "stop_reason"
+    )
+    raise RuntimeError(
+        f"invoke_structured: no tool_use block named {tool_name!r} in "
+        f"response and text fallback did not yield parseable JSON "
+        f"(stop_reason={stop_reason!r})."
+    )
+
+
+def dump_structured_output(output: dict) -> None:
+    """
+    Persist a structured tool-call output into the current attempt_N dir
+    as `output.json` so the post-mortem layout mirrors free-form runs
+    (which write `output.txt`). No-op outside an `input_log` block.
+
+    Failures are swallowed — observability must never break a run.
+    """
+    import json as _json
+
+    state = _input_log_ctx.get()
+    if state is None:
+        return
+    try:
+        agent_dir = state.run_dir / "inputs" / state.agent
+        if not agent_dir.is_dir():
+            return
+        attempts = sorted(
+            (
+                p
+                for p in agent_dir.iterdir()
+                if p.is_dir() and p.name.startswith("attempt_")
+            ),
+            key=lambda p: (
+                int(p.name.split("_", 1)[1]) if p.name.split("_", 1)[1].isdigit() else 0
+            ),
+        )
+        if not attempts:
+            return
+        (attempts[-1] / "output.json").write_text(
+            _json.dumps(output, indent=2, default=str)
+        )
+    except Exception as exc:  # pragma: no cover — observability must not raise
+        log.warning(
+            "structured-output dump failed (agent=%s): %s", state.agent, exc
+        )
 
 
 def invoke_conversation(

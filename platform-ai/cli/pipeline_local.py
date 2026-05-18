@@ -292,16 +292,24 @@ def _phase_hld(
         f"Product-agent intent:\n{json.dumps(intent, indent=2)}"
     )
 
-    def _on_attempt_failed(attempt: int, errors: List[str]) -> None:
+    def _on_attempt_failed(
+        attempt: int,
+        errors: List[str],
+        in_tok: int,
+        out_tok: int,
+        cache_r: int,
+        cache_c: int,
+    ) -> None:
         """Surface validator rejections live, instead of letting the
         spinner sit silent for ~30s while the agent retries."""
         first = errors[0] if errors else "validation failed"
         more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+        tok = _tok_note(in_tok, out_tok, cache_read=cache_r, cache_create=cache_c)
         _agent_line(
             "HLD",
             ok=False,
             ms=None,
-            notes=f"attempt {attempt} rejected: {first}{more}",
+            notes=f"attempt {attempt} rejected: {first}{more}  {tok}",
         )
         for e in errors:
             print(f"    {_DIM}• {e}{_RESET}")
@@ -398,14 +406,17 @@ def _phase_ops_picker(
     allowed = WEBHOOK_TOPICS
     topic_catalog = _filter_summary_to_allowed_topics(full_summary, allowed)
 
-    def _on_attempt_failed(attempt: int, errors: List[str]) -> None:
+    def _on_attempt_failed(
+        attempt: int, errors: List[str], in_tok: int, out_tok: int
+    ) -> None:
         first = errors[0] if errors else "validation failed"
         more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+        tok = _tok_note(in_tok, out_tok)
         _agent_line(
             "Ops Picker",
             ok=False,
             ms=None,
-            notes=f"attempt {attempt} rejected: {first}{more}",
+            notes=f"attempt {attempt} rejected: {first}{more}  {tok}",
         )
         for e in errors:
             print(f"    {_DIM}• {e}{_RESET}")
@@ -475,14 +486,22 @@ def _phase_lld(
         _tok_note,
     )
 
-    def _on_attempt_failed(attempt: int, errors: List[str]) -> None:
+    def _on_attempt_failed(
+        attempt: int,
+        errors: List[str],
+        in_tok: int,
+        out_tok: int,
+        cache_r: int,
+        cache_c: int,
+    ) -> None:
         first = errors[0] if errors else "validation failed"
         more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+        tok = _tok_note(in_tok, out_tok, cache_read=cache_r, cache_create=cache_c)
         _agent_line(
             "LLD",
             ok=False,
             ms=None,
-            notes=f"attempt {attempt} rejected: {first}{more}",
+            notes=f"attempt {attempt} rejected: {first}{more}  {tok}",
         )
         for e in errors:
             print(f"    {_DIM}• {e}{_RESET}")

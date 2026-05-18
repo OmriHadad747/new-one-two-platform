@@ -181,7 +181,35 @@ class Generator(ABC):
         handles retry errors separately so the stable prefix can be cached by
         Anthropic's prompt cache — retry attempts only pay for the new error block,
         not the full stable content (db schema, JIT sections, etc.).
+
+        Also do NOT include the PRIOR CODE block here — return it from
+        `prior_code_block()` instead so it lands in the uncached suffix.
+        Including mutating content here invalidates the cache marker on
+        the whole user prefix on every retry (~10% hit ratio observed in
+        the wild). With the prior_code_block hook the stable bytes stay
+        byte-identical across retries (~50-70% cache hit ratio).
         """
+
+    def prior_code_block(self, ctx: CodegenContext) -> str:
+        """
+        Optional hook for the per-attempt MUTATING block — typically the
+        previous attempt's artifact injected back as PRIOR CODE for the
+        next attempt to patch.
+
+        Default: empty (no mutating block). Subclasses that surface prior
+        code (backend, storefront, admin_ui) override this to format
+        `ctx.prior_<x>_code` into a labelled block.
+
+        Why a separate hook (vs. living inside user_prompt):
+        Anthropic's prompt cache invalidates at the FIRST byte that
+        changes. If prior_code lives inside the cached user block, the
+        cache marker effectively never hits on retries — the prior_code
+        differs every attempt. By returning it from here, generate()
+        passes it to invoke() as `uncached_suffix`, which sits OUTSIDE
+        the cached block. The stable user prefix stays byte-identical
+        and the cache reads ~50-70% of input tokens on retry attempts.
+        """
+        return ""
 
     @abstractmethod
     def parse(self, raw: str) -> str:
@@ -304,12 +332,18 @@ class Generator(ABC):
         # cache TTL evicts the system prompt + stable user prefix mid-
         # run. 1h TTL costs 1.25× on cache_create but serves reads at
         # the same 10% rate, so any retry within the hour pays back.
+        #
+        # The prior-code block lives in `uncached_suffix` rather than
+        # inside user_prompt so the stable user prefix stays byte-
+        # identical across retries — keeps the cache marker meaningful
+        # when prior_code mutates per attempt.
         result = invoke(
             llm,
             self.system_prompt(),
             self.user_prompt(ctx),
             retry_suffix=retry_suffix,
             cache_ttl="1h",
+            uncached_suffix=self.prior_code_block(ctx),
         )
         # Persist the raw response next to the prompt files so each codegen
         # attempt's output is post-mortem-able (same convention as the

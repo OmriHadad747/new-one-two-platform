@@ -35,7 +35,11 @@ from typing import Any, Dict, List, Tuple
 
 from pydantic import ValidationError
 
-from models.adapter import dump_output, extract_json, get_llm, invoke
+from models.adapter import (
+    dump_structured_output,
+    get_llm,
+    invoke_structured,
+)
 from models.agent_models import get_agent_model
 from subagents.base import CodegenContext
 from subagents.q_codegen_v_agent.prompt import build_system_prompt
@@ -178,12 +182,24 @@ def run_codegen_validator(
     # 5-15 min total). Default 5-min TTL evicts the prefix in between;
     # 1h spans the full pipeline so the system prompt + LLD + alignment
     # block hits cache on the second call.
-    response = invoke(llm, system, user, cache_ttl="1h")
+    response = invoke_structured(
+        llm,
+        system,
+        user,
+        tool_name="emit_codegen_findings",
+        tool_description=(
+            "Emit the codegen runtime-bug findings as a structured object "
+            "conforming to the CodegenVOutput schema. Call exactly once "
+            "with the full findings list as the tool input."
+        ),
+        tool_input_schema=CodegenVOutput.model_json_schema(),
+        cache_ttl="1h",
+    )
     in_tok = response.input_tokens
     out_tok = response.output_tokens
     cache_r = response.cache_read_tokens
     cache_c = response.cache_creation_tokens
-    dump_output(response.content)
+    dump_structured_output(response.structured_output)
 
     if response.stop_reason == "max_tokens":
         log.warning(
@@ -193,9 +209,8 @@ def run_codegen_validator(
         return [], in_tok, out_tok, cache_r, cache_c
 
     try:
-        raw_json = extract_json(response.content)
-        output = CodegenVOutput.model_validate_json(raw_json)
-    except (ValidationError, ValueError, json.JSONDecodeError) as exc:
+        output = CodegenVOutput.model_validate(response.structured_output)
+    except ValidationError as exc:
         log.warning("codegen_v: failed to parse response (%s) — fail-open", exc)
         return [], in_tok, out_tok, cache_r, cache_c
 

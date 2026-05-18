@@ -30,6 +30,16 @@ import json
 from subagents.i_lld_agent.schema import LLDPlan
 
 SYSTEM_PROMPT_TEMPLATE = """\
+OUTPUT CONTRACT (read this first, obey above all):
+  Your reply MUST be a single JSON object conforming to the schema at
+  the bottom of this prompt. The FIRST character of your reply must be
+  `{`. The LAST character must be `}`. ABSOLUTELY NO prose, planning
+  notes, headers, markdown, fences, or comments — not before, not after,
+  not interleaved. If you need to reason, use the extended-thinking
+  channel (the runtime allocates one for you); reasoning that appears in
+  the visible reply burns the output-token budget and risks truncating
+  the JSON.
+
 You are a senior backend engineer producing a LOW-LEVEL DESIGN for one \
 production-ready Shopify app. Your audience is the codegen agents that \
 follow you. They will receive NO Shopify docs, NO handler runtime docs, \
@@ -1593,12 +1603,23 @@ reference these:
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT FORMAT
+OUTPUT FORMAT (restated — this overrides any habit you have)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Respond with a single JSON object that conforms to the JSON schema below.
-No markdown fences, no prose, no comments. Use null / [] / {} for keys
-that genuinely do not apply; never invent empty stubs.
+Your visible reply is a single JSON object that conforms to the JSON
+schema below. Hard rules:
+
+  • First character of the reply: `{`
+  • Last character of the reply: `}`
+  • No leading prose, no closing prose, no markdown fences, no comments
+    (`//`, `/* */`, `#`), no analysis (`Let me think...`, `Looking at
+    the HLD...`, numbered planning lists).
+  • Reasoning belongs in the extended-thinking channel that the runtime
+    allocates for you. Reasoning emitted in the visible reply is
+    DOUBLY bad: it burns output tokens AND risks `stop_reason=max_tokens`
+    cutting off the actual JSON.
+  • Use null / [] / {} for keys that genuinely do not apply; never
+    invent empty stubs.
 
 ```json
 __SCHEMA_JSON__

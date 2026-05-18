@@ -28,15 +28,19 @@ from typing import Any, Dict, List, Tuple
 
 from pydantic import ValidationError
 
-from models.adapter import dump_output, extract_json, get_llm, invoke
+from models.adapter import (
+    dump_structured_output,
+    get_llm,
+    invoke_structured,
+)
 from models.agent_models import get_agent_model
 from subagents.k_lld_v_agent.prompt import build_system_prompt
 from subagents.k_lld_v_agent.schema import LLDVOutput
 
 log = logging.getLogger(__name__)
 
-_MAX_OUTPUT_TOKENS = 3_000
-_THINKING_BUDGET = 0
+_MAX_OUTPUT_TOKENS = 4_000
+_THINKING_BUDGET = 1024
 
 _USER_TEMPLATE = """\
 MERCHANT REQUEST
@@ -82,12 +86,28 @@ def run_lld_validator(
         thinking_budget=_THINKING_BUDGET,
     )
 
-    response = invoke(llm, system, user)
+    # 1-hour TTL: lld_v fires after the LLD agent's 5-15 min run; the
+    # default 5-min cache has already evicted the shared system prefix
+    # by the time we get here. 1h lets the cache survive into any LLD
+    # retry that lld_v findings trigger.
+    response = invoke_structured(
+        llm,
+        system,
+        user,
+        tool_name="emit_lld_findings",
+        tool_description=(
+            "Emit the LLD validation findings as a structured object "
+            "conforming to the LLDVOutput schema. Call exactly once with "
+            "the full findings list as the tool input."
+        ),
+        tool_input_schema=LLDVOutput.model_json_schema(),
+        cache_ttl="1h",
+    )
     in_tok = response.input_tokens
     out_tok = response.output_tokens
     cache_r = response.cache_read_tokens
     cache_c = response.cache_creation_tokens
-    dump_output(response.content)
+    dump_structured_output(response.structured_output)
 
     if response.stop_reason == "max_tokens":
         raise RuntimeError(
@@ -96,9 +116,8 @@ def run_lld_validator(
         )
 
     try:
-        raw_json = extract_json(response.content)
-        output = LLDVOutput.model_validate_json(raw_json)
-    except (ValidationError, json.JSONDecodeError) as exc:
+        output = LLDVOutput.model_validate(response.structured_output)
+    except ValidationError as exc:
         log.warning("lld_v: failed to parse response (%s) — fail-open", exc)
         return [], in_tok, out_tok, cache_r, cache_c
 

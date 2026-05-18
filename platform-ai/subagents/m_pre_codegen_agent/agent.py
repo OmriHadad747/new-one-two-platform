@@ -32,7 +32,11 @@ from typing import Any, Dict, List, Literal, Tuple
 
 from pydantic import ValidationError
 
-from models.adapter import dump_output, extract_json, get_llm, invoke
+from models.adapter import (
+    dump_structured_output,
+    get_llm,
+    invoke_structured,
+)
 from models.agent_models import get_agent_model
 from subagents.m_pre_codegen_agent.prompt import build_system_prompt
 from subagents.m_pre_codegen_agent.schema import PreCodegenOutput
@@ -116,7 +120,24 @@ def run_pre_codegen(
     )
 
     try:
-        response = invoke(llm, system, user)
+        # 1-hour TTL: pre_codegen runs once between lld_v and the codegen
+        # phase — well past the 5-min default cache window. Aligning TTL
+        # with the codegen agents keeps the shared LLD prefix hot for
+        # this call and any downstream codegen_v retries.
+        response = invoke_structured(
+            llm,
+            system,
+            user,
+            tool_name="emit_alignment_notes",
+            tool_description=(
+                "Emit the cross-agent alignment notes (concerns + targeted "
+                "agents + instructions) as a structured object conforming "
+                "to the PreCodegenOutput schema. Call exactly once with "
+                "the full notes list as the tool input."
+            ),
+            tool_input_schema=PreCodegenOutput.model_json_schema(),
+            cache_ttl="1h",
+        )
     except Exception as exc:  # noqa: BLE001 — fail-open by design.
         log.warning("pre_codegen: LLM invocation failed (%s) — fail-open", exc)
         return [], "llm_error", 0, 0, 0, 0
@@ -125,7 +146,7 @@ def run_pre_codegen(
     out_tok = response.output_tokens
     cache_r = response.cache_read_tokens
     cache_c = response.cache_creation_tokens
-    dump_output(response.content)
+    dump_structured_output(response.structured_output)
 
     if response.stop_reason == "max_tokens":
         # The output was truncated — JSON is almost certainly invalid.
@@ -136,16 +157,11 @@ def run_pre_codegen(
         )
         return [], "truncated", in_tok, out_tok, cache_r, cache_c
 
-    # extract_json never raises — at worst it returns a non-JSON
-    # fragment, which is detected when model_validate_json then raises
-    # json.JSONDecodeError. ValidationError means JSON parsed but didn't
-    # match the schema (extra field, unknown enum, too many notes, …).
-    raw_json = extract_json(response.content)
+    # Tool use guarantees structural shape; only semantic invariants on
+    # PreCodegenOutput can still fail (e.g. too many notes, unknown enum
+    # values that the schema's Literals reject).
     try:
-        output = PreCodegenOutput.model_validate_json(raw_json)
-    except json.JSONDecodeError as exc:
-        log.warning("pre_codegen: response was not valid JSON (%s) — fail-open", exc)
-        return [], "parse_error", in_tok, out_tok, cache_r, cache_c
+        output = PreCodegenOutput.model_validate(response.structured_output)
     except ValidationError as exc:
         log.warning("pre_codegen: response did not match schema (%s) — fail-open", exc)
         return [], "schema_error", in_tok, out_tok, cache_r, cache_c

@@ -25,7 +25,11 @@ from typing import Any, Dict, List, Tuple
 
 from pydantic import ValidationError
 
-from models.adapter import dump_output, extract_json, get_llm, invoke
+from models.adapter import (
+    dump_structured_output,
+    get_llm,
+    invoke_structured,
+)
 from models.agent_models import get_agent_model
 from subagents.e_hld_v_agent.prompt import build_system_prompt
 from subagents.e_hld_v_agent.schema import HLDVOutput
@@ -81,12 +85,28 @@ def run_hld_validator(
         thinking_budget=_THINKING_BUDGET,
     )
 
-    response = invoke(llm, system, user)
+    # 1-hour TTL: hld_v fires once but the HLD agent itself runs minutes
+    # before — keeping the cache hot across the HLD → hld_v → optional
+    # HLD-retry boundary is what makes the shared system prefix worth
+    # caching at all.
+    response = invoke_structured(
+        llm,
+        system,
+        user,
+        tool_name="emit_hld_findings",
+        tool_description=(
+            "Emit the HLD validation findings as a structured object "
+            "conforming to the HLDVOutput schema. Call exactly once with "
+            "the full findings list as the tool input."
+        ),
+        tool_input_schema=HLDVOutput.model_json_schema(),
+        cache_ttl="1h",
+    )
     in_tok = response.input_tokens
     out_tok = response.output_tokens
     cache_r = response.cache_read_tokens
     cache_c = response.cache_creation_tokens
-    dump_output(response.content)
+    dump_structured_output(response.structured_output)
 
     if response.stop_reason == "max_tokens":
         raise RuntimeError(
@@ -95,9 +115,8 @@ def run_hld_validator(
         )
 
     try:
-        raw_json = extract_json(response.content)
-        output = HLDVOutput.model_validate_json(raw_json)
-    except (ValidationError, json.JSONDecodeError) as exc:
+        output = HLDVOutput.model_validate(response.structured_output)
+    except ValidationError as exc:
         log.warning("hld_v: failed to parse response (%s) — fail-open", exc)
         return [], in_tok, out_tok, cache_r, cache_c
 

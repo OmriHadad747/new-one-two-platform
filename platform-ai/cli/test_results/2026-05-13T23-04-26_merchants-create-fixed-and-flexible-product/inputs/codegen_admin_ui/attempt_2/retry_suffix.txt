@@ -1,0 +1,18 @@
+
+
+PREVIOUS ATTEMPT FAILED VALIDATION:
+NEW ERRORS (fix these):
+- [admin_ui.js:renderDetailItems — bridge.call("/bundles/items/save", { product_external_ids: productIds })] `const productIds = picks.map(() => "")` sends an empty string for every product ID; the backend computes `Number("") === 0` and stores `product_external_id = 0` (BIGINT) for every item added through the admin UI. — The `products/update` webhook handler queries `WHERE product_external_id = ${productId}` using the real Shopify product ID (e.g. 8841234567), which never matches the stored `0`, so variant deletions are silently missed for all admin-added items — bundles are never auto-disabled when their variants are permanently removed from Shopify.
+- [admin_ui.js:fmtMoney and formatOrderTotal — `.format((minor || 0) / 100)`] Both `fmtMoney` and `formatOrderTotal` unconditionally divide `order_total_minor_units` by 100 before passing to `Intl.NumberFormat`, but for zero-decimal currencies (JPY, KRW) the minor unit IS the major unit — no division should occur. — A JPY order of 1 000 yen stored as `1000` is divided to `10` and then formatted with the JPY currency formatter, displaying ¥10 instead of ¥1,000 in both the purchase history table and the CSV export — every JPY/KRW order total shown to the merchant is 100× too small.
+
+RETRY POLICY:
+1. Fix every NEW ERROR.
+2. NEVER revert anything under DO NOT REVERT. If satisfying a new
+   error appears to require reverting a prior fix, the prior fix is
+   not the bug — your approach is. Pick a different fix:
+     - widen or refactor a type (e.g. accept `Request | ShopifyClientContext`)
+     - construct the expected shape from available data
+       (e.g. build a `ShopifyClientContext` from `payload.shop_domain`)
+     - cast at the call site only (`fn(x as Y)`) when no data is available
+3. Patch, don't rewrite. Touch the smallest region needed.
+

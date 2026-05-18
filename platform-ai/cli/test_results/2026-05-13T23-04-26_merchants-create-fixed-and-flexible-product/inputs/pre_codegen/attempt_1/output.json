@@ -1,0 +1,153 @@
+{
+  "notes": [
+    {
+      "target_agents": [
+        "backend",
+        "admin_ui",
+        "storefront"
+      ],
+      "concern": "unit",
+      "surfaces": [
+        "database.tables[2].columns[3]",
+        "database.tables[3].columns[6]",
+        "httpRoutes.admin[9].responseShape.items",
+        "httpRoutes.widget[0].responseShape.tiers",
+        "httpRoutes.widget[1].responseShape.discount_rate",
+        "httpRoutes.widget[2].responseShape.applied_discount_rate"
+      ],
+      "instruction": "discount_rate is always integer basis points (e.g. 1000 = 10.00%, range 0\u201310000). backend: store and return the raw integer; never divide before writing or after reading. admin_ui: when the merchant enters a percent (e.g. '10'), multiply by 100 before sending; when rendering, divide by 100 and display with two decimal places + '%'. storefront: when displaying a tier label ('Pick 3 for 10% off'), divide discount_rate by 100 for the human-readable string; never pass the raw bps value to Shopify or to the customer.",
+      "rationale": "Prevents admin_ui from sending 10 while the DB expects 1000, or the storefront from displaying '1000%' instead of '10%', both of which would be silent data corruption."
+    },
+    {
+      "target_agents": [
+        "backend",
+        "admin_ui"
+      ],
+      "concern": "unit",
+      "surfaces": [
+        "database.tables[3].columns[7]",
+        "httpRoutes.admin[9].responseShape.items"
+      ],
+      "instruction": "order_total_minor_units is an integer count of the currency's smallest unit (cents for USD, pence for GBP, yen for JPY \u2014 no decimals for JPY/KRW). backend: write and read it as a plain BIGINT; do not divide by 100 before returning it in the API response. admin_ui: when displaying to the merchant, use the accompanying order_currency ISO 4217 code to determine the correct decimal shift before formatting (e.g. USD/GBP: divide by 100; JPY: no division).",
+      "rationale": "Prevents the admin_ui from showing a JPY amount divided by 100 (off by 100\u00d7) or displaying a USD amount as an unformatted integer to the merchant."
+    },
+    {
+      "target_agents": [
+        "backend",
+        "admin_ui"
+      ],
+      "concern": "format",
+      "surfaces": [
+        "database.tables[3].columns[8]",
+        "httpRoutes.admin[9].responseShape.items"
+      ],
+      "instruction": "order_currency is an ISO 4217 three-letter uppercase currency code (e.g. 'USD', 'GBP', 'JPY'). backend: store and return the string exactly as received from the Shopify webhook payload's 'currency' field \u2014 do not transform case. admin_ui: treat this field as an opaque ISO 4217 code; use it only to drive decimal-place formatting of order_total_minor_units; do not localise or translate the code itself.",
+      "rationale": "Prevents case-normalisation mismatches or localisation transforms that would break currency-aware minor-unit formatting in the admin export view."
+    },
+    {
+      "target_agents": [
+        "backend",
+        "admin_ui"
+      ],
+      "concern": "format",
+      "surfaces": [
+        "httpRoutes.admin[2].responseShape.updated_at",
+        "httpRoutes.admin[0].responseShape.items",
+        "httpRoutes.admin[9].responseShape.items"
+      ],
+      "instruction": "All timestamp fields returned by the backend (created_at, updated_at, order_placed_at, recorded_at, added_at, occurred_at) must be serialised as ISO 8601 strings with UTC timezone offset (e.g. '2024-03-15T10:30:00.000Z'). admin_ui: parse these strings with a timezone-aware parser before display; do not assume epoch integers or locale-formatted strings.",
+      "rationale": "Prevents admin_ui from rendering raw ISO strings or misinterpreting them as local time, which would corrupt date-range filtering and export displays."
+    },
+    {
+      "target_agents": [
+        "backend",
+        "admin_ui",
+        "storefront"
+      ],
+      "concern": "id_shape",
+      "surfaces": [
+        "database.tables[1].columns[2]",
+        "database.tables[1].columns[3]",
+        "httpRoutes.admin[6].responseShape.items",
+        "httpRoutes.admin[7].requestShape.variant_external_ids",
+        "httpRoutes.admin[7].requestShape.product_external_ids",
+        "httpRoutes.widget[0].responseShape.items",
+        "httpRoutes.widget[1].requestShape.selected_variant_ids",
+        "httpRoutes.widget[2].requestShape.selected_variant_ids"
+      ],
+      "instruction": "variant_external_id and product_external_id travel across the API as decimal numeric strings (e.g. '123456789'), NOT as Shopify GIDs ('gid://shopify/ProductVariant/123456789') and NOT as integers. backend: store as BIGINT in DB; cast string \u2192 BIGINT on write, BIGINT \u2192 string on read before serialising JSON. admin_ui: send and receive as strings, do not add GID prefix. storefront: send selected_variant_ids as plain decimal strings; build GIDs internally only when calling Shopify APIs.",
+      "rationale": "Prevents the storefront or admin from sending GID-prefixed strings that the backend would fail to cast to BIGINT, and prevents integer overflow in JSON if sent as JS numbers."
+    },
+    {
+      "target_agents": [
+        "backend",
+        "admin_ui"
+      ],
+      "concern": "id_shape",
+      "surfaces": [
+        "httpRoutes.admin[0].responseShape.items",
+        "httpRoutes.admin[1].responseShape.bundle_id",
+        "httpRoutes.admin[4].responseShape.new_bundle_id",
+        "httpRoutes.admin[7].requestShape.bundle_id",
+        "httpRoutes.admin[9].responseShape.items"
+      ],
+      "instruction": "bundle_id (and all internal UUID primary keys: id fields on bundles, bundle_items, bundle_tiers, bundle_purchase_records, bundle_health_events) must be serialised as lowercase hyphenated UUID v4 strings (e.g. 'f47ac10b-58cc-4372-a567-0e02b2c3d479'). backend: use gen_random_uuid() in DB and return the UUID directly as a string \u2014 do not strip hyphens or encode as base64. admin_ui: treat as opaque strings; send back exactly as received.",
+      "rationale": "Prevents casing or hyphen-stripping mismatches where admin_ui sends a UUID without hyphens that the backend cannot match to an existing row."
+    },
+    {
+      "target_agents": [
+        "backend",
+        "admin_ui"
+      ],
+      "concern": "nullability",
+      "surfaces": [
+        "httpRoutes.admin[2].requestShape",
+        "capabilityRecipes.admin-update-bundle.steps[3]"
+      ],
+      "instruction": "On POST /bundles/update, absent fields (not sent in the JSON body) mean 'keep current value'; the backend uses COALESCE(${field}, existing_column) for title, mode, enabled, and description. admin_ui must NOT send explicit JSON null for a field the merchant did not touch \u2014 omit it from the request body entirely. Only send a field key when the merchant has actively changed it. The sole exception: if the merchant explicitly clears description, send \"description\": null.",
+      "rationale": "Prevents COALESCE from failing to distinguish 'user cleared the description' from 'user did not touch the description', which would silently retain stale values."
+    },
+    {
+      "target_agents": [
+        "backend",
+        "storefront"
+      ],
+      "concern": "protocol",
+      "surfaces": [
+        "capabilityRecipes.widget-validate-bundle.steps[11]",
+        "capabilityRecipes.widget-cart-add.steps[0]",
+        "httpRoutes.widget[1]",
+        "httpRoutes.widget[2]"
+      ],
+      "instruction": "The cart-add route (POST /cart/add) performs its own full server-side validation (pool membership + live Storefront availability + tier threshold) independently of the validate route. storefront widget must call POST /bundle/validate before enabling the 'Add to cart' button (to show live tier feedback), but the backend must NOT trust the prior validate result \u2014 it re-validates from scratch on every cart-add request. Do not pass a 'pre-validated' token between the two routes.",
+      "rationale": "Prevents a race condition where a variant goes out of stock between validate and cart-add, allowing an invalid selection to reach Shopify cartCreate."
+    },
+    {
+      "target_agents": [
+        "backend",
+        "admin_ui"
+      ],
+      "concern": "format",
+      "surfaces": [
+        "httpRoutes.admin[9].requestShape.date_from",
+        "httpRoutes.admin[9].requestShape.date_to",
+        "capabilityRecipes.admin-list-purchase-history.steps[0]"
+      ],
+      "instruction": "date_from and date_to query parameters for GET /purchase-history must be sent and parsed as ISO 8601 UTC datetime strings (e.g. '2024-01-01T00:00:00Z'). backend: cast both to TIMESTAMPTZ using ::timestamptz before comparison \u2014 reject with 400 if the cast fails. admin_ui: when rendering a date-picker, serialise the selected date to ISO 8601 UTC before appending to the query string; do not send locale-formatted date strings or Unix timestamps.",
+      "rationale": "Prevents the backend ::timestamptz cast from failing on locale-formatted date strings sent by the admin_ui, which would return an opaque 500 instead of a useful error."
+    },
+    {
+      "target_agents": [
+        "backend",
+        "storefront"
+      ],
+      "concern": "id_shape",
+      "surfaces": [
+        "httpRoutes.widget[2].responseShape.cart_external_id",
+        "capabilityRecipes.widget-cart-add.steps[14]"
+      ],
+      "instruction": "cart_external_id returned by POST /cart/add is the raw numeric token extracted from the Shopify cart GID (the segment after the final '/'), NOT the full GID string. backend: extract via cartCreateResult.cartCreate.cart.id.split('/').pop() and return the plain string. storefront: use this token to construct the Shopify checkout URL or pass it to the Storefront API \u2014 reconstruct the GID as 'gid://shopify/Cart/{cart_external_id}' only if an API call requires a full GID.",
+      "rationale": "Prevents the storefront from treating the full GID as an external ID and constructing a double-prefixed GID when calling subsequent Shopify Storefront cart operations."
+    }
+  ]
+}

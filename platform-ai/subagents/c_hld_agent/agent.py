@@ -27,7 +27,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 
-from models.adapter import dump_output, extract_json, get_llm, invoke
+from models.adapter import (
+    dump_structured_output,
+    get_llm,
+    invoke_structured,
+)
 from models.agent_models import get_agent_model
 from subagents.c_hld_agent.prompt import build_system_prompt
 from subagents.c_hld_agent.schema import HLDPlan
@@ -81,7 +85,7 @@ the prior plan; leave everything else untouched.
 def run_hld_agent(
     prompt: str,
     intent: Dict[str, Any],
-    on_attempt_failed: Optional[Callable[[int, List[str]], None]] = None,
+    on_attempt_failed: Optional[Callable[[int, List[str], int, int, int, int], None]] = None,
     validator_hint: Optional[str] = None,
     prior_plan: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], int, int, int, int]:
@@ -99,10 +103,12 @@ def run_hld_agent(
     ----------
     on_attempt_failed:
         Optional callback invoked when an attempt is rejected, before the
-        next attempt fires. Receives `(attempt_index, errors)` so the CLI
-        can surface live retry feedback instead of the spinner sitting
-        silent for ~30s × N attempts. Not called on the final failure
-        (`HLDValidationError` carries those errors directly).
+        next attempt fires. Receives `(attempt_index, errors, in_tokens,
+        out_tokens, cache_read_tokens, cache_creation_tokens)` — running
+        totals through this just-failed attempt — so the CLI can surface
+        live retry feedback (including spend) instead of the spinner
+        sitting silent for ~30s × N attempts. Not called on the final
+        failure (`HLDValidationError` carries the same totals directly).
 
     Raises
     ------
@@ -137,18 +143,37 @@ def run_hld_agent(
     total_cache_c = 0
     last_errors: List[str] = []
 
+    hld_schema = HLDPlan.model_json_schema()
+
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         retry_suffix = _format_retry_suffix(last_errors) if last_errors else ""
-        result = invoke(llm, system, base_user, retry_suffix=retry_suffix)
+        # 1-hour TTL: HLD attempts often run 30-90s each, and the
+        # downstream hld_v retry can land well past 5 min. With the
+        # default TTL retries pay cache_create on every attempt; 1h
+        # keeps the system + HLD prefix hot for the full pipeline.
+        result = invoke_structured(
+            llm,
+            system,
+            base_user,
+            tool_name="emit_hld_plan",
+            tool_description=(
+                "Emit the complete High-Level Design plan as a structured "
+                "object conforming to the HLDPlan schema. Call exactly "
+                "once with the full plan as the tool input."
+            ),
+            tool_input_schema=hld_schema,
+            retry_suffix=retry_suffix,
+            cache_ttl="1h",
+        )
         total_in += result.input_tokens
         total_out += result.output_tokens
         total_cache_r += result.cache_read_tokens
         total_cache_c += result.cache_creation_tokens
 
-        # Persist the raw model response next to the prompt files, so a
-        # 3-attempt failure is fully post-mortem-able without re-running.
-        # No-op outside an active `input_log` block.
-        dump_output(result.content)
+        # Persist the structured output next to the prompt files (as
+        # output.json) so a failure is fully post-mortem-able without
+        # re-running. No-op outside an active `input_log` block.
+        dump_structured_output(result.structured_output)
 
         # Truncation is a config problem (cap too low for the schema), not a
         # model error to retry against — the next attempt only adds suffix
@@ -165,25 +190,16 @@ def run_hld_agent(
                 total_cache_c,
             )
 
+        # Tool use guarantees structural shape; only semantic invariants
+        # (cross-field model_validators on HLDPlan) can still fail.
         try:
-            raw_json = extract_json(result.content)
-        except Exception as err:
-            last_errors = [f"could not extract a JSON object from output: {err}"]
-            if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
-                on_attempt_failed(attempt, last_errors)
-            continue
-
-        try:
-            plan = HLDPlan.model_validate_json(raw_json)
+            plan = HLDPlan.model_validate(result.structured_output)
         except ValidationError as err:
             last_errors = _format_pydantic_errors(err)
             if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
-                on_attempt_failed(attempt, last_errors)
-            continue
-        except json.JSONDecodeError as err:
-            last_errors = [f"output is not valid JSON: {err}"]
-            if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
-                on_attempt_failed(attempt, last_errors)
+                on_attempt_failed(
+                    attempt, last_errors, total_in, total_out, total_cache_r, total_cache_c
+                )
             continue
 
         # `by_alias=True` so transitions use `from` (not `from_`) on the

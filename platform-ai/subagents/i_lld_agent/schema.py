@@ -1228,24 +1228,48 @@ class LLDPlan(_StrictModel):
     @model_validator(mode="after")
     def _list_response_requires_pagination_kind(self) -> "LLDPlan":
         """
-        Any HTTP route whose responseShape contains a list value
-        (TS-ish "[]" suffix) MUST declare paginationKind. Catches the
-        "I returned a bare array" pattern where pagination was forgotten.
+        Any HTTP route whose responseShape contains a list of OBJECTS
+        (`{...}[]`) MUST declare paginationKind. Catches the "I returned a
+        bare array of records" pattern where pagination was forgotten.
+
+        Primitive lists (`string[]`, `number[]`, `boolean[]`, including
+        union forms like `string|null[]`) are exempt — these are bounded
+        side-channels like `validation_errors`, `errors`, `tags`,
+        `blocking_variants`, etc. They're not collections that paginate.
+        Catalog the heuristic here so we don't false-positive on every
+        route that returns an error array.
         """
+        # Detect "list of objects": value ends with `}[]` (object array) or
+        # is literally an array of an object shape. Primitive lists end with
+        # `string[]`, `number[]`, `boolean[]`, or a union of those.
+        def _is_object_list(value: str) -> bool:
+            v = value.strip()
+            if not v.endswith("[]"):
+                return False
+            inner = v[:-2].rstrip()
+            # Object literal: `{ ... }`
+            if inner.endswith("}"):
+                return True
+            return False
+
         for surface_name, routes in (
             ("widget", self.httpRoutes.widget),
             ("admin", self.httpRoutes.admin),
         ):
             for route in routes:
-                has_list = any(v.rstrip().endswith("[]") for v in route.responseShape.values())
-                if has_list and route.paginationKind is None:
+                has_object_list = any(
+                    _is_object_list(v) for v in route.responseShape.values()
+                )
+                if has_object_list and route.paginationKind is None:
                     raise ValueError(
                         f"httpRoutes.{surface_name} '{route.path}' responseShape "
-                        "contains a list value but paginationKind is null; set "
-                        "paginationKind to 'offset' or 'cursor' for paginated "
-                        "collections, or 'inline' for bounded embedded lists "
-                        "(top-N rankings, config-capped collections returned "
-                        "alongside other fields)"
+                        "contains an object-list value (`{...}[]`) but "
+                        "paginationKind is null; set paginationKind to "
+                        "'offset' or 'cursor' for paginated collections, or "
+                        "'inline' for bounded embedded lists (top-N rankings, "
+                        "config-capped collections returned alongside other "
+                        "fields). Primitive lists like `string[]` / `number[]` "
+                        "do not require paginationKind."
                     )
         return self
 

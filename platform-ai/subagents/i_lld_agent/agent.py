@@ -30,12 +30,19 @@ plus token totals.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+log = logging.getLogger(__name__)
+
 from pydantic import ValidationError
 
-from models.adapter import dump_output, extract_json, get_llm, invoke
+from models.adapter import (
+    dump_structured_output,
+    get_llm,
+    invoke_structured,
+)
 from models.agent_models import get_agent_model
 from subagents.i_lld_agent.platform_helpers_prose import (
     CONFIG_HELPER_CONTRACT,
@@ -51,8 +58,8 @@ from subagents.i_lld_agent.prompt import build_system_prompt
 from subagents.i_lld_agent.schema import LLDPlan
 
 _MAX_ATTEMPTS = 3
-_MAX_TOKENS = 40_000
-_THINKING_BUDGET = 0
+_MAX_TOKENS = 45_000
+_THINKING_BUDGET = 1024
 
 
 _USER_TEMPLATE = """\
@@ -67,7 +74,15 @@ example queries from Shopify's docs — use these to write the actual
 GraphQL strings inside your shopify_query / shopify_mutation steps):
 {ops_picks_json}
 
-Produce the LLD plan as JSON conforming to the appended schema."""
+Emit the LLD plan as a call to the `emit_lld_plan` tool. The tool's
+input_schema enforces top-level shape (capabilityRecipes is an object
+keyed by recipe id, NOT an array of objects; httpRoutes.widget / .admin
+are arrays of route objects; database.tables is an array). Step shape
+inside each recipe is NOT enforced by the tool decoder — that's
+validated post-decode against the full LLDPlan schema. Emit step
+objects with `kind` set to one of the documented step kinds and the
+fields each kind requires; semantic errors come back through the retry
+loop the same way validation findings do."""
 
 
 _REVISE_SUFFIX_TEMPLATE = """\
@@ -81,12 +96,8 @@ contract paths, same edge-case wording. Do not drop, rename, reword, or
 reorder anything outside the flagged scope. Do not add new sections
 beyond what a finding's fix explicitly requires.
 
-OUTPUT FORMAT — strictly enforced:
-  - JSON only. Your response MUST start with `{{` and end with `}}`.
-  - No preamble ("Looking at the finding…", "I see that…", etc.).
-  - No markdown fences.
-  - No commentary after the JSON.
-  Anything outside that contract is rejected as invalid output.
+Emit the revised LLD as a fresh call to the `emit_lld_plan` tool — the
+API enforces structural shape, so focus on the listed findings only.
 
 PREVIOUS ATTEMPT:
 {prior_output}
@@ -99,7 +110,9 @@ def run_lld_agent(
     prompt: str,
     plan: Dict[str, Any],
     ops_picks: Dict[str, Any],
-    on_attempt_failed: Optional[Callable[[int, List[str]], None]] = None,
+    on_attempt_failed: Optional[
+        Callable[[int, List[str], int, int, int, int], None]
+    ] = None,
     validator_hint: Optional[str] = None,
     prior_plan: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], int, int, int, int]:
@@ -124,9 +137,11 @@ def run_lld_agent(
         already merged with per-op catalog detail).
     on_attempt_failed:
         Optional callback invoked when an attempt is rejected, before the
-        next attempt fires. Receives `(attempt_index, errors)` so the CLI
-        can surface live retry feedback. Not called on the final failure
-        (`LLDValidationError` carries those errors directly).
+        next attempt fires. Receives `(attempt_index, errors, in_tokens,
+        out_tokens, cache_read_tokens, cache_creation_tokens)` — running
+        totals through this just-failed attempt — so the CLI can surface
+        live retry feedback (including spend). Not called on the final
+        failure (`LLDValidationError` carries the same totals directly).
     validator_hint:
         Optional pre-seeded findings (e.g. from a future `lld_v` validator)
         appended to the first user message.
@@ -176,6 +191,19 @@ def run_lld_agent(
     if validator_hint and last_output is not None:
         last_errors = [validator_hint]
 
+    # Flattened-for-Anthropic LLDPlan schema. The raw Pydantic schema is
+    # ~36KB with 7 recursive discriminated-union step kinds (steps that
+    # contain steps via for_each / decision / sql_transaction / try_catch);
+    # Anthropic's tool input_schema validator returns HTTP 400 on it.
+    # `_tool_input_schema()` drops every step-kind $def and replaces each
+    # `oneOf+discriminator` step-list site with `{"type": "object"}`,
+    # bringing the schema to ~3KB. Top-level shape (capabilityRecipes as
+    # object map, httpRoutes.widget/admin as arrays, etc.) is still
+    # enforced at decode time — that's where the "array vs object" drift
+    # we set out to fix actually lives. Per-step shape is enforced by
+    # `LLDPlan.model_validate(...)` after decode (unchanged).
+    lld_schema = _tool_input_schema()
+
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         if last_errors and last_output is not None:
             retry_suffix = _REVISE_SUFFIX_TEMPLATE.format(
@@ -184,26 +212,37 @@ def run_lld_agent(
             )
         else:
             retry_suffix = ""
-        result = invoke(llm, system, base_user, retry_suffix=retry_suffix)
+        # 1-hour TTL: LLD attempts run 5-15 min each, and the validator-
+        # driven retry triggered by `run_lld_validator` lands well past
+        # the 5-min default cache window. With the default TTL the
+        # cumulative cache-hit ratio on a 3-attempt run is ~25%; with
+        # the 1h TTL it lifts to ~50% because attempts 2/3 and any
+        # lld_v-driven re-runs read the cached ~100k-token system + LLD
+        # prefix instead of paying cache_create each time.
+        result = invoke_structured(
+            llm,
+            system,
+            base_user,
+            tool_name="emit_lld_plan",
+            tool_description=(
+                "Emit the complete Low-Level Design plan as a structured "
+                "object conforming to the LLDPlan schema. Call exactly "
+                "once with the full plan as the tool input."
+            ),
+            tool_input_schema=lld_schema,
+            retry_suffix=retry_suffix,
+            cache_ttl="1h",
+        )
         total_in += result.input_tokens
         total_out += result.output_tokens
         total_cache_r += result.cache_read_tokens
         total_cache_c += result.cache_creation_tokens
 
-        # Persist the raw model response next to the prompt files. No-op
-        # outside an active `input_log` block.
-        dump_output(result.content)
-        # Minify the prior output before echoing it back on the next retry:
-        #   - strips markdown fences (avoid nested ``` in the retry template)
-        #   - drops whatever indentation the model chose, saving ~30% of
-        #     retry-suffix tokens.
-        # Fall back to the raw content when the response isn't parseable —
-        # the next attempt's validator will surface the same parse error
-        # we hit here.
-        try:
-            last_output = json.dumps(json.loads(extract_json(result.content)))
-        except (ValueError, json.JSONDecodeError):
-            last_output = result.content
+        # Persist the structured tool output next to the prompt files
+        # (as output.json). No-op outside an active `input_log` block.
+        dump_structured_output(result.structured_output)
+        # Compact-serialise the prior dict for retry-suffix echo-back.
+        last_output = json.dumps(result.structured_output, default=str)
 
         # Truncation is a config problem (cap too low for the schema), not a
         # model error to retry against — the next attempt only adds suffix
@@ -220,28 +259,24 @@ def run_lld_agent(
                 total_cache_c,
             )
 
+        # Tool use guarantees structural shape; the only remaining failure
+        # mode is semantic — cross-field invariants the schema's model_
+        # validators enforce on the Pydantic object after decode.
         try:
-            raw_json = extract_json(result.content)
-        except Exception as err:
-            last_errors = [f"could not extract a JSON object from output: {err}"]
-            if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
-                on_attempt_failed(attempt, last_errors)
-            continue
-
-        try:
-            parsed = LLDPlan.model_validate_json(raw_json)
+            parsed = LLDPlan.model_validate(result.structured_output)
         except ValidationError as err:
+            raw_json = json.dumps(result.structured_output, default=str)
             last_errors = _format_pydantic_errors(err)
             last_errors = _enrich_with_byte_context(last_errors, raw_json)
             if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
-                on_attempt_failed(attempt, last_errors)
-            continue
-        except json.JSONDecodeError as err:
-            last_errors = _enrich_with_byte_context(
-                [f"output is not valid JSON: {err}"], raw_json
-            )
-            if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
-                on_attempt_failed(attempt, last_errors)
+                on_attempt_failed(
+                    attempt,
+                    last_errors,
+                    total_in,
+                    total_out,
+                    total_cache_r,
+                    total_cache_c,
+                )
             continue
 
         # `by_alias=True` so transitions use `from` (not `from_`) on the
@@ -278,6 +313,83 @@ class LLDValidationError(RuntimeError):
         self.cache_creation_tokens = cache_creation_tokens
         bullets = "\n".join(f"  - {e}" for e in errors)
         super().__init__(f"LLD agent failed after {attempts} attempt(s):\n{bullets}")
+
+
+def _tool_input_schema() -> Dict[str, Any]:
+    """
+    Build an Anthropic-tool-friendly LLDPlan schema.
+
+    The raw `LLDPlan.model_json_schema()` is ~36KB and uses 7 nested
+    `oneOf` + `discriminator` blocks for step polymorphism (steps that
+    contain steps via for_each / decision / sql_transaction / try_catch).
+    Anthropic's tool input_schema validator rejects it with HTTP 400 —
+    we hit both the size limit AND the recursive-discriminated-union
+    edge case.
+
+    This helper produces a flattened variant of the same schema for the
+    tool decoder to enforce at decode time:
+
+      • $defs entries that name a step variant (`*Step`) are dropped.
+        Anthropic no longer needs them — step shape isn't validated at
+        decode.
+      • Every site that today reads
+        `{"oneOf": [<Step refs>], "discriminator": {...}}` is replaced
+        with `{"type": "object"}`. Anthropic enforces "each element is
+        an object" instead of "each element matches one of 20 specific
+        kinds."
+      • Top-level keys (`capabilityRecipes`, `httpRoutes`, `database`,
+        etc.) keep their shape — that's where the array-vs-object
+        confusion lives that we set out to fix.
+
+    Per-step shape (right `kind`, right required fields per kind) is
+    still validated strictly by `LLDPlan.model_validate(dict)` after
+    decode — same retry path as today.
+    """
+    schema = LLDPlan.model_json_schema()
+
+    # 1. Drop $defs that describe individual step variants. Anthropic
+    #    won't see them at all once we replace the union sites below.
+    defs = schema.get("$defs") or {}
+    schema["$defs"] = {
+        name: body for name, body in defs.items() if not name.endswith("Step")
+    }
+
+    # 2. Walk the schema and rewrite every oneOf+discriminator block
+    #    that points at the step variants into `{"type": "object"}`.
+    _flatten_step_unions(schema)
+    return schema
+
+
+def _flatten_step_unions(node: Any) -> None:
+    """
+    In-place recursive walk: any dict node whose `oneOf` list points at
+    `*Step` $defs (i.e. the recursive step polymorphism that breaks
+    Anthropic's tool decoder) is collapsed to `{"type": "object"}`.
+    Other oneOf / anyOf shapes (e.g. nullable unions) are left alone.
+    """
+    if isinstance(node, dict):
+        one_of = node.get("oneOf")
+        if (
+            isinstance(one_of, list)
+            and one_of
+            and all(
+                isinstance(v, dict)
+                and isinstance(v.get("$ref"), str)
+                and v["$ref"].split("/")[-1].endswith("Step")
+                for v in one_of
+            )
+        ):
+            # Replace the union site in place: drop keys, install simple
+            # object marker. Anthropic decoder sees "this is an object"
+            # and stops validating shape.
+            node.clear()
+            node["type"] = "object"
+            return
+        for v in node.values():
+            _flatten_step_unions(v)
+    elif isinstance(node, list):
+        for v in node:
+            _flatten_step_unions(v)
 
 
 def _format_pydantic_errors(err: ValidationError) -> List[str]:

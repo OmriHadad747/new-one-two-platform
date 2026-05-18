@@ -32,7 +32,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 
-from models.adapter import dump_output, extract_json, get_llm, invoke
+from models.adapter import (
+    dump_structured_output,
+    get_llm,
+    invoke_structured,
+)
 from models.agent_models import get_agent_model
 from subagents.g_ops_picker_agent.shopify_ops import load_op_details
 from subagents.g_ops_picker_agent.prompt import build_system_prompt
@@ -72,7 +76,7 @@ def run_ops_picker_agent(
     admin_op_names: set[str],
     storefront_op_names: set[str],
     webhook_topics: set[str],
-    on_attempt_failed: Optional[Callable[[int, List[str]], None]] = None,
+    on_attempt_failed: Optional[Callable[[int, List[str], int, int], None]] = None,
     validator_hint: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], int, int]:
     """
@@ -100,9 +104,11 @@ def run_ops_picker_agent(
         offline validation of the picked names.
     on_attempt_failed:
         Optional callback invoked when an attempt is rejected, before the
-        next attempt fires. Receives `(attempt_index, errors)` so the CLI
-        can surface live retry feedback. Not called on the final failure
-        (`OpsPickerValidationError` carries those errors directly).
+        next attempt fires. Receives `(attempt_index, errors, in_tokens,
+        out_tokens)` — running totals through this just-failed attempt —
+        so the CLI can surface live retry feedback (including spend). Not
+        called on the final failure (`OpsPickerValidationError` carries
+        the same totals directly).
     validator_hint:
         Optional pre-seeded findings (e.g. from a future `ops_picker_v`
         validator) appended to the first user message.
@@ -134,35 +140,44 @@ def run_ops_picker_agent(
     total_out = 0
     last_errors: List[str] = []
 
+    ops_schema = OpsPicks.model_json_schema()
+
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         retry_suffix = _format_retry_suffix(last_errors) if last_errors else ""
-        result = invoke(llm, system, base_user, retry_suffix=retry_suffix)
+        # 1-hour TTL: ops_picker retries land minutes apart inside the
+        # same pipeline; the default 5-min cache evicts the heavy
+        # operation_index prefix between attempts.
+        result = invoke_structured(
+            llm,
+            system,
+            base_user,
+            tool_name="emit_ops_picks",
+            tool_description=(
+                "Emit the Shopify ops picks (capabilities → ops + webhook "
+                "topics) as a structured object conforming to the OpsPicks "
+                "schema. Call exactly once with the full picks as the tool "
+                "input."
+            ),
+            tool_input_schema=ops_schema,
+            retry_suffix=retry_suffix,
+            cache_ttl="1h",
+        )
         total_in += result.input_tokens
         total_out += result.output_tokens
 
-        # Persist the raw model response next to the prompt files.
-        # No-op outside an active `input_log` block.
-        dump_output(result.content)
+        # Persist the structured output next to the prompt files
+        # (as output.json). No-op outside an active `input_log` block.
+        dump_structured_output(result.structured_output)
 
+        # Tool use enforces shape; semantic invariants (cross-field
+        # model_validators on OpsPicks) plus the catalog-membership
+        # cross-check below are the only remaining failure modes.
         try:
-            raw_json = extract_json(result.content)
-        except Exception as err:
-            last_errors = [f"could not extract a JSON object from output: {err}"]
-            if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
-                on_attempt_failed(attempt, last_errors)
-            continue
-
-        try:
-            picks = OpsPicks.model_validate_json(raw_json)
+            picks = OpsPicks.model_validate(result.structured_output)
         except ValidationError as err:
             last_errors = _format_pydantic_errors(err)
             if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
-                on_attempt_failed(attempt, last_errors)
-            continue
-        except json.JSONDecodeError as err:
-            last_errors = [f"output is not valid JSON: {err}"]
-            if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
-                on_attempt_failed(attempt, last_errors)
+                on_attempt_failed(attempt, last_errors, total_in, total_out)
             continue
 
         cross_errors = _cross_check(
@@ -175,7 +190,7 @@ def run_ops_picker_agent(
         if cross_errors:
             last_errors = cross_errors
             if attempt < _MAX_ATTEMPTS and on_attempt_failed is not None:
-                on_attempt_failed(attempt, last_errors)
+                on_attempt_failed(attempt, last_errors, total_in, total_out)
             continue
 
         enriched = _enrich_with_op_details(picks.model_dump(mode="json"))

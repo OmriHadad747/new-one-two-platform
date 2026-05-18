@@ -1822,16 +1822,24 @@ def main() -> None:
             _retry_line("HLD", f"retrying with {len(_retryable)} finding(s)")
             _spinner("HLD")
 
-            def _on_retry_attempt_failed(attempt: int, errors: List[str]) -> None:
+            def _on_retry_attempt_failed(
+                attempt: int,
+                errors: List[str],
+                in_tok: int,
+                out_tok: int,
+                cache_r: int,
+                cache_c: int,
+            ) -> None:
                 """Surface validation errors from the validator-hint retry,
                 same shape as the first-pass callback in pipeline_local."""
                 first = errors[0] if errors else "validation failed"
                 more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+                tok = _tok_note(in_tok, out_tok, cache_read=cache_r, cache_create=cache_c)
                 _agent_line(
                     "HLD",
                     ok=False,
                     ms=None,
-                    notes=f"attempt {attempt} rejected: {first}{more}",
+                    notes=f"attempt {attempt} rejected: {first}{more}  {tok}",
                 )
                 for _e in errors:
                     print(f"    {_DIM}• {_e}{_RESET}")
@@ -2068,14 +2076,22 @@ def main() -> None:
             _retry_line("LLD", f"retrying with {len(_retryable_lld)} finding(s)")
             _spinner("LLD")
 
-            def _on_lld_retry_attempt_failed(attempt: int, errors: List[str]) -> None:
+            def _on_lld_retry_attempt_failed(
+                attempt: int,
+                errors: List[str],
+                in_tok: int,
+                out_tok: int,
+                cache_r: int,
+                cache_c: int,
+            ) -> None:
                 first = errors[0] if errors else "validation failed"
                 more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+                tok = _tok_note(in_tok, out_tok, cache_read=cache_r, cache_create=cache_c)
                 _agent_line(
                     "LLD",
                     ok=False,
                     ms=None,
-                    notes=f"attempt {attempt} rejected: {first}{more}",
+                    notes=f"attempt {attempt} rejected: {first}{more}  {tok}",
                 )
                 for _e in errors:
                     print(f"    {_DIM}• {_e}{_RESET}")

@@ -100,17 +100,14 @@ class BackendGenerator(Generator):
             "the email-metadata fence when emailSpec is non-null). No prose, "
             "no markdown fences wrapping the whole response.",
         ]
-
-        # PRIOR CODE goes LAST in the user prompt so the cached prefix
-        # (intent + LLD + alignment + emit instruction) stays stable on
-        # retries — Anthropic's prompt cache is prefix-based, so anything
-        # placed before a mutating section invalidates cache for itself
-        # AND everything after. Putting prior code at the end lets the
-        # ~20-30k token stable prefix hit cache on every static retry.
-        prior = _format_prior_handler(ctx.prior_backend_code)
-        if prior:
-            sections += ["", prior]
+        # PRIOR CODE intentionally lives in `prior_code_block()`, NOT here —
+        # it would otherwise invalidate the cache marker on every retry
+        # because the previous-attempt bundle differs each round. See
+        # base.Generator.prior_code_block.
         return "\n".join(sections)
+
+    def prior_code_block(self, ctx: CodegenContext) -> str:
+        return _format_prior_handler(ctx.prior_backend_code)
 
     def parse(self, raw: str) -> str:
         """
@@ -164,12 +161,18 @@ class BackendGenerator(Generator):
         # 1-hour TTL — same rationale as Generator.generate(): backend
         # may be re-invoked by static-retry then again by codegen_v
         # 5-10+ minutes later. 1h TTL spans the whole pipeline.
+        # `uncached_suffix=self.prior_code_block(ctx)` keeps the prior
+        # handler bundle OUT of the cached user prefix so the stable
+        # bytes (intent + LLD + alignment + emit instruction) keep
+        # hitting cache across retry attempts. See base.Generator
+        # docstrings for details.
         result = invoke(
             llm,
             self.system_prompt(),
             self.user_prompt(ctx),
             retry_suffix=retry_suffix,
             cache_ttl="1h",
+            uncached_suffix=self.prior_code_block(ctx),
         )
         # Mirror Generator.generate() — persist the raw response next to the
         # prompt files for post-mortem. Without this, every backend retry

@@ -62,16 +62,17 @@ class AdminGenerator(Generator):
 
         # Message ordered by cache stability (most stable first). Prompt
         # cache is prefix-based; the FIRST mutating byte invalidates
-        # everything after it. So PRIOR CODE goes LAST — it changes per
-        # attempt within a retry loop, and putting it ahead of stable
-        # blocks would dump cache on every static retry. Today's order:
+        # everything after it. PRIOR CODE is intentionally NOT here —
+        # it ships in `prior_code_block()` and lands in the uncached
+        # suffix block downstream of the cache marker, so the cached
+        # bytes below stay byte-identical across retries. Order here:
         #   1. examples_block   — shape-matched examples (stable per app)
         #   2. catalog + LLD    — per-app (stable across retries)
         #   3. alignment block  — per-app (kept after catalog so rules
         #                          reference fields already enumerated)
         #   4. emit instruction — stable
-        #   5. prior_block      — MUTATES per retry (last so the cached
-        #                          prefix survives)
+        # `prior_block` is unused here — see prior_code_block().
+        _ = prior_block  # kept for backwards-compat with previous shape
         return (
             f"App purpose: {ctx.intent.get('desiredOutcome', '')}\n"
             f"App category: {ctx.intent.get('appCategory', '')}\n\n"
@@ -87,8 +88,10 @@ class AdminGenerator(Generator):
             f"{ux_implications}"
             f"{alignment_block}"
             "Generate the admin panel ES module. Output ONLY raw JavaScript."
-            f"{prior_block}"
         )
+
+    def prior_code_block(self, ctx: CodegenContext) -> str:
+        return _format_prior_admin_ui(ctx.prior_admin_ui_code)
 
     def parse(self, raw: str) -> str:
         text = re.sub(r"^```(?:javascript|js)?\s*", "", raw.strip(), flags=re.MULTILINE)
