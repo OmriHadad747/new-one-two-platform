@@ -60,14 +60,18 @@ class AdminGenerator(Generator):
         examples_block = _format_examples(ctx.lld, ctx.intent)
         alignment_block = format_alignment_for(ctx.alignment_notes, self.name)
 
-        # Message ordered by cache stability (most stable first), so a
-        # future cache_control breakpoint between sections lets retries
-        # of the same admin panel reuse the prefix:
+        # Message ordered by cache stability (most stable first). Prompt
+        # cache is prefix-based; the FIRST mutating byte invalidates
+        # everything after it. So PRIOR CODE goes LAST — it changes per
+        # attempt within a retry loop, and putting it ahead of stable
+        # blocks would dump cache on every static retry. Today's order:
         #   1. examples_block   — shape-matched examples (stable per app)
-        #   2. catalog + LLD    — per-app
+        #   2. catalog + LLD    — per-app (stable across retries)
         #   3. alignment block  — per-app (kept after catalog so rules
         #                          reference fields already enumerated)
-        #   4. tail             — volatile request line
+        #   4. emit instruction — stable
+        #   5. prior_block      — MUTATES per retry (last so the cached
+        #                          prefix survives)
         return (
             f"App purpose: {ctx.intent.get('desiredOutcome', '')}\n"
             f"App category: {ctx.intent.get('appCategory', '')}\n\n"
@@ -82,8 +86,8 @@ class AdminGenerator(Generator):
             f"{catalog_block}\n"
             f"{ux_implications}"
             f"{alignment_block}"
-            f"{prior_block}"
             "Generate the admin panel ES module. Output ONLY raw JavaScript."
+            f"{prior_block}"
         )
 
     def parse(self, raw: str) -> str:
@@ -365,9 +369,10 @@ def _format_prior_admin_ui(prior_code: Any) -> str:
         return ""
     return (
         "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "REVISION RUN — currently deployed admin UI module:\n"
-        "(Apply the merchant feedback above as targeted changes to this code.\n"
-        " Preserve all mount() logic and bridge.call() paths NOT being changed.)\n"
+        "PRIOR CODE — your previous admin UI module (either the deployed\n"
+        "version on a revision run, or your last attempt in a retry loop):\n"
+        "(Apply changes as targeted edits to this code. Preserve all mount()\n"
+        " logic and bridge.call() paths NOT being changed.)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{prior_code}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

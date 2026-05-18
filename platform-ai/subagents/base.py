@@ -256,7 +256,7 @@ class Generator(ABC):
         )
 
         body = "\n\n".join(sections)
-        return f"\n\nPREVIOUS ATTEMPT FAILED VALIDATION:\n\n{body}\n\n{policy}\n\n"
+        return f"\n\nPREVIOUS ATTEMPT FAILED VALIDATION:\n{body}\n\n{policy}\n\n"
 
     def generate(self, ctx: CodegenContext) -> Tuple[str, int, int, int, int]:
         """

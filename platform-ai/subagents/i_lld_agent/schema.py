@@ -288,7 +288,13 @@ class StateMachine(_StrictModel):
 
 class HttpRoute(_StrictModel):
     path: str = Field(min_length=1)
-    method: Literal["GET", "POST", "PUT", "DELETE"]
+    # SDK constraint: `host.call(path, body)` / `bridge.call(path, body)` only
+    # encode GET (query string) and POST (JSON body). PUT/DELETE/PATCH have
+    # no SDK path today, so an LLD route declared with one of those produces
+    # a backend route the frontend can never reach (Express returns 404).
+    # Outbound HTTP from the handler (FetchExternalStep) is unconstrained —
+    # that's Node's http client, not our SDK.
+    method: Literal["GET", "POST"]
     purpose: str
     requestShape: dict[str, str] = Field(default_factory=dict)
     responseShape: dict[str, str] = Field(default_factory=dict)
@@ -392,6 +398,15 @@ class ShopifyQueryStep(_StepBase):
     paginationStrategy: PaginationStrategy
     connectionPath: Optional[str] = None
     elementBinding: Optional[str] = None
+    # Which Shopify GraphQL endpoint executes this op. Copied from the
+    # ops_picker pick's `surface` for `op` — buyer-side ops (`cart*`,
+    # public catalog reads, etc.) live in the Storefront schema; the
+    # Admin schema rejects them at execute time. The backend codegen
+    # routes `surface="storefront"` to `shopify.storefront(...)` and
+    # `surface="admin"` to `shopify.graphql(...)`. Defaults to "admin"
+    # for backwards compatibility with LLDs emitted before this field
+    # existed; the runner stamps it from ops_picks if the model omits it.
+    surface: Literal["admin", "storefront"] = "admin"
 
     @model_validator(mode="after")
     def _paginated_requires_connection(self) -> "ShopifyQueryStep":
@@ -411,6 +426,11 @@ class ShopifyMutationStep(_StepBase):
     mutation: str = Field(min_length=1)
     variables: dict[str, str] = Field(default_factory=dict)
     userErrorsCheck: Literal[True] = True  # always required
+    # See ShopifyQueryStep.surface — cart mutations (cartCreate,
+    # cartLinesAdd, cartDiscountCodesUpdate, etc.) require
+    # surface="storefront"; the Admin schema doesn't expose them and
+    # rejects the query at execute time.
+    surface: Literal["admin", "storefront"] = "admin"
 
 
 class SqlSelectStep(_StepBase):

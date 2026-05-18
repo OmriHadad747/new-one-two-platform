@@ -55,16 +55,20 @@ class StorefrontGenerator(Generator):
 
         alignment_block = format_alignment_for(ctx.alignment_notes, self.name)
 
-        # Message ordered by cache stability (most stable first), so a
-        # future cache_control breakpoint between sections lets retries
-        # of the same widget reuse the prefix:
-        #   1. ajax_block       — universal Shopify Ajax catalog
+        # Message ordered by cache stability (most stable first). Prompt
+        # cache is prefix-based; the FIRST mutating byte invalidates
+        # everything after it. So PRIOR CODE goes LAST — it changes per
+        # attempt within a retry loop, and putting it ahead of stable
+        # blocks would dump cache on every static retry. Today's order:
+        #   1. ajax_block       — universal Shopify Ajax catalog (stable)
         #   2. examples_block   — shape-matched examples (stable per app)
-        #   3. catalog + LLD    — per-app
-        #   4. alignment block  — per-app (kept after catalog so the rules
-        #                          reference fields the agent has already
-        #                          seen)
-        #   5. tail             — volatile request line
+        #   3. catalog + LLD    — per-app (stable across retries)
+        #   4. alignment block  — per-app (kept after catalog so the
+        #                          rules reference fields the agent has
+        #                          already seen)
+        #   5. emit instruction — stable
+        #   6. prior_block      — MUTATES per retry (last so the cached
+        #                          prefix survives)
         return (
             f"Feature: {ctx.intent.get('desiredOutcome', '')}\n"
             f"Trigger types: {', '.join(ctx.intent.get('triggerTypes', []))}\n\n"
@@ -78,8 +82,8 @@ class StorefrontGenerator(Generator):
             f"{catalog_block}\n\n"
             f"{ux_implications}"
             f"{alignment_block}"
-            f"{prior_block}"
             "Generate the widget ES module. Output ONLY raw JavaScript."
+            f"{prior_block}"
         )
 
     def parse(self, raw: str) -> str:
@@ -227,9 +231,10 @@ def _format_prior_storefront(prior_code: Any) -> str:
         return ""
     return (
         "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "REVISION RUN — currently deployed widget module:\n"
-        "(Apply the merchant feedback above as targeted changes to this code.\n"
-        " Preserve all mount() logic and host.call() paths NOT being changed.)\n"
+        "PRIOR CODE — your previous widget module (either the deployed\n"
+        "version on a revision run, or your last attempt in a retry loop):\n"
+        "(Apply changes as targeted edits to this code. Preserve all mount()\n"
+        " logic and host.call() paths NOT being changed.)\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{prior_code}\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"

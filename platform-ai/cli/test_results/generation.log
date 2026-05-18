@@ -225,3 +225,18 @@ notes.3.instruction
 2026-05-17 23:40:34,111 utils.static_validations.cross_handler WARNING cross-handler catalog path='/bundles/update' method='PUT' is not in {GET, POST} — defaulting to POST. arch_plan.py should have rejected this; investigate the architect output.
 2026-05-17 23:40:35,114 subagents.o_codegen_agent.backend_agent.typecheck ERROR typecheck: TEMPLATE BUG at src/routes/webhook.ts:32:19 TS7053 — Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ "orders/paid": (payload: unknown, req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>) => Promise<void>; "inventory_levels/update": (payload: unknown, req: Request<...>) => Promise<...>; "products/update": (payload: unknown, req: Request<...>) => Promise<...>; }'.
 2026-05-17 23:40:35,115 subagents.o_codegen_agent.backend_agent.typecheck ERROR typecheck: 1 template-owned errors filtered out of retry feedback — investigate the template before next deploy
+2026-05-18 13:59:43,056 subagents.g_ops_picker_agent.shopify_ops WARNING catalog: storefront 2026-04 operations_detail.json missing at /Users/omrihadad/Documents/personal/new-one-two/platform-ai/catalogs/shopify_storefront/2026-04/operations_detail.json — run `python platform-ai/catalogs/scripts/build_operations_detail.py storefront 2026-04` to build it
+2026-05-18 13:59:56,094 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-18 14:01:05,746 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-18 14:01:37,183 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-18 14:01:57,426 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-18 14:01:57,520 utils.static_validations.cross_handler WARNING cross-handler catalog path='/bundles/update' method='PUT' is not in {GET, POST} — defaulting to POST. arch_plan.py should have rejected this; investigate the architect output.
+2026-05-18 14:03:26,889 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-18 14:03:59,755 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-18 14:04:14,311 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-18 14:04:14,363 utils.static_validations.cross_handler WARNING cross-handler catalog path='/bundles/update' method='PUT' is not in {GET, POST} — defaulting to POST. arch_plan.py should have rejected this; investigate the architect output.
+2026-05-18 14:04:16,044 subagents.o_codegen_agent.orchestration INFO codegen: skipping coupled retry of  — handler errors are not contract-related
+2026-05-18 14:04:16,044 subagents.o_codegen_agent.orchestration INFO codegen: skipping coupled retry of admin_ui — handler errors are not contract-related
+2026-05-18 14:05:25,470 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-18 14:06:18,648 httpx INFO HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-05-18 14:06:18,776 utils.static_validations.cross_handler WARNING cross-handler catalog path='/bundles/update' method='PUT' is not in {GET, POST} — defaulting to POST. arch_plan.py should have rejected this; investigate the architect output.

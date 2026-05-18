@@ -62,8 +62,6 @@ from subagents.registry import GENERATORS
 # pipeline_local, and any future driver). Keep crew.py focused on the
 # production-API shell: progress events, contract publishing, deadline.
 from subagents.o_codegen_agent.orchestration import (
-    _BACKEND_OPEN_ARTIFACTS,
-    _DB_BROKEN_ARTIFACTS,
     _MAX_RETRIES,
     run_codegen_parallel,
     validate_artifacts,
@@ -383,6 +381,15 @@ def _phase_codegen(
     token_totals: Dict[str, Tuple[int, int]] = {}
     t0 = _now_ms()
 
+    # Per-attempt ctx. After each failed attempt we replace
+    # `prior_<x>_code` for the retrying agents (backend, storefront,
+    # admin_ui) with that attempt's output so the next attempt patches
+    # its own previous bundle instead of regenerating from scratch.
+    # DB is skipped — its validator interprets a non-empty
+    # `prior_db_sql` as a real revision run (CREATE TABLE → ALTER TABLE
+    # check), which would falsely flag the retry path.
+    attempt_ctx = base_ctx
+
     for attempt in range(1, _MAX_RETRIES + 1):
         if attempt > 1:
             # Flip only the generators that actually need re-running back to
@@ -400,7 +407,7 @@ def _phase_codegen(
 
         artifacts, attempt_tokens = _generate_artifacts(
             request,
-            base_ctx,
+            attempt_ctx,
             is_storefront,
             is_admin_ui,
             error_map,
@@ -411,6 +418,15 @@ def _phase_codegen(
         for name, (in_tok, out_tok) in attempt_tokens.items():
             prev_in, prev_out = token_totals.get(name, (0, 0))
             token_totals[name] = (prev_in + in_tok, prev_out + out_tok)
+
+        # Propagate side-band outputs written by run_codegen_parallel onto
+        # the attempt_ctx back to base_ctx — base_ctx is the canonical
+        # home callers downstream (e.g. _publish_success) read from.
+        if attempt_ctx is not base_ctx:
+            if attempt_ctx.backend_email_metadata is not None:
+                base_ctx.backend_email_metadata = attempt_ctx.backend_email_metadata
+            if attempt_ctx.backend_raw_response is not None:
+                base_ctx.backend_raw_response = attempt_ctx.backend_raw_response
 
         _emit(request, "validation", "running", "Validating generated artifacts…")
         error_map = validate_artifacts(artifacts, base_ctx, is_storefront, is_admin_ui)
@@ -442,6 +458,29 @@ def _phase_codegen(
                 f"Validation failed: {all_errors[0]}",
                 f"Validation failed after {_MAX_RETRIES} attempts: {all_errors}",
             )
+
+        # Set `prior_<x>_code` for the retrying agents to THIS attempt's
+        # output so the next attempt patches its own previous bundle (not
+        # the stale pre-retry artifact). DB stays untouched — see comment
+        # at the top of this function.
+        attempt_ctx = dataclasses.replace(
+            attempt_ctx,
+            prior_backend_code=(
+                artifacts.get("backend")
+                if "backend" in error_map and artifacts.get("backend")
+                else attempt_ctx.prior_backend_code
+            ),
+            prior_storefront_code=(
+                artifacts.get("storefront")
+                if "storefront" in error_map and artifacts.get("storefront")
+                else attempt_ctx.prior_storefront_code
+            ),
+            prior_admin_ui_code=(
+                artifacts.get("admin_ui")
+                if "admin_ui" in error_map and artifacts.get("admin_ui")
+                else attempt_ctx.prior_admin_ui_code
+            ),
+        )
 
         _emit(
             request,

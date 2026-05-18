@@ -475,11 +475,20 @@ def _walk_steps(steps: List[Dict[str, Any]], op_surface: Dict[str, str]) -> None
     """Stamp `example` onto every external-call step, recursing into nested containers."""
     for step in steps:
         kind = step.get("kind")
-        # For shopify_query steps, look up the picked op's surface so the
-        # snippet picker can route storefront vs admin examples.
-        if kind == "shopify_query":
+        # For shopify_query / shopify_mutation steps, look up the picked
+        # op's surface so the snippet picker can route storefront vs
+        # admin examples — and so the backend codegen knows which client
+        # (shopify.graphql vs shopify.storefront) to emit. The schema
+        # defaults `surface` to "admin"; this backfill only kicks in
+        # when the model omitted the field AND the ops_picks has a
+        # matching pick (any cart op tagged surface="storefront", etc.).
+        if kind in ("shopify_query", "shopify_mutation"):
             op_name = step.get("op")
-            if op_name and op_name in op_surface and "surface" not in step:
+            if (
+                op_name
+                and op_name in op_surface
+                and step.get("surface", "admin") == "admin"
+            ):
                 step["surface"] = op_surface[op_name]
         snippet = example_for_step(step)
         if snippet is not None:

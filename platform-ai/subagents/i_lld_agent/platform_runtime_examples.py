@@ -18,6 +18,8 @@ Bucket selection rules (kept here so the runner is dumb):
                      → "shopify_bulk_query"     (paginationStrategy="bulkQuery")
                      PLUS "shopify_storefront" instead when surface="storefront"
   shopify_mutation   → "shopify_mutation"
+                     PLUS "shopify_storefront" instead when surface="storefront"
+                     (cart* mutations are storefront-only)
   enqueue            → "enqueue"
   compute            → "compute_money"   when expression uses `money.*`
                      → "compute_config"  when expression uses `config.*`
@@ -427,6 +429,11 @@ def example_for_step(step: Dict[str, Any]) -> Optional[str]:
             return _EXAMPLES["shopify_bulk_query"]
         return _EXAMPLES["shopify_graphql"]
     if kind == "shopify_mutation":
+        # Storefront-surface mutations (cart*, etc.) use the same
+        # `shopify.storefront(...)` client as storefront queries —
+        # the call signature is identical, only the schema differs.
+        if step.get("surface") == "storefront":
+            return _EXAMPLES["shopify_storefront"]
         return _EXAMPLES["shopify_mutation"]
     if kind == "enqueue":
         return _EXAMPLES["enqueue"]

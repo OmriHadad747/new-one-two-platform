@@ -87,10 +87,6 @@ class BackendGenerator(Generator):
             "",
         ]
 
-        prior = _format_prior_handler(ctx.prior_backend_code)
-        if prior:
-            sections += ["", prior]
-
         alignment_block = format_alignment_for(ctx.alignment_notes, self.name)
         if alignment_block:
             sections += ["", alignment_block.rstrip()]
@@ -104,6 +100,16 @@ class BackendGenerator(Generator):
             "the email-metadata fence when emailSpec is non-null). No prose, "
             "no markdown fences wrapping the whole response.",
         ]
+
+        # PRIOR CODE goes LAST in the user prompt so the cached prefix
+        # (intent + LLD + alignment + emit instruction) stays stable on
+        # retries — Anthropic's prompt cache is prefix-based, so anything
+        # placed before a mutating section invalidates cache for itself
+        # AND everything after. Putting prior code at the end lets the
+        # ~20-30k token stable prefix hit cache on every static retry.
+        prior = _format_prior_handler(ctx.prior_backend_code)
+        if prior:
+            sections += ["", prior]
         return "\n".join(sections)
 
     def parse(self, raw: str) -> str:
@@ -345,9 +351,10 @@ def _format_prior_handler(prior: Any) -> str:
     bar = "━" * 60
     header = (
         f"\n{bar}\n"
-        "REVISION RUN — currently deployed handler bundle:\n"
-        "(Apply the merchant feedback above as targeted changes to this code.\n"
-        " Preserve all logic NOT being changed; emit the FULL bundle.)\n"
+        "PRIOR CODE — your previous handler bundle (either the deployed\n"
+        "version on a revision run, or your last attempt in a retry loop):\n"
+        "(Apply changes as targeted edits to this code. Preserve all logic\n"
+        " NOT being changed. Emit the FULL bundle.)\n"
         f"{bar}\n"
     )
     footer = f"\n{bar}\n"

@@ -581,6 +581,16 @@ def _phase_codegen(
     retry_log: List[Dict] = list(prior_retry_log or [])
     token_totals: Dict[str, Tuple[int, int, int, int]] = dict(prior_token_totals or {})
 
+    # Per-attempt ctx. Starts as base_ctx; after each failed attempt we
+    # replace `prior_<x>_code` for the retrying agents (backend, storefront,
+    # admin_ui) with this attempt's output so the next attempt patches its
+    # own previous bundle instead of regenerating from scratch (or from the
+    # stale pre-retry artifact passed in by `_phase_validator`). DB is
+    # deliberately skipped — its validator interprets a non-empty
+    # `prior_db_sql` as a real revision run (CREATE TABLE → ALTER TABLE
+    # check), which would falsely flag the retry path.
+    attempt_ctx = base_ctx
+
     _CODEGEN_LABELS = {
         "backend": "Backend",
         "db": "DB",
@@ -668,7 +678,7 @@ def _phase_codegen(
         # inputs/codegen_migration/, etc., not under a shared dir.
         with input_log("codegen", run_dir):
             artifacts, attempt_tokens = run_codegen_parallel(
-                base_ctx,
+                attempt_ctx,
                 is_storefront=is_storefront,
                 is_admin_ui=is_admin_ui,
                 error_map=error_map,
@@ -695,6 +705,15 @@ def _phase_codegen(
                 prev[2] + cr_t,
                 prev[3] + cc_t,
             )
+
+        # Propagate side-band outputs written by run_codegen_parallel onto
+        # the per-call ctx — base_ctx is the canonical home for these so
+        # callers downstream can read them after the loop exits.
+        if attempt_ctx is not base_ctx:
+            if attempt_ctx.backend_email_metadata is not None:
+                base_ctx.backend_email_metadata = attempt_ctx.backend_email_metadata
+            if attempt_ctx.backend_raw_response is not None:
+                base_ctx.backend_raw_response = attempt_ctx.backend_raw_response
 
         _spinner("Static Validation")
         t0 = time.monotonic()
@@ -741,6 +760,28 @@ def _phase_codegen(
                 print(f"    {_DIM}• {gen_name}: {e}{_RESET}")
 
         if attempt < _MAX_CODEGEN_RETRIES:
+            # Set `prior_<x>_code` for the retrying agents to THIS attempt's
+            # output so the next attempt patches its own previous bundle
+            # (not the stale pre-retry artifact). DB stays untouched — see
+            # comment at the top of this function.
+            attempt_ctx = dataclasses.replace(
+                attempt_ctx,
+                prior_backend_code=(
+                    artifacts.get("backend")
+                    if "backend" in error_map and artifacts.get("backend")
+                    else attempt_ctx.prior_backend_code
+                ),
+                prior_storefront_code=(
+                    artifacts.get("storefront")
+                    if "storefront" in error_map and artifacts.get("storefront")
+                    else attempt_ctx.prior_storefront_code
+                ),
+                prior_admin_ui_code=(
+                    artifacts.get("admin_ui")
+                    if "admin_ui" in error_map and artifacts.get("admin_ui")
+                    else attempt_ctx.prior_admin_ui_code
+                ),
+            )
             # Emit one retry header per failing agent — same convention as
             # HLD / LLD / Ops Picker (each upstream phase passes its own
             # name to `_retry_line`, not the validator's name).

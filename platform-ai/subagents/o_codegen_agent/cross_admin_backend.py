@@ -36,11 +36,14 @@ from utils.static_validations.cross_handler import (
     extract_route_bodies,
     slot_for_method,
 )
-from utils.static_validations.js_parse import extract_call_keys as _extract_call_keys
+from utils.static_validations.js_parse import top_level_keys_of
 
-# Admin-UI side: bridge.call('path', { field1: ..., field2 })
+# Admin-UI side: bridge.call('path', { … }) — match up to the opening
+# `{`. The body is walked via `top_level_keys_of`, which is depth-aware,
+# so nested object literals (`tiers: arr.map(t => ({ inner_x, inner_y }))`)
+# don't leak their keys into the top-level sent-fields set.
 _ADMIN_CALL_RE = re.compile(
-    r"bridge\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{([^}]*)\}",
+    r"bridge\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{",
     re.DOTALL,
 )
 
@@ -90,9 +93,9 @@ def validate_admin_backend_contract(
 
     for m in _ADMIN_CALL_RE.finditer(admin_ui_js):
         path = m.group(1)
-        body_block = m.group(2)
+        brace_idx = m.end() - 1  # index of the opening `{`
 
-        sent_fields = _extract_call_keys(body_block)
+        sent_fields = top_level_keys_of(admin_ui_js, brace_idx)
         if not sent_fields:
             continue
 

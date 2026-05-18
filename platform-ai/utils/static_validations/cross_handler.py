@@ -35,18 +35,22 @@ log = logging.getLogger(__name__)
 # ── Slot regexes — same shape, two slots ─────────────────────────────────────
 # Both `req.body` and `req.query` support destructure (`const {a, b} =
 # req.<slot>`) and direct-access (`req.<slot>.field`) shapes; the
-# patterns below cover both.
+# patterns below cover both. The field regexes accept the optional-chaining
+# form (`req.body?.field`) because the backend prompt's null-defense rule
+# tells the handler to use it on every webhook/route payload read —
+# without `\??` the validator falsely reports every route as "never reads
+# req.body / req.query" and triggers a wholesale cross-contract retry.
 
 REQ_BODY_DESTR_RE = re.compile(
     r"""(?:const|let|var)\s*\{([^}]+)\}\s*=\s*req\s*\.\s*body""",
     re.DOTALL,
 )
-REQ_BODY_FIELD_RE = re.compile(r"req\s*\.\s*body\s*\.\s*([a-zA-Z_]\w*)")
+REQ_BODY_FIELD_RE = re.compile(r"req\s*\.\s*body\s*\??\s*\.\s*([a-zA-Z_]\w*)")
 REQ_QUERY_DESTR_RE = re.compile(
     r"""(?:const|let|var)\s*\{([^}]+)\}\s*=\s*req\s*\.\s*query""",
     re.DOTALL,
 )
-REQ_QUERY_FIELD_RE = re.compile(r"req\s*\.\s*query\s*\.\s*([a-zA-Z_]\w*)")
+REQ_QUERY_FIELD_RE = re.compile(r"req\s*\.\s*query\s*\??\s*\.\s*([a-zA-Z_]\w*)")
 
 
 # ── Catalog method map ───────────────────────────────────────────────────────

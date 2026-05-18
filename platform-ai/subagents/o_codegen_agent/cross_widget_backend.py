@@ -38,12 +38,15 @@ from utils.static_validations.cross_handler import (
     extract_route_bodies,
     slot_for_method,
 )
-from utils.static_validations.js_parse import extract_call_keys as _extract_call_keys
+from utils.static_validations.js_parse import top_level_keys_of
 
 
-# Widget side: host.call('path', { field1: ..., field2 })
+# Widget side: host.call('path', { … }) — match up to the opening `{`.
+# The body is walked via `top_level_keys_of`, which is depth-aware, so
+# nested object literals (e.g. `items: arr.map(i => ({ x, y }))`) don't
+# leak their keys into the top-level sent-fields set.
 _WIDGET_CALL_RE = re.compile(
-    r"host\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{([^}]*)\}",
+    r"host\.call\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*\{",
     re.DOTALL,
 )
 
@@ -94,9 +97,9 @@ def validate_widget_backend_contract(
 
     for m in _WIDGET_CALL_RE.finditer(storefront):
         path = m.group(1)
-        body_block = m.group(2)
+        brace_idx = m.end() - 1  # index of the opening `{`
 
-        sent_fields = _extract_call_keys(body_block)
+        sent_fields = top_level_keys_of(storefront, brace_idx)
         if not sent_fields:
             continue
 

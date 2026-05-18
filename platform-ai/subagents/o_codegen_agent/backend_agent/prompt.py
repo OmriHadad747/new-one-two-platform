@@ -382,15 +382,27 @@ bind substitution.
   shopify_query
     Fields: op, query, variables, paginationStrategy ∈
             {"single","graphqlPaginate","bulkQuery"},
-            connectionPath?, elementBinding?, bindResultTo?
-    Per-strategy `example` covers shopify.graphql / graphqlPaginate /
-    bulkQuery / storefront. `paginationStrategy="single"` returns the
-    query result directly; the paginate/bulk variants iterate.
+            connectionPath?, elementBinding?, bindResultTo?,
+            surface ∈ {"admin","storefront"}
+    The `surface` field decides the client:
+      surface="admin"      → shopify.graphql(...) (or graphqlPaginate /
+                              bulkQuery, depending on paginationStrategy)
+      surface="storefront" → shopify.storefront(...) — public Storefront
+                              API. Required for buyer-side reads (cart,
+                              checkout, public catalog with locale/market).
+    `step.example` already shows the correct call form for this step's
+    surface; emit verbatim.
 
   shopify_mutation
     Fields: op, mutation, variables, userErrorsCheck (always true),
-            bindResultTo?
-    `example` shows the userErrors throw; do not add your own check.
+            bindResultTo?, surface ∈ {"admin","storefront"}
+    Same surface semantics as shopify_query:
+      surface="admin"      → shopify.graphql(mutation, variables)
+      surface="storefront" → shopify.storefront(mutation, variables)
+    Cart mutations (`cartCreate`, `cartLinesAdd`,
+    `cartDiscountCodesUpdate`, etc.) are storefront-only — the Admin
+    schema rejects them at execute time. `example` shows the userErrors
+    throw; do not add your own check.
 
   email_send
     Fields: to, dataKeys, onQuotaExceeded ∈ {"log_and_skip","abort_recipe"},

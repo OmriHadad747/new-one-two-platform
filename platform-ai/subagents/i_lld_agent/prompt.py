@@ -98,10 +98,12 @@ correctly inside step expressions.
                                 — async bulk op for multi-page reads.
                              shopify.storefront(query, variables)
                                 — public Storefront API with a
-                                public-scoped token. Use ONLY when the
-                                shopify_query step has surface="storefront"
-                                (set by ops-picker). Different scope and
-                                rate limits from admin.
+                                public-scoped token. Used when the
+                                shopify_query / shopify_mutation step
+                                has surface="storefront" (you set this
+                                on the step from the ops_picks pick's
+                                `surface`). Different scope and rate
+                                limits from admin.
                            Used by every shopify_query / shopify_mutation
                            step. Never call `fetch` against a Shopify URL.
 
@@ -571,7 +573,11 @@ Each entry:
                        OK   /signups/remove   BAD  /signups/:id
                      Widget paths are reached at `/widget<path>`.
                      Admin paths are reached at `/admin<path>`.
-  method            "GET" | "POST" | "PUT" | "DELETE"
+  method            "GET" | "POST" only. PUT / DELETE / PATCH are NOT
+                     supported — the host.call / bridge.call SDKs encode
+                     GET as query string and POST as JSON body, with no
+                     path for the other verbs. Use POST for every
+                     mutation (create / update / delete / save).
   purpose           one sentence in business terms
   requestShape      { fieldName: tsType }
                      tsType is a TS-ish string the codegen reads literally:
@@ -648,8 +654,9 @@ RECIPE FIELDS:
 
   triggeredBy       "webhook:<topic>" | "cron:<jobName>" |
                      "widget:<METHOD>:<path>" | "admin:<METHOD>:<path>"
-                     METHOD ∈ {GET, POST, PUT, DELETE} and must match
-                     the bound route's method exactly. Required for
+                     METHOD ∈ {GET, POST} and must match the bound
+                     route's method exactly. (PUT/DELETE are not SDK-
+                     supported — see httpRoutes.method.) Required for
                      widget/admin so GET and POST at the same path can
                      coexist as separate recipes.
   description       one sentence — what this recipe accomplishes
@@ -985,6 +992,22 @@ shopify_query
                          elementBinding  variable name each iteration's
                                          node is bound to inside the
                                          enclosing for_each step
+  surface             "admin" | "storefront" (default "admin"). MUST
+                       match the `surface` on this op's pick in the
+                       ops_picks input — the ops-picker already chose
+                       the right API per operation. Backend codegen
+                       routes "admin" → `shopify.graphql(...)` and
+                       "storefront" → `shopify.storefront(...)`. Pick
+                       by what the operation does:
+                         admin       — merchant-side: products, orders,
+                                       customers (as merchant records),
+                                       inventory, fulfillment, webhooks,
+                                       app config.
+                         storefront  — buyer-side: cart, checkout, public
+                                       catalog reads with locale/market
+                                       context, customer auth as a shopper.
+                       If unsure, the same op never appears in both
+                       schemas — check the ops_picks pick.
 
 shopify_mutation
   op                  ops-picks op name
@@ -994,6 +1017,12 @@ shopify_mutation
                        the response's userErrors field (look up the field
                        name on the op's `userErrorsField`); non-empty
                        throws.
+  surface             "admin" | "storefront" (default "admin"). Same
+                       semantics as shopify_query.surface — copy from
+                       the ops_picks pick's `surface`. Common gotcha:
+                       Cart mutations (`cartCreate`, `cartLinesAdd`,
+                       `cartDiscountCodesUpdate`, etc.) are
+                       storefront-only — the Admin schema rejects them.
 
 email_send
   Single email via platform.email.send.

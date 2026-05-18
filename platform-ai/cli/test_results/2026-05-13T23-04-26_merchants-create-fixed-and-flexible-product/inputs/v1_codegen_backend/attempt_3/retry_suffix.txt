@@ -1,7 +1,0 @@
-
-
-PREVIOUS ATTEMPT FAILED VALIDATION:
-- [src/routes/webhook-handlers.ts:inventory_levels/update (and orders/paid, products/update)] `req.platform!` is dereferenced inside all three webhook handlers for logging (`{ requestId: req.platform!.requestId }`) and for the Shopify client (`shopifyClientFor(req.platform!)`) — but the platform contract explicitly states webhook routes are NOT processed by verify-platform middleware, so `req.platform` is `undefined` at runtime. — Every webhook delivery that reaches a `console.log/warn/error` call throws `TypeError: Cannot read properties of undefined (reading 'requestId')`, crashing the handler and returning a 500. For `inventory_levels/update`, the `shopifyClientFor(req.platform!)` call crashes on any inventory item not yet in the local cache, permanently preventing first-observation variant resolution for those items. Shopify retries all three webhooks indefinitely, forming a retry storm with zero successful deliveries on the affected code paths.
-
-Fix ALL listed errors in this new attempt.
-

@@ -5,9 +5,6 @@ Public API
 ----------
   run_codegen_parallel(...)      Fan out the generator registry in parallel.
   validate_artifacts(...)        Static + cross + GraphQL + tsc validators.
-  _revision_locked_artifacts(.)  Decide which artifacts revision may rewrite.
-  _DB_BROKEN_ARTIFACTS           Finding-artifact set that unlocks db + handler.
-  _BACKEND_OPEN_ARTIFACTS        Finding-artifact set that keeps handler unlocked.
   _MAX_RETRIES                   Total codegen attempts (1 initial + 2 retries).
 
 Consumers
@@ -31,7 +28,7 @@ import contextvars
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from models.adapter import current_input_log_run_dir, input_log
 from subagents.base import CodegenContext, Generator
@@ -49,64 +46,6 @@ log = logging.getLogger(__name__)
 # ── Retry / locking constants ──────────────────────────────────────────
 
 _MAX_RETRIES = 3  # total codegen attempts (1 initial + 2 retries)
-
-# Finding-artifact sets that drive revision-locking policy.
-#
-# `artifact == "db"` means the migration itself is broken (missing tables/
-# columns) — unlock both so the revision agent fixes both together.
-_DB_BROKEN_ARTIFACTS: FrozenSet[str] = frozenset({"db"})
-
-# `artifact == "backend"` means a handler-side problem on top of a correct
-# migration — lock migration, fix the handler. `migration` is NOT in this
-# set because a migration finding is already handled by
-# `_DB_BROKEN_ARTIFACTS` above. Widget / admin-only findings fall through
-# to the default (lock both backends, fix the frontend). Plan-level
-# findings are informational — revision can't re-run the architect, so
-# they fall through too.
-_BACKEND_OPEN_ARTIFACTS: FrozenSet[str] = frozenset({"backend"})
-
-
-# ── Revision-locking policy ────────────────────────────────────────────
-
-
-def _revision_locked_artifacts(issues: List[Dict]) -> FrozenSet[str]:
-    """
-    Determine which artifacts the revision agent must treat as read-only based on
-    which LLM-validator findings fired. The findings come from the unified
-    Finding shape produced by subagents.q_codegen_v_agent (every finding carries an
-    `artifact` field).
-
-    Locking policy (single field, no Q-key categories):
-    - artifact == "db": migration itself is broken (missing table /
-      missing column) — unlock both so the revision can add the missing
-      schema AND adjust the handler in one pass.
-    - artifact == "backend": backend problem — lock migration (it's the
-      schema ground truth), fix the handler.
-    - artifact in {"storefront", "admin_ui"}: frontend misalignment — handler
-      and migration are the contract; fix the frontend, keep them locked.
-
-    Plan-level findings never reach this function — `_phase_validator`
-    filters them before invoking revision (revision can't re-run the
-    architect, so plan issues short-circuit the loop with a warning log
-    rather than wasting a revision pass on the wrong artifact).
-
-    Invariant: this function is only called after handler and migration have already
-    passed static validation in the codegen loop. If that invariant ever breaks, the
-    lock could paper over a real backend bug — revisit if backend static validation
-    is weakened or bypassed.
-    """
-    artifacts = {i.get("artifact") for i in issues if i.get("artifact")}
-
-    if artifacts & _DB_BROKEN_ARTIFACTS:
-        # Migration itself is incomplete — unlock both so the revision fixes both.
-        return frozenset()
-
-    if artifacts & _BACKEND_OPEN_ARTIFACTS:
-        # Handler misaligns with a correct migration — lock migration, fix handler.
-        return frozenset({"db"})
-
-    # Frontend-only misalignment — handler is ground truth, fix storefront/admin_ui.
-    return frozenset({"backend", "db"})
 
 
 # ── Parallel codegen ───────────────────────────────────────────────────

@@ -1,8 +1,0 @@
-
-
-PREVIOUS ATTEMPT FAILED VALIDATION:
-- [admin_ui.js:openBundleEditor save handler (bundle items save block)] When saving bundle items, `variantIds` is populated with raw GID strings (e.g. `gid://shopify/ProductVariant/12345678`) from `bridge.pickResource`, while `productIds` is declared but never populated (remains `[]`). The `bridge.call('/bundles/items/save', { variant_external_ids: variantIds, product_external_ids: productIds })` call sends mismatched-length arrays. — The backend handler for `POST /bundles/items/save` immediately returns HTTP 400 (`variant_external_ids and product_external_ids must have equal length`) because `variantIds.length > 0` but `productIds.length === 0`. Even if that were patched, `variantExternalIds.map(Number)` on GID strings produces `NaN`, which fails the `::bigint[]` Postgres cast. Merchants can never save any items to a bundle via the admin UI — the bundle is permanently empty.
-- [admin_ui.js:fmtMoneyAs (purchase history renderPHList and exportPurchaseHistory)] `fmtMoneyAs` always divides `order_total_minor_units` by `100` before passing the value to `Intl.NumberFormat`, regardless of the `order_currency`. Zero-decimal currencies (JPY, KRW) store the face amount in minor units with a divisor of 1, and three-decimal currencies (BHD, JOD) require a divisor of 1000. — A JPY order of ¥10,000 (stored as `10000` in the DB) is displayed and exported as ¥100.00 — one hundred times too small. A BHD order of 10.000 BD (stored as `10000`) is displayed as BD 100.00 — ten times too large. Merchants reviewing purchase history or exporting the CSV see systematically wrong monetary values for every non-USD-equivalent order.
-
-Fix ALL listed errors in this new attempt.
-

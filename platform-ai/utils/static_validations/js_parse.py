@@ -200,7 +200,10 @@ def top_level_keys_of(code: str, start_idx: int) -> set:
             continue
         if c == "{" or c == "[" or c == "(":
             depth += 1
-            at_key_position = False
+            # Entering the target object (depth went 0→1 on a `{`) — we are
+            # now positioned to read the first key. For any nested opener,
+            # or for `[` / `(`, we are no longer at a key position.
+            at_key_position = depth == 1 and c == "{"
             i += 1
             continue
         if c == "}" or c == "]" or c == ")":
