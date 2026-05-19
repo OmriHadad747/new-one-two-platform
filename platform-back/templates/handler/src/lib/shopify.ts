@@ -116,7 +116,10 @@ export interface ShopifyHelper {
    * the operation is best-effort cancelled so the shop's bulk-op slot is
    * released.
    */
-  bulkQuery<T = unknown>(query: string, opts?: { maxPollMs?: number }): AsyncGenerator<T, void, unknown>;
+  bulkQuery<T = unknown>(
+    query: string,
+    opts?: { maxPollMs?: number },
+  ): AsyncGenerator<T, void, unknown>;
   storefront<T = unknown>(query: string, variables?: Record<string, unknown>): Promise<T>;
 }
 
@@ -552,10 +555,7 @@ function classifyTransient(err: unknown): TransientInfo | null {
 function computeBackoffDelay(attempt: number): number {
   // Full jitter — random_between(0, cap_for_attempt).
   // Cap doubles each attempt, clamped at RETRY_BACKOFF_CAP_MS.
-  const cap = Math.min(
-    RETRY_BACKOFF_CAP_MS,
-    RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1),
-  );
+  const cap = Math.min(RETRY_BACKOFF_CAP_MS, RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1));
   return Math.floor(Math.random() * (cap + 1));
 }
 
@@ -608,11 +608,7 @@ async function withRetry<T>(label: string, op: () => Promise<T>): Promise<T> {
   );
 }
 
-async function fetchWithRetry(
-  label: string,
-  url: string,
-  init?: RequestInit,
-): Promise<Response> {
+async function fetchWithRetry(label: string, url: string, init?: RequestInit): Promise<Response> {
   return withRetry(label, async () => {
     const resp = await fetch(url, init);
     if (RETRY_RETRYABLE_HTTP_STATUSES.has(resp.status)) {

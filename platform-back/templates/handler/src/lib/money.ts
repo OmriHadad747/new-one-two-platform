@@ -15,13 +15,26 @@
  */
 
 const ZERO_DECIMAL_CURRENCIES = new Set([
-  "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "MGA",
-  "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF",
+  "BIF",
+  "CLP",
+  "DJF",
+  "GNF",
+  "ISK",
+  "JPY",
+  "KMF",
+  "KRW",
+  "MGA",
+  "PYG",
+  "RWF",
+  "UGX",
+  "VND",
+  "VUV",
+  "XAF",
+  "XOF",
+  "XPF",
 ]);
 
-const THREE_DECIMAL_CURRENCIES = new Set([
-  "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND",
-]);
+const THREE_DECIMAL_CURRENCIES = new Set(["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"]);
 
 const _warnedUnknown = new Set<string>();
 

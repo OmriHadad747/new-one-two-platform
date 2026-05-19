@@ -212,7 +212,11 @@ describe("withRetry (HTTP) — graphql path", () => {
 // ── Storefront fetch path ──────────────────────────────────────────────────
 
 describe("withRetry (HTTP) — storefront path", () => {
-  function makeResp(status: number, body: unknown = { data: { ok: true } }, headers: Record<string, string> = {}) {
+  function makeResp(
+    status: number,
+    body: unknown = { data: { ok: true } },
+    headers: Record<string, string> = {},
+  ) {
     const h = new Headers(headers);
     return {
       ok: status >= 200 && status < 300,

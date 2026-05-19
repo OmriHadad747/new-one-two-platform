@@ -183,9 +183,7 @@ async function adminProxyHandler(
   const targetUrl = `${resolved.functionUrl}/admin/${subPath}${qs ? `?${qs}` : ""}`;
   // GET requests have no body; on POST, fastify-raw-body captures the
   // original bytes before JSON parsing.
-  const rawBody = request.method === "GET"
-    ? undefined
-    : (request as { rawBody?: Buffer }).rawBody;
+  const rawBody = request.method === "GET" ? undefined : (request as { rawBody?: Buffer }).rawBody;
   const contentType = request.headers["content-type"];
 
   log.debug(

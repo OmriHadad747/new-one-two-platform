@@ -65,9 +65,7 @@ export async function get<T>(key: string, defaultValue?: T): Promise<T | undefin
  * map (no default fallback). Use this to pre-fill an admin "edit
  * settings" form where each field has its own default.
  */
-export async function getMany<T = unknown>(
-  keys: readonly string[],
-): Promise<Record<string, T>> {
+export async function getMany<T = unknown>(keys: readonly string[]): Promise<Record<string, T>> {
   if (keys.length === 0) return {};
   for (const k of keys) validateKey(k);
   const rows = await sql<{ key: string; value: T }[]>`

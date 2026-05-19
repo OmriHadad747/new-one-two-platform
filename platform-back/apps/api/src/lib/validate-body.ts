@@ -35,13 +35,11 @@ export function parseBody<TSchema extends z.ZodTypeAny>(
 ): z.infer<TSchema> | null {
   const result = schema.safeParse(req.body);
   if (!result.success) {
-    void reply
-      .status(400)
-      .send(
-        errorResponse(ErrorCode.InvalidRequest, "Request body failed validation", {
-          issues: formatIssues(result.error),
-        }),
-      );
+    void reply.status(400).send(
+      errorResponse(ErrorCode.InvalidRequest, "Request body failed validation", {
+        issues: formatIssues(result.error),
+      }),
+    );
     return null;
   }
   return result.data;
@@ -54,13 +52,11 @@ export function parseQuery<TSchema extends z.ZodTypeAny>(
 ): z.infer<TSchema> | null {
   const result = schema.safeParse(req.query);
   if (!result.success) {
-    void reply
-      .status(400)
-      .send(
-        errorResponse(ErrorCode.InvalidRequest, "Query parameters failed validation", {
-          issues: formatIssues(result.error),
-        }),
-      );
+    void reply.status(400).send(
+      errorResponse(ErrorCode.InvalidRequest, "Query parameters failed validation", {
+        issues: formatIssues(result.error),
+      }),
+    );
     return null;
   }
   return result.data;
