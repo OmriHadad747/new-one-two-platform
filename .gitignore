@@ -50,3 +50,5 @@ handler.js
 generator/shopify_mcp/cache/
 
 .claude
+
+test_results/

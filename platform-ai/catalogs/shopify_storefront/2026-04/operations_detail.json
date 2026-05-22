@@ -1,0 +1,2375 @@
+{
+  "article": {
+    "args": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "ID!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Article",
+    "returnTypeSdl": "type Article implements HasMetafields & Node & OnlineStorePublishable & Trackable {\n  author: ArticleAuthor!\n  authorV2: ArticleAuthor\n  blog: Blog!\n  comments(first: Int, after: String, last: Int, before: String, reverse: Boolean): CommentConnection!\n  content(truncateAt: Int): String!\n  contentHtml: HTML!\n  excerpt(truncateAt: Int): String\n  excerptHtml: HTML\n  handle: String!\n  id: ID!\n  image: Image\n  metafield(namespace: String, key: String!): Metafield\n  metafields(identifiers: [HasMetafieldsIdentifier!]!): [Metafield]!\n  onlineStoreUrl: URL\n  publishedAt: DateTime!\n  seo: SEO\n  tags: [String!]!\n  title: String!\n  trackingParameters: String\n}",
+    "userErrorsField": null
+  },
+  "articles": {
+    "args": [
+      {
+        "name": "first",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "after",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "last",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "before",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "reverse",
+        "required": false,
+        "type": "Boolean"
+      },
+      {
+        "name": "sortKey",
+        "required": false,
+        "type": "ArticleSortKeys"
+      },
+      {
+        "name": "query",
+        "required": false,
+        "type": "String"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "ArticleSortKeys": "enum ArticleSortKeys {\n  TITLE\n  BLOG_TITLE\n  AUTHOR\n  UPDATED_AT\n  PUBLISHED_AT\n  ID\n  RELEVANCE\n}"
+    },
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "ArticleConnection",
+    "returnTypeSdl": "type ArticleConnection {\n  edges: [ArticleEdge!]!\n  nodes: [Article!]!\n  pageInfo: PageInfo!\n}",
+    "userErrorsField": null
+  },
+  "blog": {
+    "args": [
+      {
+        "name": "handle",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "id",
+        "required": false,
+        "type": "ID"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Blog",
+    "returnTypeSdl": "type Blog implements HasMetafields & Node & OnlineStorePublishable {\n  articleByHandle(handle: String!): Article\n  articles(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ArticleSortKeys, query: String): ArticleConnection!\n  authors: [ArticleAuthor!]!\n  handle: String!\n  id: ID!\n  metafield(namespace: String, key: String!): Metafield\n  metafields(identifiers: [HasMetafieldsIdentifier!]!): [Metafield]!\n  onlineStoreUrl: URL\n  seo: SEO\n  title: String!\n}",
+    "userErrorsField": null
+  },
+  "blogs": {
+    "args": [
+      {
+        "name": "first",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "after",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "last",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "before",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "reverse",
+        "required": false,
+        "type": "Boolean"
+      },
+      {
+        "name": "sortKey",
+        "required": false,
+        "type": "BlogSortKeys"
+      },
+      {
+        "name": "query",
+        "required": false,
+        "type": "String"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "BlogSortKeys": "enum BlogSortKeys {\n  HANDLE\n  TITLE\n  ID\n  RELEVANCE\n}"
+    },
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "BlogConnection",
+    "returnTypeSdl": "type BlogConnection {\n  edges: [BlogEdge!]!\n  nodes: [Blog!]!\n  pageInfo: PageInfo!\n}",
+    "userErrorsField": null
+  },
+  "cart": {
+    "args": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "ID!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Cart",
+    "returnTypeSdl": "type Cart implements HasMetafields & Node {\n  appliedGiftCards: [AppliedGiftCard!]!\n  attribute(key: String!): Attribute\n  attributes: [Attribute!]!\n  buyerIdentity: CartBuyerIdentity!\n  checkoutUrl: URL!\n  cost: CartCost!\n  createdAt: DateTime!\n  delivery: CartDelivery!\n  deliveryGroups(first: Int, after: String, last: Int, before: String, reverse: Boolean, withCarrierRates: Boolean): CartDeliveryGroupConnection!\n  discountAllocations: [CartDiscountAllocation!]!\n  discountCodes: [CartDiscountCode!]!\n  estimatedCost: CartEstimatedCost!\n  id: ID!\n  lines(first: Int, after: String, last: Int, before: String, reverse: Boolean): BaseCartLineConnection!\n  metafield(namespace: String, key: String!): Metafield\n  metafields(identifiers: [HasMetafieldsIdentifier!]!): [Metafield]!\n  note: String\n  totalQuantity: Int!\n  updatedAt: DateTime!\n}",
+    "userErrorsField": null
+  },
+  "cartAttributesUpdate": {
+    "args": [
+      {
+        "name": "attributes",
+        "required": true,
+        "type": "[AttributeInput!]!"
+      },
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "AttributeInput": "input AttributeInput {\n  key: String!\n  value: String!\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartAttributesUpdatePayload",
+    "returnTypeSdl": "type CartAttributesUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartBillingAddressUpdate": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "billingAddress",
+        "required": false,
+        "type": "MailingAddressInput"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "MailingAddressInput": "input MailingAddressInput {\n  address1: String\n  address2: String\n  city: String\n  company: String\n  country: String\n  firstName: String\n  lastName: String\n  phone: String\n  province: String\n  zip: String\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartBillingAddressUpdatePayload",
+    "returnTypeSdl": "type CartBillingAddressUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartBuyerIdentityUpdate": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "buyerIdentity",
+        "required": true,
+        "type": "CartBuyerIdentityInput!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CartBuyerIdentityInput": "input CartBuyerIdentityInput {\n  email: String\n  phone: String\n  companyLocationId: ID\n  countryCode: CountryCode\n  customerAccessToken: String\n  preferences: CartPreferencesInput\n}",
+      "CartDeliveryCoordinatesPreferenceInput": "input CartDeliveryCoordinatesPreferenceInput {\n  latitude: Float!\n  longitude: Float!\n  countryCode: CountryCode!\n}",
+      "CartDeliveryPreferenceInput": "input CartDeliveryPreferenceInput {\n  deliveryMethod: [PreferenceDeliveryMethodType!]\n  pickupHandle: [String!]\n  coordinates: CartDeliveryCoordinatesPreferenceInput\n}",
+      "CartPreferencesInput": "input CartPreferencesInput {\n  delivery: CartDeliveryPreferenceInput\n  wallet: [String!]\n}",
+      "CountryCode": "enum CountryCode {\n  AF\n  AX\n  AL\n  DZ\n  AD\n  AO\n  AI\n  AG\n  AR\n  AM\n  AW\n  AC\n  AU\n  AT\n  AZ\n  BS\n  BH\n  BD\n  BB\n  BY\n  BE\n  BZ\n  BJ\n  BM\n  BT\n  BO\n  BA\n  BW\n  BV\n  BR\n  IO\n  BN\n  BG\n  BF\n  BI\n  KH\n  CA\n  CV\n  BQ\n  KY\n  CF\n  TD\n  CL\n  CN\n  CX\n  CC\n  CO\n  KM\n  CG\n  CD\n  CK\n  CR\n  HR\n  CU\n  CW\n  CY\n  CZ\n  CI\n  DK\n  DJ\n  DM\n  DO\n  EC\n  EG\n  SV\n  GQ\n  ER\n  EE\n  SZ\n  ET\n  FK\n  FO\n  FJ\n  FI\n  FR\n  GF\n  PF\n  TF\n  GA\n  GM\n  GE\n  DE\n  GH\n  GI\n  GR\n  GL\n  GD\n  GP\n  GT\n  GG\n  GN\n  GW\n  GY\n  HT\n  HM\n  VA\n  HN\n  HK\n  HU\n  IS\n  IN\n  ID\n  IR\n  IQ\n  IE\n  IM\n  IL\n  IT\n  JM\n  JP\n  JE\n  JO\n  KZ\n  KE\n  KI\n  KP\n  XK\n  KW\n  KG\n  LA\n  LV\n  LB\n  LS\n  LR\n  LY\n  LI\n  LT\n  LU\n  MO\n  MG\n  MW\n  MY\n  MV\n  ML\n  MT\n  MQ\n  MR\n  MU\n  YT\n  MX\n  MD\n  MC\n  MN\n  ME\n  MS\n  MA\n  MZ\n  MM\n  NA\n  NR\n  NP\n  NL\n  AN\n  NC\n  NZ\n  NI\n  NE\n  NG\n  NU\n  NF\n  MK\n  NO\n  OM\n  PK\n  PS\n  PA\n  PG\n  PY\n  PE\n  PH\n  PN\n  PL\n  PT\n  QA\n  CM\n  RE\n  RO\n  RU\n  RW\n  BL\n  SH\n  KN\n  LC\n  MF\n  PM\n  WS\n  SM\n  ST\n  SA\n  SN\n  RS\n  SC\n  SL\n  SG\n  SX\n  SK\n  SI\n  SB\n  SO\n  ZA\n  GS\n  KR\n  SS\n  ES\n  LK\n  VC\n  SD\n  SR\n  SJ\n  SE\n  CH\n  SY\n  TW\n  TJ\n  TZ\n  TH\n  TL\n  TG\n  TK\n  TO\n  TT\n  TA\n  TN\n  TR\n  TM\n  TC\n  TV\n  UG\n  UA\n  AE\n  GB\n  US\n  UM\n  UY\n  UZ\n  VU\n  VE\n  VN\n  VG\n  WF\n  EH\n  YE\n  ZM\n  ZW\n  ZZ\n}",
+      "PreferenceDeliveryMethodType": "enum PreferenceDeliveryMethodType {\n  SHIPPING\n  PICK_UP\n  PICKUP_POINT\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartBuyerIdentityUpdatePayload",
+    "returnTypeSdl": "type CartBuyerIdentityUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartClone": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartClonePayload",
+    "returnTypeSdl": "type CartClonePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartCompletionAttempt": {
+    "args": [
+      {
+        "name": "attemptId",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "CartCompletionAttemptResult",
+    "returnTypeSdl": "union CartCompletionAttemptResult = CartCompletionActionRequired | CartCompletionFailed | CartCompletionProcessing | CartCompletionSuccess",
+    "userErrorsField": null
+  },
+  "cartCreate": {
+    "args": [
+      {
+        "name": "input",
+        "required": false,
+        "type": "CartInput"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "AttributeInput": "input AttributeInput {\n  key: String!\n  value: String!\n}",
+      "CartAddressInput": "input CartAddressInput {\n  deliveryAddress: CartDeliveryAddressInput\n  copyFromCustomerAddressId: ID\n}",
+      "CartBuyerIdentityInput": "input CartBuyerIdentityInput {\n  email: String\n  phone: String\n  companyLocationId: ID\n  countryCode: CountryCode\n  customerAccessToken: String\n  preferences: CartPreferencesInput\n}",
+      "CartDeliveryAddressInput": "input CartDeliveryAddressInput {\n  address1: String\n  address2: String\n  city: String\n  company: String\n  countryCode: CountryCode\n  firstName: String\n  lastName: String\n  phone: String\n  provinceCode: String\n  zip: String\n}",
+      "CartDeliveryCoordinatesPreferenceInput": "input CartDeliveryCoordinatesPreferenceInput {\n  latitude: Float!\n  longitude: Float!\n  countryCode: CountryCode!\n}",
+      "CartDeliveryInput": "input CartDeliveryInput {\n  addresses: [CartSelectableAddressInput!]\n}",
+      "CartDeliveryPreferenceInput": "input CartDeliveryPreferenceInput {\n  deliveryMethod: [PreferenceDeliveryMethodType!]\n  pickupHandle: [String!]\n  coordinates: CartDeliveryCoordinatesPreferenceInput\n}",
+      "CartInput": "input CartInput {\n  attributes: [AttributeInput!]\n  lines: [CartLineInput!]\n  discountCodes: [String!]\n  giftCardCodes: [String!]\n  note: String\n  buyerIdentity: CartBuyerIdentityInput\n  delivery: CartDeliveryInput\n  metafields: [CartInputMetafieldInput!]\n}",
+      "CartInputMetafieldInput": "input CartInputMetafieldInput {\n  key: String!\n  value: String!\n  type: String!\n}",
+      "CartLineInput": "input CartLineInput {\n  attributes: [AttributeInput!]\n  quantity: Int\n  merchandiseId: ID!\n  sellingPlanId: ID\n  parent: CartLineParentInput\n}",
+      "CartLineParentInput": "input CartLineParentInput {\n  lineId: ID\n  merchandiseId: ID\n}",
+      "CartPreferencesInput": "input CartPreferencesInput {\n  delivery: CartDeliveryPreferenceInput\n  wallet: [String!]\n}",
+      "CartSelectableAddressInput": "input CartSelectableAddressInput {\n  address: CartAddressInput!\n  selected: Boolean\n  oneTimeUse: Boolean\n  validationStrategy: DeliveryAddressValidationStrategy\n}",
+      "CountryCode": "enum CountryCode {\n  AF\n  AX\n  AL\n  DZ\n  AD\n  AO\n  AI\n  AG\n  AR\n  AM\n  AW\n  AC\n  AU\n  AT\n  AZ\n  BS\n  BH\n  BD\n  BB\n  BY\n  BE\n  BZ\n  BJ\n  BM\n  BT\n  BO\n  BA\n  BW\n  BV\n  BR\n  IO\n  BN\n  BG\n  BF\n  BI\n  KH\n  CA\n  CV\n  BQ\n  KY\n  CF\n  TD\n  CL\n  CN\n  CX\n  CC\n  CO\n  KM\n  CG\n  CD\n  CK\n  CR\n  HR\n  CU\n  CW\n  CY\n  CZ\n  CI\n  DK\n  DJ\n  DM\n  DO\n  EC\n  EG\n  SV\n  GQ\n  ER\n  EE\n  SZ\n  ET\n  FK\n  FO\n  FJ\n  FI\n  FR\n  GF\n  PF\n  TF\n  GA\n  GM\n  GE\n  DE\n  GH\n  GI\n  GR\n  GL\n  GD\n  GP\n  GT\n  GG\n  GN\n  GW\n  GY\n  HT\n  HM\n  VA\n  HN\n  HK\n  HU\n  IS\n  IN\n  ID\n  IR\n  IQ\n  IE\n  IM\n  IL\n  IT\n  JM\n  JP\n  JE\n  JO\n  KZ\n  KE\n  KI\n  KP\n  XK\n  KW\n  KG\n  LA\n  LV\n  LB\n  LS\n  LR\n  LY\n  LI\n  LT\n  LU\n  MO\n  MG\n  MW\n  MY\n  MV\n  ML\n  MT\n  MQ\n  MR\n  MU\n  YT\n  MX\n  MD\n  MC\n  MN\n  ME\n  MS\n  MA\n  MZ\n  MM\n  NA\n  NR\n  NP\n  NL\n  AN\n  NC\n  NZ\n  NI\n  NE\n  NG\n  NU\n  NF\n  MK\n  NO\n  OM\n  PK\n  PS\n  PA\n  PG\n  PY\n  PE\n  PH\n  PN\n  PL\n  PT\n  QA\n  CM\n  RE\n  RO\n  RU\n  RW\n  BL\n  SH\n  KN\n  LC\n  MF\n  PM\n  WS\n  SM\n  ST\n  SA\n  SN\n  RS\n  SC\n  SL\n  SG\n  SX\n  SK\n  SI\n  SB\n  SO\n  ZA\n  GS\n  KR\n  SS\n  ES\n  LK\n  VC\n  SD\n  SR\n  SJ\n  SE\n  CH\n  SY\n  TW\n  TJ\n  TZ\n  TH\n  TL\n  TG\n  TK\n  TO\n  TT\n  TA\n  TN\n  TR\n  TM\n  TC\n  TV\n  UG\n  UA\n  AE\n  GB\n  US\n  UM\n  UY\n  UZ\n  VU\n  VE\n  VN\n  VG\n  WF\n  EH\n  YE\n  ZM\n  ZW\n  ZZ\n}",
+      "DeliveryAddressValidationStrategy": "enum DeliveryAddressValidationStrategy {\n  COUNTRY_CODE_ONLY\n  STRICT\n}",
+      "PreferenceDeliveryMethodType": "enum PreferenceDeliveryMethodType {\n  SHIPPING\n  PICK_UP\n  PICKUP_POINT\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartCreatePayload",
+    "returnTypeSdl": "type CartCreatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartDeliveryAddressesAdd": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "addresses",
+        "required": true,
+        "type": "[CartSelectableAddressInput!]!"
+      }
+    ],
+    "examples": [
+      {
+        "query": "mutation CartDeliveryAddressesAdd($id: ID!, $addresses: [CartSelectableAddressInput!]!) {\n  cartDeliveryAddressesAdd(cartId: $id, addresses: $addresses) {\n    userErrors {\n      message\n      code\n      field\n    }\n    warnings {\n      message\n      code\n      target\n    }\n    cart {\n      id\n      delivery {\n        addresses {\n          id\n          selected\n          oneTimeUse\n          address {\n            ... on CartDeliveryAddress {\n              firstName\n              lastName\n              company\n              address1\n              address2\n              city\n              provinceCode\n              zip\n              countryCode\n            }\n          }\n        }\n      }\n    }\n  }\n}",
+        "response": {
+          "cartDeliveryAddressesAdd": {
+            "cart": {
+              "delivery": {
+                "addresses": [
+                  {
+                    "address": {
+                      "address1": "131 Greene Street",
+                      "address2": null,
+                      "city": "New York",
+                      "company": null,
+                      "countryCode": "US",
+                      "firstName": null,
+                      "lastName": "",
+                      "provinceCode": "NY",
+                      "zip": "10012"
+                    },
+                    "id": "gid://shopify/CartSelectableAddress/59168936-5627-4056-b460-9c2ca1dff094",
+                    "oneTimeUse": false,
+                    "selected": true
+                  }
+                ]
+              },
+              "id": "gid://shopify/Cart/c1-145e58da76bbee55b288ea50b81810d3?key=0068c4788cbb29555c10c3acc3b2ffc2"
+            },
+            "userErrors": [],
+            "warnings": []
+          }
+        },
+        "scenario_title": "Adds a delivery address to a cart",
+        "variables": {
+          "addresses": [
+            {
+              "address": {
+                "deliveryAddress": {
+                  "address1": "131 Greene Street",
+                  "city": "New York",
+                  "countryCode": "US",
+                  "provinceCode": "NY",
+                  "zip": "10012"
+                }
+              },
+              "selected": true
+            }
+          ],
+          "id": "gid://shopify/Cart/c1-145e58da76bbee55b288ea50b81810d3?key=0068c4788cbb29555c10c3acc3b2ffc2"
+        }
+      }
+    ],
+    "inputTypesSdl": {
+      "CartAddressInput": "input CartAddressInput {\n  deliveryAddress: CartDeliveryAddressInput\n  copyFromCustomerAddressId: ID\n}",
+      "CartDeliveryAddressInput": "input CartDeliveryAddressInput {\n  address1: String\n  address2: String\n  city: String\n  company: String\n  countryCode: CountryCode\n  firstName: String\n  lastName: String\n  phone: String\n  provinceCode: String\n  zip: String\n}",
+      "CartSelectableAddressInput": "input CartSelectableAddressInput {\n  address: CartAddressInput!\n  selected: Boolean\n  oneTimeUse: Boolean\n  validationStrategy: DeliveryAddressValidationStrategy\n}",
+      "CountryCode": "enum CountryCode {\n  AF\n  AX\n  AL\n  DZ\n  AD\n  AO\n  AI\n  AG\n  AR\n  AM\n  AW\n  AC\n  AU\n  AT\n  AZ\n  BS\n  BH\n  BD\n  BB\n  BY\n  BE\n  BZ\n  BJ\n  BM\n  BT\n  BO\n  BA\n  BW\n  BV\n  BR\n  IO\n  BN\n  BG\n  BF\n  BI\n  KH\n  CA\n  CV\n  BQ\n  KY\n  CF\n  TD\n  CL\n  CN\n  CX\n  CC\n  CO\n  KM\n  CG\n  CD\n  CK\n  CR\n  HR\n  CU\n  CW\n  CY\n  CZ\n  CI\n  DK\n  DJ\n  DM\n  DO\n  EC\n  EG\n  SV\n  GQ\n  ER\n  EE\n  SZ\n  ET\n  FK\n  FO\n  FJ\n  FI\n  FR\n  GF\n  PF\n  TF\n  GA\n  GM\n  GE\n  DE\n  GH\n  GI\n  GR\n  GL\n  GD\n  GP\n  GT\n  GG\n  GN\n  GW\n  GY\n  HT\n  HM\n  VA\n  HN\n  HK\n  HU\n  IS\n  IN\n  ID\n  IR\n  IQ\n  IE\n  IM\n  IL\n  IT\n  JM\n  JP\n  JE\n  JO\n  KZ\n  KE\n  KI\n  KP\n  XK\n  KW\n  KG\n  LA\n  LV\n  LB\n  LS\n  LR\n  LY\n  LI\n  LT\n  LU\n  MO\n  MG\n  MW\n  MY\n  MV\n  ML\n  MT\n  MQ\n  MR\n  MU\n  YT\n  MX\n  MD\n  MC\n  MN\n  ME\n  MS\n  MA\n  MZ\n  MM\n  NA\n  NR\n  NP\n  NL\n  AN\n  NC\n  NZ\n  NI\n  NE\n  NG\n  NU\n  NF\n  MK\n  NO\n  OM\n  PK\n  PS\n  PA\n  PG\n  PY\n  PE\n  PH\n  PN\n  PL\n  PT\n  QA\n  CM\n  RE\n  RO\n  RU\n  RW\n  BL\n  SH\n  KN\n  LC\n  MF\n  PM\n  WS\n  SM\n  ST\n  SA\n  SN\n  RS\n  SC\n  SL\n  SG\n  SX\n  SK\n  SI\n  SB\n  SO\n  ZA\n  GS\n  KR\n  SS\n  ES\n  LK\n  VC\n  SD\n  SR\n  SJ\n  SE\n  CH\n  SY\n  TW\n  TJ\n  TZ\n  TH\n  TL\n  TG\n  TK\n  TO\n  TT\n  TA\n  TN\n  TR\n  TM\n  TC\n  TV\n  UG\n  UA\n  AE\n  GB\n  US\n  UM\n  UY\n  UZ\n  VU\n  VE\n  VN\n  VG\n  WF\n  EH\n  YE\n  ZM\n  ZW\n  ZZ\n}",
+      "DeliveryAddressValidationStrategy": "enum DeliveryAddressValidationStrategy {\n  COUNTRY_CODE_ONLY\n  STRICT\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartDeliveryAddressesAddPayload",
+    "returnTypeSdl": "type CartDeliveryAddressesAddPayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartDeliveryAddressesRemove": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "addressIds",
+        "required": true,
+        "type": "[ID!]!"
+      }
+    ],
+    "examples": [
+      {
+        "query": "mutation CartDeliveryAddressesRemove($id: ID!, $addressIds: [ID!]!) {\n  cartDeliveryAddressesRemove(cartId: $id, addressIds: $addressIds) {\n    userErrors {\n      message\n      code\n      field\n    }\n    warnings {\n      message\n      code\n      target\n    }\n    cart {\n      id\n      delivery {\n        addresses {\n          id\n          selected\n          oneTimeUse\n          address {\n            ... on CartDeliveryAddress {\n              firstName\n              lastName\n            }\n          }\n        }\n      }\n    }\n  }\n}",
+        "response": {
+          "cartDeliveryAddressesRemove": {
+            "cart": {
+              "delivery": {
+                "addresses": []
+              },
+              "id": "gid://shopify/Cart/c1-8f1f41212a211bb1502fd5e27fa5b413?key=f0c5f2509893edbafaab3de9c160b9a8"
+            },
+            "userErrors": [],
+            "warnings": []
+          }
+        },
+        "scenario_title": "Removes a delivery address from a cart",
+        "variables": {
+          "addressIds": [
+            "gid://shopify/CartSelectableAddress/delivery-address-1"
+          ],
+          "id": "gid://shopify/Cart/c1-8f1f41212a211bb1502fd5e27fa5b413?key=f0c5f2509893edbafaab3de9c160b9a8"
+        }
+      }
+    ],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartDeliveryAddressesRemovePayload",
+    "returnTypeSdl": "type CartDeliveryAddressesRemovePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartDeliveryAddressesReplace": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "addresses",
+        "required": true,
+        "type": "[CartSelectableAddressInput!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CartAddressInput": "input CartAddressInput {\n  deliveryAddress: CartDeliveryAddressInput\n  copyFromCustomerAddressId: ID\n}",
+      "CartDeliveryAddressInput": "input CartDeliveryAddressInput {\n  address1: String\n  address2: String\n  city: String\n  company: String\n  countryCode: CountryCode\n  firstName: String\n  lastName: String\n  phone: String\n  provinceCode: String\n  zip: String\n}",
+      "CartSelectableAddressInput": "input CartSelectableAddressInput {\n  address: CartAddressInput!\n  selected: Boolean\n  oneTimeUse: Boolean\n  validationStrategy: DeliveryAddressValidationStrategy\n}",
+      "CountryCode": "enum CountryCode {\n  AF\n  AX\n  AL\n  DZ\n  AD\n  AO\n  AI\n  AG\n  AR\n  AM\n  AW\n  AC\n  AU\n  AT\n  AZ\n  BS\n  BH\n  BD\n  BB\n  BY\n  BE\n  BZ\n  BJ\n  BM\n  BT\n  BO\n  BA\n  BW\n  BV\n  BR\n  IO\n  BN\n  BG\n  BF\n  BI\n  KH\n  CA\n  CV\n  BQ\n  KY\n  CF\n  TD\n  CL\n  CN\n  CX\n  CC\n  CO\n  KM\n  CG\n  CD\n  CK\n  CR\n  HR\n  CU\n  CW\n  CY\n  CZ\n  CI\n  DK\n  DJ\n  DM\n  DO\n  EC\n  EG\n  SV\n  GQ\n  ER\n  EE\n  SZ\n  ET\n  FK\n  FO\n  FJ\n  FI\n  FR\n  GF\n  PF\n  TF\n  GA\n  GM\n  GE\n  DE\n  GH\n  GI\n  GR\n  GL\n  GD\n  GP\n  GT\n  GG\n  GN\n  GW\n  GY\n  HT\n  HM\n  VA\n  HN\n  HK\n  HU\n  IS\n  IN\n  ID\n  IR\n  IQ\n  IE\n  IM\n  IL\n  IT\n  JM\n  JP\n  JE\n  JO\n  KZ\n  KE\n  KI\n  KP\n  XK\n  KW\n  KG\n  LA\n  LV\n  LB\n  LS\n  LR\n  LY\n  LI\n  LT\n  LU\n  MO\n  MG\n  MW\n  MY\n  MV\n  ML\n  MT\n  MQ\n  MR\n  MU\n  YT\n  MX\n  MD\n  MC\n  MN\n  ME\n  MS\n  MA\n  MZ\n  MM\n  NA\n  NR\n  NP\n  NL\n  AN\n  NC\n  NZ\n  NI\n  NE\n  NG\n  NU\n  NF\n  MK\n  NO\n  OM\n  PK\n  PS\n  PA\n  PG\n  PY\n  PE\n  PH\n  PN\n  PL\n  PT\n  QA\n  CM\n  RE\n  RO\n  RU\n  RW\n  BL\n  SH\n  KN\n  LC\n  MF\n  PM\n  WS\n  SM\n  ST\n  SA\n  SN\n  RS\n  SC\n  SL\n  SG\n  SX\n  SK\n  SI\n  SB\n  SO\n  ZA\n  GS\n  KR\n  SS\n  ES\n  LK\n  VC\n  SD\n  SR\n  SJ\n  SE\n  CH\n  SY\n  TW\n  TJ\n  TZ\n  TH\n  TL\n  TG\n  TK\n  TO\n  TT\n  TA\n  TN\n  TR\n  TM\n  TC\n  TV\n  UG\n  UA\n  AE\n  GB\n  US\n  UM\n  UY\n  UZ\n  VU\n  VE\n  VN\n  VG\n  WF\n  EH\n  YE\n  ZM\n  ZW\n  ZZ\n}",
+      "DeliveryAddressValidationStrategy": "enum DeliveryAddressValidationStrategy {\n  COUNTRY_CODE_ONLY\n  STRICT\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartDeliveryAddressesReplacePayload",
+    "returnTypeSdl": "type CartDeliveryAddressesReplacePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartDeliveryAddressesUpdate": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "addresses",
+        "required": true,
+        "type": "[CartSelectableAddressUpdateInput!]!"
+      }
+    ],
+    "examples": [
+      {
+        "query": "mutation CartDeliveryAddressesUpdate($id: ID!, $addresses: [CartSelectableAddressUpdateInput!]!) {\n  cartDeliveryAddressesUpdate(cartId: $id, addresses: $addresses) {\n    userErrors {\n      message\n      code\n      field\n    }\n    warnings {\n      message\n      code\n      target\n    }\n    cart {\n      id\n      delivery {\n        addresses {\n          id\n          selected\n          oneTimeUse\n          address {\n            ... on CartDeliveryAddress {\n              firstName\n              lastName\n              company\n              address1\n              address2\n              city\n              provinceCode\n              zip\n              countryCode\n            }\n          }\n        }\n      }\n    }\n  }\n}",
+        "response": {
+          "cartDeliveryAddressesUpdate": {
+            "cart": {
+              "delivery": {
+                "addresses": [
+                  {
+                    "address": {
+                      "address1": "123 Amoebobacterieae St",
+                      "address2": null,
+                      "city": "Ottawa",
+                      "company": null,
+                      "countryCode": "CA",
+                      "firstName": "Bob",
+                      "lastName": "Bobsen",
+                      "provinceCode": "ON",
+                      "zip": "K2P0V6"
+                    },
+                    "id": "gid://shopify/CartSelectableAddress/delivery-address-1",
+                    "oneTimeUse": true,
+                    "selected": true
+                  }
+                ]
+              },
+              "id": "gid://shopify/Cart/c1-36e8477271a658e2ec3ebd1bf2506686?key=ba72b8f664bfb53a09522a0e789123de"
+            },
+            "userErrors": [],
+            "warnings": []
+          }
+        },
+        "scenario_title": "Updates a delivery address on a cart",
+        "variables": {
+          "addresses": [
+            {
+              "address": {
+                "copyFromCustomerAddressId": "gid://shopify/MailingAddress/544365967?model_name=CustomerAddress"
+              },
+              "id": "gid://shopify/CartSelectableAddress/delivery-address-1",
+              "selected": true
+            }
+          ],
+          "id": "gid://shopify/Cart/c1-36e8477271a658e2ec3ebd1bf2506686?key=ba72b8f664bfb53a09522a0e789123de"
+        }
+      }
+    ],
+    "inputTypesSdl": {
+      "CartAddressInput": "input CartAddressInput {\n  deliveryAddress: CartDeliveryAddressInput\n  copyFromCustomerAddressId: ID\n}",
+      "CartDeliveryAddressInput": "input CartDeliveryAddressInput {\n  address1: String\n  address2: String\n  city: String\n  company: String\n  countryCode: CountryCode\n  firstName: String\n  lastName: String\n  phone: String\n  provinceCode: String\n  zip: String\n}",
+      "CartSelectableAddressUpdateInput": "input CartSelectableAddressUpdateInput {\n  id: ID!\n  address: CartAddressInput\n  selected: Boolean\n  oneTimeUse: Boolean\n  validationStrategy: DeliveryAddressValidationStrategy\n}",
+      "CountryCode": "enum CountryCode {\n  AF\n  AX\n  AL\n  DZ\n  AD\n  AO\n  AI\n  AG\n  AR\n  AM\n  AW\n  AC\n  AU\n  AT\n  AZ\n  BS\n  BH\n  BD\n  BB\n  BY\n  BE\n  BZ\n  BJ\n  BM\n  BT\n  BO\n  BA\n  BW\n  BV\n  BR\n  IO\n  BN\n  BG\n  BF\n  BI\n  KH\n  CA\n  CV\n  BQ\n  KY\n  CF\n  TD\n  CL\n  CN\n  CX\n  CC\n  CO\n  KM\n  CG\n  CD\n  CK\n  CR\n  HR\n  CU\n  CW\n  CY\n  CZ\n  CI\n  DK\n  DJ\n  DM\n  DO\n  EC\n  EG\n  SV\n  GQ\n  ER\n  EE\n  SZ\n  ET\n  FK\n  FO\n  FJ\n  FI\n  FR\n  GF\n  PF\n  TF\n  GA\n  GM\n  GE\n  DE\n  GH\n  GI\n  GR\n  GL\n  GD\n  GP\n  GT\n  GG\n  GN\n  GW\n  GY\n  HT\n  HM\n  VA\n  HN\n  HK\n  HU\n  IS\n  IN\n  ID\n  IR\n  IQ\n  IE\n  IM\n  IL\n  IT\n  JM\n  JP\n  JE\n  JO\n  KZ\n  KE\n  KI\n  KP\n  XK\n  KW\n  KG\n  LA\n  LV\n  LB\n  LS\n  LR\n  LY\n  LI\n  LT\n  LU\n  MO\n  MG\n  MW\n  MY\n  MV\n  ML\n  MT\n  MQ\n  MR\n  MU\n  YT\n  MX\n  MD\n  MC\n  MN\n  ME\n  MS\n  MA\n  MZ\n  MM\n  NA\n  NR\n  NP\n  NL\n  AN\n  NC\n  NZ\n  NI\n  NE\n  NG\n  NU\n  NF\n  MK\n  NO\n  OM\n  PK\n  PS\n  PA\n  PG\n  PY\n  PE\n  PH\n  PN\n  PL\n  PT\n  QA\n  CM\n  RE\n  RO\n  RU\n  RW\n  BL\n  SH\n  KN\n  LC\n  MF\n  PM\n  WS\n  SM\n  ST\n  SA\n  SN\n  RS\n  SC\n  SL\n  SG\n  SX\n  SK\n  SI\n  SB\n  SO\n  ZA\n  GS\n  KR\n  SS\n  ES\n  LK\n  VC\n  SD\n  SR\n  SJ\n  SE\n  CH\n  SY\n  TW\n  TJ\n  TZ\n  TH\n  TL\n  TG\n  TK\n  TO\n  TT\n  TA\n  TN\n  TR\n  TM\n  TC\n  TV\n  UG\n  UA\n  AE\n  GB\n  US\n  UM\n  UY\n  UZ\n  VU\n  VE\n  VN\n  VG\n  WF\n  EH\n  YE\n  ZM\n  ZW\n  ZZ\n}",
+      "DeliveryAddressValidationStrategy": "enum DeliveryAddressValidationStrategy {\n  COUNTRY_CODE_ONLY\n  STRICT\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartDeliveryAddressesUpdatePayload",
+    "returnTypeSdl": "type CartDeliveryAddressesUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartDiscountCodesUpdate": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "discountCodes",
+        "required": true,
+        "type": "[String!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartDiscountCodesUpdatePayload",
+    "returnTypeSdl": "type CartDiscountCodesUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartGiftCardCodesAdd": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "giftCardCodes",
+        "required": true,
+        "type": "[String!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartGiftCardCodesAddPayload",
+    "returnTypeSdl": "type CartGiftCardCodesAddPayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartGiftCardCodesRemove": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "appliedGiftCardIds",
+        "required": true,
+        "type": "[ID!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartGiftCardCodesRemovePayload",
+    "returnTypeSdl": "type CartGiftCardCodesRemovePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartGiftCardCodesUpdate": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "giftCardCodes",
+        "required": true,
+        "type": "[String!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartGiftCardCodesUpdatePayload",
+    "returnTypeSdl": "type CartGiftCardCodesUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartLinesAdd": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "lines",
+        "required": true,
+        "type": "[CartLineInput!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "AttributeInput": "input AttributeInput {\n  key: String!\n  value: String!\n}",
+      "CartLineInput": "input CartLineInput {\n  attributes: [AttributeInput!]\n  quantity: Int\n  merchandiseId: ID!\n  sellingPlanId: ID\n  parent: CartLineParentInput\n}",
+      "CartLineParentInput": "input CartLineParentInput {\n  lineId: ID\n  merchandiseId: ID\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartLinesAddPayload",
+    "returnTypeSdl": "type CartLinesAddPayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartLinesRemove": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "lineIds",
+        "required": true,
+        "type": "[ID!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartLinesRemovePayload",
+    "returnTypeSdl": "type CartLinesRemovePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartLinesUpdate": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "lines",
+        "required": true,
+        "type": "[CartLineUpdateInput!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "AttributeInput": "input AttributeInput {\n  key: String!\n  value: String!\n}",
+      "CartLineUpdateInput": "input CartLineUpdateInput {\n  id: ID!\n  quantity: Int\n  merchandiseId: ID\n  attributes: [AttributeInput!]\n  sellingPlanId: ID\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartLinesUpdatePayload",
+    "returnTypeSdl": "type CartLinesUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartMetafieldDelete": {
+    "args": [
+      {
+        "name": "input",
+        "required": true,
+        "type": "CartMetafieldDeleteInput!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CartMetafieldDeleteInput": "input CartMetafieldDeleteInput {\n  ownerId: ID!\n  key: String!\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartMetafieldDeletePayload",
+    "returnTypeSdl": "type CartMetafieldDeletePayload {\n  deletedId: ID\n  userErrors: [MetafieldDeleteUserError!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartMetafieldsSet": {
+    "args": [
+      {
+        "name": "metafields",
+        "required": true,
+        "type": "[CartMetafieldsSetInput!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CartMetafieldsSetInput": "input CartMetafieldsSetInput {\n  ownerId: ID!\n  key: String!\n  value: String!\n  type: String!\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartMetafieldsSetPayload",
+    "returnTypeSdl": "type CartMetafieldsSetPayload {\n  metafields: [Metafield!]\n  userErrors: [MetafieldsSetUserError!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartNoteUpdate": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "note",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartNoteUpdatePayload",
+    "returnTypeSdl": "type CartNoteUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartPaymentUpdate": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "payment",
+        "required": true,
+        "type": "CartPaymentInput!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "ApplePayWalletContentInput": "input ApplePayWalletContentInput {\n  billingAddress: MailingAddressInput!\n  data: String!\n  header: ApplePayWalletHeaderInput!\n  lastDigits: String\n  signature: String!\n  version: String!\n}",
+      "ApplePayWalletHeaderInput": "input ApplePayWalletHeaderInput {\n  applicationData: String\n  ephemeralPublicKey: String!\n  publicKeyHash: String!\n  transactionId: String!\n}",
+      "CartCardSource": "enum CartCardSource {\n  SAVED_CREDIT_CARD\n}",
+      "CartDirectPaymentMethodInput": "input CartDirectPaymentMethodInput {\n  billingAddress: MailingAddressInput!\n  sessionId: String!\n  cardSource: CartCardSource\n  acceptedSubscriptionTerms: Boolean\n}",
+      "CartFreePaymentMethodInput": "input CartFreePaymentMethodInput {\n  billingAddress: MailingAddressInput!\n}",
+      "CartPaymentInput": "input CartPaymentInput {\n  amount: MoneyInput!\n  sourceIdentifier: String\n  freePaymentMethod: CartFreePaymentMethodInput\n  directPaymentMethod: CartDirectPaymentMethodInput\n  walletPaymentMethod: CartWalletPaymentMethodInput\n}",
+      "CartWalletPaymentMethodInput": "input CartWalletPaymentMethodInput {\n  applePayWalletContent: ApplePayWalletContentInput\n  shopPayWalletContent: ShopPayWalletContentInput\n}",
+      "CurrencyCode": "enum CurrencyCode {\n  USD\n  EUR\n  GBP\n  CAD\n  AFN\n  ALL\n  DZD\n  AOA\n  ARS\n  AMD\n  AWG\n  AUD\n  BBD\n  AZN\n  BDT\n  BSD\n  BHD\n  BIF\n  BZD\n  BMD\n  BTN\n  BAM\n  BRL\n  BOB\n  BWP\n  BND\n  BGN\n  MMK\n  KHR\n  CVE\n  KYD\n  XAF\n  CLP\n  CNY\n  COP\n  KMF\n  CDF\n  CRC\n  HRK\n  CZK\n  DKK\n  DOP\n  XCD\n  EGP\n  ERN\n  ETB\n  FKP\n  XPF\n  FJD\n  GIP\n  GMD\n  GHS\n  GTQ\n  GYD\n  GEL\n  HTG\n  HNL\n  HKD\n  HUF\n  ISK\n  INR\n  IDR\n  ILS\n  IQD\n  JMD\n  JPY\n  JEP\n  JOD\n  KZT\n  KES\n  KID\n  KWD\n  KGS\n  LAK\n  LVL\n  LBP\n  LSL\n  LRD\n  LTL\n  MGA\n  MKD\n  MOP\n  MWK\n  MVR\n  MRU\n  MXN\n  MYR\n  MUR\n  MDL\n  MAD\n  MNT\n  MZN\n  NAD\n  NPR\n  ANG\n  NZD\n  NIO\n  NGN\n  NOK\n  OMR\n  PAB\n  PKR\n  PGK\n  PYG\n  PEN\n  PHP\n  PLN\n  QAR\n  RON\n  RUB\n  RWF\n  WST\n  SHP\n  SAR\n  RSD\n  SCR\n  SGD\n  SDG\n  SOS\n  SYP\n  ZAR\n  KRW\n  SSP\n  SBD\n  LKR\n  SRD\n  SZL\n  SEK\n  CHF\n  TWD\n  THB\n  TZS\n  TTD\n  TND\n  TRY\n  TMT\n  UGX\n  UAH\n  AED\n  UYU\n  UZS\n  VUV\n  VES\n  VND\n  XOF\n  YER\n  ZMW\n  BYN\n  BYR\n  DJF\n  GNF\n  IRR\n  LYD\n  SLL\n  STD\n  STN\n  TJS\n  TOP\n  VED\n  VEF\n  XXX\n}",
+      "Decimal": "scalar Decimal",
+      "MailingAddressInput": "input MailingAddressInput {\n  address1: String\n  address2: String\n  city: String\n  company: String\n  country: String\n  firstName: String\n  lastName: String\n  phone: String\n  province: String\n  zip: String\n}",
+      "MoneyInput": "input MoneyInput {\n  amount: Decimal!\n  currencyCode: CurrencyCode!\n}",
+      "ShopPayWalletContentInput": "input ShopPayWalletContentInput {\n  billingAddress: MailingAddressInput!\n  sessionToken: String!\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartPaymentUpdatePayload",
+    "returnTypeSdl": "type CartPaymentUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartPrepareForCompletion": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartPrepareForCompletionPayload",
+    "returnTypeSdl": "type CartPrepareForCompletionPayload {\n  result: CartPrepareForCompletionResult\n  userErrors: [CartUserError!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartRemovePersonalData": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartRemovePersonalDataPayload",
+    "returnTypeSdl": "type CartRemovePersonalDataPayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartSelectedDeliveryOptionsUpdate": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "selectedDeliveryOptions",
+        "required": true,
+        "type": "[CartSelectedDeliveryOptionInput!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CartSelectedDeliveryOptionInput": "input CartSelectedDeliveryOptionInput {\n  deliveryGroupId: ID!\n  deliveryOptionHandle: String!\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartSelectedDeliveryOptionsUpdatePayload",
+    "returnTypeSdl": "type CartSelectedDeliveryOptionsUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "cartSubmitForCompletion": {
+    "args": [
+      {
+        "name": "cartId",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "attemptToken",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CartSubmitForCompletionPayload",
+    "returnTypeSdl": "type CartSubmitForCompletionPayload {\n  result: CartSubmitForCompletionResult\n  userErrors: [CartUserError!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "collection": {
+    "args": [
+      {
+        "name": "id",
+        "required": false,
+        "type": "ID"
+      },
+      {
+        "name": "handle",
+        "required": false,
+        "type": "String"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Collection",
+    "returnTypeSdl": "type Collection implements HasMetafields & Node & OnlineStorePublishable & Trackable {\n  description(truncateAt: Int): String!\n  descriptionHtml: HTML!\n  handle: String!\n  id: ID!\n  image: Image\n  metafield(namespace: String, key: String!): Metafield\n  metafields(identifiers: [HasMetafieldsIdentifier!]!): [Metafield]!\n  onlineStoreUrl: URL\n  products(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ProductCollectionSortKeys, filters: [ProductFilter!]): ProductConnection!\n  seo: SEO!\n  title: String!\n  trackingParameters: String\n  updatedAt: DateTime!\n}",
+    "userErrorsField": null
+  },
+  "collections": {
+    "args": [
+      {
+        "name": "first",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "after",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "last",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "before",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "reverse",
+        "required": false,
+        "type": "Boolean"
+      },
+      {
+        "name": "sortKey",
+        "required": false,
+        "type": "CollectionSortKeys"
+      },
+      {
+        "name": "query",
+        "required": false,
+        "type": "String"
+      }
+    ],
+    "examples": [
+      {
+        "query": "query {\n  collections(first: 2) {\n    edges {\n      node {\n        id\n        products(first: 5) {\n          edges {\n            node {\n              id\n            }\n          }\n        }\n      }\n    }\n  }\n}",
+        "response": {
+          "collections": {
+            "edges": [
+              {
+                "node": {
+                  "id": "gid://shopify/Collection/547751128",
+                  "products": {
+                    "edges": [
+                      {
+                        "node": {
+                          "id": "gid://shopify/Product/929898465"
+                        }
+                      },
+                      {
+                        "node": {
+                          "id": "gid://shopify/Product/538825261"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "node": {
+                  "id": "gid://shopify/Collection/585546552",
+                  "products": {
+                    "edges": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "scenario_title": "Retrieve collections",
+        "variables": null
+      }
+    ],
+    "inputTypesSdl": {
+      "CollectionSortKeys": "enum CollectionSortKeys {\n  TITLE\n  UPDATED_AT\n  ID\n  RELEVANCE\n}"
+    },
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "CollectionConnection",
+    "returnTypeSdl": "type CollectionConnection {\n  edges: [CollectionEdge!]!\n  nodes: [Collection!]!\n  pageInfo: PageInfo!\n  totalCount: UnsignedInt64!\n}",
+    "userErrorsField": null
+  },
+  "customer": {
+    "args": [
+      {
+        "name": "customerAccessToken",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [
+      {
+        "query": "query {\n  customer(customerAccessToken: \"bobs_token\") {\n    id\n    firstName\n    lastName\n    acceptsMarketing\n    email\n    phone\n  }\n}",
+        "response": {
+          "customer": {
+            "acceptsMarketing": false,
+            "email": "johnsmith@example.com",
+            "firstName": "John",
+            "id": "gid://shopify/Customer/410535040",
+            "lastName": "Smith",
+            "phone": "+16134504533"
+          }
+        },
+        "scenario_title": "Get a customer by access token",
+        "variables": null
+      }
+    ],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Customer",
+    "returnTypeSdl": "type Customer implements HasMetafields {\n  acceptsMarketing: Boolean!\n  addresses(first: Int, after: String, last: Int, before: String, reverse: Boolean): MailingAddressConnection!\n  avatarUrl: String\n  createdAt: DateTime!\n  defaultAddress: MailingAddress\n  displayName: String!\n  email: String\n  firstName: String\n  id: ID!\n  lastName: String\n  metafield(namespace: String, key: String!): Metafield\n  metafields(identifiers: [HasMetafieldsIdentifier!]!): [Metafield]!\n  numberOfOrders: UnsignedInt64!\n  orders(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: OrderSortKeys, query: String): OrderConnection!\n  phone: String\n  socialLoginProvider: SocialLoginProvider\n  tags: [String!]!\n  updatedAt: DateTime!\n}",
+    "userErrorsField": null
+  },
+  "customerAccessTokenCreate": {
+    "args": [
+      {
+        "name": "input",
+        "required": true,
+        "type": "CustomerAccessTokenCreateInput!"
+      }
+    ],
+    "examples": [
+      {
+        "query": "mutation customerAccessTokenCreate {\n  customerAccessTokenCreate(input: {email: \"ghaida@example.com\", password: \"7dx2gx2Z\"}) {\n    customerAccessToken {\n      accessToken\n    }\n    customerUserErrors {\n      message\n    }\n  }\n}",
+        "response": {
+          "customerAccessTokenCreate": {
+            "customerAccessToken": {
+              "accessToken": "ghaidas_token"
+            },
+            "customerUserErrors": []
+          }
+        },
+        "scenario_title": "Create a customer access token",
+        "variables": null
+      },
+      {
+        "query": "query {\n  customer(customerAccessToken: \"bobs_token\") {\n    id\n    firstName\n    lastName\n    acceptsMarketing\n    email\n    phone\n  }\n}",
+        "response": {
+          "customer": {
+            "acceptsMarketing": false,
+            "email": "johnsmith@example.com",
+            "firstName": "John",
+            "id": "gid://shopify/Customer/410535040",
+            "lastName": "Smith",
+            "phone": "+16134504533"
+          }
+        },
+        "scenario_title": "Get a customer by customer access token",
+        "variables": null
+      }
+    ],
+    "inputTypesSdl": {
+      "CustomerAccessTokenCreateInput": "input CustomerAccessTokenCreateInput {\n  email: String!\n  password: String!\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerAccessTokenCreatePayload",
+    "returnTypeSdl": "type CustomerAccessTokenCreatePayload {\n  customerAccessToken: CustomerAccessToken\n  customerUserErrors: [CustomerUserError!]!\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerAccessTokenCreateWithMultipass": {
+    "args": [
+      {
+        "name": "multipassToken",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerAccessTokenCreateWithMultipassPayload",
+    "returnTypeSdl": "type CustomerAccessTokenCreateWithMultipassPayload {\n  customerAccessToken: CustomerAccessToken\n  customerUserErrors: [CustomerUserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerAccessTokenDelete": {
+    "args": [
+      {
+        "name": "customerAccessToken",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerAccessTokenDeletePayload",
+    "returnTypeSdl": "type CustomerAccessTokenDeletePayload {\n  deletedAccessToken: String\n  deletedCustomerAccessTokenId: String\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "customerAccessTokenRenew": {
+    "args": [
+      {
+        "name": "customerAccessToken",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerAccessTokenRenewPayload",
+    "returnTypeSdl": "type CustomerAccessTokenRenewPayload {\n  customerAccessToken: CustomerAccessToken\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "userErrors"
+  },
+  "customerActivate": {
+    "args": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "input",
+        "required": true,
+        "type": "CustomerActivateInput!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CustomerActivateInput": "input CustomerActivateInput {\n  activationToken: String!\n  password: String!\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerActivatePayload",
+    "returnTypeSdl": "type CustomerActivatePayload {\n  customer: Customer\n  customerAccessToken: CustomerAccessToken\n  customerUserErrors: [CustomerUserError!]!\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerActivateByUrl": {
+    "args": [
+      {
+        "name": "activationUrl",
+        "required": true,
+        "type": "URL!"
+      },
+      {
+        "name": "password",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "URL": "scalar URL"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerActivateByUrlPayload",
+    "returnTypeSdl": "type CustomerActivateByUrlPayload {\n  customer: Customer\n  customerAccessToken: CustomerAccessToken\n  customerUserErrors: [CustomerUserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerAddressCreate": {
+    "args": [
+      {
+        "name": "customerAccessToken",
+        "required": true,
+        "type": "String!"
+      },
+      {
+        "name": "address",
+        "required": true,
+        "type": "MailingAddressInput!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "MailingAddressInput": "input MailingAddressInput {\n  address1: String\n  address2: String\n  city: String\n  company: String\n  country: String\n  firstName: String\n  lastName: String\n  phone: String\n  province: String\n  zip: String\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerAddressCreatePayload",
+    "returnTypeSdl": "type CustomerAddressCreatePayload {\n  customerAddress: MailingAddress\n  customerUserErrors: [CustomerUserError!]!\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerAddressDelete": {
+    "args": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "customerAccessToken",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerAddressDeletePayload",
+    "returnTypeSdl": "type CustomerAddressDeletePayload {\n  customerUserErrors: [CustomerUserError!]!\n  deletedCustomerAddressId: String\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerAddressUpdate": {
+    "args": [
+      {
+        "name": "customerAccessToken",
+        "required": true,
+        "type": "String!"
+      },
+      {
+        "name": "id",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "address",
+        "required": true,
+        "type": "MailingAddressInput!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "MailingAddressInput": "input MailingAddressInput {\n  address1: String\n  address2: String\n  city: String\n  company: String\n  country: String\n  firstName: String\n  lastName: String\n  phone: String\n  province: String\n  zip: String\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerAddressUpdatePayload",
+    "returnTypeSdl": "type CustomerAddressUpdatePayload {\n  customerAddress: MailingAddress\n  customerUserErrors: [CustomerUserError!]!\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerCreate": {
+    "args": [
+      {
+        "name": "input",
+        "required": true,
+        "type": "CustomerCreateInput!"
+      }
+    ],
+    "examples": [
+      {
+        "query": "mutation customerCreate($input: CustomerCreateInput!) {\n  customerCreate(input: $input) {\n    customer {\n      firstName\n      lastName\n      email\n      phone\n      acceptsMarketing\n    }\n    customerUserErrors {\n      field\n      message\n      code\n    }\n  }\n}",
+        "response": {
+          "customerCreate": {
+            "customer": {
+              "acceptsMarketing": true,
+              "email": "johnsmith@shopify.com",
+              "firstName": "John",
+              "lastName": "Smith",
+              "phone": "+15146669999"
+            },
+            "customerUserErrors": []
+          }
+        },
+        "scenario_title": "Create a customer",
+        "variables": {
+          "input": {
+            "acceptsMarketing": true,
+            "email": "johnsmith@shopify.com",
+            "firstName": "John",
+            "lastName": "Smith",
+            "password": "5hopify",
+            "phone": "+15146669999"
+          }
+        }
+      }
+    ],
+    "inputTypesSdl": {
+      "CustomerCreateInput": "input CustomerCreateInput {\n  firstName: String\n  lastName: String\n  email: String!\n  phone: String\n  password: String!\n  acceptsMarketing: Boolean\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerCreatePayload",
+    "returnTypeSdl": "type CustomerCreatePayload {\n  customer: Customer\n  customerUserErrors: [CustomerUserError!]!\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerDefaultAddressUpdate": {
+    "args": [
+      {
+        "name": "customerAccessToken",
+        "required": true,
+        "type": "String!"
+      },
+      {
+        "name": "addressId",
+        "required": true,
+        "type": "ID!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerDefaultAddressUpdatePayload",
+    "returnTypeSdl": "type CustomerDefaultAddressUpdatePayload {\n  customer: Customer\n  customerUserErrors: [CustomerUserError!]!\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerRecover": {
+    "args": [
+      {
+        "name": "email",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerRecoverPayload",
+    "returnTypeSdl": "type CustomerRecoverPayload {\n  customerUserErrors: [CustomerUserError!]!\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerReset": {
+    "args": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "ID!"
+      },
+      {
+        "name": "input",
+        "required": true,
+        "type": "CustomerResetInput!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CustomerResetInput": "input CustomerResetInput {\n  resetToken: String!\n  password: String!\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerResetPayload",
+    "returnTypeSdl": "type CustomerResetPayload {\n  customer: Customer\n  customerAccessToken: CustomerAccessToken\n  customerUserErrors: [CustomerUserError!]!\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerResetByUrl": {
+    "args": [
+      {
+        "name": "resetUrl",
+        "required": true,
+        "type": "URL!"
+      },
+      {
+        "name": "password",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "URL": "scalar URL"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerResetByUrlPayload",
+    "returnTypeSdl": "type CustomerResetByUrlPayload {\n  customer: Customer\n  customerAccessToken: CustomerAccessToken\n  customerUserErrors: [CustomerUserError!]!\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "customerUpdate": {
+    "args": [
+      {
+        "name": "customerAccessToken",
+        "required": true,
+        "type": "String!"
+      },
+      {
+        "name": "customer",
+        "required": true,
+        "type": "CustomerUpdateInput!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CustomerUpdateInput": "input CustomerUpdateInput {\n  firstName: String\n  lastName: String\n  email: String\n  phone: String\n  password: String\n  acceptsMarketing: Boolean\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "CustomerUpdatePayload",
+    "returnTypeSdl": "type CustomerUpdatePayload {\n  customer: Customer\n  customerAccessToken: CustomerAccessToken\n  customerUserErrors: [CustomerUserError!]!\n  userErrors: [UserError!]!\n}",
+    "userErrorsField": "customerUserErrors"
+  },
+  "localization": {
+    "args": [],
+    "examples": [
+      {
+        "query": "query AllLocalizations @inContext(language: EN) {\n  localization {\n    availableCountries {\n      isoCode\n      name\n      availableLanguages {\n        isoCode\n        endonymName\n      }\n    }\n  }\n}",
+        "response": {
+          "localization": {
+            "availableCountries": [
+              {
+                "availableLanguages": [
+                  {
+                    "endonymName": "English",
+                    "isoCode": "EN"
+                  },
+                  {
+                    "endonymName": "Español",
+                    "isoCode": "ES"
+                  },
+                  {
+                    "endonymName": "Français",
+                    "isoCode": "FR"
+                  }
+                ],
+                "isoCode": "BE",
+                "name": "Belgium"
+              },
+              {
+                "availableLanguages": [
+                  {
+                    "endonymName": "English",
+                    "isoCode": "EN"
+                  },
+                  {
+                    "endonymName": "Français",
+                    "isoCode": "FR"
+                  }
+                ],
+                "isoCode": "CA",
+                "name": "Canada"
+              },
+              {
+                "availableLanguages": [
+                  {
+                    "endonymName": "English",
+                    "isoCode": "EN"
+                  },
+                  {
+                    "endonymName": "Español",
+                    "isoCode": "ES"
+                  },
+                  {
+                    "endonymName": "Français",
+                    "isoCode": "FR"
+                  }
+                ],
+                "isoCode": "DE",
+                "name": "Germany"
+              },
+              {
+                "availableLanguages": [
+                  {
+                    "endonymName": "English",
+                    "isoCode": "EN"
+                  },
+                  {
+                    "endonymName": "Español",
+                    "isoCode": "ES"
+                  },
+                  {
+                    "endonymName": "Français",
+                    "isoCode": "FR"
+                  }
+                ],
+                "isoCode": "ES",
+                "name": "Spain"
+              },
+              {
+                "availableLanguages": [
+                  {
+                    "endonymName": "English",
+                    "isoCode": "EN"
+                  },
+                  {
+                    "endonymName": "Español",
+                    "isoCode": "ES"
+                  },
+                  {
+                    "endonymName": "Français",
+                    "isoCode": "FR"
+                  }
+                ],
+                "isoCode": "FR",
+                "name": "France"
+              },
+              {
+                "availableLanguages": [
+                  {
+                    "endonymName": "English",
+                    "isoCode": "EN"
+                  }
+                ],
+                "isoCode": "GB",
+                "name": "United Kingdom"
+              },
+              {
+                "availableLanguages": [
+                  {
+                    "endonymName": "English",
+                    "isoCode": "EN"
+                  },
+                  {
+                    "endonymName": "Español",
+                    "isoCode": "ES"
+                  }
+                ],
+                "isoCode": "US",
+                "name": "United States"
+              }
+            ]
+          }
+        },
+        "scenario_title": "Load the countries a shop sells to and the supported languages for each",
+        "variables": null
+      }
+    ],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Localization",
+    "returnTypeSdl": "type Localization {\n  availableCountries: [Country!]!\n  availableLanguages: [Language!]!\n  country: Country!\n  language: Language!\n  market: Market!\n}",
+    "userErrorsField": null
+  },
+  "locations": {
+    "args": [
+      {
+        "name": "first",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "after",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "last",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "before",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "reverse",
+        "required": false,
+        "type": "Boolean"
+      },
+      {
+        "name": "sortKey",
+        "required": false,
+        "type": "LocationSortKeys"
+      },
+      {
+        "name": "near",
+        "required": false,
+        "type": "GeoCoordinateInput"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "GeoCoordinateInput": "input GeoCoordinateInput {\n  latitude: Float!\n  longitude: Float!\n}",
+      "LocationSortKeys": "enum LocationSortKeys {\n  ID\n  NAME\n  CITY\n  DISTANCE\n}"
+    },
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "LocationConnection",
+    "returnTypeSdl": "type LocationConnection {\n  edges: [LocationEdge!]!\n  nodes: [Location!]!\n  pageInfo: PageInfo!\n}",
+    "userErrorsField": null
+  },
+  "menu": {
+    "args": [
+      {
+        "name": "handle",
+        "required": true,
+        "type": "String!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Menu",
+    "returnTypeSdl": "type Menu implements Node {\n  handle: String!\n  id: ID!\n  items: [MenuItem!]!\n  itemsCount: Int!\n  title: String!\n}",
+    "userErrorsField": null
+  },
+  "metaobject": {
+    "args": [
+      {
+        "name": "id",
+        "required": false,
+        "type": "ID"
+      },
+      {
+        "name": "handle",
+        "required": false,
+        "type": "MetaobjectHandleInput"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "MetaobjectHandleInput": "input MetaobjectHandleInput {\n  handle: String!\n  type: String!\n}"
+    },
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Metaobject",
+    "returnTypeSdl": "type Metaobject implements Node & OnlineStorePublishable {\n  field(key: String!): MetaobjectField\n  fields: [MetaobjectField!]!\n  handle: String!\n  id: ID!\n  onlineStoreUrl: URL\n  seo: MetaobjectSEO\n  type: String!\n  updatedAt: DateTime!\n}",
+    "userErrorsField": null
+  },
+  "metaobjects": {
+    "args": [
+      {
+        "name": "type",
+        "required": true,
+        "type": "String!"
+      },
+      {
+        "name": "sortKey",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "first",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "after",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "last",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "before",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "reverse",
+        "required": false,
+        "type": "Boolean"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "MetaobjectConnection",
+    "returnTypeSdl": "type MetaobjectConnection {\n  edges: [MetaobjectEdge!]!\n  nodes: [Metaobject!]!\n  pageInfo: PageInfo!\n}",
+    "userErrorsField": null
+  },
+  "node": {
+    "args": [
+      {
+        "name": "id",
+        "required": true,
+        "type": "ID!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Node",
+    "returnTypeSdl": "interface Node {\n  id: ID!\n}",
+    "userErrorsField": null
+  },
+  "nodes": {
+    "args": [
+      {
+        "name": "ids",
+        "required": true,
+        "type": "[ID!]!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Node",
+    "returnTypeSdl": "interface Node {\n  id: ID!\n}",
+    "userErrorsField": null
+  },
+  "page": {
+    "args": [
+      {
+        "name": "handle",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "id",
+        "required": false,
+        "type": "ID"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Page",
+    "returnTypeSdl": "type Page implements HasMetafields & Node & OnlineStorePublishable & Trackable {\n  body: HTML!\n  bodySummary: String!\n  createdAt: DateTime!\n  handle: String!\n  id: ID!\n  metafield(namespace: String, key: String!): Metafield\n  metafields(identifiers: [HasMetafieldsIdentifier!]!): [Metafield]!\n  onlineStoreUrl: URL\n  seo: SEO\n  title: String!\n  trackingParameters: String\n  updatedAt: DateTime!\n}",
+    "userErrorsField": null
+  },
+  "pages": {
+    "args": [
+      {
+        "name": "first",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "after",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "last",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "before",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "reverse",
+        "required": false,
+        "type": "Boolean"
+      },
+      {
+        "name": "sortKey",
+        "required": false,
+        "type": "PageSortKeys"
+      },
+      {
+        "name": "query",
+        "required": false,
+        "type": "String"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "PageSortKeys": "enum PageSortKeys {\n  TITLE\n  UPDATED_AT\n  ID\n  RELEVANCE\n}"
+    },
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "PageConnection",
+    "returnTypeSdl": "type PageConnection {\n  edges: [PageEdge!]!\n  nodes: [Page!]!\n  pageInfo: PageInfo!\n}",
+    "userErrorsField": null
+  },
+  "paymentSettings": {
+    "args": [],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "PaymentSettings",
+    "returnTypeSdl": "type PaymentSettings {\n  acceptedCardBrands: [CardBrand!]!\n  cardVaultUrl: URL!\n  countryCode: CountryCode!\n  currencyCode: CurrencyCode!\n  enabledPresentmentCurrencies: [CurrencyCode!]!\n  shopifyPaymentsAccountId: String\n  supportedDigitalWallets: [DigitalWallet!]!\n}",
+    "userErrorsField": null
+  },
+  "predictiveSearch": {
+    "args": [
+      {
+        "name": "limit",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "limitScope",
+        "required": false,
+        "type": "PredictiveSearchLimitScope"
+      },
+      {
+        "name": "query",
+        "required": true,
+        "type": "String!"
+      },
+      {
+        "name": "searchableFields",
+        "required": false,
+        "type": "[SearchableField!]"
+      },
+      {
+        "name": "types",
+        "required": false,
+        "type": "[PredictiveSearchType!]"
+      },
+      {
+        "name": "unavailableProducts",
+        "required": false,
+        "type": "SearchUnavailableProductsType"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "PredictiveSearchLimitScope": "enum PredictiveSearchLimitScope {\n  ALL\n  EACH\n}",
+      "PredictiveSearchType": "enum PredictiveSearchType {\n  COLLECTION\n  PRODUCT\n  PAGE\n  ARTICLE\n  QUERY\n}",
+      "SearchUnavailableProductsType": "enum SearchUnavailableProductsType {\n  SHOW\n  HIDE\n  LAST\n}",
+      "SearchableField": "enum SearchableField {\n  AUTHOR\n  BODY\n  PRODUCT_TYPE\n  TAG\n  TITLE\n  VARIANTS_BARCODE\n  VARIANTS_SKU\n  VARIANTS_TITLE\n  VENDOR\n}"
+    },
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "PredictiveSearchResult",
+    "returnTypeSdl": "type PredictiveSearchResult {\n  articles: [Article!]!\n  collections: [Collection!]!\n  pages: [Page!]!\n  products: [Product!]!\n  queries: [SearchQuerySuggestion!]!\n}",
+    "userErrorsField": null
+  },
+  "product": {
+    "args": [
+      {
+        "name": "id",
+        "required": false,
+        "type": "ID"
+      },
+      {
+        "name": "handle",
+        "required": false,
+        "type": "String"
+      }
+    ],
+    "examples": [
+      {
+        "query": "query Products @inContext(country: GB) {\n  woolSweater: product(handle: \"wool-sweater\") {\n    title\n  }\n  alarmClock: product(handle: \"alarm-clock\") {\n    title\n  }\n  products(first: 2) {\n    nodes {\n      title\n    }\n  }\n}",
+        "response": {
+          "alarmClock": null,
+          "products": {
+            "nodes": [
+              {
+                "title": "Wool sweater"
+              }
+            ]
+          },
+          "woolSweater": {
+            "title": "Wool sweater"
+          }
+        },
+        "scenario_title": "Load products which are published in a given context",
+        "variables": null
+      },
+      {
+        "query": "query ProductTitle @inContext(country: CA, language: FR) {\n  product(handle: \"wool-sweater\") {\n    title\n    description\n  }\n}",
+        "response": {
+          "product": {
+            "description": "C’est très chaud!",
+            "title": "Chandail en laine"
+          }
+        },
+        "scenario_title": "Load translated and localized content for a product",
+        "variables": null
+      },
+      {
+        "query": "query getProductById($id: ID!) {\n  product(id: $id) {\n    title\n  }\n}",
+        "response": {
+          "product": {
+            "title": "Camper Van"
+          }
+        },
+        "scenario_title": "Retrieve a single product",
+        "variables": {
+          "id": "gid://shopify/Product/929898465"
+        }
+      },
+      {
+        "query": "query ProductPricing @inContext(country: CA) {\n  product(handle: \"wool-sweater\") {\n    variants(first: 1) {\n      nodes {\n        price {\n          amount\n          currencyCode\n        }\n      }\n    }\n  }\n}",
+        "response": {
+          "product": {
+            "variants": {
+              "nodes": [
+                {
+                  "price": {
+                    "amount": "90.0",
+                    "currencyCode": "CAD"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "scenario_title": "Retrieve local prices for a product",
+        "variables": null
+      },
+      {
+        "query": "query getProductMedia($id: ID!) {\n  product(id: $id) {\n    id\n    media(first: 10) {\n      edges {\n        node {\n          mediaContentType\n          alt\n          ...mediaFieldsByType\n        }\n      }\n    }\n  }\n}\n\nfragment mediaFieldsByType on Media {\n  ... on ExternalVideo {\n    id\n    embeddedUrl\n  }\n  ... on MediaImage {\n    image {\n      url\n    }\n  }\n  ... on Model3d {\n    sources {\n      url\n      mimeType\n      format\n      filesize\n    }\n  }\n  ... on Video {\n    sources {\n      url\n      mimeType\n      format\n      height\n      width\n    }\n  }\n}",
+        "response": {
+          "product": {
+            "id": "gid://shopify/Product/929898465",
+            "media": {
+              "edges": [
+                {
+                  "node": {
+                    "alt": "",
+                    "image": {
+                      "url": "https://cdn.shopify.com/s/files/1/0003/2595/3821/products/draft58.jpg?v=1773111786"
+                    },
+                    "mediaContentType": "IMAGE"
+                  }
+                },
+                {
+                  "node": {
+                    "alt": "",
+                    "image": {
+                      "url": "https://cdn.shopify.com/s/files/1/0003/2595/3821/products/draft59.jpg?v=1773111786"
+                    },
+                    "mediaContentType": "IMAGE"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "scenario_title": "Retrieve product media",
+        "variables": {
+          "id": "gid://shopify/Product/929898465"
+        }
+      }
+    ],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Product",
+    "returnTypeSdl": "type Product implements HasMetafields & Node & OnlineStorePublishable & Trackable {\n  adjacentVariants(selectedOptions: [SelectedOptionInput!], ignoreUnknownOptions: Boolean, caseInsensitiveMatch: Boolean): [ProductVariant!]!\n  availableForSale: Boolean!\n  category: TaxonomyCategory\n  collections(first: Int, after: String, last: Int, before: String, reverse: Boolean): CollectionConnection!\n  compareAtPriceRange: ProductPriceRange!\n  createdAt: DateTime!\n  description(truncateAt: Int): String!\n  descriptionHtml: HTML!\n  encodedVariantAvailability: String\n  encodedVariantExistence: String\n  featuredImage: Image\n  handle: String!\n  id: ID!\n  images(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ProductImageSortKeys): ImageConnection!\n  isGiftCard: Boolean!\n  media(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ProductMediaSortKeys): MediaConnection!\n  metafield(namespace: String, key: String!): Metafield\n  metafields(identifiers: [HasMetafieldsIdentifier!]!): [Metafield]!\n  onlineStoreUrl: URL\n  options(first: Int): [ProductOption!]!\n  priceRange: ProductPriceRange!\n  productType: String!\n  publishedAt: DateTime!\n  requiresSellingPlan: Boolean!\n  selectedOrFirstAvailableVariant(selectedOptions: [SelectedOptionInput!], ignoreUnknownOptions: Boolean, caseInsensitiveMatch: Boolean): ProductVariant\n  sellingPlanGroups(first: Int, after: String, last: Int, before: String, reverse: Boolean): SellingPlanGroupConnection!\n  seo: SEO!\n  tags: [String!]!\n  title: String!\n  totalInventory: Int\n  trackingParameters: String\n  updatedAt: DateTime!\n  variantBySelectedOptions(selectedOptions: [SelectedOptionInput!]!, ignoreUnknownOptions: Boolean, caseInsensitiveMatch: Boolean): ProductVariant\n  variants(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ProductVariantSortKeys): ProductVariantConnection!\n  variantsCount: Count\n  vendor: String!\n}",
+    "userErrorsField": null
+  },
+  "productRecommendations": {
+    "args": [
+      {
+        "name": "productId",
+        "required": false,
+        "type": "ID"
+      },
+      {
+        "name": "productHandle",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "intent",
+        "required": false,
+        "type": "ProductRecommendationIntent"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "ProductRecommendationIntent": "enum ProductRecommendationIntent {\n  RELATED\n  COMPLEMENTARY\n}"
+    },
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Product",
+    "returnTypeSdl": "type Product implements HasMetafields & Node & OnlineStorePublishable & Trackable {\n  adjacentVariants(selectedOptions: [SelectedOptionInput!], ignoreUnknownOptions: Boolean, caseInsensitiveMatch: Boolean): [ProductVariant!]!\n  availableForSale: Boolean!\n  category: TaxonomyCategory\n  collections(first: Int, after: String, last: Int, before: String, reverse: Boolean): CollectionConnection!\n  compareAtPriceRange: ProductPriceRange!\n  createdAt: DateTime!\n  description(truncateAt: Int): String!\n  descriptionHtml: HTML!\n  encodedVariantAvailability: String\n  encodedVariantExistence: String\n  featuredImage: Image\n  handle: String!\n  id: ID!\n  images(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ProductImageSortKeys): ImageConnection!\n  isGiftCard: Boolean!\n  media(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ProductMediaSortKeys): MediaConnection!\n  metafield(namespace: String, key: String!): Metafield\n  metafields(identifiers: [HasMetafieldsIdentifier!]!): [Metafield]!\n  onlineStoreUrl: URL\n  options(first: Int): [ProductOption!]!\n  priceRange: ProductPriceRange!\n  productType: String!\n  publishedAt: DateTime!\n  requiresSellingPlan: Boolean!\n  selectedOrFirstAvailableVariant(selectedOptions: [SelectedOptionInput!], ignoreUnknownOptions: Boolean, caseInsensitiveMatch: Boolean): ProductVariant\n  sellingPlanGroups(first: Int, after: String, last: Int, before: String, reverse: Boolean): SellingPlanGroupConnection!\n  seo: SEO!\n  tags: [String!]!\n  title: String!\n  totalInventory: Int\n  trackingParameters: String\n  updatedAt: DateTime!\n  variantBySelectedOptions(selectedOptions: [SelectedOptionInput!]!, ignoreUnknownOptions: Boolean, caseInsensitiveMatch: Boolean): ProductVariant\n  variants(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ProductVariantSortKeys): ProductVariantConnection!\n  variantsCount: Count\n  vendor: String!\n}",
+    "userErrorsField": null
+  },
+  "productTags": {
+    "args": [
+      {
+        "name": "first",
+        "required": true,
+        "type": "Int!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "StringConnection",
+    "returnTypeSdl": "type StringConnection {\n  edges: [StringEdge!]!\n  nodes: [String!]!\n  pageInfo: PageInfo!\n}",
+    "userErrorsField": null
+  },
+  "productTypes": {
+    "args": [
+      {
+        "name": "first",
+        "required": true,
+        "type": "Int!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "StringConnection",
+    "returnTypeSdl": "type StringConnection {\n  edges: [StringEdge!]!\n  nodes: [String!]!\n  pageInfo: PageInfo!\n}",
+    "userErrorsField": null
+  },
+  "products": {
+    "args": [
+      {
+        "name": "first",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "after",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "last",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "before",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "reverse",
+        "required": false,
+        "type": "Boolean"
+      },
+      {
+        "name": "sortKey",
+        "required": false,
+        "type": "ProductSortKeys"
+      },
+      {
+        "name": "query",
+        "required": false,
+        "type": "String"
+      }
+    ],
+    "examples": [
+      {
+        "query": "query getProducts($first: Int) {\n  products(first: $first) {\n    edges {\n      cursor\n      node {\n        title\n      }\n    }\n  }\n}",
+        "response": {
+          "products": {
+            "edges": [
+              {
+                "cursor": "eyJsYXN0X2lkIjo2NTcyMTE2NSwibGFzdF92YWx1ZSI6IjY1NzIxMTY1In0=",
+                "node": {
+                  "title": "Storefront Spoon"
+                }
+              },
+              {
+                "cursor": "eyJsYXN0X2lkIjoyNjMwNzE4NTYsImxhc3RfdmFsdWUiOiIyNjMwNzE4NTYifQ==",
+                "node": {
+                  "title": "Storefront Shoes"
+                }
+              },
+              {
+                "cursor": "eyJsYXN0X2lkIjo1Mzg4MjUyNjEsImxhc3RfdmFsdWUiOiI1Mzg4MjUyNjEifQ==",
+                "node": {
+                  "title": "Guitar"
+                }
+              }
+            ]
+          }
+        },
+        "scenario_title": "Retrieve first three products",
+        "variables": null
+      },
+      {
+        "query": "query getProducts($first: Int, $reverse: Boolean) {\n  products(first: $first, reverse: $reverse) {\n    edges {\n      cursor\n      node {\n        title\n      }\n    }\n  }\n}",
+        "response": {
+          "products": {
+            "edges": [
+              {
+                "cursor": "eyJsYXN0X2lkIjo5Mjk4OTg0NjUsImxhc3RfdmFsdWUiOiI5Mjk4OTg0NjUifQ==",
+                "node": {
+                  "title": "Camper Van"
+                }
+              },
+              {
+                "cursor": "eyJsYXN0X2lkIjo1Mzg4MjUyNjEsImxhc3RfdmFsdWUiOiI1Mzg4MjUyNjEifQ==",
+                "node": {
+                  "title": "Guitar"
+                }
+              },
+              {
+                "cursor": "eyJsYXN0X2lkIjoyNjMwNzE4NTYsImxhc3RfdmFsdWUiOiIyNjMwNzE4NTYifQ==",
+                "node": {
+                  "title": "Storefront Shoes"
+                }
+              }
+            ]
+          }
+        },
+        "scenario_title": "Retrieve first three products in reverse order",
+        "variables": null
+      },
+      {
+        "query": "query getProducts($first: Int, $after: String) {\n  products(first: $first, after: $after) {\n    edges {\n      cursor\n      node {\n        title\n      }\n    }\n  }\n}",
+        "response": {
+          "products": {
+            "edges": [
+              {
+                "cursor": "eyJsYXN0X2lkIjoyNjMwNzE4NTYsImxhc3RfdmFsdWUiOiIyNjMwNzE4NTYifQ==",
+                "node": {
+                  "title": "Storefront Shoes"
+                }
+              },
+              {
+                "cursor": "eyJsYXN0X2lkIjo1Mzg4MjUyNjEsImxhc3RfdmFsdWUiOiI1Mzg4MjUyNjEifQ==",
+                "node": {
+                  "title": "Guitar"
+                }
+              }
+            ]
+          }
+        },
+        "scenario_title": "Retrieve first two products after cursor",
+        "variables": null
+      },
+      {
+        "query": "query getProducts($last: Int, $before: String) {\n  products(last: $last, before: $before) {\n    edges {\n      cursor\n      node {\n        title\n      }\n    }\n  }\n}",
+        "response": {
+          "products": {
+            "edges": [
+              {
+                "cursor": "eyJsYXN0X2lkIjo2NTcyMTE2NSwibGFzdF92YWx1ZSI6IjY1NzIxMTY1In0=",
+                "node": {
+                  "title": "Storefront Spoon"
+                }
+              },
+              {
+                "cursor": "eyJsYXN0X2lkIjoyNjMwNzE4NTYsImxhc3RfdmFsdWUiOiIyNjMwNzE4NTYifQ==",
+                "node": {
+                  "title": "Storefront Shoes"
+                }
+              }
+            ]
+          }
+        },
+        "scenario_title": "Retrieve last two products before cursor",
+        "variables": null
+      },
+      {
+        "query": "query getProducts($first: Int, $query: String) {\n  products(first: $first, query: $query) {\n    edges {\n      cursor\n      node {\n        title\n      }\n    }\n  }\n}",
+        "response": {
+          "products": {
+            "edges": [
+              {
+                "cursor": "eyJsYXN0X2lkIjo1Mzg4MjUyNjEsImxhc3RfdmFsdWUiOiI1Mzg4MjUyNjEifQ==",
+                "node": {
+                  "title": "Guitar"
+                }
+              }
+            ]
+          }
+        },
+        "scenario_title": "Retrieve product that matches the query",
+        "variables": null
+      },
+      {
+        "query": "query getProducts($first: Int, $sortKey: ProductSortKeys) {\n  products(first: $first, sortKey: $sortKey) {\n    edges {\n      cursor\n      node {\n        title\n      }\n    }\n  }\n}",
+        "response": {
+          "products": {
+            "edges": [
+              {
+                "cursor": "eyJsYXN0X2lkIjo5Mjk4OTg0NjUsImxhc3RfdmFsdWUiOiJDYW1wZXIgVmFuIn0=",
+                "node": {
+                  "title": "Camper Van"
+                }
+              },
+              {
+                "cursor": "eyJsYXN0X2lkIjo1Mzg4MjUyNjEsImxhc3RfdmFsdWUiOiJHdWl0YXIifQ==",
+                "node": {
+                  "title": "Guitar"
+                }
+              },
+              {
+                "cursor": "eyJsYXN0X2lkIjoyNjMwNzE4NTYsImxhc3RfdmFsdWUiOiJTdG9yZWZyb250IFNob2VzIn0=",
+                "node": {
+                  "title": "Storefront Shoes"
+                }
+              },
+              {
+                "cursor": "eyJsYXN0X2lkIjo2NTcyMTE2NSwibGFzdF92YWx1ZSI6IlN0b3JlZnJvbnQgU3Bvb24ifQ==",
+                "node": {
+                  "title": "Storefront Spoon"
+                }
+              }
+            ]
+          }
+        },
+        "scenario_title": "Retrieve products after sorting by a key",
+        "variables": null
+      }
+    ],
+    "inputTypesSdl": {
+      "ProductSortKeys": "enum ProductSortKeys {\n  TITLE\n  PRODUCT_TYPE\n  VENDOR\n  UPDATED_AT\n  CREATED_AT\n  BEST_SELLING\n  PRICE\n  ID\n  RELEVANCE\n}"
+    },
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "ProductConnection",
+    "returnTypeSdl": "type ProductConnection {\n  edges: [ProductEdge!]!\n  filters: [Filter!]!\n  nodes: [Product!]!\n  pageInfo: PageInfo!\n}",
+    "userErrorsField": null
+  },
+  "publicApiVersions": {
+    "args": [],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "ApiVersion",
+    "returnTypeSdl": "type ApiVersion {\n  displayName: String!\n  handle: String!\n  supported: Boolean!\n}",
+    "userErrorsField": null
+  },
+  "search": {
+    "args": [
+      {
+        "name": "first",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "after",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "last",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "before",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "reverse",
+        "required": false,
+        "type": "Boolean"
+      },
+      {
+        "name": "sortKey",
+        "required": false,
+        "type": "SearchSortKeys"
+      },
+      {
+        "name": "query",
+        "required": true,
+        "type": "String!"
+      },
+      {
+        "name": "prefix",
+        "required": false,
+        "type": "SearchPrefixQueryType"
+      },
+      {
+        "name": "productFilters",
+        "required": false,
+        "type": "[ProductFilter!]"
+      },
+      {
+        "name": "types",
+        "required": false,
+        "type": "[SearchType!]"
+      },
+      {
+        "name": "unavailableProducts",
+        "required": false,
+        "type": "SearchUnavailableProductsType"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CategoryFilter": "input CategoryFilter {\n  id: String!\n}",
+      "MetafieldFilter": "input MetafieldFilter {\n  namespace: String!\n  key: String!\n  value: String!\n}",
+      "PriceRangeFilter": "input PriceRangeFilter {\n  min: Float\n  max: Float\n}",
+      "ProductFilter": "input ProductFilter {\n  available: Boolean\n  variantOption: VariantOptionFilter\n  category: CategoryFilter\n  taxonomyMetafield: TaxonomyMetafieldFilter\n  productType: String\n  productVendor: String\n  price: PriceRangeFilter\n  productMetafield: MetafieldFilter\n  variantMetafield: MetafieldFilter\n  tag: String\n}",
+      "SearchPrefixQueryType": "enum SearchPrefixQueryType {\n  LAST\n  NONE\n}",
+      "SearchSortKeys": "enum SearchSortKeys {\n  PRICE\n  RELEVANCE\n}",
+      "SearchType": "enum SearchType {\n  PRODUCT\n  PAGE\n  ARTICLE\n}",
+      "SearchUnavailableProductsType": "enum SearchUnavailableProductsType {\n  SHOW\n  HIDE\n  LAST\n}",
+      "TaxonomyMetafieldFilter": "input TaxonomyMetafieldFilter {\n  namespace: String!\n  key: String!\n  value: String!\n}",
+      "VariantOptionFilter": "input VariantOptionFilter {\n  name: String!\n  value: String!\n}"
+    },
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "SearchResultItemConnection",
+    "returnTypeSdl": "type SearchResultItemConnection {\n  edges: [SearchResultItemEdge!]!\n  nodes: [SearchResultItem!]!\n  pageInfo: PageInfo!\n  productFilters: [Filter!]!\n  totalCount: Int!\n}",
+    "userErrorsField": null
+  },
+  "shop": {
+    "args": [],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Shop",
+    "returnTypeSdl": "type Shop implements HasMetafields & Node {\n  brand: Brand\n  contactInformation: ShopPolicy\n  customerAccountTranslations: [Translation!]\n  customerAccountUrl: String\n  description: String\n  id: ID!\n  legalNotice: ShopPolicy\n  metafield(namespace: String, key: String!): Metafield\n  metafields(identifiers: [HasMetafieldsIdentifier!]!): [Metafield]!\n  moneyFormat: String!\n  name: String!\n  paymentSettings: PaymentSettings!\n  primaryDomain: Domain!\n  privacyPolicy: ShopPolicy\n  refundPolicy: ShopPolicy\n  shippingPolicy: ShopPolicy\n  shipsToCountries: [CountryCode!]!\n  shopPayInstallmentsPricing: ShopPayInstallmentsPricing\n  socialLoginProviders: [SocialLoginProvider!]!\n  subscriptionPolicy: ShopPolicyWithDefault\n  termsOfSale: ShopPolicy\n  termsOfService: ShopPolicy\n}",
+    "userErrorsField": null
+  },
+  "shopPayPaymentRequestSessionCreate": {
+    "args": [
+      {
+        "name": "sourceIdentifier",
+        "required": true,
+        "type": "String!"
+      },
+      {
+        "name": "paymentRequest",
+        "required": true,
+        "type": "ShopPayPaymentRequestInput!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CurrencyCode": "enum CurrencyCode {\n  USD\n  EUR\n  GBP\n  CAD\n  AFN\n  ALL\n  DZD\n  AOA\n  ARS\n  AMD\n  AWG\n  AUD\n  BBD\n  AZN\n  BDT\n  BSD\n  BHD\n  BIF\n  BZD\n  BMD\n  BTN\n  BAM\n  BRL\n  BOB\n  BWP\n  BND\n  BGN\n  MMK\n  KHR\n  CVE\n  KYD\n  XAF\n  CLP\n  CNY\n  COP\n  KMF\n  CDF\n  CRC\n  HRK\n  CZK\n  DKK\n  DOP\n  XCD\n  EGP\n  ERN\n  ETB\n  FKP\n  XPF\n  FJD\n  GIP\n  GMD\n  GHS\n  GTQ\n  GYD\n  GEL\n  HTG\n  HNL\n  HKD\n  HUF\n  ISK\n  INR\n  IDR\n  ILS\n  IQD\n  JMD\n  JPY\n  JEP\n  JOD\n  KZT\n  KES\n  KID\n  KWD\n  KGS\n  LAK\n  LVL\n  LBP\n  LSL\n  LRD\n  LTL\n  MGA\n  MKD\n  MOP\n  MWK\n  MVR\n  MRU\n  MXN\n  MYR\n  MUR\n  MDL\n  MAD\n  MNT\n  MZN\n  NAD\n  NPR\n  ANG\n  NZD\n  NIO\n  NGN\n  NOK\n  OMR\n  PAB\n  PKR\n  PGK\n  PYG\n  PEN\n  PHP\n  PLN\n  QAR\n  RON\n  RUB\n  RWF\n  WST\n  SHP\n  SAR\n  RSD\n  SCR\n  SGD\n  SDG\n  SOS\n  SYP\n  ZAR\n  KRW\n  SSP\n  SBD\n  LKR\n  SRD\n  SZL\n  SEK\n  CHF\n  TWD\n  THB\n  TZS\n  TTD\n  TND\n  TRY\n  TMT\n  UGX\n  UAH\n  AED\n  UYU\n  UZS\n  VUV\n  VES\n  VND\n  XOF\n  YER\n  ZMW\n  BYN\n  BYR\n  DJF\n  GNF\n  IRR\n  LYD\n  SLL\n  STD\n  STN\n  TJS\n  TOP\n  VED\n  VEF\n  XXX\n}",
+      "Decimal": "scalar Decimal",
+      "ISO8601DateTime": "scalar ISO8601DateTime",
+      "MoneyInput": "input MoneyInput {\n  amount: Decimal!\n  currencyCode: CurrencyCode!\n}",
+      "ShopPayPaymentRequestDeliveryMethodInput": "input ShopPayPaymentRequestDeliveryMethodInput {\n  code: String\n  label: String\n  detail: String\n  amount: MoneyInput\n  minDeliveryDate: ISO8601DateTime\n  maxDeliveryDate: ISO8601DateTime\n  deliveryExpectationLabel: String\n}",
+      "ShopPayPaymentRequestDeliveryMethodType": "enum ShopPayPaymentRequestDeliveryMethodType {\n  SHIPPING\n  PICKUP\n}",
+      "ShopPayPaymentRequestDiscountInput": "input ShopPayPaymentRequestDiscountInput {\n  label: String\n  amount: MoneyInput\n}",
+      "ShopPayPaymentRequestImageInput": "input ShopPayPaymentRequestImageInput {\n  url: String!\n  alt: String\n}",
+      "ShopPayPaymentRequestInput": "input ShopPayPaymentRequestInput {\n  discountCodes: [String!]\n  lineItems: [ShopPayPaymentRequestLineItemInput!]\n  shippingLines: [ShopPayPaymentRequestShippingLineInput!]\n  total: MoneyInput!\n  subtotal: MoneyInput!\n  discounts: [ShopPayPaymentRequestDiscountInput!]\n  totalShippingPrice: ShopPayPaymentRequestTotalShippingPriceInput\n  totalTax: MoneyInput\n  deliveryMethods: [ShopPayPaymentRequestDeliveryMethodInput!]\n  selectedDeliveryMethodType: ShopPayPaymentRequestDeliveryMethodType\n  locale: String!\n  presentmentCurrency: CurrencyCode!\n  paymentMethod: String\n}",
+      "ShopPayPaymentRequestLineItemInput": "input ShopPayPaymentRequestLineItemInput {\n  label: String\n  quantity: Int!\n  sku: String\n  requiresShipping: Boolean\n  image: ShopPayPaymentRequestImageInput\n  originalLinePrice: MoneyInput\n  finalLinePrice: MoneyInput\n  lineDiscounts: [ShopPayPaymentRequestDiscountInput!]\n  originalItemPrice: MoneyInput\n  finalItemPrice: MoneyInput\n  itemDiscounts: [ShopPayPaymentRequestDiscountInput!]\n}",
+      "ShopPayPaymentRequestShippingLineInput": "input ShopPayPaymentRequestShippingLineInput {\n  code: String\n  label: String\n  amount: MoneyInput\n}",
+      "ShopPayPaymentRequestTotalShippingPriceInput": "input ShopPayPaymentRequestTotalShippingPriceInput {\n  discounts: [ShopPayPaymentRequestDiscountInput!]\n  originalTotal: MoneyInput\n  finalTotal: MoneyInput\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "ShopPayPaymentRequestSessionCreatePayload",
+    "returnTypeSdl": "type ShopPayPaymentRequestSessionCreatePayload {\n  shopPayPaymentRequestSession: ShopPayPaymentRequestSession\n  userErrors: [UserErrorsShopPayPaymentRequestSessionUserErrors!]!\n}",
+    "userErrorsField": null
+  },
+  "shopPayPaymentRequestSessionSubmit": {
+    "args": [
+      {
+        "name": "token",
+        "required": true,
+        "type": "String!"
+      },
+      {
+        "name": "paymentRequest",
+        "required": true,
+        "type": "ShopPayPaymentRequestInput!"
+      },
+      {
+        "name": "idempotencyKey",
+        "required": true,
+        "type": "String!"
+      },
+      {
+        "name": "orderName",
+        "required": false,
+        "type": "String"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "CurrencyCode": "enum CurrencyCode {\n  USD\n  EUR\n  GBP\n  CAD\n  AFN\n  ALL\n  DZD\n  AOA\n  ARS\n  AMD\n  AWG\n  AUD\n  BBD\n  AZN\n  BDT\n  BSD\n  BHD\n  BIF\n  BZD\n  BMD\n  BTN\n  BAM\n  BRL\n  BOB\n  BWP\n  BND\n  BGN\n  MMK\n  KHR\n  CVE\n  KYD\n  XAF\n  CLP\n  CNY\n  COP\n  KMF\n  CDF\n  CRC\n  HRK\n  CZK\n  DKK\n  DOP\n  XCD\n  EGP\n  ERN\n  ETB\n  FKP\n  XPF\n  FJD\n  GIP\n  GMD\n  GHS\n  GTQ\n  GYD\n  GEL\n  HTG\n  HNL\n  HKD\n  HUF\n  ISK\n  INR\n  IDR\n  ILS\n  IQD\n  JMD\n  JPY\n  JEP\n  JOD\n  KZT\n  KES\n  KID\n  KWD\n  KGS\n  LAK\n  LVL\n  LBP\n  LSL\n  LRD\n  LTL\n  MGA\n  MKD\n  MOP\n  MWK\n  MVR\n  MRU\n  MXN\n  MYR\n  MUR\n  MDL\n  MAD\n  MNT\n  MZN\n  NAD\n  NPR\n  ANG\n  NZD\n  NIO\n  NGN\n  NOK\n  OMR\n  PAB\n  PKR\n  PGK\n  PYG\n  PEN\n  PHP\n  PLN\n  QAR\n  RON\n  RUB\n  RWF\n  WST\n  SHP\n  SAR\n  RSD\n  SCR\n  SGD\n  SDG\n  SOS\n  SYP\n  ZAR\n  KRW\n  SSP\n  SBD\n  LKR\n  SRD\n  SZL\n  SEK\n  CHF\n  TWD\n  THB\n  TZS\n  TTD\n  TND\n  TRY\n  TMT\n  UGX\n  UAH\n  AED\n  UYU\n  UZS\n  VUV\n  VES\n  VND\n  XOF\n  YER\n  ZMW\n  BYN\n  BYR\n  DJF\n  GNF\n  IRR\n  LYD\n  SLL\n  STD\n  STN\n  TJS\n  TOP\n  VED\n  VEF\n  XXX\n}",
+      "Decimal": "scalar Decimal",
+      "ISO8601DateTime": "scalar ISO8601DateTime",
+      "MoneyInput": "input MoneyInput {\n  amount: Decimal!\n  currencyCode: CurrencyCode!\n}",
+      "ShopPayPaymentRequestDeliveryMethodInput": "input ShopPayPaymentRequestDeliveryMethodInput {\n  code: String\n  label: String\n  detail: String\n  amount: MoneyInput\n  minDeliveryDate: ISO8601DateTime\n  maxDeliveryDate: ISO8601DateTime\n  deliveryExpectationLabel: String\n}",
+      "ShopPayPaymentRequestDeliveryMethodType": "enum ShopPayPaymentRequestDeliveryMethodType {\n  SHIPPING\n  PICKUP\n}",
+      "ShopPayPaymentRequestDiscountInput": "input ShopPayPaymentRequestDiscountInput {\n  label: String\n  amount: MoneyInput\n}",
+      "ShopPayPaymentRequestImageInput": "input ShopPayPaymentRequestImageInput {\n  url: String!\n  alt: String\n}",
+      "ShopPayPaymentRequestInput": "input ShopPayPaymentRequestInput {\n  discountCodes: [String!]\n  lineItems: [ShopPayPaymentRequestLineItemInput!]\n  shippingLines: [ShopPayPaymentRequestShippingLineInput!]\n  total: MoneyInput!\n  subtotal: MoneyInput!\n  discounts: [ShopPayPaymentRequestDiscountInput!]\n  totalShippingPrice: ShopPayPaymentRequestTotalShippingPriceInput\n  totalTax: MoneyInput\n  deliveryMethods: [ShopPayPaymentRequestDeliveryMethodInput!]\n  selectedDeliveryMethodType: ShopPayPaymentRequestDeliveryMethodType\n  locale: String!\n  presentmentCurrency: CurrencyCode!\n  paymentMethod: String\n}",
+      "ShopPayPaymentRequestLineItemInput": "input ShopPayPaymentRequestLineItemInput {\n  label: String\n  quantity: Int!\n  sku: String\n  requiresShipping: Boolean\n  image: ShopPayPaymentRequestImageInput\n  originalLinePrice: MoneyInput\n  finalLinePrice: MoneyInput\n  lineDiscounts: [ShopPayPaymentRequestDiscountInput!]\n  originalItemPrice: MoneyInput\n  finalItemPrice: MoneyInput\n  itemDiscounts: [ShopPayPaymentRequestDiscountInput!]\n}",
+      "ShopPayPaymentRequestShippingLineInput": "input ShopPayPaymentRequestShippingLineInput {\n  code: String\n  label: String\n  amount: MoneyInput\n}",
+      "ShopPayPaymentRequestTotalShippingPriceInput": "input ShopPayPaymentRequestTotalShippingPriceInput {\n  discounts: [ShopPayPaymentRequestDiscountInput!]\n  originalTotal: MoneyInput\n  finalTotal: MoneyInput\n}"
+    },
+    "isConnection": false,
+    "kind": "mutation",
+    "returnTypeName": "ShopPayPaymentRequestSessionSubmitPayload",
+    "returnTypeSdl": "type ShopPayPaymentRequestSessionSubmitPayload {\n  paymentRequestReceipt: ShopPayPaymentRequestReceipt\n  userErrors: [UserErrorsShopPayPaymentRequestSessionUserErrors!]!\n}",
+    "userErrorsField": null
+  },
+  "sitemap": {
+    "args": [
+      {
+        "name": "type",
+        "required": true,
+        "type": "SitemapType!"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {
+      "SitemapType": "enum SitemapType {\n  PRODUCT\n  COLLECTION\n  PAGE\n  METAOBJECT\n  BLOG\n  ARTICLE\n}"
+    },
+    "isConnection": false,
+    "kind": "query",
+    "returnTypeName": "Sitemap",
+    "returnTypeSdl": "type Sitemap {\n  pagesCount: Count\n  resources(page: Int!): PaginatedSitemapResources\n}",
+    "userErrorsField": null
+  },
+  "urlRedirects": {
+    "args": [
+      {
+        "name": "first",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "after",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "last",
+        "required": false,
+        "type": "Int"
+      },
+      {
+        "name": "before",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "name": "reverse",
+        "required": false,
+        "type": "Boolean"
+      },
+      {
+        "name": "query",
+        "required": false,
+        "type": "String"
+      }
+    ],
+    "examples": [],
+    "inputTypesSdl": {},
+    "isConnection": true,
+    "kind": "query",
+    "returnTypeName": "UrlRedirectConnection",
+    "returnTypeSdl": "type UrlRedirectConnection {\n  edges: [UrlRedirectEdge!]!\n  nodes: [UrlRedirect!]!\n  pageInfo: PageInfo!\n}",
+    "userErrorsField": null
+  }
+}

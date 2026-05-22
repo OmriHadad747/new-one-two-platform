@@ -1,19 +1,51 @@
 # Generator Pivot Plan
 
-A two-track architectural pivot for the app-generation pipeline. The goal is a
-step change in **functional correctness** of generated apps and a meaningful
-reduction in **generation cost**, achieved by moving complexity out of LLM
-prompts and into deterministic platform code and shared types.
+Collapse the LLD + codegen sub-agents into **one agent with tools and a todo
+list** — same loop model as Claude Code. The goal is a step change in
+**functional correctness** of generated apps and a meaningful reduction in
+**generation cost**, achieved by removing the inter-agent handoff that was
+the source of cross-file alignment bugs.
 
 > **Source of the analysis below**
 > The bugs, token counts, and retry patterns referenced in this document were
-> measured on this branch (`claude/fetch-and-switch-branch-Crro8`): the
-> post-split generator state with separate `a_product_agent`, `c_hld_agent`,
-> `e_hld_v_agent`, `g_ops_picker_agent`, `i_lld_agent`, `k_lld_v_agent`,
-> `m_pre_codegen_agent`, `o_codegen_agent`, `q_codegen_v_agent`,
-> `s_revision_agent`, `u_explenation_agent`. File-path references in this
-> document use this branch's layout (`platform-ai/`, `platform-back/`,
-> `platform-shopify-admin/`, `platform-shopify-app/`).
+> measured on the post-split generator state with separate `a_product_agent`,
+> `c_hld_agent`, `e_hld_v_agent`, `g_ops_picker_agent`, `i_lld_agent`,
+> `k_lld_v_agent`, `m_pre_codegen_agent`, `o_codegen_agent`,
+> `q_codegen_v_agent`, `s_revision_agent`, `u_explenation_agent`.
+
+---
+
+## 0. How this plan evolved
+
+This document went through three shapes before landing where it is. The
+history matters because the rejected shapes still inform the design's
+guardrails.
+
+**Iteration 1 — Two tracks in parallel.**
+- **Track A (scaffold-first codegen):** LLD emits real TypeScript files plus
+  a shared `types/contracts.ts`. Per-file codegen agents fill bodies against
+  the types. `tsc --noEmit` replaces LLM validators.
+- **Track B (Shopify protocol helpers):** typed platform helpers
+  (`ensureBundleTierDiscount`, `resolveVariantsForProducts`,
+  `defineHandler<topic>`) absorb multi-step Shopify protocols so the agent
+  has no typed path to do them wrong.
+
+**Iteration 2 — Track A only, Track B deferred.** Helpers fix specific
+Shopify-flavored bugs but don't address the general class — cross-file
+alignment. Track A is the bigger lever. Track B becomes a contingency: build
+helpers only for protocol patterns the agent demonstrably gets wrong.
+
+**Iteration 3 — Track A folded into a single agent (current design).** The
+LLD/codegen split was itself the source of drift. If one brain plans the
+contracts and another brain implements against them, the handoff can fail.
+Collapse them into one agent with read/write/tsc/todo tools, same model as
+Claude Code. This is the endpoint of Track A — the LLD-as-architect role
+doesn't need to be a separate agent at all.
+
+**Track B is not dead, just postponed.** Section §7 Phase 6 keeps it as the
+backstop: if specific Shopify-protocol bugs recur across archetypes despite
+the single-agent design, add typed helpers that make the bug inexpressible
+at the type level. Demand-driven, not pre-built.
 
 ---
 
@@ -53,363 +85,262 @@ spot.
 
 ---
 
-## 2. The two-track pivot
+## 2. The pivot in one paragraph
 
-### Track A — Scaffold-first codegen
+Replace the "LLD emits JSON → four codegen sub-agents each write a slice"
+pipeline with a **single codegen agent** that has read/write/tsc/todo tools
+and produces the entire scaffold itself. Upstream agents (product, HLD,
+ops-picker) stay; they feed the single codegen agent. Downstream validators
+are deleted. The retry signal becomes `tsc --noEmit` errors the agent fixes
+via its own tool calls, inside the same loop.
 
-Replace the JSON-LLD intermediate representation with **actual TypeScript
-files emitted by the LLD agent**. The LLD becomes a codebase architect: it
-lays out the file tree, writes a header docstring inside each file
-describing what that file owns, and emits the shared types file
-(`src/types/contracts.ts`) with the request/response interfaces of every
-route, every webhook payload shape, every cross-file boundary.
-
-Downstream codegen agents stop translating JSON. Each one is given:
-
-- the public-surface bundle from the platform template (cached, ~25k tokens)
-- the LLD-emitted scaffold (cached after attempt 1)
-- the header docstring of the one file it owns
-- the typed imports it must satisfy
-
-…and its job is reduced to "implement the body of this file so it compiles
-against the types." The agent cannot accidentally invent a field, send the
-wrong shape, or drift from a peer file's contract — the type system forbids it.
-
-### Track B — Shopify protocol helpers in the platform
-
-For every common Shopify pattern the agents currently re-implement from
-primitives, expose a single typed helper in the platform SDK that absorbs
-the entire protocol. The agent's only valid path to perform the pattern is
-to call that helper. The helper enforces the prerequisite ordering, the
-idempotency, the error handling, the API-version compatibility.
-
-Examples of patterns that today require multi-step LLM-reasoning and
-frequently regress:
-
-- "apply tiered discount to cart" — requires discount-create before
-  cart-apply
-- "detect variant deletion from products/update webhook" — requires the
-  `variant_gids` diff vs the stored bundle items, with subtle empty/missing
-  handling
-- "resolve all variants belonging to a product" — required because the
-  Shopify resource picker exposes products separately from variants
-
-Each becomes a one-line call against a typed helper.
-
-### Why the two tracks compose
-
-- **Types are the inter-agent contract.** Cross-file misalignment fails
-  `tsc`, which is precise, machine-readable, and never hallucinates.
-- **Helpers are the only valid path to a Shopify protocol.** The agent
-  cannot fabricate a discount code because there is no typed entry point
-  that accepts one — the only typed path is `ensureBundleTierDiscount(...)`.
-- **`tsc --noEmit` replaces the LLM validator layer.** The retry signal is
-  the compiler's error output, not another LLM's prose. No whack-a-mole.
+The same brain that decides the contracts is the brain best placed to
+implement against them. Removing the handoff removes the drift.
 
 ---
 
-## 3. Proof-of-concept scope (this branch's work)
+## 3. Architecture
 
-The proof is intentionally narrow: regenerate the **bundle-with-tiered-
-discount** app correctly, using the smallest set of helpers that closes the
-specific failure modes observed in its prior generation. Once that works
-end-to-end, the same pattern extends to the next app archetype.
-
-### 3.1 Helpers to implement (and only these)
-
-Built under `platform-back/templates/handler/src/lib/shopify/` (extending
-the existing `platform-back/templates/handler/src/lib/shopify.ts` with a
-directory of focused submodules). Each helper is fully typed, idempotent,
-and has its own unit tests under `platform-back/templates/handler/__tests__/`.
-
-#### `shopify.discounts.ensureBundleTierDiscount`
-
-```ts
-type EnsureBundleTierDiscountInput = {
-  bundleId: string;            // stable platform UUID — used to build the discount key
-  tier: { minimumItemCount: number; discountRate: number }; // discount_rate is bps
-  eligibleVariantIds: string[]; // Shopify decimal variant IDs the discount applies to
-};
-
-type EnsureBundleTierDiscountResult = {
-  discountNodeId: string;      // gid://shopify/DiscountNode/...
-  discountCode: string | null; // populated only if the helper chose code-based; null for automatic
-  createdNow: boolean;         // true iff we created on this call (telemetry/log purposes)
-};
-
-namespace shopify.discounts {
-  async function ensureBundleTierDiscount(
-    input: EnsureBundleTierDiscountInput,
-  ): Promise<EnsureBundleTierDiscountResult>;
-}
-```
-
-Internally:
-- Computes a deterministic discount key from `(bundleId, tier.minimumItemCount, tier.discountRate)`.
-- Looks up the existing discount node by key (via `codeDiscountNodeByCode` or
-  `automaticDiscountNode` + saved-search; final API choice decided during
-  implementation).
-- If found and up-to-date → returns existing node.
-- If found but stale → calls the appropriate `discount*Update` mutation.
-- If absent → calls the appropriate `discount*Create` mutation and activates.
-- Handles `userErrors` and retries on transient Shopify failures.
-
-**Closes:** the fabricated `BUNDLE-XXXX-1000` discount code bug. The agent's
-generated cart-add route now calls this helper and uses its returned
-identifier, with no opportunity to invent a string.
-
-#### `shopify.products.resolveVariantsForProducts`
-
-```ts
-type ResolveVariantsInput = {
-  productIds: string[];        // Shopify decimal product IDs
-  options?: { activeOnly?: boolean; perProductLimit?: number };
-};
-
-type ResolvedVariant = {
-  variantId: string;
-  productId: string;
-  available: boolean;
-};
-
-namespace shopify.products {
-  async function resolveVariantsForProducts(
-    input: ResolveVariantsInput,
-  ): Promise<ResolvedVariant[]>;
-}
-```
-
-Internally:
-- Issues a single `nodes(ids: $ids)` query with a `ProductVariant` connection
-  fragment to expand each product to its variants.
-- Paginates per product where `perProductLimit` allows.
-- Returns flat `(variantId, productId, available)` triples.
-
-**Closes:** the admin-UI bug where the merchant picker collects products and
-the request body shipped empty `variant_external_ids`. Under the new flow
-the admin UI sends `productIds: string[]`; the backend route calls the
-helper and writes both `bundle_items.variant_external_id` and
-`bundle_items.product_external_id`. The agent cannot send an empty array
-that survives — the route's typed input no longer has parallel arrays.
-
-#### `shopify.webhooks.defineHandler` (typed per topic)
-
-```ts
-type WebhookHandlerSpec<Topic extends KnownTopic> =
-  Topic extends "products/update"        ? ProductsUpdateHandlerSpec    :
-  Topic extends "inventory_levels/update"? InventoryLevelsUpdateSpec    :
-  Topic extends "orders/paid"            ? OrdersPaidHandlerSpec        :
-  never;
-
-interface ProductsUpdateHandlerSpec {
-  // Called when a variant present in a prior delivery is no longer in the
-  // current payload's variant_gids list. The helper does the diff against a
-  // caller-supplied "previously-known variants for this product" function.
-  onVariantDeleted?: (ctx: VariantDeletedCtx) => Promise<void>;
-  onVariantAdded?:   (ctx: VariantAddedCtx)   => Promise<void>;
-  loadKnownVariants: (productId: string) => Promise<string[]>;
-}
-
-interface InventoryLevelsUpdateSpec {
-  // shopify client is pre-constructed by the helper from the shop-domain
-  // header that the webhook delivery always carries — the agent never deals
-  // with shop-domain extraction.
-  onAvailabilityChanged: (ctx: {
-    inventoryItemId: string;
-    available: number;
-    shopify: ShopifyClient;
-  }) => Promise<void>;
-}
-
-interface OrdersPaidHandlerSpec {
-  // The helper performs the dedup write against `processed_webhooks`
-  // BEFORE invoking the body. The body runs at most once per (topic,
-  // delivery_id).
-  onPaid: (ctx: { order: OrdersPaidPayload }) => Promise<void>;
-}
-
-namespace shopify.webhooks {
-  function defineHandler<Topic extends KnownTopic>(
-    topic: Topic,
-    spec: WebhookHandlerSpec<Topic>,
-  ): WebhookHandlerExport;
-}
-```
-
-Each `WebhookHandlerSpec` is a discriminated type. The agent cannot subscribe
-to `inventory_levels/update` and then read `payload.line_items` — the spec
-shape only exposes inventory-relevant context.
-
-**Closes:**
-- `payload.__shopDomain` invented field — the inventory spec provides a
-  ready-built `shopify` client. The agent has no reason to extract shop
-  domain.
-- `variant_gids` regression — the products/update spec exposes
-  `onVariantDeleted` / `onVariantAdded` callbacks. The diff logic lives in
-  the helper. The agent does not have to reason about empty vs missing
-  arrays.
-- order idempotency boilerplate — `OrdersPaidHandlerSpec` does the dedup
-  write inside the helper, before invoking the body. The agent does not
-  write `ON CONFLICT DO NOTHING` boilerplate.
-
-### 3.2 What the LLD-emitted scaffold looks like for the bundle app
-
-Targeted directory layout of the **generated app** (illustrative — this is
-what the LLD agent emits into a working directory, not a change to the
-platform's own layout):
+### 3.1 Tool surface
 
 ```
-generated-app/
+read_file(path, offset?, limit?)         -> str
+write_file(path, content)                -> { ok, denied_reason? }
+todo_write(todos)                        -> ok
+run_tsc()                                -> list of tsc errors
+done()                                   -> ok | { incomplete_reason }
+```
+
+Five tools. Each earns its place:
+
+- `read_file` — peek at peer files, the in-progress `contracts.ts`, the
+  platform template surface, component rules docs. Offset/limit lets the
+  agent fetch only the slice it needs (e.g. lines 200–250 of a long file).
+- `write_file` — emit scaffold files. Allowlist applies (3.3).
+- `todo_write` — the agent plans for itself, same pattern as Claude Code's
+  own todo tool. Forces explicit planning before implementation.
+- `run_tsc` — self-verify before declaring done. The agent's own quality
+  gate, not an external one.
+- `done` — declare completion; the runner does final integrity checks
+  before accepting.
+
+**Component rules are not a tool.** They live as plain markdown under
+`platform-ai/component_rules/{admin,storefront,backend,db,webhooks,cron}.md`
+and the agent reads them with `read_file`. Fewer tool types, more uniformity.
+
+### 3.2 Output shape
+
+The agent writes the following into a working directory:
+
+```
+scaffold/
+├── app.json                    # structured metadata
 ├── src/
-│   ├── types/
-│   │   └── contracts.ts          # LLD-emitted: every request/response interface
-│   ├── routes/
-│   │   ├── admin.ts              # header: "owns POST /bundles/{create,update,...}; uses types from ../types/contracts"
-│   │   ├── widget.ts             # header: "owns POST /bundle/{validate,add-to-cart}; uses shopify.discounts.ensureBundleTierDiscount"
-│   │   └── webhook-handlers.ts   # header: "exports webhookHandlers for products/update, inventory_levels/update, orders/paid via shopify.webhooks.defineHandler"
-│   └── lib/
-│       └── business/
-│           └── bundles.ts        # header: "pure tier-evaluation logic, no IO; called from widget and webhook"
-├── admin/
-│   └── ui.ts                     # TypeScript admin UI; compiled to JS for delivery
-├── widget/
-│   └── widget.ts                 # TypeScript widget; compiled to JS for delivery
-└── migrations/
-    └── 0001_app.sql              # LLD-emitted
+│   ├── types/contracts.ts      # cross-file types
+│   ├── routes/{widget,admin}.ts
+│   ├── webhooks/{topic}.ts
+│   └── lib/business/*.ts       # pure logic
+├── admin/ui.ts
+└── widget/widget.ts
 ```
 
-Each file starts with a header docstring authored by the LLD: what this
-file owns, what it imports, what its public exports are, and any
-file-specific implementation notes (e.g. "this route must call
-`ensureBundleTierDiscount` before `cartCreate`"). The codegen agent for
-that file sees only its own header plus the shared types, plus the
-platform's public surface bundle. The body it writes must compile against
-those constraints.
+`app.json` carries the structured metadata the runner needs:
 
-### 3.3 The retry loop, redesigned
-
-```
-1. LLD emits the scaffold + headers + types/contracts.ts.
-2. Per-file codegen agents fill each body (run in parallel — they only
-   read shared types, never each other's source).
-3. `tsc --noEmit` runs over the assembled tree (template + generated).
-4. If tsc errors: feed the specific errors back to ONLY the agents whose
-   files produced them. No prose validator, no second LLM judging the
-   first. Retry budget per file: 2 attempts.
-5. If tsc passes: ship.
+```json
+{
+  "database": { "tables": [...] },
+  "shopifyIntegration": { "webhookTopics": [...], "cronSchedule": null },
+  "httpRoutes": { "widget": [...], "admin": [...] }
+}
 ```
 
-There is no `codegen_v_agent`. There is no `lld_v_agent`. The
-`pre_codegen_alignment_agent`'s role is absorbed into the LLD's
-types-file output.
+The runner then deterministically materializes from `app.json`:
+
+- `migrations/0001_app.sql` — from `database.tables[]`
+- `src/server.ts` — Express route registration from `httpRoutes`
+- Webhook subscription config — from `shopifyIntegration.webhookTopics`
+
+These three are mechanical. The agent does not write them.
+
+### 3.3 Write allowlist
+
+```
+✅ scaffold/app.json
+✅ src/types/contracts.ts
+✅ src/routes/*.ts, src/webhooks/*.ts, src/lib/**/*.ts
+✅ admin/*.ts, widget/*.ts
+❌ migrations/*.sql                 (rendered from app.json)
+❌ src/server.ts                    (rendered from app.json)
+❌ platform-back/templates/**       (the template itself)
+```
+
+The allowlist exists to keep deterministic outputs deterministic. Migration
+SQL and server wiring are mechanical; letting the agent edit them
+reintroduces drift.
+
+### 3.4 Component rules — JIT loading
+
+The base agent prompt is component-agnostic. Conventions for each target are
+loaded on demand by reading a markdown file:
+
+```
+platform-ai/component_rules/
+├── admin.md         # Polaris, App Bridge, React patterns, auth context
+├── storefront.md    # No Node APIs; theme app extension; vanilla JS
+├── backend.md       # Express handler shape; sql tagged template
+├── db.md            # SQL idioms for migrations (not used directly — see §3.2)
+├── webhooks.md      # Payload shapes per topic; dedup contract
+└── cron.md          # Cron context; idempotency
+```
+
+Each is small (~200–500 tokens) and contains: runtime constraints, available
+libs/globals, house style, do/don't list.
+
+Prompt rule: "Before implementing the first file of any component kind,
+read the matching `platform-ai/component_rules/{kind}.md`."
+
+This keeps the base prompt small and lets the rules evolve independently of
+the agent code.
 
 ---
 
-## 4. Phased plan
+## 4. The loop
 
-### Phase 0 — Foundations (no behaviour change)
+1. Agent receives merchant intent + HLD + ops_picks in its prompt.
+2. Agent calls `todo_write` to lay out its plan.
+3. Agent writes `scaffold/app.json` and `src/types/contracts.ts` first — the
+   spine. Then reads relevant `component_rules/*.md`. Then implements files.
+4. As the agent implements peer files, it may re-read `contracts.ts` or
+   other written files. `contracts.ts` is editable by the same agent — if a
+   missing shape surfaces during implementation, the agent extends it.
+5. At some point the agent calls `run_tsc()`. On errors, it fixes them via
+   more `write_file` calls. Loop until clean.
+6. When tsc is clean and todos are done, the agent calls `done()`.
+7. The runner does final integrity checks (app.json present, contracts.ts
+   present, tsc passes, no allowlist violations) and either accepts or
+   returns failures to the agent for one more round.
 
-- Decide the exact target path for the helpers under
-  `platform-back/templates/handler/src/lib/shopify/`. (Either extend the
-  existing `shopify.ts` in place or split into a directory of submodules —
-  decided during Phase 1.)
-- Establish the test convention for helpers (one `__tests__/*.test.ts` per
-  helper alongside the existing template tests; mock the Shopify GraphQL
-  transport at the client level using the same harness as the existing
-  `shopify.test.ts`).
-- Stand up a CI gate that runs `tsc --noEmit` on a representative
-  pre-existing generated app under
-  `platform-ai/cli/test_results/<timestamp>_<slug>/` to confirm baseline
-  cleanliness.
-
-### Phase 1 — Bundle-app helpers (the proof)
-
-Implement the five helpers in section 3.1, with full unit tests, behind the
-existing `shopify.graphql` / `shopify.storefront` transports. Helpers are
-added; nothing else is changed yet. After this phase a developer can
-hand-write a bundle app using them, but the generator does not yet emit
-calls to them.
-
-### Phase 2 — LLD output pivot
-
-- Change the LLD agent's contract: instead of an `LLDPlan` Pydantic object
-  serialised to JSON, it emits a `GeneratedScaffold` consisting of a list
-  of `{ path, header, body_placeholder }` entries plus the `types/contracts.ts`
-  contents.
-- The runner writes these files to a working directory. `body_placeholder`
-  is filled in later.
-- LLD validation switches from "Pydantic of `LLDPlan`" to "the
-  scaffold's `types/contracts.ts` parses with `tsc --noEmit` standalone"
-  (i.e. types compile). This is much cheaper than the current semantic
-  validator pass.
-
-### Phase 3 — Codegen pivot
-
-- Each codegen agent (backend, admin_ui, widget, db) is reduced to a
-  per-file generator. Its prompt is:
-  - the platform public-surface bundle (cached)
-  - the assembled `types/contracts.ts` (cached)
-  - the LLD-emitted header for this one file
-  - "produce only the implementation body; preserve the header verbatim"
-- Parallelism is restored at the per-file level, not the per-artifact
-  level.
-
-### Phase 4 — Retire the LLM validators
-
-- Delete `codegen_v_agent` and `lld_v_agent` from the pipeline.
-- Delete the `pre_codegen_alignment_agent`'s prose-emit role; its rules
-  move into the LLD's typed-contracts output.
-- Replace the retry signal with `tsc --noEmit` errors fed back per-file.
-- Delete the `retry_suffix` machinery that ships ~100KB of prior output
-  on every retry.
-
-### Phase 5 — Minimal graph gates for cross-file business rules
-
-A small (target ≤ 10) set of deterministic checks for invariants that
-types cannot express. Examples:
-
-- Every `webhookHandlers` export key matches a topic the LLD declared in
-  `shopifyIntegration.webhookTopics`.
-- Every route declared in `httpRoutes` is implemented in the corresponding
-  route file.
-- No generated file imports from `platform-back/templates/handler/src/lib/**`
-  internal paths — only from the public `shopify`, `db`, `paginate`,
-  `money`, `config`, `workflow`, `platform` modules.
-
-These gates are written in TypeScript / Python against the assembled
-scaffold. They are not LLM agents.
-
-### Phase 6 — Expand the helper catalogue (post-proof)
-
-Once the bundle-app proof passes, the same pattern extends to the next
-high-frequency archetypes (abandoned-cart recovery, post-purchase upsell,
-review request, loyalty, subscriptions). Each archetype is roughly one
-person-week of platform engineering for its helpers plus prompt updates.
+Retry budget is on the **agent loop**, not per-file. First cut: 50 turns
+max, hard-fail if exceeded.
 
 ---
 
-## 5. What gets retired
+## 5. Observability
 
-Once Phases 2–5 land:
+Every tool call is logged on disk under the run's results dir:
 
-| Component | Status | Reason |
+```
+test_results/<timestamp>_<slug>/codegen/
+  tool_calls/
+    001_todo_write/      input.json   output.json
+    002_read_file/       input.json   output.txt
+    003_write_file/      input.json   output.json
+    004_run_tsc/         input.json   output.txt
+    ...
+  scaffold/                # the files the agent actually wrote
+  manifest.jsonl           # one line per call: idx, tool, ts_start, ts_end, ok
+```
+
+CLI live output:
+
+```
+[001] todo_write           6 todos
+[002] read_file            platform-ai/component_rules/backend.md
+[003] write_file           scaffold/app.json ✓
+[004] write_file           src/types/contracts.ts ✓
+[005] run_tsc              0 errors
+[006] done                 ✓
+```
+
+Cheap to write, expensive-not-to-have when debugging a 40-turn failure.
+
+---
+
+## 6. What gets retired
+
+| Component | Status | Replaced by |
 |---|---|---|
-| `lld_v_agent` (LLM validator over LLD) | Deleted | Replaced by tsc on `types/contracts.ts` + minimal graph gates |
-| `codegen_v_agent` (LLM validator over emitted code) | Deleted | Replaced by tsc over the assembled scaffold |
-| `pre_codegen_alignment_agent` | Reduced to nil | Its prose-emit role becomes LLD's typed-contracts output |
-| `retry_suffix` (echo full prior output) | Deleted | tsc errors are the retry signal; no need to echo prior output |
-| `LLDPlan` Pydantic schema (JSON intermediate) | Replaced | Replaced by `GeneratedScaffold` (file tree + headers + types) |
-| Cross-file regex validators (`platform-ai/subagents/o_codegen_agent/cross_admin_backend.py`, `cross_widget_backend.py`) | Reduced | Most cases caught by tsc; what remains becomes 2-3 small graph gates |
+| `i_lld_agent` | Deleted | Folded into single codegen agent |
+| `k_lld_v_agent` | Deleted | `run_tsc` + agent self-verify |
+| `m_pre_codegen_agent` | Deleted | Single agent owns alignment via shared context |
+| `o_codegen_agent` (umbrella) | Deleted | Single agent |
+| `backend_agent` / `admin_agent` / `storefront_agent` / `db_agent` | Deleted | Single agent + JIT component rules |
+| `q_codegen_v_agent` | Deleted | `run_tsc` |
+| `s_revision_agent` | Deleted | Agent self-revises via tool loop |
+| `LLDPlan` Pydantic schema | Deleted | `app.json` (metadata) + TS files (code) |
+| `retry_suffix` machinery | Deleted | tsc errors are the in-loop retry signal |
+| Coupled-retry orchestration in codegen | Deleted | Single agent has no inter-agent coupling |
+
+What survives upstream: `a_product_agent`, `c_hld_agent`, `e_hld_v_agent`,
+`g_ops_picker_agent`, `u_explenation_agent`. They feed the single codegen
+agent unchanged.
 
 ---
 
-## 6. Success criteria
+## 7. Phased plan
 
-A regenerated bundle app — same merchant prompt as the analysed run —
+### Phase 0 — Branch & layout
+- Branch: `track-a-scaffold-first` (created).
+- Decide module location for the new agent (likely
+  `platform-ai/subagents/codegen_agent/` — replaces `o_codegen_agent`).
+
+### Phase 1 — Tool implementations + observability
+- Implement the five tools as Python callables wired to the Anthropic
+  tool-use API.
+- Implement the per-tool logging layout (§5).
+- Implement the deterministic renderers: `app.json` → migration SQL;
+  `app.json` → `src/server.ts`; `app.json` → webhook config.
+
+### Phase 2 — Agent prompt + component rules + hand-run
+- Write the base agent system prompt.
+- Write the six `component_rules/*.md` docs.
+- Hand-run the agent against the bundle merchant intent. Inspect the
+  resulting scaffold. No pipeline wiring yet.
+- Iterate prompt + rules until the agent reliably produces a tsc-clean
+  scaffold.
+
+### Phase 3 — Pipeline integration
+- Replace `o_codegen_agent` in the orchestrator with the new single agent.
+- Delete: `i_lld_agent`, `k_lld_v_agent`, `m_pre_codegen_agent`,
+  `q_codegen_v_agent`, `s_revision_agent`, the four `o_codegen` sub-agents,
+  the coupled-retry logic, `retry_suffix`, and the `LLDPlan` schema.
+- Keep upstream agents intact.
+
+### Phase 4 — Real end-to-end run
+- Run the full pipeline on the bundle intent. Compare to the analyzed run on
+  token cost, retry count, and the three end-to-end bugs.
+
+### Phase 5 — Catalog expansion
+- Run on 3–5 other archetypes (abandoned cart, post-purchase upsell,
+  loyalty, subscriptions). Tune component rules + agent prompt as gaps
+  surface.
+
+### Phase 6 — Track B as backstop (deferred until needed)
+- **This is the original Track B from iteration 1, now demand-driven.** If
+  specific Shopify-protocol bugs keep appearing across archetypes despite
+  the single-agent design — discount-then-apply, dedup-before-handler,
+  variant-resolution from products — add typed platform helpers that make
+  the bug inexpressible at the type level.
+- Examples (only build if needed):
+  - `shopify.discounts.ensureBundleTierDiscount(...)` — absorbs the
+    discount-create-then-cart-apply sequence.
+  - `shopify.products.resolveVariantsForProducts(...)` — absorbs the
+    product-picker-to-variants expansion.
+  - `shopify.webhooks.defineHandler<Topic>(...)` — narrows payload type per
+    topic so phantom fields can't compile.
+- The rule: **only after a class of bug recurs**. Don't pre-build a helper
+  catalog; pre-built helpers are infrastructure debt the single agent may
+  never need.
+
+---
+
+## 8. Success criteria
+
+A regenerated bundle app — same merchant prompt as the analyzed run —
 passes all of:
 
-1. **`tsc --noEmit` passes** on the assembled scaffold with zero retries
-   from any per-file agent. (Stretch: zero retries on the first try.)
+1. **`tsc --noEmit` passes** on the assembled scaffold by the time the agent
+   calls `done()`.
 2. **Admin UI populates the item pool.** A merchant flow that picks
    products produces real `bundle_items` rows with both
    `variant_external_id` and `product_external_id` populated.
@@ -421,58 +352,64 @@ passes all of:
    live Shopify discount being applied — verified by inspecting the cart
    in a development store.
 5. **Token cost drops measurably.** Target: total tokens per generation
-   ≤ 50% of the analysed-run baseline. Cache hit ratio on cross-agent
-   reusable prefixes ≥ 70%.
-6. **No `codegen_v` regressions.** The variant_gids early-return class of
-   regression is impossible to express under the new shape (the helper
-   owns the diff).
+   ≤ 60% of the analyzed-run baseline. (Single agent does more work per
+   turn, but no validator retries and no prior-output echoes.)
+6. **Tool-call log is readable.** A developer can scroll `manifest.jsonl`
+   and understand what the agent did, in order, in under 2 minutes.
 
 ---
 
-## 7. Risks and open questions
+## 9. Risks and open questions
 
 ### Risks
 
-- **TypeScript everywhere.** Admin UI and widget become TypeScript at
-  generation time (compiled to JS for delivery). Worth confirming that
-  the Shopify Theme App Extension and Admin Extension build paths accept
-  this without ceremony. Expected answer: yes, both already support TS.
-- **Helper maintenance.** Each helper is a one-time investment but
-  needs version-bumping when Shopify changes the underlying API. Single
-  maintenance point, but a real one. Mitigation: version-pinned Shopify
-  API string in helper code + periodic version-rev policy.
-- **Long-tail apps.** Apps requesting novel Shopify behaviours that no
-  helper covers will fall back to primitives. Acceptable so long as the
-  generator surfaces the missing-helper gap clearly to the platform
-  team instead of producing a non-functional app silently.
-- **Migration cost.** Phases 2–4 are real refactor work. The pipeline
-  must continue to function in the interim. Mitigation: gate the new
-  shape behind a feature flag; run both shapes in parallel until parity.
+- **Context bloat in long loops.** As the agent reads/writes more files,
+  context grows. Mitigation: selective `read_file` with offset/limit; force
+  re-reads instead of relying on stale cached content; 50-turn hard cap on
+  the first cut.
+- **No design audit before code.** Today's LLD forces a planning step.
+  Mitigation: prompt requires `todo_write` + `app.json` + `contracts.ts`
+  *first*, before any per-file implementation.
+- **Loss of retry isolation.** If the agent dies on turn 40, it cannot
+  cleanly resume. Acceptable for now — fail-and-restart on full input.
+- **Debugging a long trace.** Mitigation: the structured tool-call logs
+  (§5). Each tool call is an isolatable artifact on disk.
+- **Cost per turn × many turns.** Each turn the agent has prior tool
+  outputs in context. Measure early; if it bloats, prefer fewer, broader
+  writes over many small ones.
+- **Agent might keep refining indefinitely.** Mitigation: agent must call
+  `done()` to terminate; turn limit caps runaway behavior.
+- **Without Track B helpers, the agent still has to get Shopify protocols
+  right by itself.** Mitigation: component rules + `contracts.ts` carry the
+  protocol knowledge. If this proves insufficient, Phase 6 (Track B
+  backstop) closes the gap on a per-pattern basis.
 
 ### Open questions
 
-- For helpers that wrap mutations with side effects (discount-create,
-  webhook-dedup), what is the canonical telemetry / logging shape?
-- Where does the `types/contracts.ts` LIVE on disk for the generated
-  app — is it shipped to the merchant or stripped at build time?
-- Should the LLD also emit the test scaffolds, or only the source files?
-- For the bundle-app proof, do we target an automatic discount or a code
-  discount? Both work; automatic is more elegant for "auto-apply" UX,
-  code is more flexible. The helper hides the choice from the agent but
-  the platform team picks one.
+- Cache strategy: the platform surface (~25k tokens) goes in the system
+  prompt with the 1h cache. `contracts.ts` once written: best cached on the
+  agent's working dir and re-read on demand, not cached in prompt.
+- Integration tests against a sandbox dev store — out of scope for the
+  proof; revisit post-Phase 4.
+- `done()` semantics: should the runner do anything beyond "tsc passes and
+  app.json present"? Likely a small set of graph gates (every
+  `webhookTopics` entry has a matching handler file; every `httpRoutes`
+  entry has a matching exported handler). Cheap, deterministic, no LLM.
 
 ---
 
-## 8. Appendix — concrete bug-to-helper mapping
+## 10. Appendix — bug-to-mechanism mapping
 
-For traceability, mapping the three end-to-end-broken paths from the prior
-generation to the helpers that eliminate them:
+How the three end-to-end-broken paths from the prior generation are
+eliminated under the new design:
 
-| Prior bug | Helper that absorbs it | Why the bug becomes inexpressible |
-|---|---|---|
-| Admin UI sends `variant_external_ids: []` to `/bundles/items/save` | `shopify.products.resolveVariantsForProducts` | New route shape takes `productIds: string[]`; backend calls the helper. There is no field named `variant_external_ids` to send empty. |
-| `products/update` handler reads phantom `payload.__shopDomain` | `shopify.webhooks.defineHandler<"inventory_levels/update">` | The spec exposes `shopify` as a pre-built client. The agent never sees a raw payload field and has no reason to invent one. |
-| Cart-add passes fabricated `BUNDLE-XXXX-1000` discount code | `shopify.discounts.ensureBundleTierDiscount` | The only typed entry point that produces a discount is the helper. The agent cannot construct a `discountCode: string` literal — its type isn't `string`, it's the helper's return value. |
+| Prior bug | Mechanism that absorbs it |
+|---|---|
+| Admin UI sends `variant_external_ids: []` to `/bundles/items/save` | One agent writes the admin UI **and** the backend route in the same session, against the same `contracts.ts`. The two halves cannot disagree because there is no second brain to disagree with. |
+| `products/update` handler reads phantom `payload.__shopDomain` | `component_rules/webhooks.md` documents the actual payload shape; `contracts.ts` types the webhook payload precisely; `tsc` rejects the phantom field. |
+| Cart-add passes fabricated `BUNDLE-XXXX-1000` discount code | Agent writes both `discountCreate` and `cartCreate` paths in the same session. `contracts.ts` types the cart input as taking a `DiscountNodeId` returned from `discountCreate`. The fabrication required two agents to invent half-a-contract each; one agent cannot. |
 
-The retry-validator pattern would not have caught any of these reliably.
-The helper pattern makes all three unreachable by construction.
+If the agent still drifts on these classes of bug despite the above — a
+real risk — the Phase-6 Track B escape hatch is a typed platform helper
+that makes the specific case inexpressible at the type level. Not
+pre-built; only when a recurring class is observed.
