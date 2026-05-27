@@ -1,0 +1,418 @@
+{
+  "database": {
+    "tables": [
+      {
+        "name": "bundles",
+        "purpose": "Stores each bundle's identity, mode (fixed or flexible), enabled state, and a system-managed health status.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal id"
+          },
+          {
+            "name": "title",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "merchant-facing bundle title"
+          },
+          {
+            "name": "description",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "purpose": "optional merchant description"
+          },
+          {
+            "name": "mode",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": [
+              "fixed",
+              "flexible"
+            ],
+            "purpose": "distinguishes fixed bundles from flexible bundles"
+          },
+          {
+            "name": "enabled",
+            "sqlType": "BOOLEAN",
+            "constraints": "NOT NULL DEFAULT false",
+            "purpose": "whether this bundle is active and visible to customers"
+          },
+          {
+            "name": "health_status",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT 'healthy'",
+            "enum": [
+              "healthy",
+              "warned",
+              "auto_disabled"
+            ],
+            "purpose": "merchant-facing health signal"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()"
+          },
+          {
+            "name": "updated_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()"
+          }
+        ],
+        "indexes": [
+          [
+            "enabled",
+            "created_at"
+          ],
+          [
+            "health_status"
+          ]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_items",
+        "purpose": "Stores variant-level products belonging to each bundle, including last-observed availability.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal id"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the bundle this item belongs to"
+          },
+          {
+            "name": "variant_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the specific product variant in Shopify"
+          },
+          {
+            "name": "product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the parent product of the variant"
+          },
+          {
+            "name": "observed_availability",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT 'available'",
+            "enum": [
+              "available",
+              "out_of_stock",
+              "deleted"
+            ],
+            "purpose": "last known availability state"
+          },
+          {
+            "name": "added_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()"
+          }
+        ],
+        "uniqueConstraint": [
+          "bundle_id",
+          "variant_external_id"
+        ],
+        "indexes": [
+          [
+            "bundle_id",
+            "added_at"
+          ],
+          [
+            "variant_external_id"
+          ],
+          [
+            "bundle_id",
+            "observed_availability"
+          ]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_tiers",
+        "purpose": "Stores each discount tier for a bundle, including minimum item count and discount rate.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal id"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the bundle this tier belongs to"
+          },
+          {
+            "name": "minimum_item_count",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL",
+            "purpose": "minimum number of items to qualify for this tier"
+          },
+          {
+            "name": "discount_rate",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL",
+            "purpose": "discount rate in basis points (e.g. 1000 = 10%)"
+          },
+          {
+            "name": "display_order",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL",
+            "purpose": "merchant-defined display sequence"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()"
+          },
+          {
+            "name": "updated_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()"
+          }
+        ],
+        "uniqueConstraint": [
+          "bundle_id",
+          "minimum_item_count"
+        ],
+        "indexes": [
+          [
+            "bundle_id",
+            "display_order"
+          ],
+          [
+            "bundle_id",
+            "minimum_item_count"
+          ]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_purchase_records",
+        "purpose": "Stores a record of every bundle present in a paid order, keyed by order external id to survive webhook retries.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal id"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the bundle that was purchased"
+          },
+          {
+            "name": "order_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the paid Shopify order id"
+          },
+          {
+            "name": "order_placed_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL",
+            "purpose": "when the order was created"
+          },
+          {
+            "name": "variant_external_ids",
+            "sqlType": "JSONB",
+            "constraints": "NOT NULL DEFAULT '[]'",
+            "purpose": "serialized list of variant ids selected at purchase time"
+          },
+          {
+            "name": "item_count",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL",
+            "purpose": "number of items in the bundle at purchase"
+          },
+          {
+            "name": "discount_rate_applied",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL",
+            "purpose": "discount rate in basis points actually applied"
+          },
+          {
+            "name": "order_total",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "order total in minor currency units"
+          },
+          {
+            "name": "currency_code",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT 'USD'",
+            "purpose": "ISO 4217 currency code for order_total"
+          },
+          {
+            "name": "recorded_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()"
+          }
+        ],
+        "uniqueConstraint": [
+          "order_external_id",
+          "bundle_id"
+        ],
+        "indexes": [
+          [
+            "bundle_id",
+            "order_placed_at"
+          ],
+          [
+            "order_placed_at"
+          ]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_health_events",
+        "purpose": "Logs every automated health change applied to a bundle for merchant audit.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal id"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the bundle whose health changed"
+          },
+          {
+            "name": "event_kind",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": [
+              "auto_disabled",
+              "warned",
+              "cleared"
+            ],
+            "purpose": "the type of health change"
+          },
+          {
+            "name": "affected_variant_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "the specific variant that triggered this health change"
+          },
+          {
+            "name": "reason",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "human-readable reason for the health change"
+          },
+          {
+            "name": "occurred_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()"
+          }
+        ],
+        "indexes": [
+          [
+            "bundle_id",
+            "occurred_at"
+          ]
+        ],
+        "foreignKeys": []
+      }
+    ]
+  },
+  "shopifyIntegration": {
+    "webhookTopics": [
+      "orders/paid",
+      "inventory_levels/update",
+      "products/delete"
+    ],
+    "cronSchedule": null
+  },
+  "httpRoutes": {
+    "admin": [
+      {
+        "method": "GET",
+        "path": "/admin/bundles",
+        "purpose": "List bundles with pagination and filters"
+      },
+      {
+        "method": "POST",
+        "path": "/admin/bundles/create",
+        "purpose": "Create a new bundle"
+      },
+      {
+        "method": "PUT",
+        "path": "/admin/bundles/update",
+        "purpose": "Update a bundle"
+      },
+      {
+        "method": "POST",
+        "path": "/admin/bundles/remove",
+        "purpose": "Delete a bundle"
+      },
+      {
+        "method": "POST",
+        "path": "/admin/bundles/clone",
+        "purpose": "Clone a bundle"
+      },
+      {
+        "method": "POST",
+        "path": "/admin/bundles/bulk-status",
+        "purpose": "Bulk enable/disable bundles"
+      },
+      {
+        "method": "GET",
+        "path": "/admin/bundles/items",
+        "purpose": "List bundle items"
+      },
+      {
+        "method": "POST",
+        "path": "/admin/bundles/items/save",
+        "purpose": "Save bundle items"
+      },
+      {
+        "method": "GET",
+        "path": "/admin/bundles/tiers",
+        "purpose": "List bundle tiers"
+      },
+      {
+        "method": "POST",
+        "path": "/admin/bundles/tiers/save",
+        "purpose": "Save bundle tiers"
+      },
+      {
+        "method": "GET",
+        "path": "/admin/purchase-history",
+        "purpose": "List purchase history"
+      }
+    ],
+    "widget": [
+      {
+        "method": "GET",
+        "path": "/widget/bundle",
+        "purpose": "Fetch bundle config for storefront widget"
+      },
+      {
+        "method": "POST",
+        "path": "/widget/bundle/validate",
+        "purpose": "Validate a bundle selection"
+      },
+      {
+        "method": "POST",
+        "path": "/widget/cart/add",
+        "purpose": "Add bundle to cart with discount"
+      }
+    ]
+  }
+}

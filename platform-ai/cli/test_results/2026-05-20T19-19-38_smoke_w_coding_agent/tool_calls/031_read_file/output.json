@@ -1,0 +1,8 @@
+{
+  "content": "        await applyBundleHealthEvaluation(evaluation, firstAffectedVariant ?? null);\n        console.log(\n          { topic: \"products/delete\", bundleId, evaluation: evaluation.event_kind },\n          \"bundle health updated after product deletion\"\n        );\n      }\n    }\n  },\n};",
+  "total_lines": 279,
+  "returned_lines": [
+    270,
+    279
+  ]
+}

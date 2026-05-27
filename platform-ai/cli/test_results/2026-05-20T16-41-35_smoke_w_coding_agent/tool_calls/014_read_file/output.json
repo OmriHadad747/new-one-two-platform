@@ -1,0 +1,8 @@
+{
+  "content": "# Runtime example: `shopify_storefront`\n\nCanonical working snippet. Adapt the names but preserve the shape \u2014 imports, error handling, contract checks.\n\n```ts\nimport { shopifyClientFor } from \"../lib/shopify.js\";\n\nconst shopify = await shopifyClientFor(req.platform!);\n\n// Public storefront data (uses a separate, public-scoped token minted\n// by platform-back at OAuth time).\nconst data = await shopify.storefront<{\n  product: { title: string; handle: string } | null;\n}>(\n  `query Lookup($handle: String!) {\n     product(handle: $handle) { title handle }\n   }`,\n  { handle: \"blue-widget\" },\n);\n```",
+  "total_lines": 20,
+  "returned_lines": [
+    0,
+    20
+  ]
+}

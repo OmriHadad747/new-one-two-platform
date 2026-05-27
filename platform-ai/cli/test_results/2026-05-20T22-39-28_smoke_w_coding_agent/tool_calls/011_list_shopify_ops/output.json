@@ -1,0 +1,11 @@
+{
+  "cluster": "product",
+  "surface": "storefront",
+  "queries": [
+    "product(id: ID, handle: String): Product",
+    "productRecommendations(productId: ID, productHandle: String, intent: ProductRecommendationIntent): [Product!]",
+    "productTags(first: Int!): StringConnection!",
+    "productTypes(first: Int!): StringConnection!"
+  ],
+  "mutations": []
+}

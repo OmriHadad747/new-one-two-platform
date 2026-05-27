@@ -1,0 +1,64 @@
+{
+  "todos": [
+    {
+      "content": "Write scaffold/app.json (spine)",
+      "status": "in_progress",
+      "activeForm": "app.json"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts (spine)",
+      "status": "pending",
+      "activeForm": "contracts.ts"
+    },
+    {
+      "content": "Run tsc after spine to catch early errors",
+      "status": "pending",
+      "activeForm": "tsc"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts (bundle CRUD, items, tiers, purchase history)",
+      "status": "pending",
+      "activeForm": "admin routes"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts (bundle fetch, validate, cart-add)",
+      "status": "pending",
+      "activeForm": "widget routes"
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts (orders/paid, inventory_levels/update, variants/in_stock, variants/out_of_stock, products/delete)",
+      "status": "pending",
+      "activeForm": "webhook handlers"
+    },
+    {
+      "content": "Write scaffold/src/lib/bundle-health.ts (evaluate and apply bundle health)",
+      "status": "pending",
+      "activeForm": "lib/bundle-health.ts"
+    },
+    {
+      "content": "Write scaffold/src/lib/discount.ts (apply discount via Shopify Admin API)",
+      "status": "pending",
+      "activeForm": "lib/discount.ts"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts (admin panel UI)",
+      "status": "pending",
+      "activeForm": "admin/ui.ts"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts (storefront widget)",
+      "status": "pending",
+      "activeForm": "widget/widget.ts"
+    },
+    {
+      "content": "Run tsc and fix all errors",
+      "status": "pending",
+      "activeForm": "tsc"
+    },
+    {
+      "content": "Call done()",
+      "status": "pending",
+      "activeForm": "done"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "todos": [
+    {
+      "content": "Write scaffold/app.json (database tables, routes, webhooks)",
+      "status": "completed",
+      "activeForm": "spine"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts (all shared types)",
+      "status": "completed",
+      "activeForm": "spine"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts (all admin routes)",
+      "status": "completed",
+      "activeForm": "body"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts (widget routes)",
+      "status": "completed",
+      "activeForm": "body"
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts (orders/paid, variants/out_of_stock, variants/in_stock, products/delete)",
+      "status": "completed",
+      "activeForm": "body"
+    },
+    {
+      "content": "Write scaffold/src/lib/bundle-health.ts (health evaluation logic)",
+      "status": "completed",
+      "activeForm": "body"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts (admin panel UI)",
+      "status": "completed",
+      "activeForm": "body"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts (storefront widget)",
+      "status": "completed",
+      "activeForm": "body"
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "completed",
+      "activeForm": "verify"
+    },
+    {
+      "content": "Call done()",
+      "status": "in_progress",
+      "activeForm": "done"
+    }
+  ]
+}

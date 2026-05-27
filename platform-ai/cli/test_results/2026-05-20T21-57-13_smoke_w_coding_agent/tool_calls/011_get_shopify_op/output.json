@@ -1,0 +1,116 @@
+{
+  "args": [
+    {
+      "name": "id",
+      "required": false,
+      "type": "ID"
+    },
+    {
+      "name": "handle",
+      "required": false,
+      "type": "String"
+    }
+  ],
+  "examples": [
+    {
+      "query": "query Products @inContext(country: GB) {\n  woolSweater: product(handle: \"wool-sweater\") {\n    title\n  }\n  alarmClock: product(handle: \"alarm-clock\") {\n    title\n  }\n  products(first: 2) {\n    nodes {\n      title\n    }\n  }\n}",
+      "response": {
+        "alarmClock": null,
+        "products": {
+          "nodes": [
+            {
+              "title": "Wool sweater"
+            }
+          ]
+        },
+        "woolSweater": {
+          "title": "Wool sweater"
+        }
+      },
+      "scenario_title": "Load products which are published in a given context",
+      "variables": null
+    },
+    {
+      "query": "query ProductTitle @inContext(country: CA, language: FR) {\n  product(handle: \"wool-sweater\") {\n    title\n    description\n  }\n}",
+      "response": {
+        "product": {
+          "description": "C\u2019est tr\u00e8s chaud!",
+          "title": "Chandail en laine"
+        }
+      },
+      "scenario_title": "Load translated and localized content for a product",
+      "variables": null
+    },
+    {
+      "query": "query getProductById($id: ID!) {\n  product(id: $id) {\n    title\n  }\n}",
+      "response": {
+        "product": {
+          "title": "Camper Van"
+        }
+      },
+      "scenario_title": "Retrieve a single product",
+      "variables": {
+        "id": "gid://shopify/Product/929898465"
+      }
+    },
+    {
+      "query": "query ProductPricing @inContext(country: CA) {\n  product(handle: \"wool-sweater\") {\n    variants(first: 1) {\n      nodes {\n        price {\n          amount\n          currencyCode\n        }\n      }\n    }\n  }\n}",
+      "response": {
+        "product": {
+          "variants": {
+            "nodes": [
+              {
+                "price": {
+                  "amount": "90.0",
+                  "currencyCode": "CAD"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "scenario_title": "Retrieve local prices for a product",
+      "variables": null
+    },
+    {
+      "query": "query getProductMedia($id: ID!) {\n  product(id: $id) {\n    id\n    media(first: 10) {\n      edges {\n        node {\n          mediaContentType\n          alt\n          ...mediaFieldsByType\n        }\n      }\n    }\n  }\n}\n\nfragment mediaFieldsByType on Media {\n  ... on ExternalVideo {\n    id\n    embeddedUrl\n  }\n  ... on MediaImage {\n    image {\n      url\n    }\n  }\n  ... on Model3d {\n    sources {\n      url\n      mimeType\n      format\n      filesize\n    }\n  }\n  ... on Video {\n    sources {\n      url\n      mimeType\n      format\n      height\n      width\n    }\n  }\n}",
+      "response": {
+        "product": {
+          "id": "gid://shopify/Product/929898465",
+          "media": {
+            "edges": [
+              {
+                "node": {
+                  "alt": "",
+                  "image": {
+                    "url": "https://cdn.shopify.com/s/files/1/0003/2595/3821/products/draft58.jpg?v=1773111786"
+                  },
+                  "mediaContentType": "IMAGE"
+                }
+              },
+              {
+                "node": {
+                  "alt": "",
+                  "image": {
+                    "url": "https://cdn.shopify.com/s/files/1/0003/2595/3821/products/draft59.jpg?v=1773111786"
+                  },
+                  "mediaContentType": "IMAGE"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "scenario_title": "Retrieve product media",
+      "variables": {
+        "id": "gid://shopify/Product/929898465"
+      }
+    }
+  ],
+  "inputTypesSdl": {},
+  "isConnection": false,
+  "kind": "query",
+  "returnTypeName": "Product",
+  "returnTypeSdl": "type Product implements HasMetafields & Node & OnlineStorePublishable & Trackable {\n  adjacentVariants(selectedOptions: [SelectedOptionInput!], ignoreUnknownOptions: Boolean, caseInsensitiveMatch: Boolean): [ProductVariant!]!\n  availableForSale: Boolean!\n  category: TaxonomyCategory\n  collections(first: Int, after: String, last: Int, before: String, reverse: Boolean): CollectionConnection!\n  compareAtPriceRange: ProductPriceRange!\n  createdAt: DateTime!\n  description(truncateAt: Int): String!\n  descriptionHtml: HTML!\n  encodedVariantAvailability: String\n  encodedVariantExistence: String\n  featuredImage: Image\n  handle: String!\n  id: ID!\n  images(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ProductImageSortKeys): ImageConnection!\n  isGiftCard: Boolean!\n  media(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ProductMediaSortKeys): MediaConnection!\n  metafield(namespace: String, key: String!): Metafield\n  metafields(identifiers: [HasMetafieldsIdentifier!]!): [Metafield]!\n  onlineStoreUrl: URL\n  options(first: Int): [ProductOption!]!\n  priceRange: ProductPriceRange!\n  productType: String!\n  publishedAt: DateTime!\n  requiresSellingPlan: Boolean!\n  selectedOrFirstAvailableVariant(selectedOptions: [SelectedOptionInput!], ignoreUnknownOptions: Boolean, caseInsensitiveMatch: Boolean): ProductVariant\n  sellingPlanGroups(first: Int, after: String, last: Int, before: String, reverse: Boolean): SellingPlanGroupConnection!\n  seo: SEO!\n  tags: [String!]!\n  title: String!\n  totalInventory: Int\n  trackingParameters: String\n  updatedAt: DateTime!\n  variantBySelectedOptions(selectedOptions: [SelectedOptionInput!]!, ignoreUnknownOptions: Boolean, caseInsensitiveMatch: Boolean): ProductVariant\n  variants(first: Int, after: String, last: Int, before: String, reverse: Boolean, sortKey: ProductVariantSortKeys): ProductVariantConnection!\n  variantsCount: Count\n  vendor: String!\n}",
+  "userErrorsField": null
+}

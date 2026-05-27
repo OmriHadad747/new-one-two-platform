@@ -1,0 +1,8 @@
+{
+  "content": "      'healthy'\n    )\n    RETURNING id\n  `;\n\n  console.log({ requestId: req.platform!.requestId, bundleId: row.id }, \"bundle created\");\n  const response: CreateBundleResponse = { bundle_id: row.id, status: \"created\" };\n  res.status(201).json(response);\n});\n\n// \u2500\u2500\u2500 PUT /admin/bundles/update \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nadminRouter.put(\"/admin/bundles/update\", async (req: Request, res: Response) => {\n  const body = req.body as UpdateBundleRequest;\n\n  if (!body.bundle_id) {\n    res.status(400).json({ error: \"bundle_id is required\" });\n    return;\n  }\n\n  // Check if bundle exists",
+  "total_lines": 591,
+  "returned_lines": [
+    125,
+    145
+  ]
+}

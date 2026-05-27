@@ -1,0 +1,59 @@
+{
+  "todos": [
+    {
+      "content": "Write scaffold/app.json (database schema, routes, webhooks)",
+      "status": "completed",
+      "activeForm": "app.json"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts (all shared types, interfaces, branded IDs)",
+      "status": "completed",
+      "activeForm": "contracts.ts"
+    },
+    {
+      "content": "Write scaffold/src/lib/bundle-health.ts (bundle health evaluation logic)",
+      "status": "in_progress",
+      "activeForm": "lib bundle-health"
+    },
+    {
+      "content": "Write scaffold/src/lib/bundle-discount.ts (discount/tier computation logic)",
+      "status": "pending",
+      "activeForm": "lib bundle-discount"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts (all admin route handlers)",
+      "status": "pending",
+      "activeForm": "admin routes"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts (widget route handlers)",
+      "status": "pending",
+      "activeForm": "widget routes"
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts (orders/paid, variants/out_of_stock, variants/in_stock, products/delete)",
+      "status": "pending",
+      "activeForm": "webhook handlers"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts (admin panel UI)",
+      "status": "pending",
+      "activeForm": "admin UI"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts (storefront widget)",
+      "status": "pending",
+      "activeForm": "widget UI"
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "tsc"
+    },
+    {
+      "content": "Call done()",
+      "status": "pending",
+      "activeForm": "done"
+    }
+  ]
+}

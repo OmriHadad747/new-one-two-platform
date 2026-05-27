@@ -1,0 +1,16 @@
+{
+  "errors": [
+    {
+      "file": "src/routes/admin.ts",
+      "line": 425,
+      "col": 13,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook.ts",
+      "line": 32,
+      "col": 19,
+      "message": "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ \"orders/paid\": (payload: OrdersPaidPayload, _req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>) => Promise<...>; \"inventory_levels/update\": (payload: InventoryLevelUpdatePayload, _req: Request<...>) => Promise<...>; \"products/update\": (payload: ProductUpdatePayload, _req: Request<...>) => Pro...'."
+    }
+  ]
+}

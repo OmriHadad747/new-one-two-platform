@@ -1,0 +1,54 @@
+{
+  "todos": [
+    {
+      "content": "Write scaffold/app.json (spine)",
+      "status": "in_progress",
+      "activeForm": "app.json"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts (spine)",
+      "status": "pending",
+      "activeForm": "contracts.ts"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts",
+      "status": "pending",
+      "activeForm": "admin route"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts",
+      "status": "pending",
+      "activeForm": "widget route"
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts",
+      "status": "pending",
+      "activeForm": "webhook handlers"
+    },
+    {
+      "content": "Write scaffold/src/lib/bundle-health.ts (shared health logic)",
+      "status": "pending",
+      "activeForm": "lib"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts (admin panel)",
+      "status": "pending",
+      "activeForm": "admin UI"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts (storefront widget)",
+      "status": "pending",
+      "activeForm": "widget UI"
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "tsc"
+    },
+    {
+      "content": "Call done()",
+      "status": "pending",
+      "activeForm": "done"
+    }
+  ]
+}

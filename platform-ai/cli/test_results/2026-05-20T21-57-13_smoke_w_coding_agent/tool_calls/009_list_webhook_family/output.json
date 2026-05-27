@@ -1,0 +1,13 @@
+{
+  "prefix": "variants",
+  "topics": [
+    {
+      "topic": "variants/in_stock",
+      "description": "Occurs whenever a variant becomes in stock. Online channels receive this webhook only when the variant becomes in stock online."
+    },
+    {
+      "topic": "variants/out_of_stock",
+      "description": "Occurs whenever a variant becomes out of stock. Online channels receive this webhook only when the variant becomes out of stock online."
+    }
+  ]
+}

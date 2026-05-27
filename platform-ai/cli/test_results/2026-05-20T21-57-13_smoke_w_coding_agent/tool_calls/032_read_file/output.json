@@ -1,0 +1,8 @@
+{
+  "content": "          SELECT * FROM bundle_tiers WHERE bundle_id = ${item.bundle_id}\n        `;\n        const bundleRow = await sql<BundleRow[]>`\n          SELECT * FROM bundles WHERE id = ${item.bundle_id}\n        `;\n\n        if (bundleRow.length === 0) continue;\n\n        const healthResult = evaluateBundleHealth(\n          item.bundle_id,\n          bundleRow[0].mode,\n          allItems,\n          allTiers,\n          variantId\n        );\n\n        // Only apply health status change if something actually changed\n        if (healthResult.new_health_status !== bundleRow[0].health_status ||\n            healthResult.should_disable) {\n          await applyBundleHealthResult(healthResult);\n          console.log(\n            {\n              topic: \"products/update\",\n              bundleId: item.bundle_id,\n              variantId,\n              newHealth: healthResult.new_health_status,\n            },\n            \"bundle health updated\"\n          );\n        }",
+  "total_lines": 341,
+  "returned_lines": [
+    230,
+    260
+  ]
+}

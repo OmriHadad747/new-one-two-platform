@@ -33,7 +33,6 @@ from subagents.w_coding_agent.tools import (
     call_tool,
 )
 
-
 # ── Defaults ────────────────────────────────────────────────────────────────
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -101,7 +100,9 @@ def _log_tool_call(
         f.write(json.dumps(manifest_line) + "\n")
 
 
-def _cli_line(idx: int, name: str, tool_input: Dict[str, Any], result: Dict[str, Any]) -> str:
+def _cli_line(
+    idx: int, name: str, tool_input: Dict[str, Any], result: Dict[str, Any]
+) -> str:
     """One-line CLI summary: '[003] write_file   scaffold/app.json ✓'"""
     summary = ""
     if name in ("read_file", "write_file"):

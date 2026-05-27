@@ -1,0 +1,8 @@
+{
+  "content": "import type { JobsMap } from \"../lib/cron-runner.js\";\n\n// Template stub \u2014 present so server.ts's dynamic import type-resolves at\n// build time even on handlers that declare no cron schedule.\n//\n// Apps with cron: the generator REPLACES this file with a real jobs map.\n// Apps without cron: this file ships as-is; ENABLE_CRON_RUNNER stays false\n// so the cron runner never reads it.\n\nexport const jobs: JobsMap = {};",
+  "total_lines": 10,
+  "returned_lines": [
+    0,
+    10
+  ]
+}

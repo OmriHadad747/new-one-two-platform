@@ -1,0 +1,84 @@
+{
+  "todos": [
+    {
+      "content": "Write scaffold/app.json with full schema (tables, routes, webhooks)",
+      "status": "completed",
+      "activeForm": "spine"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts with all shared types",
+      "status": "in_progress",
+      "activeForm": "spine"
+    },
+    {
+      "content": "Read component_rules/db.md before finalizing schema",
+      "status": "completed",
+      "activeForm": "reference"
+    },
+    {
+      "content": "Read component_rules/backend.md before writing route handlers",
+      "status": "pending",
+      "activeForm": "reference"
+    },
+    {
+      "content": "Read component_rules/webhooks.md before writing webhook handlers",
+      "status": "pending",
+      "activeForm": "reference"
+    },
+    {
+      "content": "Read component_rules/admin.md before writing admin UI",
+      "status": "pending",
+      "activeForm": "reference"
+    },
+    {
+      "content": "Read component_rules/storefront.md before writing widget",
+      "status": "pending",
+      "activeForm": "reference"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts (all admin routes)",
+      "status": "pending",
+      "activeForm": "backend"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts (widget routes)",
+      "status": "pending",
+      "activeForm": "backend"
+    },
+    {
+      "content": "Write scaffold/src/webhooks/orders-paid.ts",
+      "status": "pending",
+      "activeForm": "webhook"
+    },
+    {
+      "content": "Write scaffold/src/webhooks/inventory-levels.ts",
+      "status": "pending",
+      "activeForm": "webhook"
+    },
+    {
+      "content": "Write scaffold/src/webhooks/products-delete.ts",
+      "status": "pending",
+      "activeForm": "webhook"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts (admin embedded panel)",
+      "status": "pending",
+      "activeForm": "admin"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts (storefront widget)",
+      "status": "pending",
+      "activeForm": "storefront"
+    },
+    {
+      "content": "Run tsc and fix all errors",
+      "status": "pending",
+      "activeForm": "verify"
+    },
+    {
+      "content": "Call done()",
+      "status": "pending",
+      "activeForm": "done"
+    }
+  ]
+}
