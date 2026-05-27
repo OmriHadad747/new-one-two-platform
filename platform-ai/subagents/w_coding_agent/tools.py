@@ -53,6 +53,9 @@ class RunnerContext:
     run_dir: Path
     todos: List[Dict[str, str]] = field(default_factory=list)
     done_called: bool = False
+    # The validated HLD plan, for the done()-gate micro-validators (intent
+    # + aim). Set by run_coding_agent; None when running tools standalone.
+    plan: Optional[Dict[str, Any]] = None
 
 
 # ── Write allowlist ─────────────────────────────────────────────────────────

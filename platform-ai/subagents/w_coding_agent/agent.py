@@ -76,6 +76,7 @@ def run_coding_agent(
         repo_root=REPO_ROOT,
         work_dir=work_dir,
         run_dir=run_dir,
+        plan=plan,
     )
 
     system_prompt = build_full_system_prompt()

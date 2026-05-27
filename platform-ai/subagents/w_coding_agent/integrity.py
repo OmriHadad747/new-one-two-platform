@@ -117,4 +117,7 @@ def run_done_gate(ctx: "RunnerContext") -> List[str]:
             for e in tsc_errors[:10]
         ]
 
-    return []
+    # Structure + types are sound — run the semantic micro-validators.
+    from subagents.w_coding_agent.validators import run_validators
+
+    return run_validators(ctx)
