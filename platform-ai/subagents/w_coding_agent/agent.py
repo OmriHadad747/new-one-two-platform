@@ -41,7 +41,10 @@ class CodingAgentResult:
     work_dir: Path           # the scaffold/ dir is at work_dir/scaffold
     run_dir: Path            # logs + tool_calls
     todos: list              # final todo list from the agent
-    incomplete_reason: Optional[str] = None  # set if done() failed integrity checks (TODO)
+    incomplete_reason: Optional[str] = None  # set if the run ended without a clean done()
+    # Token usage of the done()-gate micro-validators (Haiku), summed over
+    # the run. The coding agent's own tokens live in `run_result`.
+    validator_usage: Optional[Dict[str, int]] = None
 
 
 def run_coding_agent(
@@ -92,12 +95,22 @@ def run_coding_agent(
         on_tool_call=on_tool_call,
     )
 
+    if result.done_called:
+        incomplete_reason = None
+    elif result.hit_turn_cap:
+        incomplete_reason = "hit the turn cap before the done() gate passed"
+    else:
+        incomplete_reason = "the agent stopped before calling done()"
+
+    _persist_token_usage(run_dir, result, ctx.validator_usage)
+
     return CodingAgentResult(
         run_result=result,
         work_dir=work_dir,
         run_dir=run_dir,
         todos=ctx.todos,
-        incomplete_reason=None,  # populated once integrity.py lands
+        incomplete_reason=incomplete_reason,
+        validator_usage=ctx.validator_usage,
     )
 
 
@@ -146,3 +159,22 @@ def _persist_prompts(run_dir: Path, system: str, user: str) -> None:
     inputs_dir.mkdir(parents=True, exist_ok=True)
     (inputs_dir / "system.txt").write_text(system)
     (inputs_dir / "user.txt").write_text(user)
+
+
+def _persist_token_usage(
+    run_dir: Path, run_result: RunResult, validator_usage: Dict[str, int]
+) -> None:
+    """Write `token_usage.json` so each run yields a measurable cost delta —
+    the coding agent's own loop tokens alongside the done()-gate validators'
+    Haiku tokens. (HLD tokens are reported separately by run_hld_agent.)"""
+    payload = {
+        "coding_agent": {
+            "input_tokens": run_result.total_input_tokens,
+            "output_tokens": run_result.total_output_tokens,
+            "cache_read_tokens": run_result.cache_read_tokens,
+            "cache_creation_tokens": run_result.cache_creation_tokens,
+            "turns_used": run_result.turns_used,
+        },
+        "validators": validator_usage,
+    }
+    (run_dir / "token_usage.json").write_text(json.dumps(payload, indent=2))

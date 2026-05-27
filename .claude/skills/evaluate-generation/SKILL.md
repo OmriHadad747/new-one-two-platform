@@ -30,6 +30,9 @@ Do not restate them here; grade against them.
   `scaffold/src/types/contracts.ts` — what was built.
 - `manifest.jsonl` / `tool_calls/` — optional; use to confirm process
   (e.g. the agent fetched a topic's payload before subscribing).
+- `token_usage.json` — optional; the coding agent's loop tokens + the
+  done()-gate validators' tokens. Report them in the Token cost section so
+  runs are comparable on cost as well as quality.
 
 ## Method
 
@@ -98,6 +101,13 @@ Do not restate them here; grade against them.
 | admin | pass/fail | ... |
 | widget | pass/fail | ... |
 | db | pass/fail | ... |
+
+## Token cost
+
+<from token_usage.json if present, else "not recorded">
+- coding agent: <input> in / <output> out (<turns> turns)
+- validators: <input> in / <output> out
+- cache reads: <coding cache_read + validator cache_read>
 
 ## Notes
 

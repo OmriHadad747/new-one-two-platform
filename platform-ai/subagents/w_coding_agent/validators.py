@@ -227,6 +227,7 @@ def run_validators(
                 tool_input_schema=schema,
                 cache_ttl="1h",
             )
+            _accumulate_usage(ctx, result)
             findings = Findings.model_validate(result.structured_output).findings
         except Exception as e:  # fail-open — infra error must not block done()
             if on_tool_call is not None:
@@ -245,6 +246,16 @@ def run_validators(
             )
 
     return blocking
+
+
+def _accumulate_usage(ctx: "RunnerContext", result: Any) -> None:
+    """Sum one validator call's tokens onto ctx.validator_usage (the run's
+    running total across every done() invocation)."""
+    u = ctx.validator_usage
+    u["input_tokens"] += getattr(result, "input_tokens", 0) or 0
+    u["output_tokens"] += getattr(result, "output_tokens", 0) or 0
+    u["cache_read_tokens"] += getattr(result, "cache_read_tokens", 0) or 0
+    u["cache_creation_tokens"] += getattr(result, "cache_creation_tokens", 0) or 0
 
 
 def _build_user_message(plan_json: str, files: Dict[str, str]) -> str:

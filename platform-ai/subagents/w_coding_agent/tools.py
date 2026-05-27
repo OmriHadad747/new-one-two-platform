@@ -56,6 +56,16 @@ class RunnerContext:
     # The validated HLD plan, for the done()-gate micro-validators (intent
     # + aim). Set by run_coding_agent; None when running tools standalone.
     plan: Optional[Dict[str, Any]] = None
+    # Token usage accumulated across the done()-gate micro-validators
+    # (Haiku calls), summed over every done() invocation in the run.
+    validator_usage: Dict[str, int] = field(
+        default_factory=lambda: {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+        }
+    )
 
 
 # ── Write allowlist ─────────────────────────────────────────────────────────
