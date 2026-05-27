@@ -18,8 +18,27 @@ through `bridge`. Anything touching the DOM / network / storage outside
 
 ## Output rules
 
-- **Single export**: `export function mount(container, bridge) { ... }`.
-  No default export, no other named exports, NO `import` statements.
+- **Type the SDK** — this file IS type-checked. Start with exactly one
+  type-only import and annotate `bridge` with `AdminBridge`:
+
+  ```ts
+  import type { AdminBridge } from "@platform/admin-sdk";
+
+  export function mount(container: HTMLElement, bridge: AdminBridge): void {
+    // ...
+  }
+  ```
+
+  `import type` is erased at build, so it does NOT violate the sandbox's
+  no-runtime-import rule. **Never type `bridge` as `any`** — that disables
+  the type-check and ships bugs; the gate rejects `bridge: any`. `bridge.call`
+  returns `Promise<unknown>` — cast each result to the matching response type
+  from `contracts.ts`. For a picked resource, a variant's gid is
+  `variants[i].id`; there is no `product_id` on a `PickedResource` (tsc
+  rejects it).
+- **Single runtime export**: `export function mount(...)`. No default
+  export, no other named exports, and no *runtime* imports (the one
+  `import type` above is the only import allowed).
 - **Vanilla DOM only**: no React, no JSX, no framework.
 - **No** `setInterval`, `eval`, `new Function`. `setTimeout` only for
   short debounce/throttle (≤500ms literal) OR documented async polling.

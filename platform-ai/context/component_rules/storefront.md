@@ -17,8 +17,26 @@ through `host`. The App Block sandbox is STRICT — stricter than admin.
 
 ## Output rules
 
-- **Single export**: `export function mount(container, host) { ... }`.
-  No default export, no other named exports, NO `import` statements.
+- **Type the SDK** — this file IS type-checked. Start with exactly one
+  type-only import and annotate `host` with `Host`:
+
+  ```ts
+  import type { Host } from "@platform/storefront-sdk";
+
+  export function mount(container: HTMLElement, host: Host): void {
+    // ...
+  }
+  ```
+
+  `import type` is erased at build, so it does NOT violate the sandbox's
+  no-runtime-import rule. **Never type `host` as `any`** — that disables the
+  type-check and ships bugs; the gate rejects `host: any`. `host.call` and
+  `host.storefront` return `Promise<unknown>` — cast each result to the
+  matching response type from `contracts.ts` (for `host.call`) or the Ajax
+  catalog shape (for `host.storefront`).
+- **Single runtime export**: `export function mount(...)`. No default
+  export, no other named exports, and no *runtime* imports (the one
+  `import type` above is the only import allowed).
 - **Vanilla DOM only**: no React, no JSX, no framework.
 - **No** `setInterval`, `eval`, `new Function`. `setTimeout` only for
   short debounce/throttle (≤500ms literal).

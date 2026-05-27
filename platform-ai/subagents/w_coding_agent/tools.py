@@ -344,12 +344,19 @@ def tool_get_webhook_topic(ctx: RunnerContext, name: str) -> Dict[str, Any]:
 
 
 def tool_run_tsc(ctx: RunnerContext) -> Dict[str, Any]:
-    """Type-check the assembled scaffold. Overlays scaffold/src on top of
-    the platform template's src, then runs `npx tsc --noEmit`."""
-    from subagents.w_coding_agent.tsc_runner import run_tsc_on_scaffold
+    """Type-check the assembled scaffold. Two passes, merged:
+      - backend: overlays scaffold/src on the platform template's src.
+      - UI: scaffold/{admin,widget}/*.ts against a DOM tsconfig with the
+        SDK contracts (AdminBridge / Host) resolvable.
+    Returns `npx tsc --noEmit` errors from both."""
+    from subagents.w_coding_agent.tsc_runner import (
+        run_tsc_on_scaffold,
+        run_tsc_on_ui_scaffold,
+    )
 
     try:
         errors = run_tsc_on_scaffold(ctx.repo_root, ctx.work_dir)
+        errors = errors + run_tsc_on_ui_scaffold(ctx.repo_root, ctx.work_dir)
     except subprocess.TimeoutExpired as e:
         return {
             "error": f"tsc timed out after {e.timeout}s — investigate by hand",
@@ -554,9 +561,12 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "name": "run_tsc",
         "description": (
-            "Type-check the assembled scaffold (template + your generated "
-            "files). Returns a list of errors with file, line, message. "
-            "Empty list means clean. Call proactively, not only at the end."
+            "Type-check the assembled scaffold. Covers BOTH the backend "
+            "(template + your src/) AND the UI surfaces (admin/ui.ts against "
+            "AdminBridge, widget/widget.ts against Host). Returns errors with "
+            "file, line, message; empty list means clean. The UI mount param "
+            "must be typed with the SDK type (never `any`) or it flags. Call "
+            "proactively, not only at the end."
         ),
         "input_schema": {"type": "object", "properties": {}},
     },

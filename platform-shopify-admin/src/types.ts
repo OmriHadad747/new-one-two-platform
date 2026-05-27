@@ -124,17 +124,22 @@ export interface PickResourceOptions {
 }
 
 /**
- * One resource entry from `bridge.pickResource()`. Shape varies by
- * `type` — every entry has `id` + `title`, beyond that you cast to
- * the resource-specific subtype.
+ * One resource entry from `bridge.pickResource()`.
+ *
+ * Intentionally tight (no catch-all index signature) so admin modules that
+ * read a field the picker does not return — e.g. `p.product_id` on a picked
+ * variant — fail type-checking at generation time instead of silently
+ * writing a placeholder. When picking variants, Shopify returns the parent
+ * PRODUCTS with the chosen variants nested under `variants`; a variant's own
+ * gid is `variants[i].id`, and its product is the parent entry — there is no
+ * `product_id` field. Need a field not listed here? Cast the entry to the
+ * resource-specific shape at the call site rather than widening this type.
  */
 export interface PickedResource {
   id: string;            // gid://shopify/<Type>/<numeric_id>
   title?: string;
   handle?: string;
   variants?: PickedResource[];
-  // Shopify returns more fields per type — extend per usage.
-  [key: string]: unknown;
 }
 
 /**

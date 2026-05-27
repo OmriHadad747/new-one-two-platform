@@ -22,6 +22,7 @@ own type-checking configuration.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -31,6 +32,30 @@ from typing import Any, Dict, List
 
 TEMPLATE_REL = "platform-back/templates/handler"
 TSC_TIMEOUT_SECONDS = 90
+
+# ── UI (admin panel + storefront widget) type-check ──────────────────────────
+#
+# The backend pass above (run_tsc_on_scaffold) deliberately excludes
+# scaffold/{admin,widget}/*.ts — they run in the browser, not Node, so they
+# can't be checked against the backend's tsconfig. They were therefore never
+# type-checked at all, which is where whole-feature bugs hide. This second
+# pass checks them against a DOM tsconfig with the SDK contracts resolvable.
+#
+# SDK contracts (resolved via tsconfig `paths`, single source of truth):
+#   @platform/admin-sdk      → platform-shopify-admin/src/types.ts  (AdminBridge…)
+#   @platform/storefront-sdk → platform-ai/context/ui_types/storefront.ts (Host…)
+ADMIN_SDK_REL = "platform-shopify-admin/src/types.ts"
+STOREFRONT_SDK_REL = "platform-ai/context/ui_types/storefront.ts"
+
+# (scaffold-relative UI file, build-relative dest, SDK type the param must use)
+_UI_SURFACES = [
+    ("admin/ui.ts", "admin/ui.ts", "AdminBridge"),
+    ("widget/widget.ts", "widget/widget.ts", "Host"),
+]
+
+_MOUNT_SIG_RE = re.compile(
+    r"export\s+function\s+mount\s*\(\s*[^,)]+,\s*(?P<param>[A-Za-z_$][\w$]*)\s*:\s*(?P<type>[^,)]+)\)"
+)
 
 # Matches tsc's default error output:
 #   src/routes/widget.ts(42,5): error TS2304: Cannot find name 'Foo'.
@@ -125,3 +150,155 @@ def _parse_tsc_output(stdout: str, stderr: str) -> List[Dict[str, Any]]:
                 )
                 break
     return errors
+
+
+# ── UI type-check pass ───────────────────────────────────────────────────────
+
+
+def run_tsc_on_ui_scaffold(repo_root: Path, work_dir: Path) -> List[Dict[str, Any]]:
+    """Type-check scaffold/admin/ui.ts + scaffold/widget/widget.ts against a
+    DOM tsconfig with the SDK contracts resolvable. Returns the same
+    `{file, line, col, message}` rows as the backend pass. No-op (empty list)
+    when neither UI file exists (backend-only apps).
+
+    Two layers run:
+      1. A deterministic SDK-typing pre-check (the mount param must be typed
+         with the real SDK type, never `any` or untyped) — without it the
+         body type-check is vacuous, since `bridge: any` silences everything.
+      2. `tsc --noEmit` over the present UI files.
+    """
+    scaffold = work_dir / "scaffold"
+    present = [
+        (src_rel, dst_rel, sdk_type)
+        for (src_rel, dst_rel, sdk_type) in _UI_SURFACES
+        if (scaffold / src_rel).is_file()
+    ]
+    if not present:
+        return []
+
+    errors: List[Dict[str, Any]] = []
+
+    # Layer 1 — deterministic SDK-typing pre-check.
+    for src_rel, _dst_rel, sdk_type in present:
+        errors.extend(_check_ui_sdk_typing(scaffold / src_rel, src_rel, sdk_type))
+
+    # Layer 2 — tsc against a DOM config with the SDK contracts path-mapped.
+    template = repo_root / TEMPLATE_REL
+    node_modules = template / "node_modules"
+    if not node_modules.exists():
+        # Can't run tsc without the compiler; the pre-check still ran.
+        return errors
+
+    build = work_dir / "_tsc_ui"
+    _build_ui_dir(repo_root, scaffold, build, present)
+
+    try:
+        proc = subprocess.run(
+            ["npx", "--no-install", "tsc", "--noEmit", "-p", "tsconfig.json"],
+            cwd=build,
+            capture_output=True,
+            text=True,
+            timeout=TSC_TIMEOUT_SECONDS,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        errors.append(
+            {
+                "file": "ui",
+                "line": 0,
+                "col": 0,
+                "message": f"UI tsc could not run: {e!r}",
+            }
+        )
+        return errors
+
+    errors.extend(_parse_tsc_output(proc.stdout, proc.stderr))
+    return errors
+
+
+def _check_ui_sdk_typing(
+    path: Path, rel: str, sdk_type: str
+) -> List[Dict[str, Any]]:
+    """The mount() SDK param must be annotated with `sdk_type`, not `any` or
+    left untyped — otherwise the tsc pass checks nothing in the body."""
+    text = path.read_text()
+    m = _MOUNT_SIG_RE.search(text)
+    if not m:
+        return [
+            {
+                "file": rel,
+                "line": 1,
+                "col": 1,
+                "message": (
+                    "could not find `export function mount(container, "
+                    f"{sdk_type.lower()})` — the module must export exactly that."
+                ),
+            }
+        ]
+    line = text[: m.start()].count("\n") + 1
+    annotated = m.group("type").strip()
+    if annotated != sdk_type:
+        return [
+            {
+                "file": rel,
+                "line": line,
+                "col": 1,
+                "message": (
+                    f"mount's SDK parameter is typed `{annotated}` — it MUST be "
+                    f"`{sdk_type}` (import type from the SDK), never `any` or "
+                    "untyped, or the type-check is vacuous."
+                ),
+            }
+        ]
+    return []
+
+
+def _build_ui_dir(
+    repo_root: Path,
+    scaffold: Path,
+    build: Path,
+    present: List[tuple[str, str, str]],
+) -> None:
+    """Stage a fresh _tsc_ui/ build dir: node_modules symlink, copied SDK
+    contracts under sdk/, copied UI files, and a generated DOM tsconfig."""
+    if build.exists():
+        shutil.rmtree(build)
+    build.mkdir(parents=True)
+
+    template = repo_root / TEMPLATE_REL
+    (build / "node_modules").symlink_to(template / "node_modules")
+
+    # SDK contracts → build/sdk/* (copied so the build dir is self-contained;
+    # the source files remain the single source of truth).
+    sdk_dir = build / "sdk"
+    sdk_dir.mkdir()
+    shutil.copy2(repo_root / ADMIN_SDK_REL, sdk_dir / "admin.ts")
+    shutil.copy2(repo_root / STOREFRONT_SDK_REL, sdk_dir / "storefront.ts")
+
+    include: List[str] = []
+    for src_rel, dst_rel, _sdk_type in present:
+        dst = build / dst_rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(scaffold / src_rel, dst)
+        include.append(dst_rel)
+
+    tsconfig = {
+        "compilerOptions": {
+            "target": "ES2022",
+            "module": "ESNext",
+            "moduleResolution": "bundler",
+            "lib": ["ES2022", "DOM", "DOM.Iterable"],
+            "types": [],
+            "strict": True,
+            "exactOptionalPropertyTypes": True,
+            "noUncheckedIndexedAccess": True,
+            "skipLibCheck": True,
+            "noEmit": True,
+            "baseUrl": ".",
+            "paths": {
+                "@platform/admin-sdk": ["./sdk/admin"],
+                "@platform/storefront-sdk": ["./sdk/storefront"],
+            },
+        },
+        "include": include,
+    }
+    (build / "tsconfig.json").write_text(json.dumps(tsconfig, indent=2))

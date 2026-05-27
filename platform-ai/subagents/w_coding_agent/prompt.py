@@ -219,7 +219,11 @@ deprecation status.
 ──────────────────────────────────────────────────
 run_tsc() -> list of { file, line, col, message }
 ──────────────────────────────────────────────────
-Type-check the assembled scaffold. Empty list = clean.
+Type-check the assembled scaffold. Empty list = clean. Covers BOTH the
+backend (template + src/) AND the UI surfaces — `admin/ui.ts` is checked
+against `AdminBridge`, `widget/widget.ts` against `Host`. Those files MUST
+type their mount parameter with the SDK type (`import type` it); `bridge:
+any` / `host: any` is rejected. See the admin/storefront component rules.
 
 ──────────────────────────────────────────────────
 done() -> ok | { incomplete_reason }
