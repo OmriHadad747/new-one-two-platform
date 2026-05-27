@@ -1,9 +1,18 @@
 """
 Pydantic output schema for the HLD agent.
 
-The HLD agent emits a schema-agnostic, integration-agnostic plan. Anything
-that mentions a specific Shopify op, GraphQL field path, file path, or DB
-column belongs in the LLD plan, not here.
+The HLD agent reasons in two phases:
+  - Phase 1 (domain): a schema-agnostic data model, capabilities, triggers,
+    and contracts — the "would this change if Shopify became Stripe?" layer.
+  - Phase 2 (Shopify resolution): bind the domain plan to concrete Shopify
+    using the catalog tools — the webhook topic + per-signalField payload
+    bindings for each external event, and the resolved op (or ordered op
+    sequence for multi-step protocols) for each shopify-* capability.
+
+There is no downstream LLD agent; the coding agent implements directly
+against this plan, so the Phase-2 bindings are the contract that keeps it
+from guessing topics, ops, and payload field paths. DB columns and file
+paths are still out of scope (the coding agent owns those).
 
 Validation policy
 -----------------
@@ -93,11 +102,75 @@ class _StrictModel(BaseModel):
 # ── Triggers (discriminated union by `kind`) ──────────────────────────
 
 
+class PayloadBinding(_StrictModel):
+    """Phase-2 resolution of one semantic signalField to where it actually
+    comes from in the chosen Shopify webhook payload.
+
+    `source`:
+      - "payload"  — the value is a real field on the topic's payload;
+                     `payloadPath` is the dot-path (e.g. "id",
+                     "line_items[].variant_id"), verified via
+                     `get_webhook_topic`.
+      - "resolved" — the value is NOT on the payload and needs a follow-up
+                     lookup; `resolution` states it in one phrase (e.g.
+                     "resolve from inventory_item_id via the inventoryItem
+                     GraphQL query"). This is what makes the
+                     inventory_item_id → variant gap explicit at plan time.
+    """
+
+    signalField: str
+    source: Literal["payload", "resolved"]
+    payloadPath: Optional[str] = None
+    resolution: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _source_carries_its_detail(self) -> "PayloadBinding":
+        if self.source == "payload" and not self.payloadPath:
+            raise ValueError(
+                f"payloadBinding for '{self.signalField}' has source "
+                "'payload' but no payloadPath"
+            )
+        if self.source == "resolved" and not self.resolution:
+            raise ValueError(
+                f"payloadBinding for '{self.signalField}' has source "
+                "'resolved' but no resolution phrase"
+            )
+        return self
+
+
 class ExternalEventTrigger(_StrictModel):
     kind: Literal["external-event"]
     event: str
     signalFields: list[str]
     idempotency: str
+    # ── Phase-2 Shopify bindings ──
+    shopifyTopic: str
+    payloadBindings: list[PayloadBinding]
+
+    # Every signalField must have exactly the bindings it needs: each
+    # signalField is bound, and no binding references a field the trigger
+    # never declared. This is the structural half of "is this the right
+    # topic" — a signalField that can't be bound to the chosen topic's
+    # payload (and isn't a declared resolution hop) is a wrong-topic or
+    # missing-hop signal.
+    @model_validator(mode="after")
+    def _bindings_cover_signal_fields(self) -> "ExternalEventTrigger":
+        declared = set(self.signalFields)
+        bound = {b.signalField for b in self.payloadBindings}
+        missing = [s for s in self.signalFields if s not in bound]
+        if missing:
+            raise ValueError(
+                f"signalFields {missing} have no payloadBinding for topic "
+                f"'{self.shopifyTopic}'; bind each to a payload path or a "
+                "declared resolution hop"
+            )
+        stray = sorted(b.signalField for b in self.payloadBindings if b.signalField not in declared)
+        if stray:
+            raise ValueError(
+                f"payloadBindings {stray} reference fields not in "
+                f"signalFields {sorted(declared)}"
+            )
+        return self
 
 
 class ScheduleTrigger(_StrictModel):
@@ -121,16 +194,55 @@ Trigger = Annotated[
 # ── Capabilities ──────────────────────────────────────────────────────
 
 
+class ShopifyStep(_StrictModel):
+    """One resolved Shopify operation in a capability. A single-op capability
+    declares one step; a multi-step protocol declares an ordered list (e.g.
+    step 1 `discountCodeBasicCreate` produces a code, step 2 applies that
+    code to the cart). `produces`/`consumes` make the data flow between steps
+    explicit so the coding agent threads real ids instead of fabricating
+    them, and so the Shopify-effect validator can check the sequence was
+    honored."""
+
+    op: str
+    produces: Optional[str] = None
+    consumes: Optional[str] = None
+
+
 class Capability(_StrictModel):
     id: str
     description: str
     kind: Literal["read", "write", "compute", "notify"]
     dataNeeds: list[str]
     integration: Optional[Literal["shopify-admin", "shopify-storefront", "email"]]
+    # ── Phase-2 Shopify binding ──
+    # Resolved op(s) for shopify-admin / shopify-storefront capabilities,
+    # in execution order. Empty for compute / DB-only / email capabilities.
+    shopifySteps: list[ShopifyStep] = Field(default_factory=list)
     returnsList: bool = False
     touchesMoney: bool = False
     usesConfig: bool = False
     usesWorkflow: bool = False
+
+    # A shopify-* capability MUST resolve its op(s); a non-Shopify capability
+    # must not carry any. This is what makes "declared effect not realized"
+    # checkable downstream — the plan names the op the code must actually
+    # call.
+    @model_validator(mode="after")
+    def _shopify_steps_match_integration(self) -> "Capability":
+        is_shopify = self.integration in ("shopify-admin", "shopify-storefront")
+        if is_shopify and not self.shopifySteps:
+            raise ValueError(
+                f"capability '{self.id}' has integration '{self.integration}' "
+                "but no shopifySteps; resolve the Shopify op(s) it performs "
+                "via list_shopify_ops / get_shopify_op"
+            )
+        if not is_shopify and self.shopifySteps:
+            raise ValueError(
+                f"capability '{self.id}' declares shopifySteps but integration "
+                f"is '{self.integration}'; shopifySteps are only for "
+                "shopify-admin / shopify-storefront capabilities"
+            )
+        return self
 
 
 # ── Persistence ───────────────────────────────────────────────────────
