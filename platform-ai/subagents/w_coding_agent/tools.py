@@ -372,8 +372,16 @@ def tool_run_tsc(ctx: RunnerContext) -> Dict[str, Any]:
 
 
 def tool_done(ctx: RunnerContext) -> Dict[str, Any]:
-    """Declare completion. Final integrity checks run in the runner module
-    after the loop exits; this just flips the flag."""
+    """Declare completion. Runs the deterministic gate (structural checks +
+    tsc); only flips `done_called` when it passes. On failure the issues
+    come back as `incomplete_reason` and the loop continues so the agent
+    fixes them."""
+    from subagents.w_coding_agent.integrity import run_done_gate
+
+    issues = run_done_gate(ctx)
+    if issues:
+        return {"ok": False, "incomplete_reason": issues}
+
     ctx.done_called = True
     return {"ok": True}
 
