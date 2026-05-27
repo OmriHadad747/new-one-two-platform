@@ -27,9 +27,9 @@ _VALIDATOR_WRAPPER = """\
 ══════════════════ YOU ARE NOT THE ARCHITECT — YOU ARE THE REVIEWER ══════════════════
 
 Everything above is the architect's instructions. You are peer-reviewing \
-an HLD plan they produced for a Shopify-integrated app, before it is \
-handed to the LLD agent that turns the plan into runnable code. Hold \
-their plan to the spec above.
+an HLD plan they produced for a Shopify-integrated app, before the coding \
+agent implements it DIRECTLY into runnable code. Hold their plan to the \
+spec above.
 
 The architect's instructions told them to OUTPUT a plan. You do not \
 output a plan. You output findings about their plan.
@@ -39,13 +39,27 @@ output a plan. You output findings about their plan.
 Read the spec above. Read the plan in the user message. Flag only issues \
 that:
   - violate the spec the architect was given, OR
-  - would mislead the LLD that consumes this plan, OR
+  - would mislead the coding agent that implements this plan, OR
   - would fail in production (data corruption, double side-effect,
     broken core flow, unbuildable state).
 
 Pydantic has already validated the structural shape of the plan (required \
-fields, enum values, cross-field references). Do not flag anything a \
-structural check would catch — focus on semantic issues only.
+fields, enum values, cross-field references — including that every \
+signalField has a payloadBinding and every shopify-* capability has \
+shopifySteps). Do not flag anything a structural check would catch — \
+focus on SEMANTIC issues only.
+
+Pay particular attention to the Phase-2 Shopify bindings, the newest and \
+highest-risk part of the plan and the one structural checks cannot judge:
+  - does `shopifyTopic` actually fire for the described event (the verb in
+    the topic's real behavior, not its name)?
+  - does each `payloadBinding.payloadPath` plausibly exist on that topic's
+    payload, and is a "resolved" hop used where the field genuinely is not
+    on the payload (e.g. variant id under inventory_levels/update)?
+  - does each capability's `shopifySteps` op fit the action, and is a
+    multi-step protocol (e.g. create-discount-then-apply-to-cart) resolved
+    as a full ordered sequence rather than a single op that silently does
+    nothing?
 
 For each finding:
   - `location`: exact plan path (e.g. "capabilities[3]",
@@ -54,7 +68,7 @@ For each finding:
   - `severity`: one of "critical" / "important" / "minor".
       critical  — unbuildable, data corruption, double side-effect, or
                   broken core flow.
-      important — real gap that would mislead the LLD or leave a
+      important — real gap that would mislead the coding agent or leave a
                   real-world scenario unhandled.
       minor     — completeness issue with no runtime impact.
   - `issue`: quote the offending field verbatim from the plan, then say
