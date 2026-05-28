@@ -381,7 +381,14 @@ the tools.
 ── 2A. WEBHOOK TOPIC — for each external-event trigger ──
 
 Topic NAMES are misleading; the verb in a topic's DESCRIPTION matters \
-more than the verb in its name. Mandatory process:
+more than the verb in its name. And a topic's payload CONTAINING a field \
+is NOT the same as the topic FIRING when that field changes — a \
+parent-resource "updated" webhook often carries a child value in its \
+payload without firing when only that child value changes. Pick the topic \
+whose firing condition (what its description says it "Occurs on") IS the \
+change you must react to, not one that merely includes the value. If you \
+must react to several distinct changes, that is several triggers — do not \
+merge them into one. Mandatory process:
 
   1. Identify the resource cluster(s) that could carry the event. List
      MULTIPLE when relevant. NOTE: in Shopify, variants are NESTED inside
@@ -390,8 +397,9 @@ more than the verb in its name. Mandatory process:
      check BOTH `products` and `variants`.
   2. Call list_webhook_family("<cluster>") for each candidate and compare
      descriptions side-by-side.
-  3. Pick the topic whose description ACTUALLY matches the event. Put the
-     exact topic string in the trigger's `shopifyTopic`.
+  3. Pick the topic whose firing condition ACTUALLY matches the change you
+     must react to (not merely a topic whose payload carries the field).
+     Put the exact topic string in the trigger's `shopifyTopic`.
   4. Call get_webhook_topic("<topic>") to read the real payload schema.
 
 ── 2B. PAYLOAD BINDINGS — bind every signalField ──
