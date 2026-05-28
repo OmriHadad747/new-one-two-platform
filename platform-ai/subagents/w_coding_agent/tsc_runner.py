@@ -281,6 +281,16 @@ def _build_ui_dir(
         shutil.copy2(scaffold / src_rel, dst)
         include.append(dst_rel)
 
+    # contracts.ts is shared between backend and UI: the UI files import their
+    # request/response/row types from `../src/types/contracts.js`. Stage it so
+    # that import resolves here — without it the UI files fail with "cannot
+    # find module" and the agent is pushed to inline-duplicate the types.
+    contracts = scaffold / "src" / "types" / "contracts.ts"
+    if contracts.is_file():
+        dst = build / "src" / "types" / "contracts.ts"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(contracts, dst)
+
     tsconfig = {
         "compilerOptions": {
             "target": "ES2022",

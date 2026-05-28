@@ -36,7 +36,7 @@ from subagents.w_coding_agent.tools import (
 # ── Defaults ────────────────────────────────────────────────────────────────
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
-DEFAULT_MAX_TURNS = 50
+DEFAULT_MAX_TURNS = 80
 DEFAULT_MAX_TOKENS = 16384
 CACHE_TTL_BETA_HEADER = "extended-cache-ttl-2025-04-11"
 

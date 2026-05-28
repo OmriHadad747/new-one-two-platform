@@ -137,7 +137,7 @@ runner does the final integrity check.
 
 ─── Turn budget ───
 
-Hard cap: 60 turns. If you reach 55 without `done()`, conclude what
+Hard cap: 80 turns. If you reach 75 without `done()`, conclude what
 you can and call `done()` — the runner surfaces what's incomplete.
 
 

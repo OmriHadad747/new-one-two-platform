@@ -18,11 +18,12 @@ through `bridge`. Anything touching the DOM / network / storage outside
 
 ## Output rules
 
-- **Type the SDK** — this file IS type-checked. Start with exactly one
-  type-only import and annotate `bridge` with `AdminBridge`:
+- **Type the SDK** — this file IS type-checked. Annotate `bridge` with
+  `AdminBridge`:
 
   ```ts
   import type { AdminBridge } from "@platform/admin-sdk";
+  import type { ListBundlesResponse } from "../src/types/contracts.js";
 
   export function mount(container: HTMLElement, bridge: AdminBridge): void {
     // ...
@@ -36,9 +37,13 @@ through `bridge`. Anything touching the DOM / network / storage outside
   from `contracts.ts`. For a picked resource, a variant's gid is
   `variants[i].id`; there is no `product_id` on a `PickedResource` (tsc
   rejects it).
+- **Imports — type-only, two sources allowed**: the SDK
+  (`@platform/admin-sdk`) and the shared contracts
+  (`../src/types/contracts.js`) for request/response/row types. IMPORT the
+  contract types — do NOT re-declare them inline (inline copies drift from
+  the backend). No runtime imports.
 - **Single runtime export**: `export function mount(...)`. No default
-  export, no other named exports, and no *runtime* imports (the one
-  `import type` above is the only import allowed).
+  export, no other named exports.
 - **Vanilla DOM only**: no React, no JSX, no framework.
 - **No** `setInterval`, `eval`, `new Function`. `setTimeout` only for
   short debounce/throttle (≤500ms literal) OR documented async polling.
