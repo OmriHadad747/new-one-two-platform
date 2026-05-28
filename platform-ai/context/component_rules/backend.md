@@ -226,6 +226,19 @@ const [countRow] = await sql<{ count: string }[]>`SELECT COUNT(*) AS count FROM 
 const total = parseInt(countRow?.count ?? "0", 10);
 ```
 
+**8. A value gated by a `*_kind` / type discriminator is polymorphic — branch on it.**
+When a column means different things depending on a sibling discriminator
+(e.g. `discount_value` gated by `discount_kind` ∈ "percentage" /
+"flat-amount" / "buy-x-get-y", or any `*_type`), the HLD `role` is only a
+hint and can mislead — a percentage column is often tagged `role: money`.
+A PERCENTAGE IS NOT MONEY: do not minor-units-convert it, do not run it
+through the `money` helper, and do not currency-format it in the UI. Read
+the discriminator first, then handle each kind on its own path — store a
+percentage as a whole number (`INTEGER`) or a 0–1 ratio, store an amount in
+minor units (`BIGINT`), and map each to the matching Shopify field (e.g.
+percentage vs fixedAmount on `discountAutomatic*Create`). The discriminator
+wins over `role`.
+
 ## Quick reference — platform libs (see §7.2 for full API)
 
 | Lib         | When to import                                       |

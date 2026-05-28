@@ -66,6 +66,12 @@ One of seven literals:
 Money: ALWAYS `BIGINT` in minor units (cents, pence, yen). Persist the
 currency code alongside as a TEXT column when needed.
 
+Polymorphic value columns: when a value is gated by a `*_kind`/type
+discriminator (e.g. `discount_value` + `discount_kind`), it may be a
+PERCENTAGE rather than money — store a percentage as `INTEGER` (whole
+percent) or a ratio, never `BIGINT` minor units. The HLD `role` is a hint;
+the discriminator wins (see backend.md bug-class 8).
+
 Shopify ids: ALWAYS `BIGINT`. Never `TEXT` — sort order matters and
 indexing is faster.
 
