@@ -148,6 +148,23 @@ signatures live on disk and are fetched on demand:
 Never call `get_shopify_op` on an op name you guessed. Never pick
 between similar-sounding ops without listing the cluster first.
 
+Before writing your FIRST Shopify GraphQL call, read
+`runtime_examples/shopify_mutation.md` for the exact client pattern — do
+not guess it. The client is async and exposes one entry point:
+
+```ts
+const shopify = await shopifyClientFor(req.platform!); // await it; pass the
+                                                       // platform context,
+                                                       // not a domain string
+const data = await shopify.graphql<T>(query, variables);   // Admin GraphQL
+// storefront GraphQL is shopify.storefront<T>(query, variables)
+```
+
+Admin GraphQL is `shopify.graphql(...)` directly — there is NO `.admin`
+namespace. Calling `shopifyClientFor(domain).admin.graphql(...)`, passing a
+domain string instead of the platform context, or forgetting the `await`
+are the common mistakes.
+
 ## Bug-class prevention (production-burned)
 
 These have all caused real outages. Internalize them.
