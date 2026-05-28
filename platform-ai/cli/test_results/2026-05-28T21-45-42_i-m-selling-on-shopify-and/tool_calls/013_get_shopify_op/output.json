@@ -1,0 +1,108 @@
+{
+  "args": [
+    {
+      "name": "id",
+      "required": true,
+      "type": "ID!"
+    },
+    {
+      "name": "automaticAppDiscount",
+      "required": true,
+      "type": "DiscountAutomaticAppInput!"
+    }
+  ],
+  "examples": [
+    {
+      "query": "mutation discountAutomaticAppUpdate($automaticAppDiscount: DiscountAutomaticAppInput!, $id: ID!) {\n  discountAutomaticAppUpdate(automaticAppDiscount: $automaticAppDiscount, id: $id) {\n    automaticAppDiscount {\n      title\n      context {\n        ... on DiscountCustomerSegments {\n          segments {\n            id\n          }\n        }\n      }\n    }\n    userErrors {\n      field\n      message\n    }\n  }\n}",
+      "response": {
+        "discountAutomaticAppUpdate": {
+          "automaticAppDiscount": {
+            "context": {
+              "segments": [
+                {
+                  "id": "gid://shopify/Segment/8961721"
+                }
+              ]
+            },
+            "title": "Percentage off (Product)"
+          },
+          "userErrors": []
+        }
+      },
+      "scenario_title": "Update context for automatic app discount for a customer segment",
+      "variables": {
+        "automaticAppDiscount": {
+          "context": {
+            "customerSegments": {
+              "add": [
+                "gid://shopify/Segment/8961721"
+              ]
+            }
+          }
+        },
+        "id": "gid://shopify/DiscountAutomaticNode/159339796"
+      }
+    },
+    {
+      "query": "mutation discountAutomaticAppUpdate($automaticAppDiscount: DiscountAutomaticAppInput!, $id: ID!) {\n  discountAutomaticAppUpdate(automaticAppDiscount: $automaticAppDiscount, id: $id) {\n    automaticAppDiscount {\n      title\n      startsAt\n      endsAt\n      status\n    }\n    userErrors {\n      field\n      message\n    }\n  }\n}",
+      "response": {
+        "discountAutomaticAppUpdate": {
+          "automaticAppDiscount": {
+            "endsAt": "2025-09-30T23:59:59Z",
+            "startsAt": "2025-01-01T00:00:00Z",
+            "status": "ACTIVE",
+            "title": "Percentage off (Product)"
+          },
+          "userErrors": []
+        }
+      },
+      "scenario_title": "Update the date range of an automatic app discount",
+      "variables": {
+        "automaticAppDiscount": {
+          "endsAt": "2025-09-30T23:59:59Z",
+          "startsAt": "2025-01-01T00:00:00Z"
+        },
+        "id": "gid://shopify/DiscountAutomaticNode/159339796"
+      }
+    },
+    {
+      "query": "mutation discountAutomaticAppUpdate($automaticAppDiscount: DiscountAutomaticAppInput!, $id: ID!) {\n  discountAutomaticAppUpdate(automaticAppDiscount: $automaticAppDiscount, id: $id) {\n    automaticAppDiscount {\n      title\n      status\n      appDiscountType {\n        appKey\n        functionId\n      }\n    }\n    userErrors {\n      field\n      message\n    }\n  }\n}",
+      "response": {
+        "discountAutomaticAppUpdate": {
+          "automaticAppDiscount": {
+            "appDiscountType": {
+              "appKey": "shopify-vm-test-app",
+              "functionId": "4a28b080-ffe4-4e16-97a5-1f8ffe8dfd98"
+            },
+            "status": "EXPIRED",
+            "title": "$5 discount"
+          },
+          "userErrors": []
+        }
+      },
+      "scenario_title": "Update the title of an automatic app discount",
+      "variables": {
+        "automaticAppDiscount": {
+          "title": "$5 discount"
+        },
+        "id": "gid://shopify/DiscountAutomaticNode/159339796"
+      }
+    }
+  ],
+  "inputTypesSdl": {
+    "DateTime": "scalar DateTime",
+    "DiscountAutomaticAppInput": "input DiscountAutomaticAppInput {\n  combinesWith: DiscountCombinesWithInput\n  discountClasses: [DiscountClass!]\n  title: String\n  startsAt: DateTime\n  endsAt: DateTime\n  context: DiscountContextInput\n  tags: [String!]\n  functionHandle: String\n  metafields: [MetafieldInput!]\n  appliesOnSubscription: Boolean\n  appliesOnOneTimePurchase: Boolean\n  recurringCycleLimit: Int\n}",
+    "DiscountBuyerSelection": "enum DiscountBuyerSelection {\n  ALL\n}",
+    "DiscountClass": "enum DiscountClass {\n  PRODUCT\n  ORDER\n  SHIPPING\n}",
+    "DiscountCombinesWithInput": "input DiscountCombinesWithInput {\n  productDiscounts: Boolean\n  orderDiscounts: Boolean\n  shippingDiscounts: Boolean\n}",
+    "DiscountContextInput": "input DiscountContextInput {\n  all: DiscountBuyerSelection\n  customers: DiscountCustomersInput\n  customerSegments: DiscountCustomerSegmentsInput\n}",
+    "DiscountCustomerSegmentsInput": "input DiscountCustomerSegmentsInput {\n  add: [ID!]\n  remove: [ID!]\n}",
+    "DiscountCustomersInput": "input DiscountCustomersInput {\n  add: [ID!]\n  remove: [ID!]\n}",
+    "MetafieldInput": "input MetafieldInput {\n  id: ID\n  namespace: String\n  key: String\n  value: String\n  type: String\n}"
+  },
+  "isConnection": false,
+  "kind": "mutation",
+  "returnTypeName": "DiscountAutomaticAppUpdatePayload",
+  "returnTypeSdl": "type DiscountAutomaticAppUpdatePayload {\n  automaticAppDiscount: DiscountAutomaticApp\n  userErrors: [DiscountUserError!]!\n}",
+  "userErrorsField": "userErrors"
+}

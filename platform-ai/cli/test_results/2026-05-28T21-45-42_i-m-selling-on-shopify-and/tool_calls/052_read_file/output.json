@@ -1,0 +1,8 @@
+{
+  "content": "through `bridge`. Anything touching the DOM / network / storage outside\n`container` and `bridge` is rejected by the sandbox.\n\n## Output rules\n\n- **Type the SDK** \u2014 this file IS type-checked. Start with exactly one\n  type-only import and annotate `bridge` with `AdminBridge`:\n\n  ```ts\n  import type { AdminBridge } from \"@platform/admin-sdk\";\n\n  export function mount(container: HTMLElement, bridge: AdminBridge): void {\n    // ...\n  }\n  ```\n\n  `import type` is erased at build, so it does NOT violate the sandbox's\n  no-runtime-import rule. **Never type `bridge` as `any`** \u2014 that disables\n  the type-check and ships bugs; the gate rejects `bridge: any`. `bridge.call`\n  returns `Promise<unknown>` \u2014 cast each result to the matching response type\n  from `contracts.ts`. For a picked resource, a variant's gid is\n  `variants[i].id`; there is no `product_id` on a `PickedResource` (tsc\n  rejects it).\n- **Single runtime export**: `export function mount(...)`. No default\n  export, no other named exports, and no *runtime* imports (the one\n  `import type` above is the only import allowed).\n- **Vanilla DOM only**: no React, no JSX, no framework.\n- **No** `setInterval`, `eval`, `new Function`. `setTimeout` only for\n  short debounce/throttle (\u2264500ms literal) OR documented async polling.\n- **No hardcoded URLs**: backend access via `bridge.call` only.",
+  "total_lines": 186,
+  "returned_lines": [
+    15,
+    45
+  ]
+}

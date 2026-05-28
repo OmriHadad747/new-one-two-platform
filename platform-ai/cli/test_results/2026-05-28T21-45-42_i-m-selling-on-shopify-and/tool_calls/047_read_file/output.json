@@ -1,0 +1,8 @@
+{
+  "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"lib\": [\"ES2022\"],\n    \"strict\": true,\n    \"exactOptionalPropertyTypes\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"noImplicitOverride\": true,\n    \"esModuleInterop\": true,\n    \"skipLibCheck\": true,\n    \"declaration\": false,\n    \"sourceMap\": true,\n    \"outDir\": \"./dist\",\n    \"rootDir\": \"./src\"\n  },\n  \"include\": [\"src\"],\n  \"exclude\": [\"dist\", \"node_modules\", \"src/**/*.test.ts\"]\n}",
+  "total_lines": 20,
+  "returned_lines": [
+    0,
+    20
+  ]
+}

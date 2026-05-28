@@ -1,0 +1,34 @@
+{
+  "cluster": "cart",
+  "surface": "storefront",
+  "queries": [
+    "cart(id: ID!): Cart",
+    "cartCompletionAttempt(attemptId: String!): CartCompletionAttemptResult"
+  ],
+  "mutations": [
+    "cartAttributesUpdate(attributes: [AttributeInput!]!, cartId: ID!): CartAttributesUpdatePayload",
+    "cartBillingAddressUpdate(cartId: ID!, billingAddress: MailingAddressInput): CartBillingAddressUpdatePayload",
+    "cartBuyerIdentityUpdate(cartId: ID!, buyerIdentity: CartBuyerIdentityInput!): CartBuyerIdentityUpdatePayload",
+    "cartClone(cartId: ID!): CartClonePayload",
+    "cartCreate(input: CartInput): CartCreatePayload",
+    "cartDeliveryAddressesAdd(cartId: ID!, addresses: [CartSelectableAddressInput!]!): CartDeliveryAddressesAddPayload",
+    "cartDeliveryAddressesRemove(cartId: ID!, addressIds: [ID!]!): CartDeliveryAddressesRemovePayload",
+    "cartDeliveryAddressesReplace(cartId: ID!, addresses: [CartSelectableAddressInput!]!): CartDeliveryAddressesReplacePayload",
+    "cartDeliveryAddressesUpdate(cartId: ID!, addresses: [CartSelectableAddressUpdateInput!]!): CartDeliveryAddressesUpdatePayload",
+    "cartDiscountCodesUpdate(cartId: ID!, discountCodes: [String!]!): CartDiscountCodesUpdatePayload",
+    "cartGiftCardCodesAdd(cartId: ID!, giftCardCodes: [String!]!): CartGiftCardCodesAddPayload",
+    "cartGiftCardCodesRemove(cartId: ID!, appliedGiftCardIds: [ID!]!): CartGiftCardCodesRemovePayload",
+    "cartGiftCardCodesUpdate(cartId: ID!, giftCardCodes: [String!]!): CartGiftCardCodesUpdatePayload",
+    "cartLinesAdd(cartId: ID!, lines: [CartLineInput!]!): CartLinesAddPayload",
+    "cartLinesRemove(cartId: ID!, lineIds: [ID!]!): CartLinesRemovePayload",
+    "cartLinesUpdate(cartId: ID!, lines: [CartLineUpdateInput!]!): CartLinesUpdatePayload",
+    "cartMetafieldDelete(input: CartMetafieldDeleteInput!): CartMetafieldDeletePayload",
+    "cartMetafieldsSet(metafields: [CartMetafieldsSetInput!]!): CartMetafieldsSetPayload",
+    "cartNoteUpdate(cartId: ID!, note: String!): CartNoteUpdatePayload",
+    "cartPaymentUpdate(cartId: ID!, payment: CartPaymentInput!): CartPaymentUpdatePayload",
+    "cartPrepareForCompletion(cartId: ID!): CartPrepareForCompletionPayload",
+    "cartRemovePersonalData(cartId: ID!): CartRemovePersonalDataPayload",
+    "cartSelectedDeliveryOptionsUpdate(cartId: ID!, selectedDeliveryOptions: [CartSelectedDeliveryOptionInput!]!): CartSelectedDeliveryOptionsUpdatePayload",
+    "cartSubmitForCompletion(cartId: ID!, attemptToken: String!): CartSubmitForCompletionPayload"
+  ]
+}

@@ -1,0 +1,158 @@
+{
+  "args": [
+    {
+      "name": "automaticAppDiscount",
+      "required": true,
+      "type": "DiscountAutomaticAppInput!"
+    }
+  ],
+  "examples": [
+    {
+      "query": "mutation discountAutomaticAppCreate($automaticAppDiscount: DiscountAutomaticAppInput!) {\n  discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {\n    userErrors {\n      field\n      message\n    }\n    automaticAppDiscount {\n      discountId\n      title\n      startsAt\n      endsAt\n      status\n      appDiscountType {\n        appKey\n        functionId\n      }\n      combinesWith {\n        orderDiscounts\n        productDiscounts\n        shippingDiscounts\n      }\n    }\n  }\n}",
+      "response": {
+        "discountAutomaticAppCreate": {
+          "automaticAppDiscount": {
+            "appDiscountType": {
+              "appKey": "shopify-web",
+              "functionId": "13d358d1-2a5b-4a39-a6f9-8f53394e440d"
+            },
+            "combinesWith": {
+              "orderDiscounts": false,
+              "productDiscounts": false,
+              "shippingDiscounts": false
+            },
+            "discountId": "gid://shopify/DiscountAutomaticNode/1057856655",
+            "endsAt": "2025-02-02T17:09:21Z",
+            "startsAt": "2025-02-02T17:09:21Z",
+            "status": "EXPIRED",
+            "title": "$5 discount"
+          },
+          "userErrors": []
+        }
+      },
+      "scenario_title": "Create a non-combinable automatic order discount that's managed by an app",
+      "variables": {
+        "automaticAppDiscount": {
+          "combinesWith": {
+            "orderDiscounts": false,
+            "productDiscounts": false,
+            "shippingDiscounts": false
+          },
+          "endsAt": "2025-02-02T17:09:21Z",
+          "functionId": "a3cdef66-d84a-4254-9216-b6dd723005ad",
+          "metafields": [
+            {
+              "key": "function-configuration",
+              "namespace": "default",
+              "type": "json",
+              "value": "{\n  \"discounts\": [{\n    \"value\": {\"fixedAmount\": {\"amount\": 5}},\n    \"targets\": [{\"orderSubtotal\": {\"excludedVariantIds\": []}}]\n  }],\n  \"discountApplicationStrategy\": \"FIRST\"\n}"
+            }
+          ],
+          "startsAt": "2025-02-02T17:09:21Z",
+          "title": "$5 discount"
+        }
+      }
+    },
+    {
+      "query": "mutation discountAutomaticAppCreate($automaticAppDiscount: DiscountAutomaticAppInput!) {\n  discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {\n    userErrors {\n      field\n      message\n    }\n    automaticAppDiscount {\n      discountId\n      title\n      startsAt\n      endsAt\n      status\n      context {\n        ... on DiscountCustomerSegments {\n          segments {\n            id\n          }\n        }\n      }\n      appDiscountType {\n        appKey\n        functionId\n      }\n    }\n  }\n}",
+      "response": {
+        "discountAutomaticAppCreate": {
+          "automaticAppDiscount": {
+            "appDiscountType": {
+              "appKey": "shopify-web",
+              "functionId": "6bb26213-4a3c-4e83-94bf-98599b4b6648"
+            },
+            "context": {
+              "segments": [
+                {
+                  "id": "gid://shopify/Segment/8961721"
+                }
+              ]
+            },
+            "discountId": "gid://shopify/DiscountAutomaticNode/1057856656",
+            "endsAt": null,
+            "startsAt": "2025-07-25T23:52:03Z",
+            "status": "ACTIVE",
+            "title": "Product discount $10 off"
+          },
+          "userErrors": []
+        }
+      },
+      "scenario_title": "Create an automatic app product discount for a customer segment",
+      "variables": {
+        "automaticAppDiscount": {
+          "context": {
+            "customerSegments": {
+              "add": [
+                "gid://shopify/Segment/8961721"
+              ]
+            }
+          },
+          "functionId": "6bb26213-4a3c-4e83-94bf-98599b4b6648",
+          "metafields": [
+            {
+              "key": "function-configuration",
+              "namespace": "default",
+              "type": "json",
+              "value": "{\n  \"discounts\": [{\n    \"value\": {\"fixedAmount\": {\"amount\": 10}},\n    \"targets\": [{\"productVariant\": {\"id\": \"gid://shopify/ProductVariant/12345\"}}]\n  }],\n  \"discountApplicationStrategy\": \"FIRST\"\n}"
+            }
+          ],
+          "startsAt": "2025-07-25T19:52:03-04:00",
+          "title": "Product discount $10 off"
+        }
+      }
+    },
+    {
+      "query": "mutation discountAutomaticAppCreate($automaticAppDiscount: DiscountAutomaticAppInput!) {\n  discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {\n    userErrors {\n      field\n      message\n    }\n    automaticAppDiscount {\n      discountId\n      title\n      startsAt\n      endsAt\n      status\n      appDiscountType {\n        appKey\n        functionId\n      }\n    }\n  }\n}",
+      "response": {
+        "discountAutomaticAppCreate": {
+          "automaticAppDiscount": {
+            "appDiscountType": {
+              "appKey": "shopify-web",
+              "functionId": "677bc937-7dce-4fe4-8e8d-076c391d3e53"
+            },
+            "discountId": "gid://shopify/DiscountAutomaticNode/1057856654",
+            "endsAt": "2025-12-31T23:59:59Z",
+            "startsAt": "2025-01-01T00:00:00Z",
+            "status": "ACTIVE",
+            "title": "Product discount $10 off"
+          },
+          "userErrors": []
+        }
+      },
+      "scenario_title": "Create an automatic product discount that's managed by an app",
+      "variables": {
+        "automaticAppDiscount": {
+          "endsAt": "2025-12-31T23:59:59Z",
+          "functionId": "677bc937-7dce-4fe4-8e8d-076c391d3e53",
+          "metafields": [
+            {
+              "key": "function-configuration",
+              "namespace": "default",
+              "type": "json",
+              "value": "{\n  \"discounts\": [{\n    \"value\": {\"fixedAmount\": {\"amount\": 10}},\n    \"targets\": [{\"productVariant\": {\"id\": \"gid://shopify/ProductVariant/12345\"}}]\n  }],\n  \"discountApplicationStrategy\": \"FIRST\"\n}"
+            }
+          ],
+          "startsAt": "2025-01-01T00:00:00Z",
+          "title": "Product discount $10 off"
+        }
+      }
+    }
+  ],
+  "inputTypesSdl": {
+    "DateTime": "scalar DateTime",
+    "DiscountAutomaticAppInput": "input DiscountAutomaticAppInput {\n  combinesWith: DiscountCombinesWithInput\n  discountClasses: [DiscountClass!]\n  title: String\n  startsAt: DateTime\n  endsAt: DateTime\n  context: DiscountContextInput\n  tags: [String!]\n  functionHandle: String\n  metafields: [MetafieldInput!]\n  appliesOnSubscription: Boolean\n  appliesOnOneTimePurchase: Boolean\n  recurringCycleLimit: Int\n}",
+    "DiscountBuyerSelection": "enum DiscountBuyerSelection {\n  ALL\n}",
+    "DiscountClass": "enum DiscountClass {\n  PRODUCT\n  ORDER\n  SHIPPING\n}",
+    "DiscountCombinesWithInput": "input DiscountCombinesWithInput {\n  productDiscounts: Boolean\n  orderDiscounts: Boolean\n  shippingDiscounts: Boolean\n}",
+    "DiscountContextInput": "input DiscountContextInput {\n  all: DiscountBuyerSelection\n  customers: DiscountCustomersInput\n  customerSegments: DiscountCustomerSegmentsInput\n}",
+    "DiscountCustomerSegmentsInput": "input DiscountCustomerSegmentsInput {\n  add: [ID!]\n  remove: [ID!]\n}",
+    "DiscountCustomersInput": "input DiscountCustomersInput {\n  add: [ID!]\n  remove: [ID!]\n}",
+    "MetafieldInput": "input MetafieldInput {\n  id: ID\n  namespace: String\n  key: String\n  value: String\n  type: String\n}"
+  },
+  "isConnection": false,
+  "kind": "mutation",
+  "returnTypeName": "DiscountAutomaticAppCreatePayload",
+  "returnTypeSdl": "type DiscountAutomaticAppCreatePayload {\n  automaticAppDiscount: DiscountAutomaticApp\n  userErrors: [DiscountUserError!]!\n}",
+  "userErrorsField": "userErrors"
+}

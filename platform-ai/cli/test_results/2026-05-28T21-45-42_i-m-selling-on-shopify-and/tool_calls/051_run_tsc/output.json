@@ -1,0 +1,28 @@
+{
+  "errors": [
+    {
+      "file": "src/routes/webhook.ts",
+      "line": 32,
+      "col": 19,
+      "message": "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ \"orders/paid\": (payload: OrdersPaidPayload, _req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>) => Promise<...>; \"products/update\": (payload: ProductsUpdatePayload, _req: Request<...>) => Promise<...>; \"products/delete\": (payload: ProductsDeletePayload, _req: Request<...>) => Promise<...>; }'."
+    },
+    {
+      "file": "admin/ui.ts",
+      "line": 16,
+      "col": 8,
+      "message": "Cannot find module '../src/types/contracts.js' or its corresponding type declarations."
+    },
+    {
+      "file": "widget/widget.ts",
+      "line": 9,
+      "col": 8,
+      "message": "Cannot find module '../src/types/contracts.js' or its corresponding type declarations."
+    },
+    {
+      "file": "widget/widget.ts",
+      "line": 519,
+      "col": 54,
+      "message": "Parameter 'line' implicitly has an 'any' type."
+    }
+  ]
+}

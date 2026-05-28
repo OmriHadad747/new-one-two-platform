@@ -1,0 +1,190 @@
+{
+  "errors": [
+    {
+      "file": "src/routes/admin.ts",
+      "line": 3,
+      "col": 10,
+      "message": "'\"../lib/shopify.js\"' has no exported member named 'shopifyClient'. Did you mean 'shopifyClientFor'?"
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 46,
+      "col": 9,
+      "message": "'current' is possibly 'undefined'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 46,
+      "col": 33,
+      "message": "'next' is possibly 'undefined'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 48,
+      "col": 95,
+      "message": "'current' is possibly 'undefined'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 48,
+      "col": 122,
+      "message": "'next' is possibly 'undefined'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 180,
+      "col": 20,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 190,
+      "col": 9,
+      "message": "Argument of type 'number | bigint | null' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 227,
+      "col": 21,
+      "message": "Argument of type 'bigint[]' is not assignable to parameter of type 'SerializableParameter<never>[]'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 324,
+      "col": 21,
+      "message": "'shopifyDiscountGid' is possibly 'null'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 335,
+      "col": 9,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 430,
+      "col": 9,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 469,
+      "col": 23,
+      "message": "Argument of type 'bigint[]' is not assignable to parameter of type 'SerializableParameter<never>[]'."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 59,
+      "col": 40,
+      "message": "Argument of type 'string' is not assignable to parameter of type 'ShopifyClientContext'."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 60,
+      "col": 36,
+      "message": "Property 'admin' does not exist on type 'Promise<ShopifyHelper>'."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 120,
+      "col": 11,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 127,
+      "col": 11,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 170,
+      "col": 32,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 172,
+      "col": 37,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 181,
+      "col": 11,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 201,
+      "col": 15,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 211,
+      "col": 67,
+      "message": "Parameter 'c' implicitly has an 'any' type."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 218,
+      "col": 42,
+      "message": "Argument of type 'unknown' is not assignable to parameter of type 'BundleId'."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 233,
+      "col": 32,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 235,
+      "col": 37,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 247,
+      "col": 37,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 251,
+      "col": 67,
+      "message": "Parameter 'c' implicitly has an 'any' type."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 255,
+      "col": 42,
+      "message": "Argument of type 'unknown' is not assignable to parameter of type 'BundleId'."
+    },
+    {
+      "file": "src/routes/webhook.ts",
+      "line": 32,
+      "col": 19,
+      "message": "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ \"orders/paid\": (payload: OrdersPaidPayload, _req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>) => Promise<...>; \"products/update\": (payload: ProductsUpdatePayload, _req: Request<...>) => Promise<...>; \"products/delete\": (payload: ProductsDeletePayload, _req: Request<...>) => Promise<...>; }'."
+    },
+    {
+      "file": "admin/ui.ts",
+      "line": 16,
+      "col": 8,
+      "message": "Cannot find module '../src/types/contracts.js' or its corresponding type declarations."
+    },
+    {
+      "file": "widget/widget.ts",
+      "line": 9,
+      "col": 8,
+      "message": "Cannot find module '../src/types/contracts.js' or its corresponding type declarations."
+    },
+    {
+      "file": "widget/widget.ts",
+      "line": 519,
+      "col": 54,
+      "message": "Parameter 'line' implicitly has an 'any' type."
+    }
+  ]
+}

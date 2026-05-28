@@ -1,0 +1,314 @@
+{
+  "name": "Bundle Builder",
+  "description": "Create and manage fixed and flexible product bundles with configurable and tiered discounts. Customers pick items on the storefront, see live totals, and add to cart with one click.",
+  "database": {
+    "tables": [
+      {
+        "name": "bundles",
+        "purpose": "Master record for each merchant-created bundle, holding its type, discount configuration, Shopify resource references, and operational status.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal bundle identifier"
+          },
+          {
+            "name": "title",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "merchant-facing bundle name"
+          },
+          {
+            "name": "bundle_type",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": ["fixed", "flexible"],
+            "purpose": "fixed: all items required; flexible: customer picks from pool"
+          },
+          {
+            "name": "required_count",
+            "sqlType": "INTEGER",
+            "constraints": "NULL",
+            "purpose": "for flexible bundles: how many items the customer must choose"
+          },
+          {
+            "name": "discount_kind",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": ["percentage", "flat_amount", "buy_x_get_y"],
+            "purpose": "the type of discount applied to this bundle"
+          },
+          {
+            "name": "discount_value",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "base discount in minor units (cents) when no tier rules override; for percentage kind this is basis points (100 = 1%)"
+          },
+          {
+            "name": "discount_currency",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "purpose": "ISO currency code for flat_amount discount_value; null for percentage and buy_x_get_y"
+          },
+          {
+            "name": "enabled",
+            "sqlType": "BOOLEAN",
+            "constraints": "NOT NULL DEFAULT true",
+            "purpose": "merchant toggle for the bundle"
+          },
+          {
+            "name": "availability_status",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT 'active'",
+            "enum": ["active", "degraded", "suspended"],
+            "purpose": "active, degraded (some components unavailable), or suspended (cannot be fulfilled)"
+          },
+          {
+            "name": "shopify_product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "the Shopify product bundle node numeric id"
+          },
+          {
+            "name": "shopify_product_gid",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "purpose": "the Shopify product bundle GID (gid://shopify/Product/...)"
+          },
+          {
+            "name": "shopify_discount_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "the Shopify DiscountAutomaticNode numeric id"
+          },
+          {
+            "name": "shopify_discount_gid",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "purpose": "the Shopify DiscountAutomaticNode GID"
+          },
+          {
+            "name": "purchase_count",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "running tally of orders that included this bundle"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          },
+          {
+            "name": "updated_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": [],
+        "indexes": [
+          ["enabled", "created_at"],
+          ["availability_status"],
+          ["shopify_product_external_id"],
+          ["shopify_discount_external_id"]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_components",
+        "purpose": "Each row is one allowed item slot in a bundle — either a whole product or a specific variant — with a flag for whether it is currently available.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal component identifier"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the parent bundle"
+          },
+          {
+            "name": "product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the Shopify product numeric id this component belongs to"
+          },
+          {
+            "name": "variant_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "null means the whole product; non-null pins to a specific variant"
+          },
+          {
+            "name": "position",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "display ordering within the bundle"
+          },
+          {
+            "name": "is_available",
+            "sqlType": "BOOLEAN",
+            "constraints": "NOT NULL DEFAULT true",
+            "purpose": "set false when the product is deleted or goes out of stock"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": [],
+        "indexes": [
+          ["bundle_id", "position"],
+          ["product_external_id"],
+          ["variant_external_id"]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_tier_rules",
+        "purpose": "Stores the tiered discount ladder for a bundle — each row is one tier (a minimum item count threshold and its discount value).",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal tier identifier"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the bundle this tier belongs to"
+          },
+          {
+            "name": "min_quantity",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL",
+            "purpose": "minimum number of items to qualify for this tier"
+          },
+          {
+            "name": "discount_value",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "discount amount in minor units or basis points for this tier"
+          },
+          {
+            "name": "position",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "sort order ascending by min_quantity"
+          }
+        ],
+        "uniqueConstraint": ["bundle_id", "min_quantity"],
+        "indexes": [
+          ["bundle_id", "position"]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_purchase_events",
+        "purpose": "Immutable log of every paid order that included a bundle, used to drive the purchase count on the admin table.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal event identifier"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the bundle that was purchased"
+          },
+          {
+            "name": "order_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the Shopify order numeric id"
+          },
+          {
+            "name": "discount_codes_applied",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "purpose": "serialised list of discount codes present on the order for double-application audit"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": ["bundle_id", "order_external_id"],
+        "indexes": [
+          ["order_external_id"],
+          ["bundle_id", "created_at"]
+        ],
+        "foreignKeys": []
+      }
+    ]
+  },
+  "shopifyIntegration": {
+    "webhookTopics": [
+      "orders/paid",
+      "products/update",
+      "products/delete"
+    ],
+    "cronSchedule": null
+  },
+  "httpRoutes": {
+    "admin": [
+      {
+        "path": "/admin/bundles",
+        "method": "GET",
+        "purpose": "Return a paginated list of all bundles with summary fields for the admin table view.",
+        "paginationKind": "offset"
+      },
+      {
+        "path": "/admin/bundles/create",
+        "method": "POST",
+        "purpose": "Create a new fixed or flexible bundle with its discount configuration."
+      },
+      {
+        "path": "/admin/bundles/update",
+        "method": "PUT",
+        "purpose": "Edit any field on an existing bundle, triggering re-sync of the Shopify product bundle and discount."
+      },
+      {
+        "path": "/admin/bundles/toggle",
+        "method": "POST",
+        "purpose": "Enable or disable a bundle, activating or deactivating its automatic discount in Shopify."
+      },
+      {
+        "path": "/admin/bundles/delete",
+        "method": "DELETE",
+        "purpose": "Delete a bundle record and remove its associated Shopify discount."
+      },
+      {
+        "path": "/admin/bundles/components",
+        "method": "POST",
+        "purpose": "Add or replace the component items (products or specific variants) of a bundle."
+      }
+    ],
+    "widget": [
+      {
+        "path": "/widget/bundle",
+        "method": "GET",
+        "purpose": "Return the full bundle definition for a given product page so the storefront widget can render the correct initial UI."
+      },
+      {
+        "path": "/widget/bundle/add-to-cart",
+        "method": "POST",
+        "purpose": "Receive the customer's item selections, validate them against the bundle rules, and return the cart payload the frontend should submit to Shopify Storefront API."
+      }
+    ]
+  }
+}
