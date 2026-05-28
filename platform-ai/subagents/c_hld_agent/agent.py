@@ -25,7 +25,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from models.adapter import dump_structured_output
+from models.adapter import dump_input, dump_structured_output
 from models.agent_models import get_agent_model
 from subagents.c_hld_agent.loop import DEFAULT_MAX_TURNS, run_hld_loop
 from subagents.c_hld_agent.prompt import build_system_prompt
@@ -114,6 +114,12 @@ def run_hld_agent(
     # Catalog tools resolve repo-relative paths off repo_root; the HLD agent
     # has no scaffold, so work_dir / run_dir are unused (set to repo_root).
     ctx = RunnerContext(repo_root=REPO_ROOT, work_dir=REPO_ROOT, run_dir=REPO_ROOT)
+
+    # The loop uses a raw Anthropic client and bypasses invoke(), so it never
+    # creates an input-trace dir on its own. Trace the prompt here so the HLD
+    # run leaves the same inputs/<agent>/attempt_1/{system.txt,user.txt} trail
+    # as the single-shot agents; dump_structured_output below adds output.json.
+    dump_input(system, user)
 
     result = run_hld_loop(
         ctx,

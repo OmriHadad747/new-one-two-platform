@@ -189,6 +189,24 @@ def _dump_inputs(
         log.warning("input-trace dump failed (agent=%s): %s", state.agent, exc)
 
 
+def dump_input(
+    system: Union[str, list[str]],
+    user: str,
+    retry_suffix: str = "",
+    *,
+    multi_turn_messages: Optional[list[dict]] = None,
+) -> None:
+    """
+    Public entry point to trace a prompt for agents that bypass `invoke()` —
+    the raw-client agentic loops in c_hld_agent / w_coding_agent. Creates the
+    next `attempt_N` dir and writes system.txt / user.txt exactly as `invoke()`
+    does, so loop-driven agents leave the same on-disk trail as single-shot
+    ones. No-op outside an `input_log` block. Pair with `dump_output` (free-form)
+    or `dump_structured_output` (tool output) to persist the response too.
+    """
+    _dump_inputs(system, user, retry_suffix, multi_turn_messages=multi_turn_messages)
+
+
 def dump_output(content: str) -> None:
     """
     Persist a model response into the most recent attempt_N dir created by

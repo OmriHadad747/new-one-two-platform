@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 
 from pydantic import ValidationError
 
-from models.adapter import extract_json, get_llm, invoke, invoke_conversation
+from models.adapter import dump_output, extract_json, get_llm, invoke, invoke_conversation
 from models.agent_models import get_agent_model
 from subagents.a_product_agent.prompt import (
     PRODUCT_ANALYZE_BASE,
@@ -87,6 +87,7 @@ def run_product_agent(prompt: str) -> Tuple[Dict[str, Any], int, int]:
         )
         total_in += result.input_tokens
         total_out += result.output_tokens
+        dump_output(result.content)  # trace alongside the attempt's system/user
 
         try:
             raw_json = extract_json(result.content)
@@ -148,6 +149,7 @@ def run_product_agent_analyze(
     result = invoke_conversation(
         llm, PRODUCT_ANALYZE_BASE, history, cache_ttl="1h"
     )
+    dump_output(result.content)  # trace alongside the attempt's system/user
     metrics: Dict[str, int] = {
         "in": result.input_tokens,
         "out": result.output_tokens,
