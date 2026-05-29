@@ -40,7 +40,10 @@ the defect.
 - `tool_calls/NNN_<tool>/{input,output}.json` — the coding agent's ordered
   actions. `run_tsc` outputs hold compile errors; `write_file` inputs hold
   what it wrote (and when); `read_file` shows what context it consulted and
-  in what order.
+  in what order. The `done` call's `output.json` holds the **done()-gate
+  validator findings** (write-path / shopify-effect / persistence-safety) —
+  when `done()` actually ran. `token_usage.json:validators` confirms they
+  fired at all.
 - `scaffold/**` — the final generated files (end state).
 - `_tsc/`, `_tsc_ui/` — the dirs that were actually type-checked. A mismatch
   between these and `scaffold/` can itself be the bug.
@@ -64,6 +67,18 @@ the defect.
   Order is the evidence.
 - **Separate cause from inheritance.** If every downstream stage faithfully
   carried an upstream defect, the fix is upstream — don't patch the symptom.
+- **Validators hallucinate — verify their findings against the artifact.**
+  Both review stages are advisory and Haiku-based, so a finding can be a
+  false positive: `hld_v` (`state.json:hld_v_findings`,
+  `inputs/hld_v/attempt_N/output.json`) and the coding agent's done()-gate
+  validators (`tool_calls/<NNN>_done/output.json`). Apply **quote-or-drop**
+  to each finding: the cited `file:line` / plan path must actually exist AND
+  actually carry the defect claimed. A fabricated or mislocated finding is
+  itself the bug — and a hallucinated *blocking* (critical/important)
+  finding wrongly blocks `done()`, sending the coding agent to "fix" a
+  non-existent problem and burning turns toward the cap. When the reported
+  bug *is* a validator finding, first decide whether the finding is real
+  before tracing further.
 - **Name the cheapest stage to fix the bug class**: plan instruction →
   prevention rule → downstream validator. (Same philosophy as the rest of
   the generator.)
