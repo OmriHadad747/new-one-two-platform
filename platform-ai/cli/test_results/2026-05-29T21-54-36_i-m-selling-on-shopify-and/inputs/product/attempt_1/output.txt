@@ -1,0 +1,10 @@
+```json
+{
+  "status": "needs_clarification",
+  "question": "For flexible bundles, when a customer picks 3 items from your pool and adds them to cart, should each item appear as a separate line in the Shopify cart (so they see three product rows), or should they appear grouped under one special 'bundle' name? The discount code will be auto-applied either way, but this affects how the cart looks to the customer and what they see in their order history.",
+  "suggestions": [
+    "Three separate lines, bundled by a discount code",
+    "One wrapper line with sub-items listed in order notes"
+  ]
+}
+```

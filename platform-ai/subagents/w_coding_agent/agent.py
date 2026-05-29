@@ -152,13 +152,14 @@ def _build_user_message(
 
 
 def _persist_prompts(run_dir: Path, system: str, user: str) -> None:
-    """Write the prompts to disk for post-hoc inspection. Mirrors the
-    `inputs/<agent>/attempt_N/` convention of the existing pipeline, but
-    one attempt total — the agent loop owns retries internally."""
-    inputs_dir = run_dir / "inputs"
-    inputs_dir.mkdir(parents=True, exist_ok=True)
-    (inputs_dir / "system.txt").write_text(system)
-    (inputs_dir / "user.txt").write_text(user)
+    """Write the prompts to disk for post-hoc inspection, under `inputs/coding/`
+    so the coding agent matches the per-agent `inputs/<agent>/` layout of the
+    other agents. The loop owns retries internally, so there is a single
+    system/user pair (no attempt_N split)."""
+    coding_dir = run_dir / "inputs" / "coding"
+    coding_dir.mkdir(parents=True, exist_ok=True)
+    (coding_dir / "system.txt").write_text(system)
+    (coding_dir / "user.txt").write_text(user)
 
 
 def _persist_token_usage(

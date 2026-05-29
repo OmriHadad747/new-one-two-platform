@@ -1,0 +1,12 @@
+```json
+{
+  "status": "needs_clarification",
+  "question": "You've described a rich bundle system with two key mechanics: (1) fixed packs where you define the exact items, and (2) flexible 'pick N from M' bundles. For the flexible bundles, when a customer adds the bundle to their cart, should each selected item appear as a separate line in their cart (so they see three distinct products if they picked three), or should they all be bundled into a single line-item label?",
+  "suggestions": [
+    "Each selected item shows separately in the cart with the discount applied",
+    "All selected items appear under one bundle-name line"
+  ]
+}
+```
+
+This detail determines whether the app can be built on Ton. The platform can handle separate line items (each maps 1:1 to a real Shopify product/variant) but cannot merge multiple items into a single virtual line under a wrapper name — that requires Shopify Functions, which is a different tool.

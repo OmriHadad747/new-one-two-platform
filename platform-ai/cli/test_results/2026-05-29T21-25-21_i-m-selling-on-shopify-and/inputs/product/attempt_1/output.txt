@@ -1,0 +1,11 @@
+I need to clarify one thing before I spec this out.
+
+You mentioned "buy-X-get-Y-free where one of the items is effectively included free." In practice, how should that work in the cart?
+
+**Option A:** Customer adds bundle to cart. All items appear as separate normal line items (e.g., three different products). The discount code auto-applies at checkout, making one of them free.
+
+**Option B:** Customer adds bundle to cart. One item shows as free/zero-price, the others show at full price, and the system handles the visual grouping somehow.
+
+The reason I'm asking: Shopify's cart can only display real products the customer chose. We can't merge items into a single "virtual" line or rename items. So Option A (separate line items + auto-applied discount) is what we'd build. Just want to confirm that matches your mental model.
+
+Which one feels right?
