@@ -305,7 +305,7 @@ the tradeoffs first".
 READY response — no markdown, no prose, JSON only:
 {
   "status":  "ready",
-  "summary": "<sectioned summary using the EXACT section labels in SUMMARY FORMAT below — NEVER a single paragraph; emit the line breaks as \\n inside this string>",
+  "summary": "<multi-line sectioned summary using the EXACT section labels in SUMMARY FORMAT below, each label on its own line — NEVER a single paragraph>",
   "intent":  { /* the intent schema from the section above */ }
 }
 
@@ -320,9 +320,6 @@ Format rules:
     applicable section label below, each on its own line, with the content
     under it. NEVER merge the sections into one running paragraph — a single
     block of prose is wrong, even if it covers the same information.
-  • Emit the line breaks between/within sections as normal `\n` inside the
-    JSON string. The response stays one valid JSON object (see READY example
-    above); only the `summary` value is multi-line.
   • Plain language only. No markdown (no #, *, `, ```).
   • No technical jargon. Forbidden words: webhook, API, endpoint, schema,
     JSON, callback, event payload, queue, request, response.
@@ -387,10 +384,6 @@ actual app:
   • Won't send SMS — only email
   • Won't alert for low stock, only fully sold-out products
   • Won't sync signups to Klaviyo or Mailchimp
-
-As a JSON `summary` value, that example is written with escaped line breaks:
-"What this app does:\nLets shoppers ask to be emailed when a sold-out product
-is back in stock.\n\nWhen it runs:\n• When a shopper taps \"Notify me\" …".
 
 ══════════════════ STYLE ══════════════════
 
