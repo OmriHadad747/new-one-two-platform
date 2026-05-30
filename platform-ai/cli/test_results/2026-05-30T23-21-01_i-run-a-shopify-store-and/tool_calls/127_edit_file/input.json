@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/cron.ts",
+  "old_string": "      // Use the canonical GID stored from the original inventoryItem Shopify API response.\n      // If not available (e.g. older batch), fall back to constructing from numeric ID.\n      const variantGidToCheck = storedVariantGid ?? `gid://shopify/ProductVariant/${variantIdStr}`;\n      const variantData = await shopify.graphql<ProductVariantQueryResult>(",
+  "new_string": "      // Use only the canonical GID stored from the original inventoryItem Shopify API response.\n      // If not available, skip the batch rather than fabricating a GID.\n      if (!storedVariantGid) {\n        console.error({ batchId, variantIdStr }, \"no canonical variant GID stored \u2014 completing batch without send\");\n        await sql`\n          UPDATE notification_batches\n          SET status = 'completed', completed_at = now()\n          WHERE id = ${batchId}\n        `;\n        continue;\n      }\n      const variantGidToCheck = storedVariantGid;\n      const variantData = await shopify.graphql<ProductVariantQueryResult>("
+}

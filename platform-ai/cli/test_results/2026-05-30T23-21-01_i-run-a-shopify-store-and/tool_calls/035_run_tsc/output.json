@@ -1,0 +1,310 @@
+{
+  "errors": [
+    {
+      "file": "src/routes/admin.ts",
+      "line": 213,
+      "col": 19,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 217,
+      "col": 41,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 224,
+      "col": 19,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 228,
+      "col": 41,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 236,
+      "col": 19,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 240,
+      "col": 41,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 247,
+      "col": 19,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 251,
+      "col": 41,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 269,
+      "col": 23,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 271,
+      "col": 39,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 275,
+      "col": 23,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 277,
+      "col": 39,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 362,
+      "col": 19,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 365,
+      "col": 41,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 372,
+      "col": 19,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 375,
+      "col": 41,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 383,
+      "col": 19,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 386,
+      "col": 41,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 393,
+      "col": 19,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 396,
+      "col": 41,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 414,
+      "col": 23,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 416,
+      "col": 39,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 420,
+      "col": 23,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 422,
+      "col": 39,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/cron.ts",
+      "line": 151,
+      "col": 25,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/cron.ts",
+      "line": 154,
+      "col": 39,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/cron.ts",
+      "line": 161,
+      "col": 25,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/cron.ts",
+      "line": 164,
+      "col": 39,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/cron.ts",
+      "line": 258,
+      "col": 13,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 180,
+      "col": 24,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 184,
+      "col": 61,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 204,
+      "col": 27,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 207,
+      "col": 35,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 244,
+      "col": 9,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 287,
+      "col": 37,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 294,
+      "col": 37,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 300,
+      "col": 37,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 321,
+      "col": 22,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 323,
+      "col": 33,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/webhook-handlers.ts",
+      "line": 389,
+      "col": 11,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/webhook.ts",
+      "line": 32,
+      "col": 19,
+      "message": "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ \"inventory_levels/update\": (payload: InventoryLevelUpdatePayload, req: Request<ParamsDictionary, any, any, ParsedQs, Record<...>>) => Promise<...>; \"products/delete\": (payload: ProductsDeletePayload, req: Request<...>) => Promise<...>; \"orders/paid\": (payload: OrdersPaidPayload, req: Request<...>) => Promise<...>; }'."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 135,
+      "col": 14,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 138,
+      "col": 37,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 144,
+      "col": 14,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 147,
+      "col": 37,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 216,
+      "col": 22,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 219,
+      "col": 37,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 224,
+      "col": 22,
+      "message": "Type of 'await' operand must either be a valid promise or must not contain a callable 'then' member."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 227,
+      "col": 37,
+      "message": "Argument of type 'bigint' is not assignable to parameter of type 'ParameterOrFragment<never>'."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 237,
+      "col": 13,
+      "message": "No overload matches this call."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 263,
+      "col": 13,
+      "message": "No overload matches this call."
+    }
+  ]
+}

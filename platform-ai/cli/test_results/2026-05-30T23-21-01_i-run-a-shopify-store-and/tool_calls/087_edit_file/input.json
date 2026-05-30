@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/cron.ts",
+  "old_string": "    // Re-confirm variant availability at send time\n    if (variantIdStr !== null) {\n      const variantData = await shopify.graphql<ProductVariantQueryResult>(",
+  "new_string": "    // Re-confirm variant availability at send time\n    if (variantIdStr !== null) {\n      // Validate variantIdStr is numeric before constructing GID\n      if (!/^\\d+$/.test(variantIdStr)) {\n        console.error({ batchId, variantIdStr }, \"variant id is not numeric \u2014 completing batch without send\");\n        await sql`\n          UPDATE notification_batches\n          SET status = 'completed', completed_at = now()\n          WHERE id = ${batchId}\n        `;\n        continue;\n      }\n      const variantData = await shopify.graphql<ProductVariantQueryResult>("
+}

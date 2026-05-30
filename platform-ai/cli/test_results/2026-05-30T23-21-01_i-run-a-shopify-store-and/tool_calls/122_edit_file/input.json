@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/widget/widget.ts",
+  "old_string": "      const safeDisplayName = itemDisplayName || \"This item\";",
+  "new_string": "      if (!itemDisplayName) {\n        setMsg(\"Unable to identify the product. Please try refreshing the page.\", \"error\");\n        submitBtn.disabled = false;\n        submitBtn.textContent = \"Notify Me\";\n        return;\n      }\n\n      const safeDisplayName = itemDisplayName;"
+}

@@ -1,0 +1,16 @@
+{
+  "errors": [
+    {
+      "file": "admin/ui.ts",
+      "line": 276,
+      "col": 11,
+      "message": "Type '{ product_id: string; cursor: string | undefined; }' is not assignable to type 'AdminSubscribersRequest' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the types of the target's properties."
+    },
+    {
+      "file": "admin/ui.ts",
+      "line": 402,
+      "col": 11,
+      "message": "Type '{ product_id: string; cursor: string | undefined; }' is not assignable to type 'AdminSubscribersExportRequest' with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined' to the types of the target's properties."
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "content": "    console.log({ orderId: orderIdStr, buyerEmail }, \"no notified entries in attribution window\");\n  }\n\n  const variantIdSet = new Set(variantIdStrings);\n\n  for (const entry of notifiedEntries) {\n    // Match logic:\n    // - Variant-level: the purchased variant ID must match exactly\n    // - Product-level: at least one purchased variant must have the same product_external_id\n    //   as the entry, confirmed via waitlist_entries to avoid cross-product false matches\n    let isMatch: boolean;\n    if (entry.variant_external_id !== null) {\n      isMatch = variantIdSet.has(entry.variant_external_id);\n    } else if (variantIdStrings.length === 0) {\n      // No variant IDs in order \u2014 can't verify product ownership, skip\n      isMatch = false;\n    } else {\n      // Check if any purchased variant belongs to the entry's product\n      const productMatchRows = await sql<{ id: string }[]>`\n        SELECT id FROM waitlist_entries\n        WHERE product_external_id = ${entry.product_external_id}::bigint\n        AND variant_external_id = ANY(\n          ARRAY[${variantIdStrings.join(\",\")}]::bigint[]\n        )\n        LIMIT 1\n      `;\n      isMatch = productMatchRows.length > 0;\n    }\n\n    if (!isMatch) continue;",
+  "total_lines": 387,
+  "returned_lines": [
+    305,
+    335
+  ]
+}

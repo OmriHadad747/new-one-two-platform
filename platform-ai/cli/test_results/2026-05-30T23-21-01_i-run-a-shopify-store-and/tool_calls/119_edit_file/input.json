@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/webhook-handlers.ts",
+  "old_string": "  if (notifiedEntries.length === 0) {\n    console.log({ orderId: orderIdStr, buyerEmail }, \"no notified entries in window \u2014 skipping\");\n    return;\n  }\n\n  const variantIdSet = new Set(variantIdStrings);",
+  "new_string": "  if (notifiedEntries.length === 0) {\n    console.log({ orderId: orderIdStr, buyerEmail }, \"no notified entries in attribution window\");\n  }\n\n  const variantIdSet = new Set(variantIdStrings);"
+}

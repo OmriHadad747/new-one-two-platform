@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/admin/ui.ts",
+  "old_string": "    const req: AdminSubscribersExportRequest = { product_id: productId, cursor: cursor ?? undefined };\n    if (variantId !== null) {\n      req.variant_id = variantId;\n    }",
+  "new_string": "    const req: AdminSubscribersExportRequest = cursor\n      ? { product_id: productId, cursor }\n      : { product_id: productId };\n    if (variantId !== null) {\n      req.variant_id = variantId;\n    }"
+}

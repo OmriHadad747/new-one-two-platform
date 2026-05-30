@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/webhook-handlers.ts",
+  "old_string": "  // Only proceed with notification batch creation when stock is positive\n  if (available === null || available <= 0) {\n    console.log({ inventoryItemId, available }, \"no positive stock \u2014 not creating notification batch\");\n    return;\n  }\n\n  // Use the actual restock detection timestamp from the webhook payload",
+  "new_string": "  // Use the actual restock detection timestamp from the webhook payload"
+}

@@ -45,6 +45,12 @@ class CodingAgentResult:
     # Token usage of the done()-gate micro-validators (Haiku), summed over
     # the run. The coding agent's own tokens live in `run_result`.
     validator_usage: Optional[Dict[str, int]] = None
+    # tsc errors against the FINAL scaffold state (run at loop exit
+    # regardless of how the loop ended). Empty = clean. This is the ground
+    # truth on whether the shipped artifact actually builds — never trust
+    # an earlier mid-loop tsc result, because edits after done()/the last
+    # run_tsc() can have broken it. Also persisted to final_tsc.json.
+    final_tsc_errors: Optional[list] = None
 
 
 def run_coding_agent(
@@ -102,6 +108,20 @@ def run_coding_agent(
     else:
         incomplete_reason = "the agent stopped before calling done()"
 
+    # FINAL TSC — ground truth on whether the shipped scaffold builds.
+    # An earlier mid-loop run_tsc() can be stale; the agent may have edited
+    # contracts/files after its last tsc and never re-checked. This pass is
+    # the authoritative answer for the eval, regardless of how the loop ended.
+    final_tsc_errors = _run_final_tsc(work_dir)
+    _persist_final_tsc(run_dir, final_tsc_errors)
+    if final_tsc_errors and not incomplete_reason:
+        incomplete_reason = (
+            f"final tsc check failed with {len(final_tsc_errors)} error(s) "
+            "after loop exit — scaffold does not build"
+        )
+    elif final_tsc_errors and incomplete_reason:
+        incomplete_reason += f"; also: final tsc has {len(final_tsc_errors)} error(s)"
+
     _persist_token_usage(run_dir, result, ctx.validator_usage)
 
     return CodingAgentResult(
@@ -111,7 +131,31 @@ def run_coding_agent(
         todos=ctx.todos,
         incomplete_reason=incomplete_reason,
         validator_usage=ctx.validator_usage,
+        final_tsc_errors=final_tsc_errors,
     )
+
+
+def _run_final_tsc(work_dir: Path) -> list:
+    """Run tsc against the final scaffold state. Never raises — infra
+    errors are surfaced as a single synthetic entry so the eval can see
+    them. Returns [] if clean."""
+    try:
+        from subagents.w_coding_agent.tsc_runner import (
+            run_tsc_on_scaffold,
+            run_tsc_on_ui_scaffold,
+        )
+        errs = run_tsc_on_scaffold(REPO_ROOT, work_dir)
+        errs = errs + run_tsc_on_ui_scaffold(REPO_ROOT, work_dir)
+        return errs
+    except Exception as e:
+        return [{"file": "<final_tsc>", "line": 0, "message": f"tsc infra error: {e}"}]
+
+
+def _persist_final_tsc(run_dir: Path, errors: list) -> None:
+    """Write final_tsc.json so post-hoc tools (eval skill, CI) read the
+    same ground truth without re-running tsc themselves."""
+    payload = {"errors": errors, "error_count": len(errors), "clean": not errors}
+    (run_dir / "final_tsc.json").write_text(json.dumps(payload, indent=2))
 
 
 # ── Internals ───────────────────────────────────────────────────────────────

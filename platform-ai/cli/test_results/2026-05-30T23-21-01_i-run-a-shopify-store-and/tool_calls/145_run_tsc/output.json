@@ -1,0 +1,28 @@
+{
+  "errors": [
+    {
+      "file": "src/routes/admin.ts",
+      "line": 430,
+      "col": 30,
+      "message": "Property 'product_external_id' does not exist on type 'ExportRow'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 432,
+      "col": 18,
+      "message": "Property 'product_external_id' does not exist on type 'ExportRow'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 434,
+      "col": 13,
+      "message": "Property 'variant_external_id' does not exist on type 'ExportRow'."
+    },
+    {
+      "file": "src/routes/admin.ts",
+      "line": 435,
+      "col": 20,
+      "message": "Property 'variant_external_id' does not exist on type 'ExportRow'."
+    }
+  ]
+}

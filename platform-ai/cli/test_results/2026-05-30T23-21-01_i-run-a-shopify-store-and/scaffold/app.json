@@ -1,0 +1,416 @@
+{
+  "name": "back-in-stock-notifier",
+  "database": {
+    "tables": [
+      {
+        "name": "waitlist_entries",
+        "purpose": "Each row represents one shopper's expressed interest in being notified when a specific variant (or product) comes back in stock.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal id"
+          },
+          {
+            "name": "shopper_email",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "email address to notify"
+          },
+          {
+            "name": "product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the product this entry is associated with"
+          },
+          {
+            "name": "variant_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "the specific variant; null when signup is at product level"
+          },
+          {
+            "name": "item_display_name",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "human-readable label captured at signup time for use in notification emails"
+          },
+          {
+            "name": "item_page_url",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "URL to the product page, included in the notification email"
+          },
+          {
+            "name": "signup_level",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": ["variant", "product"],
+            "purpose": "whether the signup is at variant or product level"
+          },
+          {
+            "name": "status",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT 'active'",
+            "enum": ["active", "notified", "converted", "unsubscribed"],
+            "purpose": "active, notified, converted, or unsubscribed"
+          },
+          {
+            "name": "unsubscribe_token",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "unique token embedded in notification emails for one-click unsubscribe"
+          },
+          {
+            "name": "signed_up_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          },
+          {
+            "name": "notified_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NULL",
+            "purpose": "timestamp of most recent notification send"
+          },
+          {
+            "name": "notification_batch_id",
+            "sqlType": "UUID",
+            "constraints": "NULL",
+            "purpose": "the batch that last notified this entry"
+          }
+        ],
+        "uniqueConstraint": ["shopper_email", "product_external_id", "variant_external_id"],
+        "indexes": [
+          ["product_external_id", "variant_external_id", "status", "signed_up_at"],
+          ["unsubscribe_token"],
+          ["shopper_email"],
+          ["notification_batch_id"]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "notification_batches",
+        "purpose": "Tracks each restock notification run for a specific item including dispatch status, scheduled send time, and subscriber count for quiet-hours scheduling and idempotency.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal id"
+          },
+          {
+            "name": "product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the product that restocked"
+          },
+          {
+            "name": "variant_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "the variant that restocked; null for product-level batches"
+          },
+          {
+            "name": "variant_gid",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "purpose": "canonical Shopify GID for the variant (gid://shopify/ProductVariant/<id>), stored from the inventoryItem API response for use in subsequent Shopify ops"
+          },
+          {
+            "name": "available_quantity_at_detection",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL",
+            "purpose": "stock level observed at restock detection, used to cap notification count"
+          },
+          {
+            "name": "status",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT 'pending'",
+            "enum": ["pending", "sending", "completed"],
+            "purpose": "pending, sending, or completed"
+          },
+          {
+            "name": "entries_notified",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "number of waitlist entries included in this batch"
+          },
+          {
+            "name": "detected_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": "when the restock event was received"
+          },
+          {
+            "name": "scheduled_send_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL",
+            "purpose": "earliest time this batch may be dispatched, accounting for quiet hours"
+          },
+          {
+            "name": "completed_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NULL",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": ["product_external_id", "variant_external_id", "detected_at"],
+        "indexes": [
+          ["status", "scheduled_send_at"],
+          ["product_external_id", "variant_external_id", "detected_at"]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "conversions",
+        "purpose": "Records when a previously-notified shopper purchases the item they were waiting for within the 7-day attribution window, enabling demand-recovery metrics.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal id"
+          },
+          {
+            "name": "waitlist_entry_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES waitlist_entries(id) ON DELETE CASCADE",
+            "purpose": "the waitlist entry that led to this purchase"
+          },
+          {
+            "name": "order_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the paid order that triggered conversion detection"
+          },
+          {
+            "name": "shopper_email",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "denormalised for query efficiency"
+          },
+          {
+            "name": "product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the product purchased"
+          },
+          {
+            "name": "variant_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "the variant purchased"
+          },
+          {
+            "name": "notified_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL",
+            "purpose": "when the notification was sent, for attribution window calculation"
+          },
+          {
+            "name": "converted_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL",
+            "purpose": "when the order was paid"
+          }
+        ],
+        "uniqueConstraint": ["order_external_id", "waitlist_entry_id"],
+        "indexes": [
+          ["shopper_email", "product_external_id"],
+          ["order_external_id"],
+          ["converted_at"]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "notification_settings",
+        "purpose": "Single-row table holding the merchant's notification message template and quiet-hours configuration.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal id"
+          },
+          {
+            "name": "notification_subject_template",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT '{{product_name}} is back in stock!'",
+            "purpose": "template string with product name and item detail placeholders for notification subject line"
+          },
+          {
+            "name": "notification_body_template",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT '<p>Great news! {{item_detail}} is back in stock.</p><p><a href=\"{{item_url}}\">Shop now</a></p><p><a href=\"{{unsubscribe_url}}\">Unsubscribe</a></p>'",
+            "purpose": "HTML content template with product name, item detail, item URL, and unsubscribe link placeholders"
+          },
+          {
+            "name": "quiet_hours_start",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT '22:00'",
+            "purpose": "local time (HH:MM) after which sends are held"
+          },
+          {
+            "name": "quiet_hours_end",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT '08:00'",
+            "purpose": "local time (HH:MM) when sends resume"
+          },
+          {
+            "name": "timezone",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL DEFAULT 'America/New_York'",
+            "purpose": "IANA timezone name for interpreting quiet hours"
+          },
+          {
+            "name": "updated_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": [],
+        "indexes": [],
+        "foreignKeys": []
+      },
+      {
+        "name": "dashboard_snapshots",
+        "purpose": "Pre-aggregated per-item waitlist and conversion counts refreshed after each batch completes, enabling instant admin dashboard load without full-table scans.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal id"
+          },
+          {
+            "name": "product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the product this snapshot covers"
+          },
+          {
+            "name": "variant_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "the variant; null for product-level aggregates"
+          },
+          {
+            "name": "item_display_name",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "product and variant label for rendering without a Shopify lookup"
+          },
+          {
+            "name": "active_waitlist_count",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "number of entries currently awaiting notification"
+          },
+          {
+            "name": "total_signups",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "all-time signup count"
+          },
+          {
+            "name": "total_notified",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "all-time notified count"
+          },
+          {
+            "name": "total_conversions",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "all-time conversion count"
+          },
+          {
+            "name": "last_restock_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NULL",
+            "purpose": "most recent restock detection timestamp"
+          },
+          {
+            "name": "snapshot_updated_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": ["product_external_id", "variant_external_id"],
+        "indexes": [
+          ["active_waitlist_count"],
+          ["product_external_id", "variant_external_id"]
+        ],
+        "foreignKeys": []
+      }
+    ]
+  },
+  "shopifyIntegration": {
+    "webhookTopics": [
+      "inventory_levels/update",
+      "products/delete",
+      "orders/paid"
+    ],
+    "cronSchedule": "*/15 * * * *"
+  },
+  "httpRoutes": {
+    "widget": [
+      {
+        "path": "/widget/availability",
+        "method": "GET",
+        "purpose": "Check whether a specific variant or product is currently sold out so the widget knows whether to render the signup form."
+      },
+      {
+        "path": "/widget/signup-status",
+        "method": "GET",
+        "purpose": "Return whether a given email is already on the waitlist for a specific item."
+      },
+      {
+        "path": "/widget/signup",
+        "method": "POST",
+        "purpose": "Record a shopper's waitlist signup for a sold-out item; duplicate signups are silently ignored."
+      },
+      {
+        "path": "/widget/unsubscribe",
+        "method": "POST",
+        "purpose": "Process a one-click unsubscribe from all waitlists for the shopper identified by the token."
+      }
+    ],
+    "admin": [
+      {
+        "path": "/admin/dashboard",
+        "method": "GET",
+        "purpose": "Return products and variants ranked by active waitlist size with aggregate demand-recovery metrics."
+      },
+      {
+        "path": "/admin/subscribers",
+        "method": "GET",
+        "purpose": "Return the paginated list of individual subscribers waiting for a specific product or variant."
+      },
+      {
+        "path": "/admin/subscribers/export",
+        "method": "GET",
+        "purpose": "Stream all subscriber rows for a given item as a CSV download."
+      },
+      {
+        "path": "/admin/settings",
+        "method": "GET",
+        "purpose": "Fetch the current notification template and quiet-hours settings."
+      },
+      {
+        "path": "/admin/settings/template",
+        "method": "PUT",
+        "purpose": "Save the merchant's edited notification subject and body template."
+      },
+      {
+        "path": "/admin/settings/quiet-hours",
+        "method": "PUT",
+        "purpose": "Save the merchant's quiet-hours start time, end time, and timezone."
+      }
+    ]
+  }
+}

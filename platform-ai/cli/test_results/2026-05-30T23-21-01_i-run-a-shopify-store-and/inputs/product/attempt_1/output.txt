@@ -1,0 +1,11 @@
+```json
+{
+  "status": "needs_clarification",
+  "question": "On the 'notify front of the queue' flow: when stock is limited and you have 50 people waiting, should the app notify N people (you set N), or should it notify everyone but mark the rest as 'waiting for next restock' so they see their status in the admin? Also, when a customer is notified, should they automatically unsubscribe from that specific item, or stay subscribed in case stock runs out again?",
+  "suggestions": [
+    "Notify everyone at once, customer unsubscribes after notified",
+    "Notify X people (you set limit), rest auto-notified at next restock",
+    "Notify everyone, they stay subscribed for future restocks"
+  ]
+}
+```

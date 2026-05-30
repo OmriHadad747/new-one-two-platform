@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "incomplete_reason": [
+    "[persistence-safety] critical src/routes/widget.ts:226 \u2014 Product-level waitlist signup uses `WHERE NOT EXISTS (SELECT 1 FROM waitlist_entries WHERE...)` pattern to guard against duplicates, which is a SELECT-then-INSERT race. The plan declares (email, product_id, variant_id) as the dedup key and requires idempotent writes. FIX: Replace the WHERE NOT EXISTS subquery pattern with ON CONFLICT (shopper_email, product_external_id, variant_external_id) DO NOTHING, matching the variant-level signup pattern on line 209."
+  ]
+}

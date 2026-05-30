@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/webhook-handlers.ts",
+  "old_string": "  // Idempotency check\n  const [existing] = await sql<{ id: string }[]>`\n    SELECT id FROM conversions\n    WHERE order_external_id = ${orderIdStr}::bigint\n    LIMIT 1\n  `;\n\n  if (existing) {\n    console.log({ orderId: orderIdStr }, \"conversion already recorded \u2014 skipping\");\n    return;\n  }\n\n  // Collect variant ids from line items (may be empty for non-variant products)",
+  "new_string": "  // Collect variant ids from line items (may be empty for non-variant products)\n  // Idempotency is enforced by ON CONFLICT (order_external_id, waitlist_entry_id) DO NOTHING on insert"
+}

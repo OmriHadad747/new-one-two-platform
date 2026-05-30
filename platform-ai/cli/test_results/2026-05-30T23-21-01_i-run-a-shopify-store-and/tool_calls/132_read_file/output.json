@@ -1,0 +1,8 @@
+{
+  "content": "  const detectedAt = updatedAt ? new Date(updatedAt) : now;\n\n  // Load quiet hours settings\n  const [settings] = await sql<{\n    quiet_hours_start: string;\n    quiet_hours_end: string;\n    timezone: string;\n  }[]>`\n    SELECT quiet_hours_start, quiet_hours_end, timezone\n    FROM notification_settings\n    LIMIT 1\n  `;\n\n  const quietStart = settings?.quiet_hours_start ?? \"22:00\";\n  const quietEnd = settings?.quiet_hours_end ?? \"08:00\";\n  const timezone = settings?.timezone ?? \"America/New_York\";\n\n  const scheduledSendAt = computeScheduledSendAt(now, quietStart, quietEnd, timezone);\n\n  // Store the canonical variant GID from the Shopify API response alongside the numeric ID\n  await sql`\n    INSERT INTO notification_batches (\n      product_external_id,\n      variant_external_id,\n      variant_gid,\n      available_quantity_at_detection,\n      status,\n      entries_notified,\n      detected_at,\n      scheduled_send_at\n    ) VALUES (\n      ${productIdStr}::bigint,\n      ${variantIdStr}::bigint,\n      ${variantGid},\n      ${available},\n      'pending',\n      0,\n      ${detectedAt},\n      ${scheduledSendAt}\n    )",
+  "total_lines": 389,
+  "returned_lines": [
+    190,
+    230
+  ]
+}

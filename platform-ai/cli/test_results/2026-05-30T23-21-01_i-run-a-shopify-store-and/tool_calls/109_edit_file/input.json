@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/types/contracts.ts",
+  "old_string": "export interface NotificationBatchRow {\n  id: NotificationBatchId;\n  product_external_id: bigint;\n  variant_external_id: bigint | null;\n  available_quantity_at_detection: number;\n  status: BatchStatus;\n  entries_notified: number;\n  detected_at: Date;\n  scheduled_send_at: Date;\n  completed_at: Date | null;\n}",
+  "new_string": "export interface NotificationBatchRow {\n  id: NotificationBatchId;\n  product_external_id: bigint;\n  variant_external_id: bigint | null;\n  variant_gid: string | null; // canonical Shopify GID from inventoryItem API response\n  available_quantity_at_detection: number;\n  status: BatchStatus;\n  entries_notified: number;\n  detected_at: Date;\n  scheduled_send_at: Date;\n  completed_at: Date | null;\n}"
+}

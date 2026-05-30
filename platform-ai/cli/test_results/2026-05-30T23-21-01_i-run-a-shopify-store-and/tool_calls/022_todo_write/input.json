@@ -1,0 +1,236 @@
+{
+  "todos": [
+    {
+      "content": "Read component rules: db.md, backend.md, admin.md, storefront.md, webhooks.md, cron.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json \u2014 spine: database, shopifyIntegration, httpRoutes",
+      "status": "completed",
+      "activeForm": "write_file",
+      "implements": [
+        "type-level spine for all contracts above"
+      ],
+      "consumes": [
+        "db.md schema conventions"
+      ],
+      "produces": [
+        "database.tables[], shopifyIntegration.webhookTopics[], httpRoutes"
+      ],
+      "do_not": [
+        "declare app_config table (template-managed)",
+        "redeclare template-shipped tables"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts \u2014 shared type contracts",
+      "status": "in_progress",
+      "activeForm": "write_file",
+      "implements": [
+        "type-level spine for all contracts above"
+      ],
+      "consumes": [
+        "every externalContract requestShape + responseShape (define an aliased type per endpoint)",
+        "every trigger payload (define a typed shape per topic)",
+        "every persistence table (define a Row type)",
+        "for routes that augment rows with resolved data, define a <Row>WithLive shape that includes the resolved live.<field>"
+      ],
+      "produces": [
+        "named, branded id types where the plan implies an id (avoid raw string)",
+        "exported types every route + UI file imports \u2014 no cross-file structural typing"
+      ],
+      "do_not": [
+        "use `any` for any field the plan typed",
+        "let UI files import from route files or vice versa \u2014 contracts.ts is the only shared shape"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts \u2014 webhook handlers",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "inventory level for a variant changes",
+        "a product is deleted from the store",
+        "an order is paid"
+      ],
+      "consumes": [
+        "[inventory_levels/update] event: inventory level for a variant changes",
+        "  'inventory item external id' \u2190 payload.inventory_item_id",
+        "  'available quantity' \u2190 payload.available",
+        "  'location external id' \u2190 payload.location_id",
+        "  'updated timestamp' \u2190 payload.updated_at",
+        "  'variant external id' \u2190 resolve variant from inventory_item_id via the admin inventoryItem query (inventoryItem.variant.id)",
+        "  'product external id' \u2190 resolve product from inventory_item_id via the admin inventoryItem query (inventoryItem.variant.product.id)",
+        "[products/delete] event: a product is deleted from the store",
+        "  'product external id' \u2190 payload.id",
+        "[orders/paid] event: an order is paid",
+        "  'order external id' \u2190 payload.id",
+        "  'buyer email' \u2190 payload.email",
+        "  'line item variant external ids' \u2190 payload.line_items[].variant_id",
+        "  'paid timestamp' \u2190 payload.processed_at"
+      ],
+      "produces": [
+        "idempotent DB writes per the capability each trigger drives",
+        "ON CONFLICT on every dedup-keyed insert (per persistence keyedBy)"
+      ],
+      "do_not": [
+        "early-return when a declared signalField is empty (silently disables the trigger)",
+        "read an undeclared payload field (paths above are the contract)",
+        "ignore a declared payloadBinding \u2014 every signalField above must be read at least once"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts \u2014 admin route handlers",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "resolve-variant-from-inventory-item",
+        "confirm-variant-availability"
+      ],
+      "consumes": [
+        "GET /admin/dashboard requestShape: cursor",
+        "GET /admin/subscribers requestShape: cursor, product_id, variant_id",
+        "GET /admin/subscribers/export requestShape: cursor, product_id, variant_id",
+        "GET /admin/settings requestShape: ",
+        "PUT /admin/settings/template requestShape: notification_body_template, notification_subject_template",
+        "PUT /admin/settings/quiet-hours requestShape: quiet_hours_end, quiet_hours_start, timezone",
+        "[resolve-variant-from-inventory-item/inventoryItem] consumes: inventory item external id",
+        "[confirm-variant-availability/productVariant] consumes: variant external id"
+      ],
+      "produces": [
+        "GET /admin/dashboard responseShape: items, next_cursor, overall_metrics, total_count",
+        "GET /admin/subscribers responseShape: next_cursor, subscribers, total_count",
+        "GET /admin/subscribers/export responseShape: csv_data, next_cursor, total_count",
+        "GET /admin/settings responseShape: notification_body_template, notification_subject_template, quiet_hours_end, quiet_hours_start, timezone",
+        "PUT /admin/settings/template responseShape: preview_body, preview_subject, success",
+        "PUT /admin/settings/quiet-hours responseShape: success",
+        "[resolve-variant-from-inventory-item/inventoryItem] produces: variant external id and product external id",
+        "[confirm-variant-availability/productVariant] produces: current availableForSale and inventoryQuantity"
+      ],
+      "do_not": [
+        "pass a literal/placeholder GID (e.g. 'gid://shopify/Product/0') to any Shopify op \u2014 fail-fast instead",
+        "call a bound op only to discard its returned id \u2014 every produces above must be persisted or threaded forward",
+        "provision Shopify side-effects outside the DB transaction without a rollback path"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts \u2014 storefront route handlers",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "check-item-availability"
+      ],
+      "consumes": [
+        "GET /widget/availability requestShape: product_id, variant_id",
+        "GET /widget/signup-status requestShape: email, product_id, variant_id",
+        "POST /widget/signup requestShape: email, item_display_name, item_page_url, product_id, signup_level, variant_id",
+        "POST /widget/unsubscribe requestShape: token",
+        "[check-item-availability/product] consumes: product external id"
+      ],
+      "produces": [
+        "GET /widget/availability responseShape: available, signup_level",
+        "GET /widget/signup-status responseShape: already_signed_up",
+        "POST /widget/signup responseShape: already_signed_up, success",
+        "POST /widget/unsubscribe responseShape: success",
+        "[check-item-availability/product] produces: variant availableForSale flag and selectedOptions",
+        "for every member/row this route returns: include resolved `live.<field>` for any reference the storefront will pass to cartCreate"
+      ],
+      "do_not": [
+        "fall back from a resolved live.<field> to the raw DB column it shadows (e.g. `?? member.product_external_id`)",
+        "accept caller-supplied ids without validating shape (variant ids are numeric strings; merchandise GIDs go to ProductVariant, not Product)"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/cron.ts \u2014 notification batch dispatcher",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "dispatch-pending-notification-batches"
+      ],
+      "consumes": [
+        "notification_batches rows in pending status with scheduled_send_at passed",
+        "config: quiet_hours_start, quiet_hours_end, timezone",
+        "waitlist_entries for batch ordered by signed_up_at ascending"
+      ],
+      "produces": [
+        "emails sent via platform email helper",
+        "waitlist_entries marked notified",
+        "notification_batches marked completed",
+        "dashboard_snapshots upserted"
+      ],
+      "do_not": [
+        "send emails outside the quiet hours window",
+        "send to already-notified entries"
+      ]
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts \u2014 admin UI surface",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "/admin/dashboard",
+        "/admin/subscribers",
+        "/admin/subscribers/export",
+        "/admin/settings",
+        "/admin/settings/template",
+        "/admin/settings/quiet-hours"
+      ],
+      "consumes": [
+        "calls GET /admin/dashboard \u2014 responseShape: items, next_cursor, overall_metrics, total_count",
+        "calls GET /admin/subscribers \u2014 responseShape: next_cursor, subscribers, total_count",
+        "calls GET /admin/subscribers/export \u2014 responseShape: csv_data, next_cursor, total_count",
+        "calls GET /admin/settings \u2014 responseShape: notification_body_template, notification_subject_template, quiet_hours_end, quiet_hours_start, timezone",
+        "calls PUT /admin/settings/template \u2014 responseShape: preview_body, preview_subject, success",
+        "calls PUT /admin/settings/quiet-hours \u2014 responseShape: success"
+      ],
+      "produces": [
+        "sends GET /admin/dashboard \u2014 requestShape: cursor",
+        "sends GET /admin/subscribers \u2014 requestShape: cursor, product_id, variant_id",
+        "sends GET /admin/subscribers/export \u2014 requestShape: cursor, product_id, variant_id",
+        "sends GET /admin/settings \u2014 requestShape: ",
+        "sends PUT /admin/settings/template \u2014 requestShape: notification_body_template, notification_subject_template",
+        "sends PUT /admin/settings/quiet-hours \u2014 requestShape: quiet_hours_end, quiet_hours_start, timezone"
+      ],
+      "do_not": [
+        "send a placeholder/sentinel (e.g. '0', '', null) for a reference column the plan declares NOT NULL \u2014 use real picker data",
+        "omit a UI affordance for a nullable-with-purpose column above (the merchant has no other way to set it)",
+        "store a variant id where a product id is required (or vice versa)"
+      ]
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts \u2014 storefront widget UI",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "/widget/availability",
+        "/widget/signup-status",
+        "/widget/signup",
+        "/widget/unsubscribe"
+      ],
+      "consumes": [
+        "calls GET /widget/availability \u2014 responseShape: available, signup_level",
+        "calls GET /widget/signup-status \u2014 responseShape: already_signed_up",
+        "calls POST /widget/signup \u2014 responseShape: already_signed_up, success",
+        "calls POST /widget/unsubscribe \u2014 responseShape: success",
+        "for ANY response field shaped `live.<field>` or a resolved id, USE that field for selection / cart / submit \u2014 never the raw DB column it shadows"
+      ],
+      "produces": [
+        "sends GET /widget/availability \u2014 requestShape: product_id, variant_id",
+        "sends GET /widget/signup-status \u2014 requestShape: email, product_id, variant_id",
+        "sends POST /widget/signup \u2014 requestShape: email, item_display_name, item_page_url, product_id, signup_level, variant_id",
+        "sends POST /widget/unsubscribe \u2014 requestShape: token"
+      ],
+      "do_not": [
+        "use `member.variant_external_id ?? member.product_external_id` (or any analogue) \u2014 a product id wrapped as a variant GID breaks cartCreate",
+        "build a `gid://shopify/ProductVariant/<id>` from anything that wasn't returned by the backend as a variant id",
+        "enable a CTA whose preconditions (selection count, availability) the plan declares \u2014 the backend re-validates anyway, but the UI must mirror it"
+      ]
+    },
+    {
+      "content": "Run tsc and fix any errors",
+      "status": "pending",
+      "activeForm": "run_tsc"
+    }
+  ]
+}

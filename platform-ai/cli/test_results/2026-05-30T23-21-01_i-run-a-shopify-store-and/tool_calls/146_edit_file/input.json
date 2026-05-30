@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/admin.ts",
+  "old_string": "    type ExportRow = {\n      id: string;\n      shopper_email: string;\n      item_display_name: string;\n      signup_level: string;\n      status: string;\n      signed_up_at: Date;\n      notified_at: Date | null;\n    };",
+  "new_string": "    type ExportRow = {\n      id: string;\n      shopper_email: string;\n      product_external_id: string;\n      variant_external_id: string | null;\n      item_display_name: string;\n      signup_level: string;\n      status: string;\n      signed_up_at: Date;\n      notified_at: Date | null;\n    };"
+}

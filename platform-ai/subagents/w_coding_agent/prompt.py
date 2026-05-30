@@ -194,7 +194,7 @@ reframes the contract, etc.). Single-file local fixes don't need it.
 
 ─── Turn budget ───
 
-Hard cap: 80 turns. If you reach 75 without `done()`, conclude what
+Hard cap: 140 turns. If you reach 130 without `done()`, conclude what
 you can and call `done()` — the runner surfaces what's incomplete.
 
 

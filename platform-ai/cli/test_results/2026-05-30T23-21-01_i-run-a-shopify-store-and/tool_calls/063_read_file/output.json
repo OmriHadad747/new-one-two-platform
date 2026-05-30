@@ -1,0 +1,8 @@
+{
+  "content": "\n  console.log({ topic: \"orders/paid\", orderId: orderIdStr, buyerEmail }, \"received\");\n\n  // Idempotency check\n  const [existing] = await sql<{ id: string }[]>`\n    SELECT id FROM conversions\n    WHERE order_external_id = ${orderIdStr}::bigint\n    LIMIT 1\n  `;\n\n  if (existing) {\n    console.log({ orderId: orderIdStr }, \"conversion already recorded \u2014 skipping\");\n    return;\n  }\n\n  const variantIdStrings = lineItems\n    .map((li) => li.variant_id)\n    .filter((id): id is number => id !== null && id !== undefined)\n    .map((id) => String(id));\n\n  if (variantIdStrings.length === 0) {\n    console.log({ orderId: orderIdStr }, \"no variant ids in order \u2014 skipping\");\n    return;\n  }\n\n  // Attribution window: 7 days\n  const attributionWindowMs = 7 * 24 * 60 * 60 * 1000;\n  const windowStart = new Date(processedAt.getTime() - attributionWindowMs);\n\n  const safeEmail = buyerEmail.replace(/\\0/g, \"\");\n\n  const notifiedEntries = await sql<{\n    id: string;\n    product_external_id: string;\n    variant_external_id: string | null;\n    notified_at: Date;\n  }[]>`\n    SELECT id,\n           product_external_id::text,\n           variant_external_id::text,",
+  "total_lines": 378,
+  "returned_lines": [
+    270,
+    310
+  ]
+}

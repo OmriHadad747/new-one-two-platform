@@ -1,0 +1,10 @@
+{
+  "errors": [
+    {
+      "file": "src/routes/webhook.ts",
+      "line": 32,
+      "col": 19,
+      "message": "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ \"inventory_levels/update\": (payload: InventoryLevelUpdatePayload, _req: Request<ParamsDictionary, any, any, ParsedQs, Record<...>>) => Promise<...>; \"products/delete\": (payload: ProductsDeletePayload, _req: Request<...>) => Promise<...>; \"orders/paid\": (payload: OrdersPaidPayload, _req: Request<...>) => Promise<.....'."
+    }
+  ]
+}

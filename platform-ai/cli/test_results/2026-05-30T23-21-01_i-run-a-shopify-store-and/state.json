@@ -1,0 +1,996 @@
+{
+  "run_ts": "2026-05-30T23-21-01",
+  "run_slug": "i-run-a-shopify-store-and",
+  "prompt": "I run a Shopify store and I'm losing sales every time something sells out \u2014 shoppers see \"Sold out\" and leave without telling me they were interested. I want a \"Notify me when back in stock\" app so any shopper can leave their email on a sold-out item and hear from me the moment it's available again, and I can see in the admin which products people are waiting on so I know what to restock. Shoppers should sign up at the variant level when a product has multiple variants like sizes or colors (they pick the exact one and only get notified about that one), or at the product level when there's nothing meaningful to choose between \u2014 default to whichever fits. The widget sits on the product page right under the sold-out button, takes an email, confirms inline, and never appears on items already in stock. When something is back, every shopper waiting should be emailed in the order they signed up; if only a few units come back and many are waiting, notify the front of the queue and keep the rest for the next restock, and each shopper hears about a given item once per restock so no duplicate blasts if stock briefly dips. In the admin I want a dashboard ranking products by waitlist size, a drill-in to see individual subscribers and export them as CSV, an editor for the email subject and body (with product name, item details, and a one-click unsubscribe link), and quiet hours so nothing sends late at night. Every email needs a working unsubscribe that clears the shopper from all their waitlists; deleted products clear their waitlist cleanly; duplicate signups for the same item from the same email are a no-op; the same email across many products is fine. The number I care about most is \"lost demand recovered\" \u2014 how many signed up, how many got notified, and how many of those actually bought that item within a week.",
+  "version": 2,
+  "created_at": "2026-05-30T23:21:01",
+  "updated_at": "2026-05-30T23:32:24",
+  "intent": {
+    "triggerTypes": [
+      "widget",
+      "webhook",
+      "admin",
+      "cron"
+    ],
+    "resources": [
+      "products",
+      "inventory",
+      "customers"
+    ],
+    "desiredOutcome": "Capture lost demand from sold-out products, notify waiting shoppers when stock returns, and help merchants prioritize restocking by demand.",
+    "cronHint": "every 1 hour (inventory polling) + respect quiet hours for notification sends",
+    "appCategory": "storefront_backend_admin",
+    "qualityBrief": "A polished back-in-stock notifier handles duplicate webhook delivery (idempotent restock detection per variant per day), guest checkout with no customer record (email-based signup, no dependency on customer ID), deleted products (cascade-delete waitlist rows), and inventory races (check stock state at send time, skip if sold out again). The widget detects in-stock vs sold-out by querying Shopify, appears/hides correctly on variant selection, and confirms inline without page reload. The admin dashboard shows real conversion metrics (% of notified who bought within 7 days), unsubscribe links are one-click and work from any email client, and quiet hours prevent sends outside the window even if restock occurs during silence. Duplicate signups from the same email+variant are silently ignored (no error, no re-confirmation). The email template editor shows live preview with real product names and variant details."
+  },
+  "tokens_product": {
+    "in": 9281,
+    "out": 943,
+    "cache_read": 8260,
+    "cache_create": 416
+  },
+  "plan": {
+    "schema_version": "1",
+    "archetype": "backend+admin+storefront",
+    "feasibility": "feasible",
+    "blockedReason": null,
+    "complexity": "high",
+    "dataFlow": "A shopper on a sold-out product page loads the widget, which queries Shopify Storefront to confirm the item is unavailable before rendering; on form submit, the backend records a waitlist entry (deduplicating by email + item identity). When an inventory_levels/update webhook fires, the backend resolves the inventory item to a variant and product via the admin inventoryItem query, then checks whether a waitlist exists for that variant (or its parent product for product-level signups). If stock is positive it enqueues a notification batch \u2014 respecting quiet hours \u2014 pulling the queue front-to-back per restock event, capped by available units, and marking each entry as notified so subsequent restock events skip already-notified subscribers until they buy. Each notified shopper receives a templated email with a one-click unsubscribe link. When an order is paid, the backend matches its line items against recently-notified waitlist entries for the same email + item within the 7-day conversion window and records the conversion. When a product is deleted, its entire waitlist is cascade-removed. The merchant admin dashboard reads pre-aggregated waitlist stats, lists individual subscribers, exports CSV, and edits the notification email template and quiet-hours settings.",
+    "triggers": [
+      {
+        "kind": "external-event",
+        "event": "inventory level for a variant changes",
+        "signalFields": [
+          "inventory item external id",
+          "available quantity",
+          "location external id",
+          "updated timestamp",
+          "variant external id",
+          "product external id"
+        ],
+        "idempotency": "deduplicate by inventory item external id + calendar date; if a notification batch was already initiated for the same item on the same calendar day, skip unless stock has returned to zero and risen again",
+        "shopifyTopic": "inventory_levels/update",
+        "payloadBindings": [
+          {
+            "signalField": "inventory item external id",
+            "source": "payload",
+            "payloadPath": "inventory_item_id",
+            "resolution": null
+          },
+          {
+            "signalField": "available quantity",
+            "source": "payload",
+            "payloadPath": "available",
+            "resolution": null
+          },
+          {
+            "signalField": "location external id",
+            "source": "payload",
+            "payloadPath": "location_id",
+            "resolution": null
+          },
+          {
+            "signalField": "updated timestamp",
+            "source": "payload",
+            "payloadPath": "updated_at",
+            "resolution": null
+          },
+          {
+            "signalField": "variant external id",
+            "source": "resolved",
+            "payloadPath": null,
+            "resolution": "resolve variant from inventory_item_id via the admin inventoryItem query (inventoryItem.variant.id)"
+          },
+          {
+            "signalField": "product external id",
+            "source": "resolved",
+            "payloadPath": null,
+            "resolution": "resolve product from inventory_item_id via the admin inventoryItem query (inventoryItem.variant.product.id)"
+          }
+        ]
+      },
+      {
+        "kind": "external-event",
+        "event": "a product is deleted from the store",
+        "signalFields": [
+          "product external id"
+        ],
+        "idempotency": "if no waitlist rows exist for the product, treat as no-op",
+        "shopifyTopic": "products/delete",
+        "payloadBindings": [
+          {
+            "signalField": "product external id",
+            "source": "payload",
+            "payloadPath": "id",
+            "resolution": null
+          }
+        ]
+      },
+      {
+        "kind": "external-event",
+        "event": "an order is paid",
+        "signalFields": [
+          "order external id",
+          "buyer email",
+          "line item variant external ids",
+          "paid timestamp"
+        ],
+        "idempotency": "if a conversion record already exists for this order external id, treat as no-op",
+        "shopifyTopic": "orders/paid",
+        "payloadBindings": [
+          {
+            "signalField": "order external id",
+            "source": "payload",
+            "payloadPath": "id",
+            "resolution": null
+          },
+          {
+            "signalField": "buyer email",
+            "source": "payload",
+            "payloadPath": "email",
+            "resolution": null
+          },
+          {
+            "signalField": "line item variant external ids",
+            "source": "payload",
+            "payloadPath": "line_items[].variant_id",
+            "resolution": null
+          },
+          {
+            "signalField": "paid timestamp",
+            "source": "payload",
+            "payloadPath": "processed_at",
+            "resolution": null
+          }
+        ]
+      },
+      {
+        "kind": "schedule",
+        "cadence": "every 15 minutes",
+        "jobPurpose": "Dispatch pending notification batches that were held for quiet hours once the send window reopens.",
+        "perTickWork": "Load all notification batches in pending status whose scheduled send time has passed and the current time falls within the merchant's allowed send window, then dispatch emails for each batch entry in signup-order and mark them sent.",
+        "bulkFetchRule": false
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "check-item-availability",
+        "description": "Query Shopify Storefront to determine whether a specific variant or product is currently unavailable so the widget can decide whether to render.",
+        "kind": "read",
+        "dataNeeds": [
+          "product external id",
+          "variant external id"
+        ],
+        "integration": "shopify-storefront",
+        "shopifySteps": [
+          {
+            "op": "product",
+            "produces": "variant availableForSale flag and selectedOptions",
+            "consumes": "product external id"
+          }
+        ],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "record-waitlist-signup",
+        "description": "Persist a shopper's email against the specific variant or product they want to be notified about, silently ignoring duplicate email + item combinations.",
+        "kind": "write",
+        "dataNeeds": [
+          "shopper email",
+          "product external id",
+          "variant external id",
+          "item display name",
+          "signup level"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "get-signup-status",
+        "description": "Return whether a given email is already on the waitlist for a specific item so the widget renders the correct initial state on page load.",
+        "kind": "read",
+        "dataNeeds": [
+          "shopper email",
+          "product external id",
+          "variant external id"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "resolve-variant-from-inventory-item",
+        "description": "Look up the variant and parent product identifiers from an inventory item id so a restock event can be matched to waitlist entries.",
+        "kind": "read",
+        "dataNeeds": [
+          "inventory item external id"
+        ],
+        "integration": "shopify-admin",
+        "shopifySteps": [
+          {
+            "op": "inventoryItem",
+            "produces": "variant external id and product external id",
+            "consumes": "inventory item external id"
+          }
+        ],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "confirm-variant-availability",
+        "description": "Re-query the variant's current availability at send time to guard against stock that has sold out again between restock detection and notification dispatch.",
+        "kind": "read",
+        "dataNeeds": [
+          "variant external id"
+        ],
+        "integration": "shopify-admin",
+        "shopifySteps": [
+          {
+            "op": "productVariant",
+            "produces": "current availableForSale and inventoryQuantity",
+            "consumes": "variant external id"
+          }
+        ],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "create-notification-batch",
+        "description": "When a restock is detected, create a notification batch record holding the ordered queue of subscribers to contact and schedule dispatch respecting quiet hours.",
+        "kind": "write",
+        "dataNeeds": [
+          "variant external id",
+          "product external id",
+          "available quantity",
+          "restock detected timestamp"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": true,
+        "usesWorkflow": true
+      },
+      {
+        "id": "send-restock-notification-email",
+        "description": "Send a personalised restock notification email to a waiting shopper using the merchant's configured subject and body with an embedded one-click unsubscribe link.",
+        "kind": "notify",
+        "dataNeeds": [
+          "shopper email",
+          "product name",
+          "item detail label",
+          "item page URL",
+          "unsubscribe token",
+          "notification subject template",
+          "notification body template"
+        ],
+        "integration": "email",
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": true,
+        "usesWorkflow": false
+      },
+      {
+        "id": "mark-entry-notified",
+        "description": "Record that a waitlist entry has been included in a notification batch so it is not re-notified for the same restock event.",
+        "kind": "write",
+        "dataNeeds": [
+          "waitlist entry id",
+          "notification batch id",
+          "notified timestamp"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": true
+      },
+      {
+        "id": "process-unsubscribe",
+        "description": "Remove a shopper from all their active waitlist entries when they click their one-click unsubscribe link, identified by a single-use token.",
+        "kind": "write",
+        "dataNeeds": [
+          "unsubscribe token"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "record-conversion",
+        "description": "When an order is paid, match its line items against notified waitlist entries for the same email within the 7-day conversion window and record each match as a conversion.",
+        "kind": "write",
+        "dataNeeds": [
+          "order external id",
+          "buyer email",
+          "purchased variant external ids",
+          "paid timestamp"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "cascade-delete-waitlist",
+        "description": "Remove all waitlist entries and notification batch rows associated with a deleted product.",
+        "kind": "write",
+        "dataNeeds": [
+          "product external id"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "list-waitlist-dashboard",
+        "description": "Return products and variants ranked by active waitlist size for the admin dashboard.",
+        "kind": "read",
+        "dataNeeds": [
+          "page cursor"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": true,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "list-subscribers-for-item",
+        "description": "Return the paginated list of individual subscribers waiting for a specific product or variant, for the admin drill-in view.",
+        "kind": "read",
+        "dataNeeds": [
+          "product external id",
+          "variant external id",
+          "page cursor"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": true,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "export-subscribers-csv",
+        "description": "Stream all subscriber rows for a given item as a CSV download for the merchant.",
+        "kind": "read",
+        "dataNeeds": [
+          "product external id",
+          "variant external id"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": true,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      },
+      {
+        "id": "read-settings",
+        "description": "Fetch the current notification template and quiet-hours settings for the admin settings page.",
+        "kind": "read",
+        "dataNeeds": [],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": true,
+        "usesWorkflow": false
+      },
+      {
+        "id": "save-notification-template",
+        "description": "Persist the merchant's edited notification subject and body text.",
+        "kind": "write",
+        "dataNeeds": [
+          "notification subject template",
+          "notification body template"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": true,
+        "usesWorkflow": false
+      },
+      {
+        "id": "save-quiet-hours",
+        "description": "Persist the merchant's configured quiet-hours start time, end time, and timezone.",
+        "kind": "write",
+        "dataNeeds": [
+          "quiet hours start time",
+          "quiet hours end time",
+          "timezone"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": true,
+        "usesWorkflow": false
+      },
+      {
+        "id": "read-conversion-metrics",
+        "description": "Return aggregate demand-recovery metrics \u2014 total signups, total notified, and total conversions with rate \u2014 for the admin dashboard.",
+        "kind": "read",
+        "dataNeeds": [
+          "time window"
+        ],
+        "integration": null,
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      }
+    ],
+    "persistence": [
+      {
+        "name": "waitlist_entries",
+        "purpose": "Each row represents one shopper's expressed interest in being notified when a specific variant (or product) comes back in stock.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "shopper_email",
+            "role": "text",
+            "nullable": false,
+            "purpose": "email address to notify"
+          },
+          {
+            "name": "product_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "the product this entry is associated with"
+          },
+          {
+            "name": "variant_external_id",
+            "role": "reference",
+            "nullable": true,
+            "purpose": "the specific variant; null when signup is at product level"
+          },
+          {
+            "name": "item_display_name",
+            "role": "text",
+            "nullable": false,
+            "purpose": "human-readable label captured at signup time for use in notification emails"
+          },
+          {
+            "name": "item_page_url",
+            "role": "text",
+            "nullable": false,
+            "purpose": "URL to the product page, included in the notification email"
+          },
+          {
+            "name": "signup_level",
+            "role": "status",
+            "nullable": false,
+            "purpose": "whether the signup is at variant or product level"
+          },
+          {
+            "name": "status",
+            "role": "status",
+            "nullable": false,
+            "purpose": "active, notified, converted, or unsubscribed"
+          },
+          {
+            "name": "unsubscribe_token",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": "unique token embedded in notification emails for one-click unsubscribe"
+          },
+          {
+            "name": "signed_up_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "notified_at",
+            "role": "timestamp",
+            "nullable": true,
+            "purpose": "timestamp of most recent notification send"
+          },
+          {
+            "name": "notification_batch_id",
+            "role": "reference",
+            "nullable": true,
+            "purpose": "the batch that last notified this entry"
+          }
+        ],
+        "keyedBy": "one row per (shopper_email, product_external_id, variant_external_id) triplet; variant_external_id may be null for product-level signups",
+        "statusField": null,
+        "queryPatterns": [
+          "active entries for a given variant external id ordered by signed_up_at ascending for queue-order notification dispatch",
+          "active entries for a given product external id where signup level is product ordered by signed_up_at ascending",
+          "single entry by unsubscribe token for unsubscribe processing",
+          "all entries for a given shopper email for bulk unsubscribe",
+          "all entries for a given product external id for cascade delete",
+          "entries with cursor pagination filtered by status for admin subscriber list",
+          "count of active entries grouped by product and variant for dashboard ranking"
+        ]
+      },
+      {
+        "name": "notification_batches",
+        "purpose": "Tracks each restock notification run for a specific item including dispatch status, scheduled send time, and subscriber count for quiet-hours scheduling and idempotency.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "product_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "the product that restocked"
+          },
+          {
+            "name": "variant_external_id",
+            "role": "reference",
+            "nullable": true,
+            "purpose": "the variant that restocked; null for product-level batches"
+          },
+          {
+            "name": "available_quantity_at_detection",
+            "role": "count",
+            "nullable": false,
+            "purpose": "stock level observed at restock detection, used to cap notification count"
+          },
+          {
+            "name": "status",
+            "role": "status",
+            "nullable": false,
+            "purpose": "pending, sending, or completed"
+          },
+          {
+            "name": "entries_notified",
+            "role": "count",
+            "nullable": false,
+            "purpose": "number of waitlist entries included in this batch"
+          },
+          {
+            "name": "detected_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": "when the restock event was received"
+          },
+          {
+            "name": "scheduled_send_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": "earliest time this batch may be dispatched, accounting for quiet hours"
+          },
+          {
+            "name": "completed_at",
+            "role": "timestamp",
+            "nullable": true,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per restock detection event per item, deduplicated by product_external_id + variant_external_id + calendar date of detected_at",
+        "statusField": null,
+        "queryPatterns": [
+          "pending batches whose scheduled_send_at has passed for the scheduler tick",
+          "completed batches for a given product and variant ordered by detected_at descending",
+          "single batch by id for status updates"
+        ]
+      },
+      {
+        "name": "conversions",
+        "purpose": "Records when a previously-notified shopper purchases the item they were waiting for within the 7-day attribution window, enabling demand-recovery metrics.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "waitlist_entry_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "the waitlist entry that led to this purchase"
+          },
+          {
+            "name": "order_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "the paid order that triggered conversion detection"
+          },
+          {
+            "name": "shopper_email",
+            "role": "text",
+            "nullable": false,
+            "purpose": "denormalised for query efficiency"
+          },
+          {
+            "name": "product_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "the product purchased"
+          },
+          {
+            "name": "variant_external_id",
+            "role": "reference",
+            "nullable": true,
+            "purpose": "the variant purchased"
+          },
+          {
+            "name": "notified_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": "when the notification was sent, for attribution window calculation"
+          },
+          {
+            "name": "converted_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": "when the order was paid"
+          }
+        ],
+        "keyedBy": "one row per (order_external_id, waitlist_entry_id) pair",
+        "statusField": null,
+        "queryPatterns": [
+          "conversion count and rate grouped by product and variant for dashboard metrics",
+          "existence check by order_external_id for idempotency",
+          "conversions within a configurable time window for aggregate reporting"
+        ]
+      },
+      {
+        "name": "notification_settings",
+        "purpose": "Single-row table holding the merchant's notification message template and quiet-hours configuration.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "notification_subject_template",
+            "role": "text",
+            "nullable": false,
+            "purpose": "template string with product name and item detail placeholders for notification subject line"
+          },
+          {
+            "name": "notification_body_template",
+            "role": "text",
+            "nullable": false,
+            "purpose": "HTML content template with product name, item detail, item URL, and unsubscribe link placeholders"
+          },
+          {
+            "name": "quiet_hours_start",
+            "role": "text",
+            "nullable": false,
+            "purpose": "local time (HH:MM) after which sends are held"
+          },
+          {
+            "name": "quiet_hours_end",
+            "role": "text",
+            "nullable": false,
+            "purpose": "local time (HH:MM) when sends resume"
+          },
+          {
+            "name": "timezone",
+            "role": "text",
+            "nullable": false,
+            "purpose": "IANA timezone name for interpreting quiet hours"
+          },
+          {
+            "name": "updated_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "single row representing the only configuration record for this installation",
+        "statusField": null,
+        "queryPatterns": [
+          "full row fetch on every notification send and settings page load"
+        ]
+      },
+      {
+        "name": "dashboard_snapshots",
+        "purpose": "Pre-aggregated per-item waitlist and conversion counts refreshed after each batch completes, enabling instant admin dashboard load without full-table scans.",
+        "columns": [
+          {
+            "name": "id",
+            "role": "identifier",
+            "nullable": false,
+            "purpose": null
+          },
+          {
+            "name": "product_external_id",
+            "role": "reference",
+            "nullable": false,
+            "purpose": "the product this snapshot covers"
+          },
+          {
+            "name": "variant_external_id",
+            "role": "reference",
+            "nullable": true,
+            "purpose": "the variant; null for product-level aggregates"
+          },
+          {
+            "name": "item_display_name",
+            "role": "text",
+            "nullable": false,
+            "purpose": "product and variant label for rendering without a Shopify lookup"
+          },
+          {
+            "name": "active_waitlist_count",
+            "role": "count",
+            "nullable": false,
+            "purpose": "number of entries currently awaiting notification"
+          },
+          {
+            "name": "total_signups",
+            "role": "count",
+            "nullable": false,
+            "purpose": "all-time signup count"
+          },
+          {
+            "name": "total_notified",
+            "role": "count",
+            "nullable": false,
+            "purpose": "all-time notified count"
+          },
+          {
+            "name": "total_conversions",
+            "role": "count",
+            "nullable": false,
+            "purpose": "all-time conversion count"
+          },
+          {
+            "name": "last_restock_at",
+            "role": "timestamp",
+            "nullable": true,
+            "purpose": "most recent restock detection timestamp"
+          },
+          {
+            "name": "snapshot_updated_at",
+            "role": "timestamp",
+            "nullable": false,
+            "purpose": null
+          }
+        ],
+        "keyedBy": "one row per (product_external_id, variant_external_id) pair",
+        "statusField": null,
+        "queryPatterns": [
+          "all rows ordered by active_waitlist_count descending with cursor pagination for dashboard ranking",
+          "single row by product and variant for per-item metrics display",
+          "upsert by product and variant after each batch completion or new signup"
+        ]
+      }
+    ],
+    "stateMachine": null,
+    "externalContracts": [
+      {
+        "surface": "widget",
+        "path": "/widget/availability",
+        "method": "GET",
+        "purpose": "Check whether a specific variant or product is currently sold out so the widget knows whether to render the signup form.",
+        "requestShape": {
+          "product_id": "reference",
+          "variant_id": "reference"
+        },
+        "responseShape": {
+          "available": "flag",
+          "signup_level": "status"
+        }
+      },
+      {
+        "surface": "widget",
+        "path": "/widget/signup-status",
+        "method": "GET",
+        "purpose": "Return whether a given email is already on the waitlist for a specific item so the widget renders the correct initial state on page load.",
+        "requestShape": {
+          "product_id": "reference",
+          "variant_id": "reference",
+          "email": "text"
+        },
+        "responseShape": {
+          "already_signed_up": "flag"
+        }
+      },
+      {
+        "surface": "widget",
+        "path": "/widget/signup",
+        "method": "POST",
+        "purpose": "Record a shopper's waitlist signup for a sold-out item; duplicate signups are silently ignored.",
+        "requestShape": {
+          "product_id": "reference",
+          "variant_id": "reference",
+          "email": "text",
+          "item_display_name": "text",
+          "item_page_url": "text",
+          "signup_level": "status"
+        },
+        "responseShape": {
+          "success": "flag",
+          "already_signed_up": "flag"
+        }
+      },
+      {
+        "surface": "widget",
+        "path": "/widget/unsubscribe",
+        "method": "POST",
+        "purpose": "Process a one-click unsubscribe from all waitlists for the shopper identified by the token embedded in their notification email.",
+        "requestShape": {
+          "token": "identifier"
+        },
+        "responseShape": {
+          "success": "flag"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/dashboard",
+        "method": "GET",
+        "purpose": "Return products and variants ranked by active waitlist size with aggregate demand-recovery metrics for the admin dashboard.",
+        "requestShape": {
+          "cursor": "text"
+        },
+        "responseShape": {
+          "items": "list",
+          "next_cursor": "text",
+          "total_count": "count",
+          "overall_metrics": "object"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/subscribers",
+        "method": "GET",
+        "purpose": "Return the paginated list of individual subscribers waiting for a specific product or variant.",
+        "requestShape": {
+          "product_id": "reference",
+          "variant_id": "reference",
+          "cursor": "text"
+        },
+        "responseShape": {
+          "subscribers": "list",
+          "next_cursor": "text",
+          "total_count": "count"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/subscribers/export",
+        "method": "GET",
+        "purpose": "Stream all subscriber rows for a given item as a CSV download for the merchant.",
+        "requestShape": {
+          "product_id": "reference",
+          "variant_id": "reference",
+          "cursor": "text"
+        },
+        "responseShape": {
+          "csv_data": "text",
+          "next_cursor": "text",
+          "total_count": "count"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/settings",
+        "method": "GET",
+        "purpose": "Fetch the current notification template and quiet-hours settings for the admin settings page.",
+        "requestShape": {},
+        "responseShape": {
+          "notification_subject_template": "text",
+          "notification_body_template": "text",
+          "quiet_hours_start": "text",
+          "quiet_hours_end": "text",
+          "timezone": "text"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/settings/template",
+        "method": "PUT",
+        "purpose": "Save the merchant's edited notification subject and body template.",
+        "requestShape": {
+          "notification_subject_template": "text",
+          "notification_body_template": "text"
+        },
+        "responseShape": {
+          "success": "flag",
+          "preview_subject": "text",
+          "preview_body": "text"
+        }
+      },
+      {
+        "surface": "admin",
+        "path": "/admin/settings/quiet-hours",
+        "method": "PUT",
+        "purpose": "Save the merchant's quiet-hours start time, end time, and timezone.",
+        "requestShape": {
+          "quiet_hours_start": "text",
+          "quiet_hours_end": "text",
+          "timezone": "text"
+        },
+        "responseShape": {
+          "success": "flag"
+        }
+      }
+    ],
+    "edgeCases": [
+      "Duplicate inventory_levels/update delivery for the same item on the same calendar day \u2014 the second event must be dropped before creating a new batch or dispatching any emails.",
+      "Stock returns briefly but sells out again before the quiet-hours window opens \u2014 re-confirm variant availability at send time and cancel the batch without sending if stock is zero.",
+      "A shopper submits the signup form twice for the same email and item via a network retry \u2014 the second insert must be a silent no-op with no duplicate row and no re-confirmation.",
+      "A product is deleted while a notification batch for it is in pending status \u2014 cascade-delete waitlist entries and cancel pending batches before any emails are dispatched.",
+      "An orders/paid webhook is delivered more than once for the same order \u2014 the idempotency check on order_external_id must prevent duplicate conversion rows and double-counting in metrics.",
+      "A notification email hard-bounces or is rejected by the provider \u2014 record the delivery failure on the waitlist entry, do not retry automatically, and surface the failure count in the admin subscriber list.",
+      "The quiet-hours window spans midnight (e.g. 22:00\u201307:00) \u2014 the scheduler must handle the wrap-around so no sends occur during the full overnight block.",
+      "A restock event fires for a variant that has no active waitlist entries \u2014 exit immediately with no batch created and no further external API calls made."
+    ]
+  },
+  "tokens_hld": {
+    "in": 66257,
+    "out": 19768,
+    "cache_read": 190013,
+    "cache_create": 42969
+  },
+  "hld_v_findings": [
+    {
+      "severity": "critical",
+      "location": "capabilities[id=unsubscribe-shopper], persistence",
+      "issue": "The capability description states \"mark the email as globally unsubscribed so future signups are rejected\" but no table in persistence stores global unsubscribe state. The `is_unsubscribed` flag exists only on `waitlist_entries` rows. When those rows are deleted (or flagged), a subsequent signup attempt by the same email has nothing to check \u2014 `record-waitlist-signup` deduplicates on email + item_scope_external_id, and if the old rows are gone the constraint is gone. The spine principle requires a backing table for every piece of state the system manages; a global suppression list with no table is phantom storage.",
+      "fix": "Add a `suppressed_emails` table (keyed by email, with an `unsubscribed_at` timestamp) and add a lookup against it as the first guard in `record-waitlist-signup`; update the `unsubscribe-shopper` dataNeeds to include the email resolved from the token so the coding agent writes to both the entries rows and the suppression table."
+    },
+    {
+      "severity": "important",
+      "location": "externalContracts[path=/widget/waitlist/signup].requestShape, capabilities[id=record-waitlist-signup].dataNeeds",
+      "issue": "The `record-waitlist-signup` capability requires \"product title\", \"variant title\", and the `waitlist_entries` table requires `product_url` \u2014 yet the widget POST `/widget/waitlist/signup` requestShape carries only `{email, item_scope_type, item_scope_external_id, product_external_id}`. None of the three missing values are in the request, and `record-waitlist-signup` has `integration: null` with no Shopify lookup step. The coding agent has no described path to obtain product_title, variant_title, or product_url at signup time; the snapshot columns in `waitlist_entries` would be written as NULL or fabricated.",
+      "fix": "Either add `product_title`, `variant_title`, and `product_url` to the widget POST requestShape (supplied by the storefront page at submission time), or chain a `shopify-admin` read capability to fetch them server-side and update `record-waitlist-signup`'s integration and shopifySteps accordingly."
+    },
+    {
+      "severity": "important",
+      "location": "triggers[kind=schedule].perTickWork, capabilities[id=verify-stock-before-send].shopifySteps",
+      "issue": "The schedule drain re-checks stock via `verify-stock-before-send` using op `productVariant`, but `productVariant` on the Admin API returns a `sellableOnlineQuantity` or `inventoryQuantity` field, not a direct `available_for_sale` boolean as the `produces` field claims. More critically, the variant here is identified by a Shopify global id (GID), yet the notification_queue row stores only `waitlist_entry_id` and `batch_id` \u2014 neither of which directly carries the variant GID. The coding agent must join through `waitlist_entries.item_scope_external_id` to get the variant id, but this join chain is not described in perTickWork or the capability's dataNeeds, leaving the lookup path ambiguous.",
+      "fix": "Add `item_scope_external_id` (the variant/product GID) to `notification_queue` columns so the drain job can pass it directly to `verify-stock-before-send`, and correct the `produces` value to match the actual field name returned by `productVariant` (e.g. `inventoryQuantity` and `availableForSale`)."
+    }
+  ],
+  "tokens_hld_v": {
+    "in": 20775,
+    "out": 4592,
+    "cache_read": 0,
+    "cache_create": 20765
+  },
+  "tokens_hld_revise": {
+    "in": 33496,
+    "out": 15299,
+    "cache_read": 137762,
+    "cache_create": 13838
+  }
+}

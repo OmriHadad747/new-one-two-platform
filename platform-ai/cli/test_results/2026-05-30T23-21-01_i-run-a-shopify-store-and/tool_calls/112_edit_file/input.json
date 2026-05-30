@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/cron.ts",
+  "old_string": "    const batchId = batch.id as NotificationBatchId;\n    const productIdStr = batch.product_external_id;\n    const variantIdStr = batch.variant_external_id;\n    const availableQty = batch.available_quantity_at_detection;",
+  "new_string": "    const batchId = batch.id as NotificationBatchId;\n    const productIdStr = batch.product_external_id;\n    const variantIdStr = batch.variant_external_id;\n    const storedVariantGid = batch.variant_gid; // canonical GID from inventoryItem API response\n    const availableQty = batch.available_quantity_at_detection;"
+}

@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/types/contracts.ts",
+  "old_string": "export interface ProductVariantQueryResult {\n  productVariant: {\n    id: string;\n    availableForSale: boolean;\n    inventoryQuantity: number | null;\n  } | null;\n}",
+  "new_string": "export interface ProductVariantQueryResult {\n  productVariant: {\n    id: string; // canonical GID returned by Shopify: gid://shopify/ProductVariant/<n>\n    availableForSale: boolean;\n    inventoryQuantity: number | null;\n  } | null;\n}"
+}

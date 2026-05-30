@@ -1,0 +1,7 @@
+{
+  "ok": false,
+  "incomplete_reason": [
+    "[write-path-integrity] critical src/routes/webhook-handlers.ts:211 \u2014 In `handleInventoryLevelUpdate()`, the `detected_at` is truncated to UTC day start with `detectedAt.setUTCHours(0, 0, 0, 0)`, which overwrites the actual restock detection timestamp with a hardcoded placeholder (midnight). This corrupts the reference column `notification_batches.detected_at` and breaks the idempotency deduplication logic, which relies on per-day uniqueness but should preserve the actual event timestamp for audit/ordering. FIX: Remove the setUTCHours truncation and use the actual webhook-provided `updated_at` timestamp as `detected_at` without modification.",
+    "[write-path-integrity] critical src/routes/widget.ts:204 \u2014 In POST /widget/signup with product-level signups, the route inserts `variant_external_id = NULL` into the database, but the UI sends no `variant_id` field at all when signup is at product level. The plan requires 'variant_external_id' to be 'nullable-with-purpose' for product-level rows, but the route must verify the UI actually omitted it rather than silently substituting NULL. More critically, if the UI later sends a hardcoded `\"\"` or `\"0\"` instead of omitting the field, the route will accept it as a real value and persist it, violating the invariant. FIX: Validate that when `signup_level === 'product'`, the request body does NOT contain a `variant_id` field, and reject with 400 if it is present; this ensures the NULL is intentional product-level data, not a placeholder."
+  ]
+}
