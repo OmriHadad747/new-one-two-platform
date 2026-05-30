@@ -51,7 +51,17 @@ class Finding(BaseModel):
     file: str
     line: Optional[int] = None
     issue: str = Field(description="the offending code, quoted, and why it's wrong")
-    fix: str = Field(description="one concrete sentence the coding agent can act on")
+    fix: str = Field(
+        description=(
+            "ONE imperative sentence that prescribes EXACTLY ONE change. "
+            "Forbidden: 'either / or', 'options: (1)... (2)...', 'could / "
+            "should / may', 'one approach is...', a menu of alternatives, "
+            "or a comment-only suggestion that doesn't change behavior. "
+            "If two distinct fixes are defensible, emit two SEPARATE "
+            "findings — never one finding with a menu. The coding agent "
+            "must be able to act on this sentence verbatim."
+        )
+    )
 
 
 class Findings(BaseModel):
@@ -76,6 +86,15 @@ do not manufacture findings.
 severity: critical = silently breaks a feature or corrupts data;
 important = a declared behavior is unreliable; minor = cosmetic/no runtime
 impact.
+
+FIX FORMAT (strict): each finding's `fix` is ONE imperative sentence that
+prescribes EXACTLY ONE change. No options menu, no "either / or", no
+"(1)... (2)...", no "could / should / may", no "one approach is...". If
+you believe two distinct fixes are defensible, emit two SEPARATE findings
+— never a single finding with a menu. The downstream agent must be able
+to act on your sentence verbatim. A fix that only adds a comment or
+"reframes" the contract WITHOUT changing behavior is not a fix; do not
+emit it.
 
 THE INVARIANT:
 """

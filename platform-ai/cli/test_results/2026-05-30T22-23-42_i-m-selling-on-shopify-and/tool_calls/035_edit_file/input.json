@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/admin.ts",
+  "old_string": "    const nextCursor: string | null = hasMore\n      ? Buffer.from(pageRows[pageRows.length - 1].created_at).toString(\"base64\")\n      : null;",
+  "new_string": "    const lastRow = pageRows[pageRows.length - 1];\n    const nextCursor: string | null = hasMore && lastRow\n      ? Buffer.from(lastRow.created_at).toString(\"base64\")\n      : null;"
+}

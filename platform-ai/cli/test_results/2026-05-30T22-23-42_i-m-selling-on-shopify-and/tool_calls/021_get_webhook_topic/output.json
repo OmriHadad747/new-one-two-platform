@@ -1,0 +1,15 @@
+{
+  "access_scopes": [
+    "products"
+  ],
+  "description": "Occurs whenever a product is deleted.",
+  "fields": [
+    {
+      "name": "id",
+      "nullable": false,
+      "type": "integer"
+    }
+  ],
+  "related_resource": "Product",
+  "topic": "products/delete"
+}

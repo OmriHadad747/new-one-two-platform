@@ -1,0 +1,25 @@
+{
+  "args": [
+    {
+      "name": "input",
+      "required": true,
+      "type": "ProductBundleCreateInput!"
+    }
+  ],
+  "examples": [],
+  "inputTypesSdl": {
+    "ProductBundleComponentInput": "input ProductBundleComponentInput {\n  quantity: Int\n  productId: ID!\n  optionSelections: [ProductBundleComponentOptionSelectionInput!]!\n  quantityOption: ProductBundleComponentQuantityOptionInput\n}",
+    "ProductBundleComponentOptionSelectionInput": "input ProductBundleComponentOptionSelectionInput {\n  componentOptionId: ID!\n  name: String!\n  values: [String!]!\n}",
+    "ProductBundleComponentQuantityOptionInput": "input ProductBundleComponentQuantityOptionInput {\n  name: String!\n  values: [ProductBundleComponentQuantityOptionValueInput!]!\n}",
+    "ProductBundleComponentQuantityOptionValueInput": "input ProductBundleComponentQuantityOptionValueInput {\n  name: String!\n  quantity: Int!\n}",
+    "ProductBundleConsolidatedOptionComponentInput": "input ProductBundleConsolidatedOptionComponentInput {\n  componentOptionValue: String!\n  componentOptionId: ID\n}",
+    "ProductBundleConsolidatedOptionInput": "input ProductBundleConsolidatedOptionInput {\n  optionName: String!\n  optionSelections: [ProductBundleConsolidatedOptionSelectionInput!]!\n}",
+    "ProductBundleConsolidatedOptionSelectionInput": "input ProductBundleConsolidatedOptionSelectionInput {\n  optionValue: String!\n  components: [ProductBundleConsolidatedOptionComponentInput!]!\n}",
+    "ProductBundleCreateInput": "input ProductBundleCreateInput {\n  title: String!\n  consolidatedOptions: [ProductBundleConsolidatedOptionInput!]\n  components: [ProductBundleComponentInput!]!\n}"
+  },
+  "isConnection": false,
+  "kind": "mutation",
+  "returnTypeName": "ProductBundleCreatePayload",
+  "returnTypeSdl": "type ProductBundleCreatePayload {\n  productBundleOperation: ProductBundleOperation\n  userErrors: [UserError!]!\n}",
+  "userErrorsField": "userErrors"
+}

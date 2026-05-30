@@ -1,0 +1,8 @@
+{
+  "content": "function discountNodeGid(externalId: string): string {\n  return `gid://shopify/DiscountCodeNode/${externalId}`;\n}\n\n/** Extract the numeric legacy id from a Shopify GID */\nfunction legacyIdFromGid(gid: string): string {\n  const parts = gid.split(\"/\");\n  return parts[parts.length - 1];\n}\n\ninterface ProvisionedTier {\n  tierId?: string;\n  minItemCount: number;\n  discountCode: string;\n  discountExternalId: string;",
+  "total_lines": 872,
+  "returned_lines": [
+    60,
+    75
+  ]
+}

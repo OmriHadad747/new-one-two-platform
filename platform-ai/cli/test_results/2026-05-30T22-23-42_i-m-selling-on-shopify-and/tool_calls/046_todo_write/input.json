@@ -1,0 +1,105 @@
+{
+  "todos": [
+    {
+      "content": "Read component rules: db.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json \u2014 spine",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts \u2014 spine",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Read component rules: backend.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Read component rules: webhooks.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Look up Shopify ops: productBundleCreate, productBundleUpdate, discountCodeBasicCreate, discountCodeBxgyCreate, discountCodeBasicUpdate, discountCodeBxgyUpdate, productVariant",
+      "status": "completed",
+      "activeForm": "list_shopify_ops"
+    },
+    {
+      "content": "Look up Storefront ops: cartLinesAdd, cartDiscountCodesUpdate",
+      "status": "completed",
+      "activeForm": "list_shopify_ops"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts \u2014 admin route handlers",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts \u2014 storefront route handlers",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts \u2014 webhook handlers",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Read component rules: admin.md",
+      "status": "in_progress",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts \u2014 admin UI surface",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "/admin/bundles",
+        "/admin/bundles/create",
+        "/admin/bundles/update",
+        "/admin/bundles/toggle",
+        "/admin/bundles/detail"
+      ],
+      "consumes": [
+        "calls GET /admin/bundles \u2014 responseShape: bundles, next_cursor, total_count",
+        "calls POST /admin/bundles/create \u2014 responseShape: bundle_id, status, warnings",
+        "calls PUT /admin/bundles/update \u2014 responseShape: bundle_id, status, warnings",
+        "calls POST /admin/bundles/toggle \u2014 responseShape: errors, updated_count",
+        "calls GET /admin/bundles/detail \u2014 responseShape: bundle, purchase_count"
+      ],
+      "produces": [
+        "sends GET /admin/bundles \u2014 requestShape: cursor, status_filter",
+        "sends POST /admin/bundles/create \u2014 requestShape: bundle_type, components, discount_kind, flexible_pick_count, tiers, title",
+        "sends PUT /admin/bundles/update \u2014 requestShape: bundle_id, bundle_type, components, discount_kind, enabled, flexible_pick_count, tiers, title",
+        "sends POST /admin/bundles/toggle \u2014 requestShape: bundle_ids, enabled",
+        "sends GET /admin/bundles/detail \u2014 requestShape: bundle_id"
+      ],
+      "do_not": [
+        "send a placeholder/sentinel (e.g. '0', '', null) for a reference column the plan declares NOT NULL \u2014 use real picker data",
+        "omit a UI affordance for a nullable-with-purpose column above (the merchant has no other way to set it)",
+        "store a variant id where a product id is required (or vice versa)"
+      ]
+    },
+    {
+      "content": "Read component rules: storefront.md",
+      "status": "pending",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts \u2014 storefront widget UI",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "run_tsc"
+    }
+  ]
+}

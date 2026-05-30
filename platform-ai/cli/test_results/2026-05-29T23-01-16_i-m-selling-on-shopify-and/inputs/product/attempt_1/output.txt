@@ -1,0 +1,12 @@
+```json
+{
+  "status": "needs_clarification",
+  "question": "When a customer adds a flexible bundle (\"pick 3 from this list\") to their cart, should each of their 3 chosen items appear as separate line items in the cart and checkout, or should all 3 be grouped into a single \"bundle\" line item with a custom name?",
+  "suggestions": [
+    "Each item appears separately; discount code applied automatically",
+    "All items grouped under one custom bundle line in cart"
+  ]
+}
+```
+
+The reason: Ton can build the first (separate items + auto-applied discount code) end-to-end. The second requires Cart Transform Functions (a Shopify mechanism outside Ton's scope). This is the decision that shapes your entire tech stack, so I need to know your preference before I spec the app.

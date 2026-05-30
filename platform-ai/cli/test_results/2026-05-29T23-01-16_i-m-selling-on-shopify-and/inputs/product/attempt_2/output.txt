@@ -1,0 +1,14 @@
+```json
+{
+  "status": "ready",
+  "summary": "What this app does:\nLets you create fixed and flexible product bundles with tiered discounts, then sell them on your product pages with live pricing and one-click checkout.\n\nWhen it runs:\n• When you create or edit a bundle in the admin\n• When a customer configures and adds a bundle to their cart from the storefront\n• When you view the admin bundles table\n\nWhat you'll see:\n• An admin page listing all bundles with product counts, discount details, and purchase history\n• An edit form for each bundle where you set products, variants, discount type (percent, flat, BOGO), tiered thresholds, and enable/disable\n• A counter showing how many times each bundle was purchased\n\nWhat customers see:\n• A bundle widget on product pages showing fixed items or a flexible picker (\"choose 3 from these 5\")\n• Live-updating bundle total with discount applied as they configure\n• An \"Add bundle to cart\" button that adds each selected item as a separate line, then applies a discount code at checkout\n\nWhat this app does NOT do:\n• Won't merge bundle items into a single wrapped line item — each product appears as its own line in the cart\n• Won't apply discounts during the bundle picker UI — only at checkout via discount code\n• Won't sync bundle sales data to external analytics tools\n• Won't let customers customize individual item quantities within a bundle",
+  "intent": {
+    "triggerTypes": ["admin", "widget"],
+    "resources": ["products", "discounts"],
+    "desiredOutcome": "Merchants create and manage product bundles with tiered discounts; customers configure bundles on product pages and buy them with auto-applied discount codes.",
+    "cronHint": null,
+    "appCategory": "storefront_backend_admin",
+    "qualityBrief": "A polished bundle app handles product/variant lookups without stale caches, generates unique discount codes per bundle type (fixed vs flexible) with correct tiering logic, and displays live totals that never diverge from final checkout price. It must validate that a customer's flexible-bundle selections meet the count requirement before allowing add-to-cart, gracefully handle deleted/unavailable products in existing bundles, and show bundle purchase counts without race conditions on concurrent orders. The admin form should let merchants bulk-edit tiered tiers and preview the discount matrix before saving. The storefront widget must be mobile-responsive, show out-of-stock variants clearly, and disable the add-to-cart button if selection is incomplete or if any item is unavailable."
+  }
+}
+```

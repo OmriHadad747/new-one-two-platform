@@ -1,0 +1,8 @@
+{
+  "content": "\n    const hasMore = rows.length > 50;\n    const pageRows = hasMore ? rows.slice(0, 50) : rows;\n\n    const nextCursor: string | null = hasMore\n      ? Buffer.from(pageRows[pageRows.length - 1].created_at).toString(\"base64\")\n      : null;\n\n    const [countRow] = await sql<{ count: string }[]>`SELECT COUNT(*) AS count FROM bundle_definitions`;\n    const totalCount = parseInt(countRow?.count ?? \"0\", 10);\n\n    const bundles: AdminBundleSummary[] = pageRows.map((r) => ({\n      id: r.id,\n      title: r.title,\n      bundle_type: r.bundle_type,",
+  "total_lines": 872,
+  "returned_lines": [
+    263,
+    278
+  ]
+}

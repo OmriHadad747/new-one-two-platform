@@ -175,11 +175,17 @@ class Spinner:
 
     def _run(self) -> None:
         color = AGENT_COLOR.get(self.label, CYAN)
+        start = time.monotonic()
         i = 0
         while not self._stop.is_set():
+            elapsed = time.monotonic() - start
+            # Live elapsed clock so it's obvious the agent is working (and
+            # whether the LLM is crawling vs the process hanging). Blank for
+            # the first second to avoid a flickery "0.0s".
+            clock = f"{elapsed:4.1f}s" if elapsed >= 1 else "     "
             sys.stdout.write(
                 f"\r  {c(self.label.ljust(14), color, BOLD)} "
-                f"{c(self._chars[i], DIM)}  "
+                f"{c(self._chars[i], DIM)}  {c(clock, DIM)}"
             )
             sys.stdout.flush()
             i = (i + 1) % len(self._chars)

@@ -1,0 +1,8 @@
+{
+  "content": "          )\n        `;\n      }\n\n      // Insert discount tiers\n      for (let i = 0; i < tiers.length; i++) {\n        const tier = tiers[i];\n        const provisioned = provisionedTiers[i];\n        await tx`\n          INSERT INTO bundle_discount_tiers",
+  "total_lines": 872,
+  "returned_lines": [
+    448,
+    458
+  ]
+}

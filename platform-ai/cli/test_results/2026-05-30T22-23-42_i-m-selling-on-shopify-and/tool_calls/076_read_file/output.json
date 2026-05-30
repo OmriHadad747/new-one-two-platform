@@ -1,0 +1,8 @@
+{
+  "content": "  // Resolve variant prices from Shopify Admin API\n  const shopify = await shopifyClientFor(req.platform!);\n  let originalTotalMinor = 0;\n  const currency = \"USD\";\n\n  for (const variantId of selected_variant_external_ids) {\n    try {\n      const variantGid = `gid://shopify/ProductVariant/${variantId}`;\n      const variantData = await shopify.graphql<ProductVariantQueryResult>(\n        `query GetVariant($id: ID!) {\n           productVariant(id: $id) {\n             id\n             price\n             availableForSale\n             legacyResourceId\n           }\n         }`,\n        { id: variantGid },\n      );\n      if (variantData.productVariant) {\n        originalTotalMinor += money.toMinorUnits(variantData.productVariant.price, currency);\n      }\n    } catch (_err) {\n      // best-effort; proceed with partial total\n    }\n  }\n\n  if (!matchedTier) {\n    const response: WidgetPreviewTotalResponse = {\n      original_total: originalTotalMinor,\n      discounted_total: originalTotalMinor,\n      tier_label: \"No tier applies for this item count\",\n      discount_amount: 0,\n    };\n    res.json(response);\n    return;\n  }\n\n  const { discountedTotal, discountAmount, tierLabel } = applyTierDiscount(\n    originalTotalMinor,\n    matchedTier,\n    bundleRow.discount_kind,\n    currency,\n  );\n\n  const response: WidgetPreviewTotalResponse = {\n    original_total: originalTotalMinor,\n    discounted_total: discountedTotal,\n    tier_label: tierLabel,\n    discount_amount: discountAmount,",
+  "total_lines": 489,
+  "returned_lines": [
+    433,
+    483
+  ]
+}

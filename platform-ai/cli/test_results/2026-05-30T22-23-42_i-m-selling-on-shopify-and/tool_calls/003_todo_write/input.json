@@ -1,0 +1,257 @@
+{
+  "todos": [
+    {
+      "content": "Read component rules: db.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json \u2014 spine",
+      "status": "in_progress",
+      "activeForm": "write_file",
+      "implements": [
+        "persist-bundle-definition",
+        "list-bundles-admin",
+        "toggle-bundle-enabled",
+        "fetch-bundle-for-widget",
+        "record-purchase-attribution",
+        "flag-degraded-bundles"
+      ],
+      "consumes": [
+        "database schema from db.md",
+        "webhook topics: orders/paid, products/update, products/delete",
+        "httpRoutes from externalContracts"
+      ],
+      "produces": [
+        "app.json with database.tables[], shopifyIntegration.webhookTopics[], httpRoutes[]"
+      ],
+      "do_not": [
+        "redeclare template-shipped tables",
+        "omit indexes for query patterns"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts \u2014 spine",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "type-level spine for all contracts above"
+      ],
+      "consumes": [
+        "every externalContract requestShape + responseShape",
+        "every trigger payload",
+        "every persistence table"
+      ],
+      "produces": [
+        "named branded id types",
+        "exported types every route + UI file imports",
+        "Row types for all 4 tables",
+        "WithLive shapes for resolved data"
+      ],
+      "do_not": [
+        "use `any` for any field the plan typed",
+        "let UI files import from route files or vice versa"
+      ]
+    },
+    {
+      "content": "Read component rules: backend.md",
+      "status": "pending",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Read component rules: webhooks.md",
+      "status": "pending",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Look up Shopify ops: productBundleCreate, productBundleUpdate, discountCodeBasicCreate, discountCodeBxgyCreate, discountCodeBasicUpdate, discountCodeBxgyUpdate, productVariant",
+      "status": "pending",
+      "activeForm": "list_shopify_ops"
+    },
+    {
+      "content": "Look up Storefront ops: cartLinesAdd, cartDiscountCodesUpdate",
+      "status": "pending",
+      "activeForm": "list_shopify_ops"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts \u2014 admin route handlers",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "create-shopify-bundle-product",
+        "provision-tier-discount-codes",
+        "update-shopify-bundle-product",
+        "sync-tier-discount-codes",
+        "resolve-variant-prices",
+        "list-bundles-admin",
+        "toggle-bundle-enabled"
+      ],
+      "consumes": [
+        "GET /admin/bundles requestShape: cursor, status_filter",
+        "POST /admin/bundles/create requestShape: bundle_type, components, discount_kind, flexible_pick_count, tiers, title",
+        "PUT /admin/bundles/update requestShape: bundle_id, bundle_type, components, discount_kind, enabled, flexible_pick_count, tiers, title",
+        "POST /admin/bundles/toggle requestShape: bundle_ids, enabled",
+        "GET /admin/bundles/detail requestShape: bundle_id",
+        "[create-shopify-bundle-product/productBundleCreate] consumes: bundle title, component product ids, option selections, quantities",
+        "[provision-tier-discount-codes/discountCodeBasicCreate] consumes: discount kind, value, item scope",
+        "[provision-tier-discount-codes/discountCodeBxgyCreate] consumes: buy quantity, get quantity, item scope",
+        "[update-shopify-bundle-product/productBundleUpdate] consumes: shopify bundle product external id, updated component data",
+        "[sync-tier-discount-codes/discountCodeBasicUpdate] consumes: discount node id, updated value",
+        "[sync-tier-discount-codes/discountCodeBxgyUpdate] consumes: discount node id, updated buy/get quantities",
+        "[resolve-variant-prices/productVariant] consumes: variant external id"
+      ],
+      "produces": [
+        "GET /admin/bundles responseShape: bundles, next_cursor, total_count",
+        "POST /admin/bundles/create responseShape: bundle_id, status, warnings",
+        "PUT /admin/bundles/update responseShape: bundle_id, status, warnings",
+        "POST /admin/bundles/toggle responseShape: errors, updated_count",
+        "GET /admin/bundles/detail responseShape: bundle, purchase_count",
+        "[create-shopify-bundle-product/productBundleCreate] produces: shopify bundle product node id and product external id",
+        "[provision-tier-discount-codes/discountCodeBasicCreate] produces: discount code node id and code string for percentage and flat-amount tiers",
+        "[provision-tier-discount-codes/discountCodeBxgyCreate] produces: discount code node id and code string for buy-x-get-y tiers",
+        "[update-shopify-bundle-product/productBundleUpdate] produces: updated bundle product node id",
+        "[sync-tier-discount-codes/discountCodeBasicUpdate] produces: updated code discount node for percentage and flat-amount tiers",
+        "[sync-tier-discount-codes/discountCodeBxgyUpdate] produces: updated code discount node for buy-x-get-y tiers",
+        "[resolve-variant-prices/productVariant] produces: variant price and availability"
+      ],
+      "do_not": [
+        "pass a literal/placeholder GID (e.g. 'gid://shopify/Product/0') to any Shopify op \u2014 fail-fast instead",
+        "call a bound op only to discard its returned id \u2014 every produces above must be persisted or threaded forward",
+        "provision Shopify side-effects outside the DB transaction without a rollback path"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts \u2014 storefront route handlers",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "add-bundle-to-cart",
+        "fetch-bundle-for-widget",
+        "compute-live-bundle-total",
+        "resolve-variant-prices"
+      ],
+      "consumes": [
+        "GET /widget/bundles requestShape: cursor, product_external_id",
+        "POST /widget/bundle/add-to-cart requestShape: bundle_id, cart_external_id, item_count, selected_variant_external_ids",
+        "POST /widget/bundle/preview-total requestShape: bundle_id, item_count, selected_variant_external_ids",
+        "[add-bundle-to-cart/cartLinesAdd] consumes: cart external id, variant merchandise ids and quantities",
+        "[add-bundle-to-cart/cartDiscountCodesUpdate] consumes: cart external id, tier discount code string from previous step"
+      ],
+      "produces": [
+        "GET /widget/bundles responseShape: bundles, next_cursor, total_count",
+        "POST /widget/bundle/add-to-cart responseShape: cart_external_id, discount_code, discounted_total, warnings",
+        "POST /widget/bundle/preview-total responseShape: discount_amount, discounted_total, original_total, tier_label",
+        "[add-bundle-to-cart/cartLinesAdd] produces: updated cart with line ids",
+        "[add-bundle-to-cart/cartDiscountCodesUpdate] produces: cart with applied discount code",
+        "for every member/row this route returns: include resolved `live.<field>` for any reference the storefront will pass to cartCreate"
+      ],
+      "do_not": [
+        "fall back from a resolved live.<field> to the raw DB column it shadows (e.g. `?? member.product_external_id`)",
+        "accept caller-supplied ids without validating shape (variant ids are numeric strings; merchandise GIDs go to ProductVariant, not Product)"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts \u2014 webhook handlers",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "an order is paid",
+        "a product or its variants are updated or removed in the catalog",
+        "a product is permanently deleted from the catalog"
+      ],
+      "consumes": [
+        "[orders/paid] event: an order is paid",
+        "  'order external id' \u2190 payload.id",
+        "  'discount codes applied' \u2190 payload.discount_codes",
+        "  'order total' \u2190 payload.total_price",
+        "[products/update] event: a product or its variants are updated or removed in the catalog",
+        "  'product external id' \u2190 payload.id",
+        "  'product status' \u2190 payload.status",
+        "  'variant list' \u2190 payload.variants",
+        "[products/delete] event: a product is permanently deleted from the catalog",
+        "  'product external id' \u2190 payload.id"
+      ],
+      "produces": [
+        "idempotent DB writes per the capability each trigger drives",
+        "ON CONFLICT on every dedup-keyed insert (per persistence keyedBy)"
+      ],
+      "do_not": [
+        "early-return when a declared signalField is empty (silently disables the trigger)",
+        "read an undeclared payload field (paths above are the contract)",
+        "ignore a declared payloadBinding \u2014 every signalField above must be read at least once"
+      ]
+    },
+    {
+      "content": "Read component rules: admin.md",
+      "status": "pending",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts \u2014 admin UI surface",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "/admin/bundles",
+        "/admin/bundles/create",
+        "/admin/bundles/update",
+        "/admin/bundles/toggle",
+        "/admin/bundles/detail"
+      ],
+      "consumes": [
+        "calls GET /admin/bundles \u2014 responseShape: bundles, next_cursor, total_count",
+        "calls POST /admin/bundles/create \u2014 responseShape: bundle_id, status, warnings",
+        "calls PUT /admin/bundles/update \u2014 responseShape: bundle_id, status, warnings",
+        "calls POST /admin/bundles/toggle \u2014 responseShape: errors, updated_count",
+        "calls GET /admin/bundles/detail \u2014 responseShape: bundle, purchase_count"
+      ],
+      "produces": [
+        "sends GET /admin/bundles \u2014 requestShape: cursor, status_filter",
+        "sends POST /admin/bundles/create \u2014 requestShape: bundle_type, components, discount_kind, flexible_pick_count, tiers, title",
+        "sends PUT /admin/bundles/update \u2014 requestShape: bundle_id, bundle_type, components, discount_kind, enabled, flexible_pick_count, tiers, title",
+        "sends POST /admin/bundles/toggle \u2014 requestShape: bundle_ids, enabled",
+        "sends GET /admin/bundles/detail \u2014 requestShape: bundle_id"
+      ],
+      "do_not": [
+        "send a placeholder/sentinel (e.g. '0', '', null) for a reference column the plan declares NOT NULL \u2014 use real picker data",
+        "omit a UI affordance for a nullable-with-purpose column above (the merchant has no other way to set it)",
+        "store a variant id where a product id is required (or vice versa)"
+      ]
+    },
+    {
+      "content": "Read component rules: storefront.md",
+      "status": "pending",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts \u2014 storefront widget UI",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "/widget/bundles",
+        "/widget/bundle/add-to-cart",
+        "/widget/bundle/preview-total"
+      ],
+      "consumes": [
+        "calls GET /widget/bundles \u2014 responseShape: bundles, next_cursor, total_count",
+        "calls POST /widget/bundle/add-to-cart \u2014 responseShape: cart_external_id, discount_code, discounted_total, warnings",
+        "calls POST /widget/bundle/preview-total \u2014 responseShape: discount_amount, discounted_total, original_total, tier_label",
+        "for ANY response field shaped `live.<field>` or a resolved id, USE that field for selection / cart / submit \u2014 never the raw DB column it shadows"
+      ],
+      "produces": [
+        "sends GET /widget/bundles \u2014 requestShape: cursor, product_external_id",
+        "sends POST /widget/bundle/add-to-cart \u2014 requestShape: bundle_id, cart_external_id, item_count, selected_variant_external_ids",
+        "sends POST /widget/bundle/preview-total \u2014 requestShape: bundle_id, item_count, selected_variant_external_ids"
+      ],
+      "do_not": [
+        "use `member.variant_external_id ?? member.product_external_id` (or any analogue) \u2014 a product id wrapped as a variant GID breaks cartCreate",
+        "build a `gid://shopify/ProductVariant/<id>` from anything that wasn't returned by the backend as a variant id",
+        "enable a CTA whose preconditions (selection count, availability) the plan declares \u2014 the backend re-validates anyway, but the UI must mirror it"
+      ]
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "run_tsc"
+    }
+  ]
+}

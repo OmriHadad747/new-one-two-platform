@@ -1,0 +1,21 @@
+{
+  "args": [
+    {
+      "name": "cartId",
+      "required": true,
+      "type": "ID!"
+    },
+    {
+      "name": "discountCodes",
+      "required": true,
+      "type": "[String!]!"
+    }
+  ],
+  "examples": [],
+  "inputTypesSdl": {},
+  "isConnection": false,
+  "kind": "mutation",
+  "returnTypeName": "CartDiscountCodesUpdatePayload",
+  "returnTypeSdl": "type CartDiscountCodesUpdatePayload {\n  cart: Cart\n  userErrors: [CartUserError!]!\n  warnings: [CartWarning!]!\n}",
+  "userErrorsField": "userErrors"
+}

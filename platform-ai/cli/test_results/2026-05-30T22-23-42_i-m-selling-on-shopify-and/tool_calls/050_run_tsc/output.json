@@ -1,0 +1,10 @@
+{
+  "errors": [
+    {
+      "file": "admin/ui.ts",
+      "line": 725,
+      "col": 11,
+      "message": "Type 'string | undefined' is not assignable to type 'string'."
+    }
+  ]
+}

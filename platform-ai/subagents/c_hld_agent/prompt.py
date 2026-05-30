@@ -120,6 +120,27 @@ than one (an event + a daily cleanup, etc.).
 documented EXCLUSIVELY in `externalContracts`; a stub trigger with no \
 path/purpose is dead weight and will be rejected as such.
 
+EXTERNAL-STATE COMPLETENESS. Before finalizing the trigger list, walk \
+every persistence column whose value REFLECTS EXTERNAL SYSTEM STATE — \
+availability, inventory level, price, status, fulfillment state, \
+deletion, address, anything Shopify owns. For each such column ask: \
+"what external event changes this in the real world?" The answer must \
+be one of:
+  (a) a declared external-event trigger that fires on that change \
+      (with a payloadBinding to the column's new value or a resolution \
+      hop in Phase 2), OR
+  (b) the column is dropped and the value is fetched on demand at the \
+      moment it's read (no persistence — the route hits the API every \
+      time), OR
+  (c) an explicit edgeCase that names the column as KNOWN-STALE and \
+      bounds the consequence (e.g. "members.available is refreshed only \
+      on products/update; inventory-only changes are caught by the \
+      widget's live availability check before add-to-cart, never by the \
+      cached flag").
+A persisted column whose value goes stale silently with no plan path to \
+refresh it is the version of class 8 (null-disables-feature) that \
+shipped the inventory bug — pick (a), (b), or (c) explicitly.
+
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 3. EXTERNAL CONTRACTS

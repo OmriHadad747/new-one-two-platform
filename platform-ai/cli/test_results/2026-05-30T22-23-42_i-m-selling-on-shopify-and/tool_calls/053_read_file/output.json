@@ -1,0 +1,8 @@
+{
+  "content": "\n    // Add product\n    panel.querySelector(\"#btn-add-product\")?.addEventListener(\"click\", async () => {\n      const picked = await bridge.pickResource({ type: \"product\" });\n      if (!picked || picked.length === 0) return;\n      for (const p of picked) {\n        // p.id is the GID: gid://shopify/Product/<numeric_id>\n        const numericId = p.id.split(\"/\").pop() ?? \"\";\n        if (!numericId) continue;\n        formComponents.push({",
+  "total_lines": 951,
+  "returned_lines": [
+    710,
+    720
+  ]
+}

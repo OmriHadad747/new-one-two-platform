@@ -1,0 +1,79 @@
+{
+  "todos": [
+    {
+      "content": "Read component rules: db.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json \u2014 spine",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts \u2014 spine",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Read component rules: backend.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Read component rules: webhooks.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Look up Shopify ops",
+      "status": "completed",
+      "activeForm": "list_shopify_ops"
+    },
+    {
+      "content": "Look up Storefront ops",
+      "status": "completed",
+      "activeForm": "list_shopify_ops"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts \u2014 admin route handlers",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts \u2014 storefront route handlers",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts \u2014 webhook handlers",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Read component rules: admin.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts \u2014 admin UI surface",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Read component rules: storefront.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts \u2014 storefront widget UI",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "completed",
+      "activeForm": "run_tsc"
+    }
+  ]
+}

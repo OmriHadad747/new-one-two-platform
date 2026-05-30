@@ -1,0 +1,15 @@
+{
+  "coding_agent": {
+    "input_tokens": 186304,
+    "output_tokens": 70037,
+    "cache_read_tokens": 6624214,
+    "cache_creation_tokens": 139537,
+    "turns_used": 80
+  },
+  "validators": {
+    "input_tokens": 114326,
+    "output_tokens": 3541,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 114320
+  }
+}

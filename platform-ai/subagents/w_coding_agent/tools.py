@@ -51,7 +51,7 @@ class RunnerContext:
     repo_root: Path
     work_dir: Path
     run_dir: Path
-    todos: List[Dict[str, str]] = field(default_factory=list)
+    todos: List[Dict[str, Any]] = field(default_factory=list)
     done_called: bool = False
     # The validated HLD plan, for the done()-gate micro-validators (intent
     # + aim). Set by run_coding_agent; None when running tools standalone.
@@ -174,10 +174,86 @@ def tool_write_file(
     return {"ok": True, "bytes_written": len(content)}
 
 
-def tool_todo_write(
-    ctx: RunnerContext, todos: List[Dict[str, str]]
+def tool_edit_file(
+    ctx: RunnerContext,
+    path: str,
+    old_string: str,
+    new_string: str,
+    replace_all: bool = False,
 ) -> Dict[str, Any]:
-    """Store the agent's task list. Minimal validation."""
+    """Surgical string replacement on an existing scaffold file.
+
+    Same allowlist as write_file. The file must already exist (use
+    write_file for initial creation). `old_string` must appear EXACTLY
+    once unless `replace_all` is true. Returns ok + replacements +
+    bytes_written.
+
+    Preferred over write_file for any change that's smaller than the
+    file — avoids rewriting hundreds of lines just to alter a few, and
+    avoids the regression-risk of re-emitting unchanged regions.
+    """
+    allowed, reason = _classify_write_path(path)
+    if not allowed:
+        return {"ok": False, "denied_reason": reason}
+
+    p = ctx.work_dir / path
+    if not p.exists():
+        return {
+            "ok": False,
+            "error": f"file does not exist: {path} — use write_file to create it",
+        }
+    if not p.is_file():
+        return {"ok": False, "error": f"not a regular file: {path}"}
+
+    if old_string == new_string:
+        return {"ok": False, "error": "old_string and new_string are identical"}
+    if not old_string:
+        return {"ok": False, "error": "old_string must be non-empty"}
+
+    try:
+        original = p.read_text()
+    except UnicodeDecodeError:
+        return {"ok": False, "error": f"file is not UTF-8 text: {path}"}
+
+    occurrences = original.count(old_string)
+    if occurrences == 0:
+        return {
+            "ok": False,
+            "error": "old_string not found — read the file first and copy the exact text (whitespace included)",
+        }
+    if occurrences > 1 and not replace_all:
+        return {
+            "ok": False,
+            "error": (
+                f"old_string matches {occurrences} times — add more surrounding "
+                "context to make it unique, or pass replace_all=true"
+            ),
+        }
+
+    if replace_all:
+        updated = original.replace(old_string, new_string)
+        replacements = occurrences
+    else:
+        updated = original.replace(old_string, new_string, 1)
+        replacements = 1
+
+    p.write_text(updated)
+    return {
+        "ok": True,
+        "replacements": replacements,
+        "bytes_written": len(updated),
+    }
+
+
+def tool_todo_write(
+    ctx: RunnerContext, todos: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Store the agent's task list. Minimal validation.
+
+    Required per item: content, status, activeForm. Optional plan-slice
+    fields (implements / consumes / produces / do_not) are stored
+    verbatim and surfaced to the agent on later turns.
+    """
     valid_statuses = {"pending", "in_progress", "completed"}
     in_progress = 0
     for i, t in enumerate(todos):
@@ -405,6 +481,7 @@ def tool_done(ctx: RunnerContext) -> Dict[str, Any]:
 TOOL_DISPATCH: Dict[str, Callable[..., Dict[str, Any]]] = {
     "read_file": tool_read_file,
     "write_file": tool_write_file,
+    "edit_file": tool_edit_file,
     "todo_write": tool_todo_write,
     "list_shopify_ops": tool_list_shopify_ops,
     "get_shopify_op": tool_get_shopify_op,
@@ -466,11 +543,49 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "edit_file",
+        "description": (
+            "Surgical string replacement on an existing scaffold file. "
+            "PREFER this over write_file for any change smaller than the "
+            "whole file — rewriting hundreds of lines just to alter a few "
+            "wastes tokens AND risks regressions in untouched regions. "
+            "old_string must match EXACTLY (whitespace included) and appear "
+            "exactly once unless replace_all=true. Read the file first to "
+            "get the exact text. Same path allowlist as write_file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Repo-relative scaffold path; file must already exist.",
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "Exact text to replace (whitespace-sensitive).",
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "Replacement text. Must differ from old_string.",
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "Replace every occurrence. Default false (require unique match).",
+                },
+            },
+            "required": ["path", "old_string", "new_string"],
+        },
+    },
+    {
         "name": "todo_write",
         "description": (
-            "Maintain your task list. Each todo has content, status "
-            "(pending|in_progress|completed), and activeForm. Exactly ONE "
-            "in_progress at any time. Replace the full list on each call."
+            "Maintain your task list. Each todo has content, status, and "
+            "activeForm — plus the OPTIONAL plan-slice fields implements, "
+            "consumes, produces, do_not (use them on any todo that writes a "
+            "file the plan binds: list the capabilities it implements, the "
+            "fields/ids it must read, the fields/ids it must emit, and "
+            "anti-patterns to avoid). Exactly ONE in_progress at a time. "
+            "Replace the full list on each call."
         ),
         "input_schema": {
             "type": "object",
@@ -486,6 +601,39 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                                 "enum": ["pending", "in_progress", "completed"],
                             },
                             "activeForm": {"type": "string"},
+                            "implements": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "Plan capability ids this todo implements "
+                                    "(e.g. 'add-bundle-to-cart')."
+                                ),
+                            },
+                            "consumes": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "Each entry is one field/id this code must READ, "
+                                    "with its producer named: e.g. "
+                                    "'member.live.variant_external_id ← produced by GET /widget/bundle'."
+                                ),
+                            },
+                            "produces": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "Each entry is one field/id this code must EMIT. "
+                                    "Match the plan's per-step `produces`."
+                                ),
+                            },
+                            "do_not": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "Anti-patterns specific to this surface "
+                                    "(e.g. 'fallback variant_external_id ?? product_external_id')."
+                                ),
+                            },
                         },
                         "required": ["content", "status", "activeForm"],
                     },

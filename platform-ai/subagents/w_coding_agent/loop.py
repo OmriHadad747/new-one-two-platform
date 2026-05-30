@@ -107,8 +107,18 @@ def _cli_line(
     summary = ""
     if name in ("read_file", "write_file"):
         summary = tool_input.get("path", "")
+    elif name == "edit_file":
+        path = tool_input.get("path", "")
+        repls = result.get("replacements") if isinstance(result, dict) else None
+        summary = f"{path} ({repls} repl)" if repls else path
     elif name in ("get_shopify_op", "get_webhook_topic"):
         summary = tool_input.get("name", "")
+    elif name == "list_shopify_ops":
+        cluster = tool_input.get("cluster", "")
+        surface = tool_input.get("surface", "")
+        summary = f"{cluster} ({surface})" if surface else cluster
+    elif name == "list_webhook_family":
+        summary = tool_input.get("prefix", "")
     elif name == "todo_write":
         summary = f"{len(tool_input.get('todos', []))} todos"
     elif name == "run_tsc":

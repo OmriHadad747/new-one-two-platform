@@ -1,0 +1,394 @@
+{
+  "name": "Product Bundles",
+  "description": "Create and manage product bundles with tiered discounts. Customers configure bundles on product pages and buy them with auto-applied discounts at checkout.",
+  "database": {
+    "tables": [
+      {
+        "name": "bundles",
+        "purpose": "Master record for each merchant-defined bundle definition, its type, discount configuration, and enabled state.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal bundle id"
+          },
+          {
+            "name": "title",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "merchant-facing bundle title"
+          },
+          {
+            "name": "bundle_type",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": [
+              "fixed",
+              "flexible"
+            ],
+            "purpose": "fixed or flexible bundle type"
+          },
+          {
+            "name": "discount_kind",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": [
+              "percentage",
+              "flat_amount",
+              "bxgy"
+            ],
+            "purpose": "percentage, flat_amount, or bxgy"
+          },
+          {
+            "name": "required_selection_count",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "for flexible bundles, number of items customer must pick; 0 for fixed"
+          },
+          {
+            "name": "shopify_product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "Shopify bundle product id returned from productBundleCreate"
+          },
+          {
+            "name": "enabled",
+            "sqlType": "BOOLEAN",
+            "constraints": "NOT NULL DEFAULT true",
+            "purpose": "whether this bundle is active"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          },
+          {
+            "name": "updated_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": [
+          "title"
+        ],
+        "indexes": [
+          [
+            "enabled",
+            "created_at"
+          ]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_members",
+        "purpose": "Each product or variant slot that belongs to a bundle, with live availability state.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal member id"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the parent bundle"
+          },
+          {
+            "name": "product_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the Shopify product id this member references"
+          },
+          {
+            "name": "variant_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "set when the member is pinned to a specific variant"
+          },
+          {
+            "name": "available",
+            "sqlType": "BOOLEAN",
+            "constraints": "NOT NULL DEFAULT true",
+            "purpose": "live availability state updated by products/update webhook"
+          },
+          {
+            "name": "position",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "display order within the bundle"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          },
+          {
+            "name": "updated_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": null,
+        "indexes": [
+          [
+            "bundle_id",
+            "position"
+          ],
+          [
+            "product_external_id"
+          ],
+          [
+            "variant_external_id"
+          ]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_discount_tiers",
+        "purpose": "The ordered discount tiers of a bundle — each tier specifies a minimum item count and the corresponding discount value.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal tier id"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the parent bundle"
+          },
+          {
+            "name": "min_item_count",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL",
+            "purpose": "minimum number of items to qualify for this tier"
+          },
+          {
+            "name": "discount_value",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "purpose": "percentage as decimal string (e.g. 0.10 = 10%) when discount_kind is percentage"
+          },
+          {
+            "name": "discount_amount",
+            "sqlType": "BIGINT",
+            "constraints": "NULL",
+            "purpose": "flat currency amount in minor units when discount_kind is flat_amount"
+          },
+          {
+            "name": "discount_currency",
+            "sqlType": "TEXT",
+            "constraints": "NULL",
+            "purpose": "currency code for flat_amount tiers"
+          },
+          {
+            "name": "free_item_count",
+            "sqlType": "INTEGER",
+            "constraints": "NULL",
+            "purpose": "number of items given free when discount_kind is bxgy"
+          },
+          {
+            "name": "position",
+            "sqlType": "INTEGER",
+            "constraints": "NOT NULL DEFAULT 0",
+            "purpose": "ordering from smallest to largest qualifying count"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": [
+          "bundle_id",
+          "min_item_count"
+        ],
+        "indexes": [
+          [
+            "bundle_id",
+            "position"
+          ]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_discount_external_refs",
+        "purpose": "Maps each bundle discount tier to its provisioned Shopify automatic discount, enabling targeted update and deactivation.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal ref id"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the parent bundle"
+          },
+          {
+            "name": "tier_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundle_discount_tiers(id) ON DELETE CASCADE",
+            "purpose": "the specific tier this discount was provisioned for"
+          },
+          {
+            "name": "discount_external_id",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "the Shopify automatic discount GID returned at provisioning"
+          },
+          {
+            "name": "discount_title",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "purpose": "the title used when provisioning, for storefront cart apply"
+          },
+          {
+            "name": "discount_kind",
+            "sqlType": "TEXT",
+            "constraints": "NOT NULL",
+            "enum": [
+              "basic",
+              "bxgy"
+            ],
+            "purpose": "basic or bxgy, mirrors bundle discount_kind at provisioning time"
+          },
+          {
+            "name": "created_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          },
+          {
+            "name": "updated_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": [
+          "tier_id"
+        ],
+        "indexes": [
+          [
+            "bundle_id"
+          ]
+        ],
+        "foreignKeys": []
+      },
+      {
+        "name": "bundle_purchase_counts",
+        "purpose": "Records each paid order that contained a bundle purchase for idempotent count tracking and admin display.",
+        "columns": [
+          {
+            "name": "id",
+            "sqlType": "UUID",
+            "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()",
+            "purpose": "internal record id"
+          },
+          {
+            "name": "bundle_id",
+            "sqlType": "UUID",
+            "constraints": "NOT NULL REFERENCES bundles(id) ON DELETE CASCADE",
+            "purpose": "the bundle that was purchased"
+          },
+          {
+            "name": "order_external_id",
+            "sqlType": "BIGINT",
+            "constraints": "NOT NULL",
+            "purpose": "the paid Shopify order id used for idempotency"
+          },
+          {
+            "name": "incremented_at",
+            "sqlType": "TIMESTAMPTZ",
+            "constraints": "NOT NULL DEFAULT now()",
+            "purpose": null
+          }
+        ],
+        "uniqueConstraint": [
+          "bundle_id",
+          "order_external_id"
+        ],
+        "indexes": [
+          [
+            "bundle_id"
+          ]
+        ],
+        "foreignKeys": []
+      }
+    ]
+  },
+  "shopifyIntegration": {
+    "webhookTopics": [
+      "orders/paid",
+      "products/update"
+    ],
+    "cronSchedule": null,
+    "scopes": [
+      "read_products",
+      "write_products",
+      "read_discounts",
+      "write_discounts",
+      "read_orders"
+    ]
+  },
+  "httpRoutes": {
+    "admin": [
+      {
+        "path": "/admin/bundles",
+        "method": "GET",
+        "purpose": "Return a paginated list of all bundles with their status and purchase counts for the admin dashboard.",
+        "paginationKind": "offset"
+      },
+      {
+        "path": "/admin/bundles/detail",
+        "method": "GET",
+        "purpose": "Return the full definition of a single bundle including members, tiers, and purchase count for the edit form."
+      },
+      {
+        "path": "/admin/bundles/create",
+        "method": "POST",
+        "purpose": "Create a new bundle definition with members, discount kind, and tiered discount rules."
+      },
+      {
+        "path": "/admin/bundles/update",
+        "method": "PUT",
+        "purpose": "Update any field of an existing bundle definition, re-provisioning Shopify discounts for changed tiers."
+      },
+      {
+        "path": "/admin/bundles/toggle",
+        "method": "POST",
+        "purpose": "Enable or disable a bundle and activate or deactivate all associated Shopify automatic discounts."
+      }
+    ],
+    "widget": [
+      {
+        "path": "/widget/bundle",
+        "method": "GET",
+        "purpose": "Return a bundle definition with live variant availability and pricing for a given product page."
+      },
+      {
+        "path": "/widget/bundle/preview-total",
+        "method": "POST",
+        "purpose": "Compute the live discounted total for a customer's current item selection against the matching discount tier."
+      },
+      {
+        "path": "/widget/bundle/add-to-cart",
+        "method": "POST",
+        "purpose": "Validate the customer's selection meets bundle requirements, then create a Shopify cart with the selected variants and the bundle's automatic discount applied."
+      }
+    ]
+  }
+}
