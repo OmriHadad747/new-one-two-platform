@@ -1,0 +1,90 @@
+{
+  "todos": [
+    {
+      "content": "Read component rules: db.md, backend.md, webhooks.md, admin.md, storefront.md, cron.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json \u2014 spine metadata",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts \u2014 shared type contracts",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts \u2014 webhook handlers",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts \u2014 storefront route handlers",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts \u2014 admin route handlers",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/cron.ts \u2014 scheduled email delivery job",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts \u2014 admin UI surface",
+      "status": "in_progress",
+      "activeForm": "write_file",
+      "implements": [
+        "/admin/dashboard",
+        "/admin/variants/subscribers",
+        "/admin/variants/subscribers/export",
+        "/admin/runs",
+        "/admin/email-template",
+        "/admin/settings"
+      ],
+      "consumes": [
+        "calls GET /admin/dashboard \u2014 responseShape: items, next_cursor, total_count",
+        "calls GET /admin/variants/subscribers \u2014 responseShape: next_cursor, subscribers, total_count",
+        "calls GET /admin/variants/subscribers/export \u2014 responseShape: csv_content",
+        "calls GET /admin/runs \u2014 responseShape: next_cursor, runs, total_count",
+        "calls GET /admin/email-template \u2014 responseShape: body_template, subject_template, updated_at",
+        "calls PUT /admin/email-template \u2014 responseShape: success, updated_at",
+        "calls GET /admin/settings \u2014 responseShape: batch_size, quiet_hours_end, quiet_hours_start, updated_at",
+        "calls PUT /admin/settings \u2014 responseShape: success, updated_at"
+      ],
+      "produces": [
+        "sends GET /admin/dashboard \u2014 requestShape: cursor",
+        "sends GET /admin/variants/subscribers \u2014 requestShape: cursor, variant_external_id",
+        "sends GET /admin/variants/subscribers/export \u2014 requestShape: variant_external_id",
+        "sends GET /admin/runs \u2014 requestShape: cursor",
+        "sends PUT /admin/email-template \u2014 requestShape: body_template, subject_template",
+        "sends PUT /admin/settings \u2014 requestShape: batch_size, quiet_hours_end, quiet_hours_start"
+      ],
+      "do_not": [
+        "send a placeholder/sentinel for a reference column the plan declares NOT NULL",
+        "omit a UI affordance for a nullable-with-purpose column",
+        "store a variant id where a product id is required"
+      ]
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts \u2014 storefront widget UI",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "run_tsc"
+    },
+    {
+      "content": "Call done()",
+      "status": "pending",
+      "activeForm": "done"
+    }
+  ]
+}

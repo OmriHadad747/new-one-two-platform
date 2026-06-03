@@ -34,6 +34,15 @@ from typing import Any, Callable, Dict, List, Optional
 SHOPIFY_API_VERSION = "2026-04"
 DEFAULT_READ_LIMIT = 2000  # lines
 
+# Max times `done()` may be called with the validator gate returning findings
+# before the loop force-accepts and exits. Caps the cost of the fix-loop: the
+# old behavior allowed unbounded retries (one run burned 9, each costing ~$1
+# in coding-agent turns + Haiku validators) when validator over-fires kept
+# pushing the agent into ineffectual edits. Generic — applies to any agent
+# with a validator-gated done() pattern.
+MAX_DONE_ATTEMPTS = 4
+DEFAULT_TOOL_RESULT_BYTES = 32 * 1024  # 32 KiB hard cap per tool result
+
 
 # ── Runner context ──────────────────────────────────────────────────────────
 
@@ -66,6 +75,12 @@ class RunnerContext:
             "cache_creation_tokens": 0,
         }
     )
+    # Cumulative count of done() calls that returned non-empty findings.
+    # When this reaches MAX_DONE_ATTEMPTS, the next done() force-accepts
+    # to cap the fix-loop cost. The unresolved findings are surfaced via
+    # `forced_completion_findings` so post-hoc eval sees them.
+    done_failed_attempts: int = 0
+    forced_completion_findings: List[str] = field(default_factory=list)
 
 
 # ── Write allowlist ─────────────────────────────────────────────────────────
@@ -464,15 +479,53 @@ def tool_done(ctx: RunnerContext) -> Dict[str, Any]:
     """Declare completion. Runs the deterministic gate (structural checks +
     tsc); only flips `done_called` when it passes. On failure the issues
     come back as `incomplete_reason` and the loop continues so the agent
-    fixes them."""
+    fixes them.
+
+    Retry cap: after MAX_DONE_ATTEMPTS failed validator gates, the next
+    done() force-accepts — the unresolved findings are recorded in
+    `forced_completion_findings` for the eval to read. This bounds the
+    fix-loop cost: validator over-fires used to drive unbounded retries
+    (one run burned 9, ~$1 each). Generic policy, not app-specific.
+    """
     from subagents.w_coding_agent.integrity import run_done_gate
 
     issues = run_done_gate(ctx)
-    if issues:
-        return {"ok": False, "incomplete_reason": issues}
+    if not issues:
+        ctx.done_called = True
+        return {"ok": True}
 
-    ctx.done_called = True
-    return {"ok": True}
+    ctx.done_failed_attempts += 1
+    retries_remaining = MAX_DONE_ATTEMPTS - ctx.done_failed_attempts
+
+    if retries_remaining <= 0:
+        # Force-accept. The agent has hit the cap; further iteration is
+        # not worth the token spend. Surface what's left for eval.
+        ctx.done_called = True
+        ctx.forced_completion_findings = list(issues)
+        return {
+            "ok": True,
+            "forced_completion": True,
+            "unresolved_findings": issues,
+            "note": (
+                f"done() validator gate has failed {ctx.done_failed_attempts}× "
+                f"(cap: {MAX_DONE_ATTEMPTS}); accepting completion with "
+                f"{len(issues)} unresolved finding(s). Recorded for eval."
+            ),
+        }
+
+    return {
+        "ok": False,
+        "incomplete_reason": issues,
+        "attempt": ctx.done_failed_attempts,
+        "retries_remaining": retries_remaining,
+        "note": (
+            f"done() attempt {ctx.done_failed_attempts}/{MAX_DONE_ATTEMPTS} — "
+            f"{retries_remaining} retry(ies) remain before forced acceptance. "
+            "Apply the fixes prescribed above; do not re-investigate findings "
+            "you've already considered if you have a defensible reason to "
+            "disagree (note: validators can over-fire)."
+        ),
+    }
 
 
 # ── Dispatch table ──────────────────────────────────────────────────────────

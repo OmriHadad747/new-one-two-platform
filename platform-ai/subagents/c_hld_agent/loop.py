@@ -18,7 +18,9 @@ write/tsc/done tools are not registered, so the model cannot call them.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import anthropic
@@ -33,7 +35,15 @@ from subagents.w_coding_agent.tools import (
 
 CACHE_TTL_BETA_HEADER = "extended-cache-ttl-2025-04-11"
 DEFAULT_MAX_TURNS = 40
-DEFAULT_MAX_TOKENS = 8000
+# The emit_hld_plan tool's input IS the whole plan JSON — for complex apps
+# (3+ webhook topics with payloadBindings + 15+ capabilities with shopifySteps
+# + 5+ tables) it can run 10-15K output tokens just for the structured object,
+# plus a few hundred tokens of preamble. The previous 8000 cap silently
+# truncated emit calls mid-tool-use, surfacing as "stopped without calling
+# emit_hld_plan". Sonnet 4.6 supports up to 64K output; 32K is the right
+# headroom — pay only when the model uses it. Generic — applies to any
+# loop whose terminal tool carries a large structured output.
+DEFAULT_MAX_TOKENS = 32000
 
 EMIT_TOOL = "emit_hld_plan"
 
@@ -61,6 +71,15 @@ class HLDLoopResult:
     total_output_tokens: int
     cache_read_tokens: int
     cache_creation_tokens: int
+    # The raw stop_reason from the final API response when the loop ended
+    # without an emit. "end_turn" means the model decided it was done.
+    # "max_tokens" means we cut it off mid-response — often the emit call
+    # itself, since the tool input carries the entire plan JSON.
+    final_stop_reason: Optional[str] = None
+    # The last assistant text the model produced when it stopped without
+    # emitting. Captured so post-hoc debug can see what the model "said"
+    # instead of emitting. None when the loop ended via a successful emit.
+    final_assistant_text: Optional[str] = None
 
 
 def _emit_tool_definition() -> Dict[str, Any]:
@@ -121,9 +140,15 @@ def run_hld_loop(
     tot_in = tot_out = tot_cache_r = tot_cache_c = 0
     last_errors: List[str] = []
     turn = 0
+    tool_call_idx = 0
 
     for turn in range(1, max_turns + 1):
-        resp = client.messages.create(
+        # Streamed — the Anthropic SDK refuses non-streaming calls whose
+        # max_tokens could imply >10 min of processing. With our 32K cap
+        # (sized so emit_hld_plan can carry the full plan JSON), .create()
+        # raises before sending. .stream() places the call and we collect
+        # the final message; the shape is identical to .create()'s return.
+        with client.messages.stream(
             model=model,
             max_tokens=max_tokens,
             system=[
@@ -136,7 +161,8 @@ def run_hld_loop(
             tools=tools,
             messages=messages,
             extra_headers={"anthropic-beta": CACHE_TTL_BETA_HEADER},
-        )
+        ) as stream:
+            resp = stream.get_final_message()
 
         tot_in += resp.usage.input_tokens
         tot_out += resp.usage.output_tokens
@@ -146,7 +172,13 @@ def run_hld_loop(
         messages.append({"role": "assistant", "content": resp.content})
 
         if resp.stop_reason != "tool_use":
-            # Model stopped without emitting — surface cleanly.
+            # Model stopped without emitting — surface cleanly with what
+            # the model actually said and why it stopped.
+            text_parts: List[str] = []
+            for b in resp.content:
+                if getattr(b, "type", None) == "text":
+                    text_parts.append(b.text or "")
+            final_text = "\n".join(text_parts).strip() or None
             return HLDLoopResult(
                 plan=None,
                 validation_errors=last_errors,
@@ -157,6 +189,8 @@ def run_hld_loop(
                 total_output_tokens=tot_out,
                 cache_read_tokens=tot_cache_r,
                 cache_creation_tokens=tot_cache_c,
+                final_stop_reason=resp.stop_reason,
+                final_assistant_text=final_text,
             )
 
         tool_uses = [b for b in resp.content if b.type == "tool_use"]
@@ -165,6 +199,7 @@ def run_hld_loop(
 
         for tu in tool_uses:
             tool_input = dict(tu.input)
+            t0 = time.monotonic()
             if tu.name == EMIT_TOOL:
                 try:
                     plan = HLDPlan.model_validate(tool_input)
@@ -176,6 +211,10 @@ def run_hld_loop(
                     result = {"ok": False, "errors": last_errors}
             else:
                 result = call_tool(ctx, tu.name, tool_input)
+            ms = int((time.monotonic() - t0) * 1000)
+
+            tool_call_idx += 1
+            _log_tool_call(tool_call_idx, tu.name, tool_input, result, ms)
 
             if on_tool_call is not None:
                 on_tool_call(_cli_line(tu.name, tool_input, result))
@@ -214,6 +253,45 @@ def run_hld_loop(
         cache_read_tokens=tot_cache_r,
         cache_creation_tokens=tot_cache_c,
     )
+
+
+def _log_tool_call(
+    idx: int,
+    name: str,
+    tool_input: Dict[str, Any],
+    result: Dict[str, Any],
+    ms_elapsed: int,
+) -> None:
+    """Mirror w_coding_agent.loop._log_tool_call: per-call input.json +
+    output.json under inputs/hld/attempt_1/tool_calls/, plus one
+    manifest line. Gives the HLD the same observability the coding agent
+    already has — without this you can't see whether the architect
+    actually called list_webhook_family or just guessed.
+
+    Reads the active run_dir from `current_input_log_run_dir()`; no-op
+    outside an input_log block (so unit tests of the loop don't write to
+    repo root)."""
+    from models.adapter import current_input_log_run_dir
+    run_dir = current_input_log_run_dir()
+    if run_dir is None:
+        return
+    base = run_dir / "inputs" / "hld" / "attempt_1" / "tool_calls"
+    base.mkdir(parents=True, exist_ok=True)
+    call_dir = base / f"{idx:03d}_{name}"
+    call_dir.mkdir(parents=True, exist_ok=True)
+    (call_dir / "input.json").write_text(json.dumps(tool_input, indent=2))
+    (call_dir / "output.json").write_text(json.dumps(result, indent=2))
+
+    manifest = run_dir / "inputs" / "hld" / "attempt_1" / "manifest.jsonl"
+    line = {
+        "idx": idx,
+        "tool": name,
+        "ms": ms_elapsed,
+        "ok": (result.get("ok") if isinstance(result, dict) and "ok" in result
+               else ("error" not in result if isinstance(result, dict) else True)),
+    }
+    with manifest.open("a") as f:
+        f.write(json.dumps(line) + "\n")
 
 
 def _cli_line(name: str, tool_input: Dict[str, Any], result: Dict[str, Any]) -> str:

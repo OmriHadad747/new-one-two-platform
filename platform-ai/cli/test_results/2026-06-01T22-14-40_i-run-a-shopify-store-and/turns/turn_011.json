@@ -1,0 +1,12 @@
+{
+  "turn": 11,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 429,
+  "cache_read_tokens": 51890,
+  "cache_creation_tokens": 3263,
+  "tool_uses": [
+    "todo_write"
+  ],
+  "assistant_text": "Now write the widget route handlers:"
+}

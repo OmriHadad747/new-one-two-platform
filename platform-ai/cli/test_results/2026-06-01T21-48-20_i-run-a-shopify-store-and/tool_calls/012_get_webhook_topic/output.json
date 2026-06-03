@@ -1,0 +1,108 @@
+{
+  "access_scopes": [
+    "products"
+  ],
+  "description": "Occurs whenever a variant becomes out of stock. Online channels receive this webhook only when the variant becomes out of stock online.",
+  "fields": [
+    {
+      "format": "uri",
+      "name": "admin_graphql_api_id",
+      "nullable": false,
+      "type": "string"
+    },
+    {
+      "name": "barcode",
+      "nullable": false,
+      "type": "null"
+    },
+    {
+      "name": "compare_at_price",
+      "nullable": false,
+      "type": "string"
+    },
+    {
+      "format": "date-time",
+      "name": "created_at",
+      "nullable": false,
+      "type": "string"
+    },
+    {
+      "name": "id",
+      "nullable": false,
+      "type": "integer"
+    },
+    {
+      "name": "image_id",
+      "nullable": false,
+      "type": "null"
+    },
+    {
+      "name": "inventory_policy",
+      "nullable": false,
+      "type": "string"
+    },
+    {
+      "name": "inventory_quantity",
+      "nullable": false,
+      "type": "integer"
+    },
+    {
+      "name": "old_inventory_quantity",
+      "nullable": false,
+      "type": "integer"
+    },
+    {
+      "name": "option1",
+      "nullable": false,
+      "type": "string"
+    },
+    {
+      "name": "option2",
+      "nullable": false,
+      "type": "null"
+    },
+    {
+      "name": "option3",
+      "nullable": false,
+      "type": "null"
+    },
+    {
+      "name": "position",
+      "nullable": false,
+      "type": "integer"
+    },
+    {
+      "name": "price",
+      "nullable": false,
+      "type": "string"
+    },
+    {
+      "name": "product_id",
+      "nullable": false,
+      "type": "integer"
+    },
+    {
+      "name": "sku",
+      "nullable": false,
+      "type": "null"
+    },
+    {
+      "name": "taxable",
+      "nullable": false,
+      "type": "boolean"
+    },
+    {
+      "name": "title",
+      "nullable": false,
+      "type": "string"
+    },
+    {
+      "format": "date-time",
+      "name": "updated_at",
+      "nullable": false,
+      "type": "string"
+    }
+  ],
+  "related_resource": "ProductVariant",
+  "topic": "variants/out_of_stock"
+}

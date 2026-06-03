@@ -273,7 +273,24 @@ class Table(_StrictModel):
     name: str
     purpose: str
     columns: list[Column]
-    keyedBy: str
+    # Structured dedup key — the exact column list the downstream
+    # uniqueConstraint must match. The integrity gate checks this
+    # against `app.json.uniqueConstraint` (a deterministic check that
+    # catches the "natural-language said calendar date, formal
+    # constraint used timestamp" class of plan-vs-code contradiction).
+    # Empty list means "no dedup key" — only valid for tables that
+    # genuinely have no natural uniqueness (rare). Non-obvious column
+    # choices (derived columns like `detected_date` that exist to make
+    # daily dedup work) should be justified in the relevant column's
+    # `purpose` field, not in prose at the table level. Generic.
+    keyedByColumns: list[str] = Field(default_factory=list)
+    # DEPRECATED: free-text restatement of keyedByColumns. Retained as
+    # Optional so legacy plans (pre-keyedByColumns) still parse; new
+    # plans should NOT set it — the structured `keyedByColumns` is the
+    # single source of truth, and any rationale for non-obvious column
+    # choices belongs on the column's own `purpose` field. Will be
+    # removed once no in-flight plans reference it.
+    keyedBy: Optional[str] = None
     statusField: Optional[str] = None
     queryPatterns: list[str] = Field(default_factory=list)
 
@@ -290,6 +307,22 @@ class Table(_StrictModel):
                 f"statusField '{self.statusField}' on table "
                 f"'{self.name}' does not match any column on this table; "
                 f"columns are {sorted(column_names)}"
+            )
+        return self
+
+    # keyedByColumns must (a) name only declared columns of this table,
+    # and (b) be non-empty if keyedBy isn't a degenerate description.
+    # Structural check; no app knowledge.
+    @model_validator(mode="after")
+    def _keyed_by_columns_resolve(self) -> "Table":
+        if not self.keyedByColumns:
+            return self
+        column_names = {c.name for c in self.columns}
+        stray = [k for k in self.keyedByColumns if k not in column_names]
+        if stray:
+            raise ValueError(
+                f"keyedByColumns {stray} on table '{self.name}' do not "
+                f"match any column; columns are {sorted(column_names)}"
             )
         return self
 

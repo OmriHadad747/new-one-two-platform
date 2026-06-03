@@ -197,15 +197,36 @@ For each table, declare:
                    Use `ratio` for fractional values bounded between 0
                    and 1. `money` is for currency amounts only; `count`
                    is for whole-number integers.
-                   `purpose` is required for `reference` columns;
-                   optional otherwise.
+                   `purpose` is required for `reference` columns AND for
+                   any column whose existence is non-obvious from its
+                   name — particularly derived/denormalized columns
+                   whose presence is justified by query patterns, dedup
+                   keys, or scheduling math. If a future reader of
+                   `keyedByColumns` would ask "why is this column in the
+                   key?", the answer lives in that column's `purpose`.
+                   Example: a `detected_date` column added so a webhook
+                   dedupes one-per-day even when delivery fires multiple
+                   times — its `purpose` explains the daily dedup intent.
+                   Optional only when the column name + role are
+                   self-evidently sufficient (`id`, `created_at` on a
+                   table where their role is obvious).
                    Do NOT specify SQL types, constraints, defaults,
                    indexes, or check constraints — the coding agent owns
                    the DDL.
-  - keyedBy      : the natural identity of a row in domain terms ("one
-                   row per abandoned cart, keyed by the cart's external
-                   identifier"). The coding agent picks the column and
-                   constraint.
+  - keyedByColumns: the EXACT column-name list that backs the table's
+                   natural identity. The coding agent generates a
+                   uniqueConstraint over this exact column set; the
+                   integrity gate fails a mismatch. EVERY name must
+                   appear in `columns`. Empty list means "no dedup key"
+                   — only valid for tables that genuinely have no
+                   natural uniqueness (rare). If a non-obvious column
+                   appears here (e.g. a derived `detected_date` instead
+                   of `detected_at`), justify it in that COLUMN's
+                   `purpose` — never in prose at the table level. This
+                   is what prevents the "natural-language said calendar
+                   date, formal constraint used timestamp" class of
+                   plan-internal contradiction: state the columns
+                   formally, and put the why on the column itself.
   - statusField  : RESERVED for binding a column to a non-null
                    stateMachine — see section 6. Set to null otherwise,
                    even when a column has role `status`.
@@ -218,7 +239,9 @@ CONFIGURATION TABLES. Whenever a capability's dataNeeds reference a \
 configuration value (rate, threshold, toggle, limit, interval, template) \
 or an admin GET/POST contract reads or writes one, the table that stores \
 that configuration must exist — typically a single-row settings table \
-with `keyedBy: "single row representing the only configuration record"`.
+with `keyedByColumns: []` (no natural uniqueness — guarded by code to \
+keep exactly one row) and a `purpose` on the row's id column explaining \
+the singleton intent.
 
 PRE-AGGREGATION CONSISTENCY. If the qualityBrief calls for "instant \
 load", "responsive at scale", or similar fast-read requirements and you \
@@ -563,7 +586,7 @@ get_webhook_topic / get_shopify_op would return — never guessed.)
         {"name": "failure_reason", "role": "text", "nullable": true, "purpose": null},
         {"name": "created_at", "role": "timestamp", "nullable": false, "purpose": null}
       ],
-      "keyedBy": "one row per paid-order issuance attempt, deduplicated by order external id",
+      "keyedByColumns": ["order_external_id"],
       "statusField": null,
       "queryPatterns": [
         "all issuances filtered by status, ordered by creation time, supporting cursor pagination",

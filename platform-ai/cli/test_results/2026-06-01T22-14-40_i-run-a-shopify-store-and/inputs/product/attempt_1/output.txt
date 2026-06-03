@@ -1,0 +1,11 @@
+```json
+{
+  "status": "needs_clarification",
+  "question": "When you say 'notify the front of the queue and keep the rest for the next restock' — do you want the app to decide automatically (e.g. 'only notify the first 5 if 5 units came back') based on a quantity you set, or do you want to manually choose how many to notify each time you restock?",
+  "suggestions": [
+    "Auto-notify based on a merchant-set quantity threshold",
+    "Manual pick: I choose which signups to notify per restock",
+    "Notify everyone when stock returns, no limiting"
+  ]
+}
+```

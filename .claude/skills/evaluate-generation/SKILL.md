@@ -28,9 +28,12 @@ Grade against them; don't restate them.
   `shopifyTopic`, `payloadBindings`, `shopifySteps`), `hld_v_findings`, and
   per-stage `tokens_*`. The backbone for ranking the HLD stages.
 - `inputs/<stage>/attempt_N/{system.txt,user.txt,output.*}` — each stage's
-  prompts + output (`product`, `hld`, `hld_revise`, `hld_v`).
+  prompts + output (`product`, `hld`, `hld_revise`, `hld_v`, `coding`).
+  The `coding` stage also writes `tool_calls/`, `manifest.jsonl`, and
+  `turns/` under the same `inputs/coding/attempt_1/` dir.
 - `scaffold/app.json` + `scaffold/**` — the built app (only when coding ran).
-- `token_usage.json`, `manifest.jsonl` / `tool_calls/` — optional.
+- `token_usage.json` (at run root), `final_tsc.json`,
+  `forced_completion.json` — optional run-level aggregates.
 
 Detect which stages ran from these; rank only those present.
 

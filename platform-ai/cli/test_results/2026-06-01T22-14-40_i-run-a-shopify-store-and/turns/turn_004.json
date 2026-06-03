@@ -1,0 +1,12 @@
+{
+  "turn": 4,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 3431,
+  "cache_read_tokens": 35363,
+  "cache_creation_tokens": 2496,
+  "tool_uses": [
+    "write_file"
+  ],
+  "assistant_text": "Now let me write app.json:"
+}

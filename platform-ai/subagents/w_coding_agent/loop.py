@@ -28,6 +28,7 @@ from typing import Any, Dict, List
 import anthropic
 
 from subagents.w_coding_agent.tools import (
+    DEFAULT_TOOL_RESULT_BYTES,
     TOOL_DEFINITIONS,
     RunnerContext,
     call_tool,
@@ -37,7 +38,17 @@ from subagents.w_coding_agent.tools import (
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 DEFAULT_MAX_TURNS = 140
-DEFAULT_MAX_TOKENS = 16384
+# Per-turn output cap. Sized so a single write_file of a typical UI/route
+# file (admin.ts is often 600+ lines ≈ 6-8K tokens of content plus tool-
+# use JSON overhead) fits with headroom and ~1.5× safety margin. The
+# previous 6000 truncated admin.ts mid-write and killed the run — the
+# loop's "stop_reason != 'tool_use'" exit treats max_tokens as a halt.
+# "Force focused turns" is now handled by the OUTPUT DISCIPLINE section
+# of the system prompt, not by squeezing the output cap below what
+# legitimate work needs. Generic — applies to any loop whose tool args
+# can carry a file body. Stays well under the SDK's ~21K streaming
+# threshold so no streaming switch is needed here (unlike HLD).
+DEFAULT_MAX_TOKENS = 12000
 CACHE_TTL_BETA_HEADER = "extended-cache-ttl-2025-04-11"
 
 
@@ -59,8 +70,19 @@ class RunResult:
 # ── Logging ─────────────────────────────────────────────────────────────────
 
 
+def _attempt_dir(ctx: RunnerContext) -> Path:
+    """Per-attempt artifacts (tool_calls/, manifest.jsonl, turns/, the
+    prompts) live under `inputs/coding/attempt_1/` so the coding agent's
+    layout mirrors product/hld/hld_v. Run-level aggregates
+    (token_usage.json, final_tsc.json, forced_completion.json) stay at
+    run_dir."""
+    d = ctx.run_dir / "inputs" / "coding" / "attempt_1"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def _tool_calls_dir(ctx: RunnerContext) -> Path:
-    d = ctx.run_dir / "tool_calls"
+    d = _attempt_dir(ctx) / "tool_calls"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -87,7 +109,8 @@ def _log_tool_call(
     (call_dir / "output.json").write_text(json.dumps(result, indent=2))
 
     # Manifest line — append-only, one per call. Used by CLI scan tools
-    # and post-hoc inspection.
+    # and post-hoc inspection. Lives alongside tool_calls/ under the
+    # attempt dir.
     ok = result.get("ok") if isinstance(result, dict) else None
     has_error = isinstance(result, dict) and "error" in result
     manifest_line = {
@@ -96,7 +119,7 @@ def _log_tool_call(
         "ms": ms_elapsed,
         "ok": (not has_error) if ok is None else ok,
     }
-    with (_tool_calls_dir(ctx).parent / "manifest.jsonl").open("a") as f:
+    with (_attempt_dir(ctx) / "manifest.jsonl").open("a") as f:
         f.write(json.dumps(manifest_line) + "\n")
 
 
@@ -135,6 +158,87 @@ def _cli_line(
 
 
 # ── The loop ────────────────────────────────────────────────────────────────
+
+
+def _truncate_tool_result_json(payload: str, *, cap_bytes: int) -> str:
+    """Hard cap on a single tool_result content blob. Saves ~3-15K
+    fresh-input tokens per oversized result (run_tsc with hundreds of
+    errors, read_file of a large file). The agent can re-read with
+    offset/limit if it needs more. Generic — applies to any tool result."""
+    if len(payload) <= cap_bytes:
+        return payload
+    # Keep the head — JSON keys at the front are usually the most
+    # informative ("ok": false, "errors": [...]). Append a marker the
+    # model can recognise.
+    head = payload[: cap_bytes - 200]
+    tail = (
+        f'\n  ... [TRUNCATED — original was {len(payload)} bytes; '
+        f"showing first {cap_bytes - 200}. Re-fetch with offset/limit if "
+        f"you need more.]"
+    )
+    return head + tail
+
+
+def _dump_turn(
+    ctx: RunnerContext,
+    *,
+    turn: int,
+    response: Any,
+) -> None:
+    """After every model turn, dump a small JSON blob with the turn's
+    stop_reason, the assistant's text content (if any), and the names of
+    tool_use blocks it emitted. This closes the visibility gap for
+    coding failures: when the loop exits with stop_reason != "tool_use"
+    you can read exactly what the model said on its final turn instead
+    of guessing. Cheap (one tiny file per turn) and generic — applies
+    to any tool-using loop."""
+    turns_dir = _attempt_dir(ctx) / "turns"
+    turns_dir.mkdir(parents=True, exist_ok=True)
+    text_parts: list = []
+    tool_names: list = []
+    for block in response.content:
+        btype = getattr(block, "type", None)
+        if btype == "text":
+            text_parts.append(getattr(block, "text", "") or "")
+        elif btype == "tool_use":
+            tool_names.append(getattr(block, "name", "?"))
+    payload = {
+        "turn": turn,
+        "stop_reason": response.stop_reason,
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+        "cache_read_tokens": getattr(response.usage, "cache_read_input_tokens", 0) or 0,
+        "cache_creation_tokens": getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
+        "tool_uses": tool_names,
+        "assistant_text": "\n".join(text_parts).strip(),
+    }
+    (turns_dir / f"turn_{turn:03d}.json").write_text(json.dumps(payload, indent=2))
+
+
+def _flush_progress(
+    ctx: RunnerContext,
+    *,
+    turn: int,
+    tot_in: int,
+    tot_out: int,
+    tot_cache_read: int,
+    tot_cache_create: int,
+) -> None:
+    """Write the running coding+validator token totals to disk after each
+    turn. This is the ONLY source of truth for halted/killed runs — the
+    end-of-run `_persist_token_usage` doesn't fire if the loop exits
+    abnormally. Cheap (one small JSON write per turn) and generic."""
+    payload = {
+        "coding_agent": {
+            "input_tokens": tot_in,
+            "output_tokens": tot_out,
+            "cache_read_tokens": tot_cache_read,
+            "cache_creation_tokens": tot_cache_create,
+            "turns_used": turn,
+        },
+        "validators": dict(ctx.validator_usage),
+    }
+    (ctx.run_dir / "token_usage.json").write_text(json.dumps(payload, indent=2))
 
 
 def run_loop(
@@ -178,6 +282,15 @@ def run_loop(
     turn = 0
     final_stop = "unknown"
     hit_cap = False
+    # The most-recent user message in `messages` that carries a
+    # cache_control marker. Each turn we rotate the marker forward onto
+    # the newest tool_result message so the growing conversation history
+    # stays in cache_read territory (~$0.30/M) instead of paying full
+    # input on every turn (~$3/M). The system prompt + user_msg_0 keep
+    # their own markers; this is the THIRD breakpoint (within Anthropic's
+    # 4-marker-per-request limit). Generic — applies to any agent loop
+    # with a growing conversation.
+    prev_user_msg_idx_with_cache: int | None = None
 
     for turn in range(1, max_turns + 1):
         resp = client.messages.create(
@@ -200,6 +313,11 @@ def run_loop(
         tot_cache_read += getattr(resp.usage, "cache_read_input_tokens", 0) or 0
         tot_cache_create += getattr(resp.usage, "cache_creation_input_tokens", 0) or 0
         final_stop = resp.stop_reason
+
+        # Per-turn dump for post-hoc debug: stop_reason, assistant text,
+        # tool_use names, usage. Without this, a loop exit on
+        # stop_reason="end_turn" is a black box.
+        _dump_turn(ctx, turn=turn, response=resp)
 
         # Append the assistant's turn (text + tool_use blocks) to history.
         messages.append({"role": "assistant", "content": resp.content})
@@ -225,15 +343,46 @@ def run_loop(
             if on_tool_call is not None:
                 on_tool_call(_cli_line(call_idx, tu.name, tool_input, result))
 
-            result_blocks.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": tu.id,
-                    "content": json.dumps(result, indent=2),
-                }
+            content = _truncate_tool_result_json(
+                json.dumps(result, indent=2),
+                cap_bytes=DEFAULT_TOOL_RESULT_BYTES,
             )
+            block = {
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": content,
+            }
+            result_blocks.append(block)
 
+        # Rotate the conversation-history cache breakpoint onto the last
+        # block of the user message we're about to send. This keeps the
+        # full prior conversation (~50-200K tokens by mid-run) in cheap
+        # cache_read territory on the NEXT turn instead of charging full
+        # input ($3/M → $0.30/M). Remove the previous user-message
+        # marker first so we stay under Anthropic's 4-per-request limit.
+        if prev_user_msg_idx_with_cache is not None:
+            for block_ in messages[prev_user_msg_idx_with_cache]["content"]:
+                if isinstance(block_, dict):
+                    block_.pop("cache_control", None)
+        if result_blocks:
+            result_blocks[-1]["cache_control"] = {
+                "type": "ephemeral",
+                "ttl": "1h",
+            }
         messages.append({"role": "user", "content": result_blocks})
+        prev_user_msg_idx_with_cache = len(messages) - 1
+
+        # Flush running token totals after EVERY turn so halted/killed runs
+        # still leave a usable cost record on disk. Generic — applies to any
+        # agent loop that may exit abnormally.
+        _flush_progress(
+            ctx,
+            turn=turn,
+            tot_in=tot_in,
+            tot_out=tot_out,
+            tot_cache_read=tot_cache_read,
+            tot_cache_create=tot_cache_create,
+        )
 
         if ctx.done_called:
             break

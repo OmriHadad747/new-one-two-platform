@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "externalContracts (widget surface) + capabilities[send-notification-email]",
+      "issue": "The only unsubscribe route declared is `POST /widget/unsubscribe`. Clicking a link inside a notification email fires a browser GET, not a POST. The `send-notification-email` capability embeds an `unsubscribe_token` in the email body as a clickable link; that link will return a 404 or 405 in every real mail client because no `GET /widget/unsubscribe` route exists. Per invariant A, every outbound URL must trace to a declared route with a matching method.",
+      "fix": "Add a `GET /widget/unsubscribe` contract with `requestShape: {unsubscribe_token: \"text\"}` and `responseShape: {success: \"flag\", removed_count: \"count\"}` that handles the one-click unsubscribe; keep the POST for any programmatic callers or rename the existing route to GET."
+    },
+    {
+      "severity": "critical",
+      "location": "triggers (no schedule trigger declared) + edgeCases[5] + persistence[notification_emails].columns[scheduled_for]",
+      "issue": "The plan defers quiet-hours emails by writing a `scheduled_for` timestamp and status `pending` to `notification_emails`, then states \"a follow-up dispatch check sends pending emails at the correct time\" (edgeCase 5, dataFlow). However, no schedule trigger is declared anywhere in the plan. There is nothing to wake up and process those pending rows \u2014 quiet-hours deferral is fully designed in persistence and edge cases but has no execution path, making the feature unbuildable as specified.",
+      "fix": "Declare a schedule trigger (e.g. cadence: \"every 5 minutes\", jobPurpose: \"dispatch deferred notification emails whose scheduled_for time has passed\") and add a corresponding `dispatch-deferred-emails` capability that queries `notification_emails` for pending rows where scheduled_for \u2264 now and sends them."
+    },
+    {
+      "severity": "important",
+      "location": "persistence[notification_emails].columns + edgeCases[3]",
+      "issue": "Edge case 3 states: \"the notification_emails record is marked failed with the reason.\" The `notification_emails` table has no `failure_reason` column. The `record-notification-outcome` capability also lists `failure reason` as a dataNeed. There is nowhere in the declared schema to actually store the failure reason, so the coding agent will either silently drop it or invent a column name.",
+      "fix": "Add a `{name: \"failure_reason\", role: \"text\", nullable: true, purpose: \"delivery failure message captured when status is set to failed\"}` column to the `notification_emails` table."
+    }
+  ]
+}

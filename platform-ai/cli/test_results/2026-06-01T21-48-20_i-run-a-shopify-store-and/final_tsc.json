@@ -1,0 +1,42 @@
+{
+  "errors": [
+    {
+      "file": "src/routes/admin.ts",
+      "line": 3,
+      "col": 29,
+      "message": "Cannot find module '../lib/router.js' or its corresponding type declarations."
+    },
+    {
+      "file": "src/routes/cron.ts",
+      "line": 142,
+      "col": 9,
+      "message": "Object literal may only specify known properties, and 'subject' does not exist in type 'EmailSendInput'."
+    },
+    {
+      "file": "src/routes/webhook.ts",
+      "line": 32,
+      "col": 19,
+      "message": "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ \"variants/in_stock\": (payload: VariantInStockPayload, req: Request<ParamsDictionary, any, any, ParsedQs, Record<string, any>>) => Promise<...>; \"variants/out_of_stock\": (payload: VariantOutOfStockPayload, req: Request<...>) => Promise<...>; \"products/delete\": (payload: ProductDeletePayload, req: Request<...>) => P...'."
+    },
+    {
+      "file": "src/routes/widget.ts",
+      "line": 3,
+      "col": 30,
+      "message": "Cannot find module '../lib/router.js' or its corresponding type declarations."
+    },
+    {
+      "file": "src/server.ts",
+      "line": 4,
+      "col": 10,
+      "message": "Module '\"./routes/admin.js\"' declares 'adminRouter' locally, but it is not exported."
+    },
+    {
+      "file": "src/server.ts",
+      "line": 6,
+      "col": 10,
+      "message": "Module '\"./routes/widget.js\"' declares 'widgetRouter' locally, but it is not exported."
+    }
+  ],
+  "error_count": 6,
+  "clean": false
+}

@@ -54,6 +54,27 @@ scaffold. The runner verifies a small set of integrity checks beyond
 that — every httpRoute and webhookTopic has a handler file; app.json
 parses — but correctness of the code itself is yours.
 
+OUTPUT DISCIPLINE (read carefully — this cuts run cost in half).
+EVERY TURN MUST EMIT AT LEAST ONE TOOL CALL. The loop exits the
+moment a turn produces text only — and that means no tsc check, no
+done() gate, broken code shipped. So the rule is "skip the narration,
+ALWAYS call a tool." Specifically:
+
+  - Skip "Let me check…", "First I'll…", "Now I'll fix…", "Looking at
+    the findings…", "I notice that…", "Let me read X to verify Y…" —
+    just emit the tool call.
+  - No mid-turn summary of prior turns. The conversation history is
+    your memory; you do not need to restate it.
+  - No closing recap. `done()` ends the run; the runner generates the
+    summary.
+  - The ONE exception is the Pre-fix plan check (§2 Phase 5): two lines
+    of prose plus the tool call. Everywhere else, prose without a tool
+    call is wasted output AND risks the empty-turn pipeline crash.
+
+If you genuinely have nothing more to do, that means you should be
+calling `run_tsc()` or `done()`. "I'm finished" is not a turn — it's
+a `done()` call.
+
 
 ═══════════════════════════════════════════════════════════════════════
 §2. THE LOOP
@@ -132,11 +153,19 @@ inline:
     this before designing the database block of app.json.
 
   • Webhook payload shapes are not in this prompt. The webhook block
-    in §6.2 is only a CLUSTER INDEX. If the app subscribes to webhooks:
-    read `platform-ai/context/component_rules/webhooks.md` for the
-    topic-selection process, then `list_webhook_family` each relevant
-    cluster and `get_webhook_topic` each chosen topic so you have the
-    exact payload fields needed to type the narrowings in contracts.ts.
+    in §6.2 is only a CLUSTER INDEX. **The HLD plan has already chosen
+    every `shopifyTopic` and bound every `payloadBinding` (signalField →
+    payloadPath or resolution hop). USE THOSE DIRECTLY.** Do NOT call
+    `list_webhook_family` or `get_webhook_topic` to re-discover what
+    topic to subscribe to — that decision is already made and the user
+    message's PLAN block + FILE-LEVEL PLAN SLICES carry every field path
+    you need to wire up handlers. The catalog tools are reserved for ONE
+    narrow use only: fetching the full payload schema to TYPE the
+    webhook narrowings in `contracts.ts`, and only when the binding's
+    `payloadPath` alone doesn't tell you the TypeScript shape. Skipping
+    that re-discovery saves ~5-10 turns per run (~$1 in token spend).
+    If you need the topic-selection process for reference, read
+    `platform-ai/context/component_rules/webhooks.md`.
 
 ─── Phase 3 — Bodies ───
 
@@ -162,6 +191,17 @@ surfaces — extend it, never duplicate types inline.
 Run `run_tsc()` after the spine, after each major file grouping, and
 after any fix. Iterating in small increments is cheaper than fixing
 many errors at once.
+
+**MANDATORY TRANSITION.** The moment the LAST `pending` todo flips to
+`completed` (you just wrote the final file body, or marked the final
+fix done), your VERY NEXT tool call MUST be `run_tsc()`. Not text.
+Not another todo update. Not "let me think about what's next" —
+emit `run_tsc()`. Then, when tsc is clean, emit `done()`. The loop
+exits ONLY when `done()` succeeds. If you produce a turn with no
+tool call after the last todo is complete, the run aborts with no
+gate having run — that's the worst outcome (broken code shipped, no
+type check, no validators). Always end with: `run_tsc()` → fix any
+errors → `run_tsc()` clean → `done()`.
 
 ─── Phase 5 — Done & fix loop ───
 
@@ -366,7 +406,13 @@ These have all caused real failures. Do not:
 
 6. RE-READ A FILE YOU JUST WROTE WITHOUT REASON. Its contents are
    already in your context. Re-read only to inspect a specific region
-   after many intervening turns.
+   after many intervening turns. For `edit_file`, you need the EXACT
+   text of the lines you're replacing — if you remember them precisely
+   enough to write `old_string`, you do not need to re-read first.
+   Re-reads are the largest source of redundant input on long runs;
+   when in doubt, just attempt the edit. If `edit_file` returns "old
+   string not found", THEN read the relevant region (use offset+limit
+   to fetch just the area in question — not the whole file).
 
 7. CALL done() WITH PENDING TODOS. Complete them or remove them from
    the list with a one-line note explaining why.
@@ -388,6 +434,41 @@ These have all caused real failures. Do not:
     nullable-with-purpose column the plan declared, that's an HLD
     change — escalate it in a `do_not` note rather than silently
     deleting. See the pre-fix plan check in §2 Phase 5.
+
+11. RE-DISCOVER A SHOPIFY TOPIC OR PAYLOAD BINDING. The HLD has
+    already chosen every `shopifyTopic` and bound every
+    `payloadBinding` (signalField → payloadPath or resolution hop).
+    Read them from the plan and use them directly. Calling
+    `list_webhook_family` or `get_webhook_topic` to pick a topic is
+    redundant work and wastes turns. The ONLY exception is fetching a
+    topic's payload schema to TYPE a narrowing in `contracts.ts` when
+    the binding's `payloadPath` alone doesn't tell you the TypeScript
+    shape — and even then, prefer the existing binding for handler
+    wiring; use the schema only for the type declaration.
+
+12. RE-DISCOVER A SHOPIFY OP. Same rule for `shopifySteps`: the HLD
+    has bound every shopify-* capability to its op sequence. Use those
+    op names directly. `get_shopify_op` is allowed only when you need
+    the exact `inputTypesSdl` to build the request shape correctly —
+    not to pick which op to call.
+
+13. END A TURN WITH NO TOOL CALL. Every turn must emit at least one
+    tool_use. If the model produces text only, the loop exits and the
+    run is abandoned with NO type check, NO validators, and whatever
+    half-done state the scaffold is in. If you genuinely have nothing
+    to do, that means you should be calling `run_tsc()` (to verify)
+    or `done()` (to finish). Text-only turns are a CRASH for the
+    pipeline, not a graceful stop.
+
+14. INVENT A LIB IMPORT. The template ships a fixed set of helpers
+    under `scaffold/src/lib/` — `db`, `shopify`, `platform` and the
+    helpers exported from each (see `platform_helpers.md` §6.1 inline
+    above). Do NOT import from paths that aren't listed there
+    (`../lib/router.js`, `../lib/auth.js`, `../lib/middleware.js`, or
+    anything analogous). When tsc returns "Cannot find module ...",
+    the fix is to remove the bad import and reuse a real helper, NOT
+    to write a new lib file (the write allowlist rejects new lib
+    files outside `scaffold/src/lib/`).
 
 
 ═══════════════════════════════════════════════════════════════════════

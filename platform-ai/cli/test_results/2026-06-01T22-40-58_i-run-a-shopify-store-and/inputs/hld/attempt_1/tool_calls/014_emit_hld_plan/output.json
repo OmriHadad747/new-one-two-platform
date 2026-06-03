@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "errors": [
+    "triggers.0.external-event: Value error, payloadBindings ['variant external id'] reference fields not in signalFields ['available quantity', 'inventory item external id', 'location external id']",
+    "persistence.3.columns.1.name: Value error, column name 'email_subject' is platform-owned (email template fields are managed by the platform; do not declare them in HLD)",
+    "persistence.3.columns.2.name: Value error, column name 'email_body' is platform-owned (email template fields are managed by the platform; do not declare them in HLD)"
+  ]
+}

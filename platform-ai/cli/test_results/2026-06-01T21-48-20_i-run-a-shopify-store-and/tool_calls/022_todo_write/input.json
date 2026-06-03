@@ -1,0 +1,78 @@
+{
+  "todos": [
+    {
+      "content": "Read component rules: db.md, backend.md, webhooks.md, admin.md, storefront.md, cron.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json \u2014 spine metadata",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts \u2014 shared type contracts",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts \u2014 webhook handlers",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts \u2014 storefront route handlers",
+      "status": "in_progress",
+      "activeForm": "write_file",
+      "implements": [
+        "check-item-availability-and-signup-status",
+        "record-signup",
+        "unsubscribe-shopper"
+      ],
+      "consumes": [
+        "GET /widget/status requestShape: email, product_external_id, variant_external_id",
+        "POST /widget/signups requestShape: product_external_id, shopper_email, variant_external_id",
+        "POST /widget/unsubscribe requestShape: unsubscribe_token"
+      ],
+      "produces": [
+        "GET /widget/status responseShape: already_signed_up, is_out_of_stock, variant_title",
+        "POST /widget/signups responseShape: message, success",
+        "POST /widget/unsubscribe responseShape: success"
+      ],
+      "do_not": [
+        "fall back from a resolved live.<field> to the raw DB column it shadows",
+        "accept caller-supplied ids without validating shape"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts \u2014 admin route handlers",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/cron.ts \u2014 scheduled email delivery job",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts \u2014 admin UI surface",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts \u2014 storefront widget UI",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "run_tsc"
+    },
+    {
+      "content": "Call done()",
+      "status": "pending",
+      "activeForm": "done"
+    }
+  ]
+}

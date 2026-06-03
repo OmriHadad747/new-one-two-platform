@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "capabilities[send-restock-notification-email] / externalContracts[/widget/unsubscribe]",
+      "issue": "The capability description states \"unsubscribe link\" and dataNeeds includes \"unsubscribe token\", meaning the email body will contain a clickable URL (e.g. `/widget/unsubscribe?token=xxx`). Clicking a link in an email browser-opens a GET request. The only declared unsubscribe route is `POST /widget/unsubscribe`. There is no `GET /widget/unsubscribe` route in externalContracts. In production, every shopper who clicks the unsubscribe link will receive a 404 or method-not-allowed error \u2014 the feature is entirely broken for its primary use path.",
+      "fix": "Add a `GET /widget/unsubscribe` externalContract (requestShape: {unsubscribe_token: \"text\"}, responseShape: {success: \"flag\", message: \"text\"}) that handles the click from the email body; the existing POST can remain for programmatic use."
+    },
+    {
+      "severity": "important",
+      "location": "persistence[restock_events].columns[detected_date]",
+      "issue": "The column is declared with `role: \"timestamp\"` but its `purpose` explicitly states \"UTC calendar date (not time)\". The spec warns directly about this contradiction: if the coding agent creates a datetime/timestamptz column (the natural interpretation of role `timestamp`), the unique constraint `(item_external_id, item_type, detected_date)` will not deduplicate by calendar day \u2014 two webhook deliveries for the same item arriving at different clock times on the same day will both insert successfully, firing a second notification batch and violating the \"one notification batch per restock per day\" invariant.",
+      "fix": "Change the column's `role` to `text` (storing the ISO date string, e.g. \"2024-11-01\") or add explicit guidance in `purpose` that the coding agent must store only the date part (e.g. via DATE type or date-truncation) so the unique constraint actually spans a calendar day rather than an exact instant."
+    }
+  ]
+}

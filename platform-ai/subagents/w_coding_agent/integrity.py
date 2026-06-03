@@ -47,6 +47,11 @@ def check_structural(ctx: "RunnerContext") -> List[str]:
             "must exist before handlers can import them"
         )
 
+    # Plan-vs-code checks on the persistence spec. Both checks are
+    # GENERIC — they iterate the plan's own declarations and compare to
+    # the app.json values; no app knowledge anywhere.
+    failures.extend(_check_persistence_plan_vs_app(ctx, app))
+
     # 3. Webhook topics ↔ handler keys.
     topics = (app.get("shopifyIntegration") or {}).get("webhookTopics") or []
     if topics:
@@ -89,6 +94,80 @@ def check_structural(ctx: "RunnerContext") -> List[str]:
                     f"{surface} route '{method} {path}' is declared in "
                     f"app.json but not registered in {surface}.ts"
                 )
+
+    return failures
+
+
+def _check_persistence_plan_vs_app(
+    ctx: "RunnerContext", app: Dict[str, Any]
+) -> List[str]:
+    """Two generic persistence checks, both structural:
+
+      (A) keyedByColumns ↔ uniqueConstraint match.
+          If the HLD declares `keyedByColumns` on a table, the
+          generated `app.json` for the same table must declare a
+          `uniqueConstraint` with exactly the same column set. Catches
+          plans where the natural-language keyedBy text and the formal
+          constraint diverged (e.g. "calendar date" vs raw timestamp).
+
+      (B) nullable-in-uniqueConstraint trap.
+          A `uniqueConstraint` that includes a NULL-allowing column
+          will not deduplicate NULL rows under Postgres' default
+          semantics. Flag unless the table opts in to
+          `nullsNotDistinct: true`. Catches the silent-duplicate-rows
+          class of bug.
+
+    Both rules are app-agnostic. The plan supplies what was declared;
+    these check the joint with the code.
+    """
+    plan = getattr(ctx, "plan", None) or {}
+    tables_plan: Dict[str, Dict[str, Any]] = {
+        t.get("name", ""): t for t in (plan.get("persistence") or [])
+    }
+    tables_app = ((app.get("database") or {}).get("tables")) or []
+    failures: List[str] = []
+
+    for tbl in tables_app:
+        tname = tbl.get("name")
+        if not tname:
+            continue
+        unique = tbl.get("uniqueConstraint") or []
+        nulls_not_distinct = bool(tbl.get("nullsNotDistinct", False))
+
+        # (A) keyedByColumns mismatch
+        plan_tbl = tables_plan.get(tname) or {}
+        keyed = plan_tbl.get("keyedByColumns") or []
+        if keyed:
+            if sorted(keyed) != sorted(unique):
+                failures.append(
+                    f"persistence: table '{tname}' has uniqueConstraint "
+                    f"{unique} in app.json but plan.keyedByColumns is "
+                    f"{keyed} — they must reference the same column set. "
+                    f"Either update app.json to match the plan, or escalate "
+                    f"the plan change."
+                )
+
+        # (B) nullable column inside a uniqueConstraint
+        if unique and not nulls_not_distinct:
+            cols_by_name: Dict[str, Dict[str, Any]] = {
+                c.get("name", ""): c for c in (tbl.get("columns") or [])
+            }
+            for col_name in unique:
+                col = cols_by_name.get(col_name) or {}
+                constraints = (col.get("constraints") or "").upper()
+                # "NULL" alone (not "NOT NULL") means nullable
+                is_nullable = "NULL" in constraints and "NOT NULL" not in constraints
+                if is_nullable:
+                    failures.append(
+                        f"persistence: table '{tname}' uniqueConstraint "
+                        f"includes nullable column '{col_name}' but does "
+                        f"not declare `nullsNotDistinct: true`. Postgres "
+                        f"treats NULLs as distinct in unique indexes, so "
+                        f"the constraint will not deduplicate NULL rows — "
+                        f"either add `\"nullsNotDistinct\": true` to the "
+                        f"table, drop the nullable column from "
+                        f"uniqueConstraint, or make the column NOT NULL."
+                    )
 
     return failures
 

@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/widget/widget.ts",
+  "old_string": "        const resp = (await host.call(\"/widget/signup\", {\n          email,\n          item_external_id: itemExternalId,\n          item_scope: itemScope,\n          product_external_id: productExternalId,\n        })) as WidgetSignupResponse;",
+  "new_string": "        const resp = (await host.call(\"/widget/signup\", {\n          email,\n          item_external_id: String(itemExternalId),\n          item_scope: itemScope,\n          product_external_id: String(productExternalId),\n        })) as WidgetSignupResponse;"
+}

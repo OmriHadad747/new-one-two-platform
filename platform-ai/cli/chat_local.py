@@ -46,7 +46,6 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-
 # ── Bootstrap ────────────────────────────────────────────────────────────────
 
 _HERE = Path(__file__).resolve().parent
@@ -63,7 +62,6 @@ except ImportError:
 
 import ui  # noqa: E402
 import pipeline  # noqa: E402
-
 
 # ── Run dir + state ──────────────────────────────────────────────────────────
 
@@ -220,11 +218,14 @@ def main() -> int:
 
     # ── Phase 4 — Coding agent ──────────────────────────────────────────────
     if state.get("coding_done_called"):
-        ui.agent_line("Coding", True, None, ui.c("(resumed — already complete)", ui.DIM))
+        ui.agent_line(
+            "Coding", True, None, ui.c("(resumed — already complete)", ui.DIM)
+        )
         return _final_summary(run_dir, halted_after="coding")
 
     result = pipeline.run_coding(prompt, intent, plan, run_dir)
     rr = result.run_result
+    vu = result.validator_usage or {}
     _save_state(
         run_dir,
         tokens_coding={
@@ -232,6 +233,12 @@ def main() -> int:
             "out": rr.total_output_tokens,
             "cache_read": rr.cache_read_tokens,
             "cache_create": rr.cache_creation_tokens,
+        },
+        tokens_validators={
+            "in": vu.get("input_tokens", 0),
+            "out": vu.get("output_tokens", 0),
+            "cache_read": vu.get("cache_read_tokens", 0),
+            "cache_create": vu.get("cache_creation_tokens", 0),
         },
         coding_done_called=rr.done_called,
         coding_turns_used=rr.turns_used,
@@ -244,7 +251,11 @@ def main() -> int:
 def _final_summary(run_dir: Path, halted_after: str, success: bool = True) -> int:
     print()
     if halted_after == "coding":
-        title = ui.c("DONE", ui.GREEN, ui.BOLD) if success else ui.c("INCOMPLETE", ui.RED, ui.BOLD)
+        title = (
+            ui.c("DONE", ui.GREEN, ui.BOLD)
+            if success
+            else ui.c("INCOMPLETE", ui.RED, ui.BOLD)
+        )
     else:
         title = ui.c(f"STOPPED after {halted_after}", ui.YELLOW, ui.BOLD)
     rel_out = str(run_dir.relative_to(PLATFORM_AI.parent))
@@ -259,6 +270,7 @@ def _final_summary(run_dir: Path, halted_after: str, success: bool = True) -> in
             ("tokens_hld_v", "HLD Check"),
             ("tokens_hld_revise", "HLD (revise)"),
             ("tokens_coding", "Coding"),
+            ("tokens_validators", "Validators"),
         ]:
             t = state.get(key)
             if not t:

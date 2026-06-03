@@ -1,0 +1,242 @@
+{
+  "todos": [
+    {
+      "content": "Read db.md and backend.md component rules",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json \u2014 spine metadata",
+      "status": "completed",
+      "activeForm": "write_file",
+      "implements": [
+        "type-level spine for all contracts above"
+      ],
+      "consumes": [
+        "database schema from db.md",
+        "all externalContracts, triggers, capabilities from HLD"
+      ],
+      "produces": [
+        "database.tables[]",
+        "shopifyIntegration.webhookTopics[]",
+        "httpRoutes.widget[]",
+        "httpRoutes.admin[]"
+      ],
+      "do_not": [
+        "redeclare template-shipped tables",
+        "omit any declared webhook topic or http route"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts \u2014 shared type contracts",
+      "status": "in_progress",
+      "activeForm": "write_file",
+      "implements": [
+        "type-level spine for all contracts above"
+      ],
+      "consumes": [
+        "every externalContract requestShape + responseShape",
+        "every trigger payload",
+        "every persistence table"
+      ],
+      "produces": [
+        "named branded id types",
+        "exported types every route + UI file imports"
+      ],
+      "do_not": [
+        "use `any` for any field the plan typed",
+        "let UI files import from route files or vice versa"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts \u2014 webhook handlers",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "an inventory level is updated",
+        "a product is deleted",
+        "an order is paid"
+      ],
+      "consumes": [
+        "[inventory_levels/update] inventory item external id \u2190 payload.inventory_item_id",
+        "[inventory_levels/update] available quantity \u2190 payload.available",
+        "[inventory_levels/update] location external id \u2190 payload.location_id",
+        "[inventory_levels/update] variant external id \u2190 resolve from inventory_item_id via inventoryItem admin GraphQL",
+        "[inventory_levels/update] product external id \u2190 resolve from inventory_item_id via inventoryItem admin GraphQL",
+        "[products/delete] product external id \u2190 payload.id",
+        "[orders/paid] order external id \u2190 payload.id",
+        "[orders/paid] buyer email \u2190 payload.email",
+        "[orders/paid] purchased item variant external ids \u2190 payload.line_items[].variant_id",
+        "[orders/paid] order paid timestamp \u2190 payload.processed_at"
+      ],
+      "produces": [
+        "idempotent DB writes per capability",
+        "ON CONFLICT on every dedup-keyed insert"
+      ],
+      "do_not": [
+        "early-return when a declared signalField is empty",
+        "read an undeclared payload field",
+        "ignore a declared payloadBinding"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts \u2014 admin route handlers",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "resolve-restock-item",
+        "fetch-item-details-for-email",
+        "list-waitlist-summary",
+        "list-waitlist-entries-for-item",
+        "read-conversion-stats",
+        "save-email-template",
+        "save-settings"
+      ],
+      "consumes": [
+        "GET /admin/dashboard requestShape: cursor",
+        "GET /admin/waitlist requestShape: cursor, product_external_id, variant_external_id",
+        "GET /admin/waitlist/export requestShape: product_external_id, variant_external_id",
+        "GET /admin/stats requestShape: cursor, date_from, date_to",
+        "GET /admin/template requestShape: (none)",
+        "PUT /admin/template requestShape: body_template, subject_template",
+        "GET /admin/settings requestShape: (none)",
+        "PUT /admin/settings requestShape: per_restock_notify_cap, quiet_hours_end, quiet_hours_start"
+      ],
+      "produces": [
+        "GET /admin/dashboard responseShape: next_cursor, products, total_count",
+        "GET /admin/waitlist responseShape: entries, next_cursor, total_count",
+        "GET /admin/waitlist/export responseShape: csv_data",
+        "GET /admin/stats responseShape: next_cursor, total_converted, total_count, total_notified, total_signups",
+        "GET /admin/template responseShape: body_template, subject_template, updated_at",
+        "PUT /admin/template responseShape: success, updated_at",
+        "GET /admin/settings responseShape: per_restock_notify_cap, quiet_hours_end, quiet_hours_start, updated_at",
+        "PUT /admin/settings responseShape: success"
+      ],
+      "do_not": [
+        "pass a literal/placeholder GID to any Shopify op",
+        "call a bound op only to discard its returned id",
+        "provision Shopify side-effects outside DB transaction without rollback path"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts \u2014 storefront route handlers",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "check-item-availability",
+        "register-signup",
+        "get-signup-status",
+        "unsubscribe-shopper"
+      ],
+      "consumes": [
+        "GET /widget/availability requestShape: product_external_id, variant_external_id",
+        "POST /widget/signup requestShape: product_external_id, scope, shopper_email, variant_external_id",
+        "GET /widget/signup requestShape: product_external_id, shopper_email, variant_external_id",
+        "POST /widget/unsubscribe requestShape: unsubscribe_token",
+        "[check-item-availability/product] consumes: product external id"
+      ],
+      "produces": [
+        "GET /widget/availability responseShape: available, product_title, variant_label",
+        "POST /widget/signup responseShape: already_registered, message",
+        "GET /widget/signup responseShape: registered",
+        "POST /widget/unsubscribe responseShape: entries_removed, success"
+      ],
+      "do_not": [
+        "fall back from resolved live.<field> to raw DB column",
+        "accept caller-supplied ids without validating shape"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/cron.ts \u2014 scheduled email sender",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "send-notification-email",
+        "record-notification-send",
+        "create-notification-batch (scheduler side)"
+      ],
+      "consumes": [
+        "app_settings quiet_hours_start/end, per_restock_notify_cap",
+        "notification_sends queued ordered by queue_position",
+        "notification_batches open status",
+        "email_template subject/body"
+      ],
+      "produces": [
+        "dispatched notification_sends rows",
+        "updated notification_batches total_sent"
+      ],
+      "do_not": [
+        "send emails during quiet hours",
+        "send duplicate emails for same shopper+batch"
+      ]
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts \u2014 admin UI surface",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "/admin/dashboard",
+        "/admin/waitlist",
+        "/admin/waitlist/export",
+        "/admin/stats",
+        "/admin/template",
+        "/admin/settings"
+      ],
+      "consumes": [
+        "calls GET /admin/dashboard \u2014 responseShape: next_cursor, products, total_count",
+        "calls GET /admin/waitlist \u2014 responseShape: entries, next_cursor, total_count",
+        "calls GET /admin/waitlist/export \u2014 responseShape: csv_data",
+        "calls GET /admin/stats \u2014 responseShape: next_cursor, total_converted, total_count, total_notified, total_signups",
+        "calls GET /admin/template \u2014 responseShape: body_template, subject_template, updated_at",
+        "calls PUT /admin/template \u2014 responseShape: success, updated_at",
+        "calls GET /admin/settings \u2014 responseShape: per_restock_notify_cap, quiet_hours_end, quiet_hours_start, updated_at",
+        "calls PUT /admin/settings \u2014 responseShape: success"
+      ],
+      "produces": [
+        "sends GET /admin/dashboard \u2014 requestShape: cursor",
+        "sends GET /admin/waitlist \u2014 requestShape: cursor, product_external_id, variant_external_id",
+        "sends GET /admin/waitlist/export \u2014 requestShape: product_external_id, variant_external_id",
+        "sends GET /admin/stats \u2014 requestShape: cursor, date_from, date_to",
+        "sends PUT /admin/template \u2014 requestShape: body_template, subject_template",
+        "sends PUT /admin/settings \u2014 requestShape: per_restock_notify_cap, quiet_hours_end, quiet_hours_start"
+      ],
+      "do_not": [
+        "send placeholder/sentinel for NOT NULL reference columns",
+        "omit UI affordance for nullable-with-purpose columns",
+        "store variant id where product id required"
+      ]
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts \u2014 storefront widget UI",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "/widget/availability",
+        "/widget/signup",
+        "/widget/unsubscribe"
+      ],
+      "consumes": [
+        "calls GET /widget/availability \u2014 responseShape: available, product_title, variant_label",
+        "calls POST /widget/signup \u2014 responseShape: already_registered, message",
+        "calls GET /widget/signup \u2014 responseShape: registered",
+        "calls POST /widget/unsubscribe \u2014 responseShape: entries_removed, success"
+      ],
+      "produces": [
+        "sends GET /widget/availability \u2014 requestShape: product_external_id, variant_external_id",
+        "sends POST /widget/signup \u2014 requestShape: product_external_id, scope, shopper_email, variant_external_id",
+        "sends GET /widget/signup \u2014 requestShape: product_external_id, shopper_email, variant_external_id",
+        "sends POST /widget/unsubscribe \u2014 requestShape: unsubscribe_token"
+      ],
+      "do_not": [
+        "use `member.variant_external_id ?? member.product_external_id`",
+        "build gid://shopify/ProductVariant/<id> from non-backend-returned id",
+        "enable CTA whose preconditions the plan declares"
+      ]
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "run_tsc"
+    }
+  ]
+}

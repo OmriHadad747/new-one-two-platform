@@ -61,6 +61,34 @@ highest-risk part of the plan and the one structural checks cannot judge:
     as a full ordered sequence rather than a single op that silently does
     nothing?
 
+Two additional GENERIC plan-level invariants (no app knowledge — they \
+iterate the plan's own declarations and check internal consistency):
+
+  (A) Outbound URLs are bound to declared routes. ANY capability whose
+      `dataNeeds` or `description` references a URL the system will EMIT
+      in user-facing content (an email body's unsubscribe link, an SMS
+      magic link, a redirect callback, an app-proxy URL the merchant or
+      customer clicks) must trace to a declared `externalContracts` entry
+      with a matching method that handles the click. If a capability
+      mentions "unsubscribe link", "confirmation link", "magic link",
+      "callback URL", "deep link", or any analog and no GET (or matching
+      method) route in `externalContracts` matches its target path, the
+      link is unreachable in production — flag it. This catches the
+      class where an email link emits to `/apps/<thing>/unsubscribe`
+      while only `POST /widget/unsubscribe` exists.
+
+  (B) Capability dataNeeds are reachable. Each entry in a capability's
+      `dataNeeds` must trace to one of: (i) a trigger's `payloadBindings`
+      (for capabilities driven by a trigger), (ii) a prior capability's
+      `produces` in a multi-step flow, (iii) an `externalContract`
+      requestShape (for capabilities served by a route), or (iv) a
+      declared `payloadBinding.resolution` hop. If a capability declares
+      it consumes "product_id" but no trigger, contract, or upstream
+      capability supplies it, the coding agent has no described source
+      and will either invent one or silently disable the feature — flag
+      it. Quote the unreachable dataNeed verbatim; if you cannot show
+      that no upstream supplies it, drop the finding.
+
 For each finding:
   - `location`: exact plan path (e.g. "capabilities[3]",
     "persistence[1].columns[7]", "triggers[0].signalFields",

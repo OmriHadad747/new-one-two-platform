@@ -133,25 +133,56 @@ def run_product_analysis(
                 continue
 
             if status == "needs_clarification":
-                question = response.get("question", "")
-                sugg = list(response.get("suggestions") or [])
+                # NEW shape: list of {question, suggestions}. Falls back
+                # to the old singular shape when an older model run or
+                # un-updated path emits it.
+                questions = response.get("questions") or []
+                if not questions and response.get("question"):
+                    questions = [
+                        {
+                            "question": response["question"],
+                            "suggestions": list(response.get("suggestions") or []),
+                        }
+                    ]
             else:
-                question = "Could you rephrase your request?"
-                sugg = []
+                questions = [
+                    {"question": "Could you rephrase your request?", "suggestions": []}
+                ]
 
-            ui.bot(question)
-            if sugg:
-                ui.suggestions(sugg)
-                ui.hint("Pick a number, or type your own answer.")
-            answer = ui.ask("You")
-            while not answer:
+            # Ask one-by-one (numbered, e.g. "(1 of 2)" when more than one).
+            # Each question keeps the existing single-question UX — picking
+            # a numbered suggestion OR typing free-form. All answers are
+            # combined into one user message returned to the model.
+            total = len(questions)
+            collected: list = []
+            for i, q in enumerate(questions, start=1):
+                q_text = (q.get("question") or "").strip()
+                sugg = list(q.get("suggestions") or [])
+                label = q_text if total == 1 else f"({i} of {total}) {q_text}"
+                ui.bot(label)
+                if sugg:
+                    ui.suggestions(sugg)
+                    ui.hint("Pick a number, or type your own answer.")
                 answer = ui.ask("You")
-            if sugg and answer.isdigit() and 1 <= int(answer) <= len(sugg):
-                answer = sugg[int(answer) - 1]
-                ui.echo_choice(answer)
+                while not answer:
+                    answer = ui.ask("You")
+                if sugg and answer.isdigit() and 1 <= int(answer) <= len(sugg):
+                    answer = sugg[int(answer) - 1]
+                    ui.echo_choice(answer)
+                collected.append((q_text, answer))
+
+            # Aggregate into one user turn. Single Q stays terse (the
+            # bare answer, like today). Multi-Q sends a labelled block so
+            # the model can match each answer to its question.
+            if total == 1:
+                combined = collected[0][1]
+            else:
+                combined = "\n".join(
+                    f"- {q}: {a}" for q, a in collected
+                )
             history += [
                 {"role": "assistant", "content": json.dumps(response)},
-                {"role": "user", "content": answer},
+                {"role": "user", "content": combined},
             ]
 
 

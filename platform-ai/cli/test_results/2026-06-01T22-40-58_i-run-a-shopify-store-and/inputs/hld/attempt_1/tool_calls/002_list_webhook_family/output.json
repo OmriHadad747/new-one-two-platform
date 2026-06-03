@@ -1,0 +1,17 @@
+{
+  "prefix": "products",
+  "topics": [
+    {
+      "topic": "products/create",
+      "description": "Occurs whenever a product is created. Product webhooks will return a full variants payload for the first 100 records. For records 101 and higher, the payload won't include the full variant details, but the `variant_gids` field will still include a `admin_graphql_api_id` value for these variants. `variant_gids` are sorted by `updated_at`, with the gids for recently updated variants appearing first."
+    },
+    {
+      "topic": "products/delete",
+      "description": "Occurs whenever a product is deleted."
+    },
+    {
+      "topic": "products/update",
+      "description": "Occurs whenever a product is updated, ordered, or variants are added, removed or updated. Product webhooks will return a full variants payload for the first 100 records. For records 101 and higher, the payload won't include the full variant details, but the `variant_gids` field will still include a `admin_graphql_api_id` value for these variants. `variant_gids` are sorted by `updated_at`, with the gids for recently updated variants appearing first."
+    }
+  ]
+}

@@ -34,7 +34,12 @@ from subagents.w_coding_agent.tools import RunnerContext
 # platform-ai/subagents/c_hld_agent/agent.py → repo root is parents[3].
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-_MAX_TOKENS = 8000  # per turn; the plan now carries Shopify bindings too.
+# Bumped from 8000: the emit_hld_plan tool's input is the FULL plan JSON,
+# which for complex apps (3+ topics × payloadBindings + 15+ capabilities ×
+# shopifySteps + 5+ tables) can be 10-15K tokens. The old cap silently
+# truncated emit calls and surfaced as "stopped without emit". See
+# loop.py:DEFAULT_MAX_TOKENS for the full rationale.
+_MAX_TOKENS = 32000
 
 
 _USER_TEMPLATE = """\
@@ -146,9 +151,42 @@ def run_hld_agent(
             f"HLD agent hit the {DEFAULT_MAX_TURNS}-turn cap without emitting a valid plan"
         ]
     elif result.stopped_without_emit:
+        # Surface the actual stop_reason — "max_tokens" means the emit call
+        # was truncated mid-tool-use (raise max_tokens); "end_turn" means the
+        # model decided to stop with prose instead of calling the tool.
+        reason = result.final_stop_reason or "unknown"
+        why = {
+            "max_tokens": (
+                "the response was cut off mid-tool-use — emit_hld_plan "
+                "carries the full plan JSON and overflowed the per-turn "
+                "output cap. Raise DEFAULT_MAX_TOKENS in c_hld_agent/loop.py."
+            ),
+            "end_turn": (
+                "the model ended its turn with prose instead of calling "
+                "emit_hld_plan. The system prompt's terminal-action "
+                "instructions may not be firm enough."
+            ),
+            "refusal": "the model refused — inspect the assistant text.",
+        }.get(reason, f"unexpected stop_reason {reason!r}")
+        tail = ""
+        if result.final_assistant_text:
+            snippet = result.final_assistant_text[:500].replace("\n", " ")
+            tail = f' Last assistant text (truncated): "{snippet}"'
         errors = result.validation_errors or [
-            "HLD agent stopped without calling emit_hld_plan"
+            f"HLD agent stopped without calling emit_hld_plan "
+            f"(stop_reason={reason}): {why}{tail}"
         ]
+        # Persist the final assistant text for post-hoc debugging.
+        try:
+            from pathlib import Path as _Path
+            trace_dir = _Path("inputs") / "hld" / "attempt_1"
+            if trace_dir.exists() and result.final_assistant_text is not None:
+                (trace_dir / "final_assistant_text.txt").write_text(
+                    f"stop_reason: {reason}\nturns_used: {result.turns_used}\n\n"
+                    + result.final_assistant_text
+                )
+        except Exception:
+            pass  # never let trace-writing block the error path
     else:
         errors = result.validation_errors or ["HLD agent failed to emit a valid plan"]
 

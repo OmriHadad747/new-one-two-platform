@@ -1,0 +1,28 @@
+{
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "externalContracts[3] (POST /widget/unsubscribe) and capabilities[\"dispatch-notifications\"]",
+      "issue": "The `dispatch-notifications` capability sends emails with a \"one-click unsubscribe link\". An unsubscribe link embedded in an email is opened by the recipient's browser, which issues a GET request. The only declared unsubscribe route is `POST /widget/unsubscribe` \u2014 there is no GET counterpart. A browser clicking the emailed link will receive a 405 Method Not Allowed; every unsubscribe in production is silently broken.",
+      "fix": "Add a `GET /widget/unsubscribe` route to `externalContracts` with `requestShape: {\"unsubscribe_token\": \"text\"}` that accepts the token as a query parameter and delegates to the `unsubscribe-shopper` capability; the POST variant can remain for programmatic use but the GET is what the emailed link must resolve to."
+    },
+    {
+      "severity": "important",
+      "location": "persistence[4].columns[\"product_title\"] and persistence[4].columns[\"variant_title\"] (demand_snapshots)",
+      "issue": "`product_title` and `variant_title` are persisted columns whose values are owned by Shopify. Per the external-state completeness rule, every column reflecting external system state must be bound to a trigger that refreshes it, fetched on demand, or declared as known-stale in an edge case. The plan has no `products/update` trigger, no on-demand fetch, and no edge case acknowledging that these titles go stale when a merchant renames a product or variant. The admin dashboard will silently display wrong product names with no plan path to correct them.",
+      "fix": "Add a `products/update` external-event trigger (signalField: \"product title\", \"variant titles\", \"product external id\") with a corresponding capability that refreshes `product_title` and `variant_title` in `demand_snapshots`; alternatively, remove both columns from `demand_snapshots` and resolve the display names from Shopify at read-time in the `list-demand-dashboard` capability."
+    },
+    {
+      "severity": "important",
+      "location": "persistence[1] (restock_runs) keyedByColumns: []",
+      "issue": "`keyedByColumns` is empty, meaning no database-level uniqueness guard exists on `restock_runs`. The plan's one-run-per-item dedup relies entirely on an application-level check for an existing open/dispatching run. Under concurrent webhook delivery (two simultaneous `inventory_levels/update` events for the same item), the check-then-insert is a race condition: both handlers read no open run, both insert, and the item's shoppers are double-notified \u2014 the exact scenario the merchant cited as a critical quality requirement.",
+      "fix": "Add a partial unique constraint (expressible as a `keyedByColumns`-equivalent) such as `[\"item_key\", \"status\"]` scoped to active statuses, or introduce a dedicated `active_run_locks` table with `keyedByColumns: [\"item_key\"]` whose insert acts as the atomic gate; document the chosen concurrency strategy in the restock_runs `queryPatterns`."
+    },
+    {
+      "severity": "minor",
+      "location": "capabilities[\"check-item-availability\"].dataNeeds",
+      "issue": "`dataNeeds` includes `\"variant external id\"` but the resolved `shopifySteps` op (`product`) is queried by `product external id` alone and returns all variants \u2014 the variant external id is not consumed by the Shopify call. Per spec, dataNeeds are inputs the capability requires to do its work; listing a value the capability receives but does not pass to its integration step is misleading and will confuse the coding agent about which argument to thread.",
+      "fix": "Remove `\"variant external id\"` from `check-item-availability.dataNeeds`; if the widget needs it to pre-select a variant in the response, document that the frontend supplies it as a UI selection rather than as an input to the Shopify query."
+    }
+  ]
+}

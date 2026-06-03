@@ -1,0 +1,76 @@
+{
+  "todos": [
+    {
+      "content": "Read component rules: db.md, backend.md, webhooks.md, admin.md, storefront.md, cron.md",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json \u2014 spine metadata",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts \u2014 shared type contracts",
+      "status": "in_progress",
+      "activeForm": "write_file",
+      "implements": [
+        "type-level spine for all contracts above"
+      ],
+      "consumes": [
+        "every externalContract requestShape + responseShape",
+        "every trigger payload (define a typed shape per topic)",
+        "every persistence table (define a Row type)",
+        "for routes that augment rows with resolved data, define a <Row>WithLive shape"
+      ],
+      "produces": [
+        "named, branded id types",
+        "exported types every route + UI file imports \u2014 no cross-file structural typing"
+      ],
+      "do_not": [
+        "use `any` for any field the plan typed",
+        "let UI files import from route files or vice versa \u2014 contracts.ts is the only shared shape"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts \u2014 webhook handlers",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts \u2014 storefront route handlers",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts \u2014 admin route handlers",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/cron.ts \u2014 scheduled email delivery job",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts \u2014 admin UI surface",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts \u2014 storefront widget UI",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "run_tsc"
+    },
+    {
+      "content": "Call done()",
+      "status": "pending",
+      "activeForm": "done"
+    }
+  ]
+}

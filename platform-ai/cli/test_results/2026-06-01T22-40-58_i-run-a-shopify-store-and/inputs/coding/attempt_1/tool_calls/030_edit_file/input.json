@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/admin/ui.ts",
+  "old_string": "        const picked = await bridge.pickResource({ type: \"variant\" });\n        if (!picked || picked.length === 0) return;\n        const resource = picked[0];\n        // variant GID: \"gid://shopify/ProductVariant/123\"\n        const variantId = parseInt(resource.id.split(\"/\").pop() ?? \"\", 10);",
+  "new_string": "        const picked = await bridge.pickResource({ type: \"variant\" });\n        if (!picked || picked.length === 0) return;\n        const resource = picked[0];\n        if (!resource) return;\n        // variant GID: \"gid://shopify/ProductVariant/123\"\n        const variantId = parseInt(resource.id.split(\"/\").pop() ?? \"\", 10);"
+}

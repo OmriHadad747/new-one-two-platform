@@ -1,0 +1,8 @@
+{
+  "content": "    // Extract numeric IDs from GIDs\n    const variantExternalId = parseInt(variantGid.split(\"/\").pop() ?? \"\", 10);\n    const productExternalId = parseInt(productGid.split(\"/\").pop() ?? \"\", 10);\n\n    if (isNaN(variantExternalId) || isNaN(productExternalId)) {\n      console.error(\n        { topic: \"inventory_levels/update\", inventoryItemId, variantGid, productGid },\n        \"failed to parse variant or product external id from GID\"\n      );\n      return;\n    }\n\n    // Count active waitlist entries for this variant\n    const [countRow] = await sql<{ count: string }[]>`\n      SELECT COUNT(*) AS count\n      FROM waitlist_entries\n      WHERE item_external_id = ${variantExternalId}\n        AND item_scope = 'variant'\n        AND status = 'active'\n    `;\n    const activeWaitlistCount = parseInt(countRow?.count ?? \"0\", 10);\n\n    if (activeWaitlistCount === 0) {\n      console.log(\n        { topic: \"inventory_levels/update\", variantExternalId },\n        \"no active waitlist entries, skipping restock event\"\n      );\n      return;\n    }\n\n    const notificationBudget = Math.min(available, activeWaitlistCount);\n\n    // Create restock event\n    const [restockEvent] = await sql<RestockEventRow[]>`\n      INSERT INTO restock_events\n        (item_external_id, item_scope, inventory_item_external_id, available_quantity, notification_budget, notified_count, status)\n      VALUES\n        (${variantExternalId}, 'variant', ${inventoryItemId}, ${available}, ${notificationBudget}, 0, 'open')\n      ON CONFLICT (inventory_item_external_id, status) DO NOTHING\n      RETURNING *",
+  "total_lines": 402,
+  "returned_lines": [
+    95,
+    135
+  ]
+}

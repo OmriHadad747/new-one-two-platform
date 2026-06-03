@@ -37,18 +37,32 @@ the defect.
   Phase-2 bindings: `shopifyTopic`, `payloadBindings`, `shopifySteps`),
   `hld_v_findings`, per-stage `tokens_*`. Fastest way to see what each
   stage *decided*.
-- `tool_calls/NNN_<tool>/{input,output}.json` — the coding agent's ordered
-  actions. `run_tsc` outputs hold compile errors; `write_file` inputs hold
-  what it wrote (and when); `read_file` shows what context it consulted and
-  in what order. The `done` call's `output.json` holds the **done()-gate
-  validator findings** (write-path / shopify-effect / persistence-safety) —
-  when `done()` actually ran. `token_usage.json:validators` confirms they
-  fired at all.
+- `inputs/coding/attempt_1/tool_calls/NNN_<tool>/{input,output}.json` — the
+  coding agent's ordered actions. `run_tsc` outputs hold compile errors;
+  `write_file` inputs hold what it wrote (and when); `read_file` shows what
+  context it consulted and in what order. The `done` call's `output.json`
+  holds the **done()-gate validator findings** (write-path / shopify-effect
+  / persistence-safety) — when `done()` actually ran.
+  `token_usage.json:validators` confirms they fired at all.
+- `inputs/coding/attempt_1/turns/turn_NNN.json` — per-turn dump of the
+  model's `stop_reason`, `assistant_text`, `tool_uses`, and per-turn
+  usage. Read this first when the run halted on a text-only turn
+  (stop_reason=`end_turn`) so you can see exactly what the model said
+  instead of guessing.
+- `inputs/coding/attempt_1/manifest.jsonl` — ordered event log of the
+  coding loop (one line per tool call).
+- `inputs/hld/attempt_1/{tool_calls,manifest.jsonl}` — same layout for
+  the HLD's catalog lookups (`list_webhook_family`, `get_webhook_topic`,
+  etc.). Empty means the architect bound topics without grounding —
+  worth flagging.
 - `scaffold/**` — the final generated files (end state).
 - `_tsc/`, `_tsc_ui/` — the dirs that were actually type-checked. A mismatch
   between these and `scaffold/` can itself be the bug.
-- `manifest.jsonl` — ordered event log of the whole run.
 - `token_usage.json` — cost; also reveals cap hits / truncation.
+- `final_tsc.json` — ground-truth tsc result against the final scaffold
+  (run after the loop exits, no matter how it ended).
+- `forced_completion.json` — when `done()` retry cap fires, lists the
+  unresolved findings the loop accepted past.
 - `../generation.log` — cross-run log (one level up, shared by all runs).
 
 ## Principles (no fixed step order — drive it yourself)
@@ -61,7 +75,7 @@ the defect.
 - **Read that stage's `system.txt`** to decide: could the stage have done
   better with the instructions it had? This separates a prompt/instruction
   gap from a model miss — they need different fixes.
-- **For coding-agent bugs, the `tool_calls/` sequence is the timeline.**
+- **For coding-agent bugs, the `inputs/coding/attempt_1/tool_calls/` sequence is the timeline.**
   What did it read before it wrote? Which `run_tsc` introduced vs cleared
   errors? Did it consult the right doc before or after writing the code?
   Order is the evidence.
@@ -71,7 +85,7 @@ the defect.
   Both review stages are advisory and Haiku-based, so a finding can be a
   false positive: `hld_v` (`state.json:hld_v_findings`,
   `inputs/hld_v/attempt_N/output.json`) and the coding agent's done()-gate
-  validators (`tool_calls/<NNN>_done/output.json`). Apply **quote-or-drop**
+  validators (`inputs/coding/attempt_1/tool_calls/<NNN>_done/output.json`). Apply **quote-or-drop**
   to each finding: the cited `file:line` / plan path must actually exist AND
   actually carry the defect claimed. A fabricated or mislocated finding is
   itself the bug — and a hallucinated *blocking* (critical/important)

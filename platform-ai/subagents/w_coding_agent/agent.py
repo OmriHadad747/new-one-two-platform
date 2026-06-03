@@ -51,6 +51,11 @@ class CodingAgentResult:
     # an earlier mid-loop tsc result, because edits after done()/the last
     # run_tsc() can have broken it. Also persisted to final_tsc.json.
     final_tsc_errors: Optional[list] = None
+    # If the done()-retry cap (tools.MAX_DONE_ATTEMPTS) was hit, these are
+    # the validator findings the loop force-accepted past. Empty means the
+    # gate passed cleanly or the loop exited some other way. Persisted to
+    # forced_completion.json for the eval skill to pick up.
+    forced_completion_findings: list = None  # type: ignore[assignment]
 
 
 def run_coding_agent(
@@ -106,7 +111,27 @@ def run_coding_agent(
     elif result.hit_turn_cap:
         incomplete_reason = "hit the turn cap before the done() gate passed"
     else:
-        incomplete_reason = "the agent stopped before calling done()"
+        # Surface WHY the loop exited so failures are debuggable. The
+        # final stop_reason + a peek at the last assistant text both
+        # live on disk under turns/turn_NNN.json; this builds the
+        # one-line summary.
+        reason = result.final_stop_reason or "unknown"
+        why = {
+            "end_turn": (
+                "the model produced no tool_use on its final turn — "
+                "it likely thought the work was done but skipped run_tsc + "
+                "done(). See turns/turn_*.json for the assistant text."
+            ),
+            "max_tokens": (
+                "the response was truncated mid-turn (output cap hit). "
+                "If this recurs, raise DEFAULT_MAX_TOKENS in loop.py."
+            ),
+            "stop_sequence": "the model emitted a stop sequence — unusual.",
+            "refusal": "the model refused — inspect turns/turn_*.json.",
+        }.get(reason, f"stop_reason={reason!r}")
+        incomplete_reason = (
+            f"the agent stopped before calling done() (stop_reason={reason}): {why}"
+        )
 
     # FINAL TSC — ground truth on whether the shipped scaffold builds.
     # An earlier mid-loop run_tsc() can be stale; the agent may have edited
@@ -124,6 +149,21 @@ def run_coding_agent(
 
     _persist_token_usage(run_dir, result, ctx.validator_usage)
 
+    # Persist forced-completion findings (if any) so the eval skill can read
+    # them without re-running the validators. Empty file when the gate passed.
+    forced = list(ctx.forced_completion_findings)
+    (run_dir / "forced_completion.json").write_text(
+        json.dumps(
+            {"findings": forced, "forced": bool(forced), "count": len(forced)},
+            indent=2,
+        )
+    )
+    if forced and not incomplete_reason:
+        incomplete_reason = (
+            f"done() retry cap reached; {len(forced)} validator finding(s) "
+            "force-accepted (see forced_completion.json)"
+        )
+
     return CodingAgentResult(
         run_result=result,
         work_dir=work_dir,
@@ -132,6 +172,7 @@ def run_coding_agent(
         incomplete_reason=incomplete_reason,
         validator_usage=ctx.validator_usage,
         final_tsc_errors=final_tsc_errors,
+        forced_completion_findings=forced,
     )
 
 
@@ -474,11 +515,13 @@ def _format_block(
 
 
 def _persist_prompts(run_dir: Path, system: str, user: str) -> None:
-    """Write the prompts to disk for post-hoc inspection, under `inputs/coding/`
-    so the coding agent matches the per-agent `inputs/<agent>/` layout of the
-    other agents. The loop owns retries internally, so there is a single
-    system/user pair (no attempt_N split)."""
-    coding_dir = run_dir / "inputs" / "coding"
+    """Write the prompts to disk for post-hoc inspection under
+    `inputs/coding/attempt_1/` so the coding agent matches the
+    `inputs/<agent>/attempt_N/` layout of the other agents. The loop
+    owns retries internally, so there is only ever attempt_1 — but the
+    nested dir makes the layout uniform across stages (tool_calls/,
+    manifest.jsonl, turns/, system.txt, user.txt all co-located)."""
+    coding_dir = run_dir / "inputs" / "coding" / "attempt_1"
     coding_dir.mkdir(parents=True, exist_ok=True)
     (coding_dir / "system.txt").write_text(system)
     (coding_dir / "user.txt").write_text(user)

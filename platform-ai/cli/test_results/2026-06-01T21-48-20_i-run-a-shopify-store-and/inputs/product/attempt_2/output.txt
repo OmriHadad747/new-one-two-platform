@@ -1,0 +1,14 @@
+```json
+{
+  "status": "ready",
+  "summary": "What this app does:\nLets shoppers sign up for back-in-stock alerts on sold-out products and variants, then automatically emails them the moment stock returns — while you track waitlist demand and decide when to restock.\n\nWhen it runs:\n• When a shopper clicks \"Notify me\" on a sold-out product or variant page\n• When you restock an item, waiting shoppers are emailed automatically in signup order\n• When inventory drops and rises again, the next batch of waitlisted shoppers are notified\n\nWhat you'll see:\n• A dashboard ranking products by waitlist size\n• A drill-in view showing individual email signups for each product, with a CSV export button\n• An editor for the notification email subject and body, with placeholders for product name and variant details\n• A setting for quiet hours (notifications still send, but emails are queued to arrive after the window)\n• Metrics showing total signups, emails sent, and how many buyers purchased within a week\n\nWhat customers see:\n• A \"Notify me when back in stock\" button on sold-out product pages\n• The button appears only on variants/products with zero stock\n• After entering their email, an inline confirmation message\n• A one-click unsubscribe link in every notification email\n\nWhat this app does NOT do:\n• Won't send SMS — only email\n• Won't notify for low stock or price drops, only when stock goes from zero to available\n• Won't sync signups to Klaviyo or Mailchimp\n• Won't change checkout or cart behavior",
+  "intent": {
+    "triggerTypes": ["widget", "webhook", "admin"],
+    "resources": ["inventory", "customers"],
+    "desiredOutcome": "Capture lost demand from sold-out shoppers, automatically notify them on restock, and give merchants visibility into waitlist demand to inform restocking decisions.",
+    "cronHint": null,
+    "appCategory": "storefront_backend_admin",
+    "qualityBrief": "A polished back-in-stock notifier handles: duplicate signups from the same email on the same variant (idempotent), partial restocks where fewer units arrive than waitlisted shoppers (queue fairly, notify only the front of the line, preserve the rest for the next restock), product deletions (clear waitlists cleanly without orphaned records), one notification per restock per shopper per variant (no duplicate blasts if stock briefly dips), guest email signups (no customer account required), and variant-level vs product-level logic (default intelligently based on variant count). The widget must never appear on in-stock items and must confirm inline without a page refresh. Merchants need run history in the admin, CSV export with proper escaping, a functional email template editor with preview, quiet-hours queueing that respects the setting, and accurate attribution of purchases back to notification sends (within 7 days)."
+  }
+}
+```

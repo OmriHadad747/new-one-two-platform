@@ -1,0 +1,10 @@
+```json
+{
+  "status": "needs_clarification",
+  "question": "When stock comes back — say you restock 3 units of a size and 8 shoppers are waiting — you want to notify the first 3 in signup order and hold the rest for the next restock. That's clear. But I need to confirm the queue behavior: If stock drops again before you restock (e.g., someone cancels an order and that unit sells to another customer), do the held shoppers stay in their original position in line, or do they drop to the back? In other words, is the queue persistent across multiple restocks of the same variant, or does it reset each time?",
+  "suggestions": [
+    "Queue persists — same shoppers keep their place across multiple restocks",
+    "Queue resets — each restock starts a fresh notification round"
+  ]
+}
+```
