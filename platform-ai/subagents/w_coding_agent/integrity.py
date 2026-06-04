@@ -52,6 +52,11 @@ def check_structural(ctx: "RunnerContext") -> List[str]:
     # the app.json values; no app knowledge anywhere.
     failures.extend(_check_persistence_plan_vs_app(ctx, app))
 
+    # Helper-reuse checks: when the plan declares a need a ready template
+    # helper exists for, the generated source MUST import that helper rather
+    # than re-implement it. GENERIC — iterates the plan's own flags.
+    failures.extend(_check_helper_reuse(ctx))
+
     # 3. Webhook topics ↔ handler keys.
     topics = (app.get("shopifyIntegration") or {}).get("webhookTopics") or []
     if topics:
@@ -169,6 +174,77 @@ def _check_persistence_plan_vs_app(
                         f"uniqueConstraint, or make the column NOT NULL."
                     )
 
+    return failures
+
+
+def _check_helper_reuse(ctx: "RunnerContext") -> List[str]:
+    """Plan-flag → helper-import presence. The template ships finished helpers
+    under `src/lib/`; when the plan declares a need one of them covers, the
+    generated source must IMPORT it instead of hand-rolling the same logic
+    (the recurring reinvention bug: hand-rolled LIMIT/OFFSET, raw settings
+    SELECTs, inline `Math.round(parseFloat(x)*100)`, hand-rolled claim loops).
+
+    GENERIC and zero-false-positive: each check fires only off a flag the
+    plan ITSELF set (`touchesMoney`/`usesConfig`/`usesWorkflow`/`returnsList`
+    on a capability, or a declared `stateMachine`). If the plan declared the
+    need, the binding helper is mandatory — so a missing import is a real
+    miss, never a guess. This is a structural presence check (it asserts the
+    helper is imported somewhere in the generated source); the "don't
+    hand-roll the same thing" negative stays advisory (prompt + the
+    micro-validators).
+    """
+    plan = getattr(ctx, "plan", None) or {}
+    caps = plan.get("capabilities") or []
+    scaffold = ctx.work_dir / "scaffold"
+
+    # Concatenate the generated source the agent authored (never the template
+    # lib, which the agent doesn't emit). Cheap — scaffolds are small.
+    src_root = scaffold / "src"
+    files = list(src_root.rglob("*.ts")) if src_root.is_dir() else []
+    for extra in ("admin/ui.ts", "widget/widget.ts"):
+        p = scaffold / extra
+        if p.is_file():
+            files.append(p)
+    if not files:
+        return []
+    blob = "\n".join(p.read_text() for p in files)
+
+    # (helper module name, is-needed?, one-line directive) — driven by plan flags.
+    needs = [
+        (
+            "workflow",
+            any(c.get("usesWorkflow") for c in caps) or bool(plan.get("stateMachine")),
+            "import { workflow } from \"../lib/workflow.js\" and drive the row "
+            "lifecycle with workflow.claim/attempt/sweepStale — do not hand-roll "
+            "a claim/try/update loop",
+        ),
+        (
+            "config",
+            any(c.get("usesConfig") for c in caps),
+            "import { config } from \"../lib/config.js\" and read/write settings "
+            "with config.get/set — do not SELECT settings from a custom table",
+        ),
+        (
+            "money",
+            any(c.get("touchesMoney") for c in caps),
+            "import { money } from \"../lib/money.js\" and use money.toMinorUnits/"
+            "sum/percentage — do not inline Math.round(parseFloat(x)*100) or raw +/*",
+        ),
+        (
+            "paginate",
+            any(c.get("returnsList") for c in caps),
+            "import { paginate } from \"../lib/paginate.js\" for the list route(s) "
+            "— do not hand-roll LIMIT/OFFSET or a separate COUNT(*) query",
+        ),
+    ]
+
+    failures: List[str] = []
+    for helper, needed, directive in needs:
+        if needed and f"lib/{helper}" not in blob:
+            failures.append(
+                f"helper-reuse: the plan declares a capability that needs the "
+                f"`{helper}` helper, but no generated file imports it. {directive}."
+            )
     return failures
 
 

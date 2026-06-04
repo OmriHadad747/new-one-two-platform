@@ -284,6 +284,8 @@ def _render_file_plan_slices(plan: Dict[str, Any]) -> str:
         if col.get("nullable") and col.get("purpose")
     ]
 
+    flags = _helper_flags(plan)
+
     blocks: list[str] = []
 
     # ── webhook-handlers.ts ──
@@ -319,6 +321,7 @@ def _render_file_plan_slices(plan: Dict[str, Any]) -> str:
                     "ON CONFLICT on every dedup-keyed insert (per persistence keyedBy)",
                 ],
                 do_not=do_not,
+                use_helpers=_uses_for(flags, "workflow", "money", "config"),
             )
         )
 
@@ -353,6 +356,7 @@ def _render_file_plan_slices(plan: Dict[str, Any]) -> str:
                 implements=[c.get("id") for c in shopify_admin_caps],
                 consumes=consumes,
                 produces=produces,
+                use_helpers=_uses_for(flags, "paginate", "config", "money"),
                 do_not=[
                     "pass a literal/placeholder GID (e.g. 'gid://shopify/Product/0') to any Shopify op — fail-fast instead",
                     "call a bound op only to discard its returned id — every produces above must be persisted or threaded forward",
@@ -394,6 +398,7 @@ def _render_file_plan_slices(plan: Dict[str, Any]) -> str:
                 + [
                     "for every member/row this route returns: include resolved `live.<field>` for any reference the storefront will pass to cartCreate (so the widget never has to fall back to a raw DB column)",
                 ],
+                use_helpers=_uses_for(flags, "paginate", "money"),
                 do_not=[
                     "fall back from a resolved live.<field> to the raw DB column it shadows (e.g. `?? member.product_external_id`)",
                     "accept caller-supplied ids without validating shape (variant ids are numeric strings; merchandise GIDs go to ProductVariant, not Product)",
@@ -499,19 +504,58 @@ def _format_block(
     consumes: list,
     produces: list,
     do_not: list,
+    use_helpers: list | None = None,
 ) -> str:
     def fmt(items: list) -> str:
         if not items:
             return "    (none)"
         return "\n".join(f"    - {x}" for x in items if x)
 
-    return (
+    out = (
         f"▸ {file}  — {role}\n"
         f"  implements:\n{fmt(implements)}\n"
         f"  consumes:\n{fmt(consumes)}\n"
         f"  produces:\n{fmt(produces)}\n"
         f"  do_not:\n{fmt(do_not)}"
     )
+    # Only render the section when the plan's flags imply a helper for this
+    # file — keeps the slice clean for files with no helper binding.
+    if use_helpers:
+        out += f"\n  use_helpers:\n{fmt(use_helpers)}"
+    return out
+
+
+# Plan-flag → ready helper. The directives are GENERIC (the same wording for
+# every app); only WHETHER each fires depends on the plan's own flags. This is
+# the slice-level half of the helper-reuse fix: the system prompt documents the
+# helpers, but the agent works from the per-file todo it copies from here, so
+# the binding has to be present at THIS altitude too. The deterministic gate
+# (integrity._check_helper_reuse) enforces the import; this makes following it
+# the easy path.
+_HELPER_DIRECTIVE = {
+    "workflow": "use workflow.* (claim/attempt/sweepStale) for the row lifecycle — do NOT hand-roll a claim/try/update loop",
+    "config": "use config.get/set for app settings — do NOT declare a settings table or SELECT settings",
+    "money": "use money.toMinorUnits/sum/percentage for monetary values — do NOT inline Math.round(parseFloat(x)*100) or raw +/*",
+    "paginate": "call paginate() for list routes — do NOT write LIMIT/OFFSET or a separate COUNT(*)",
+}
+
+
+def _helper_flags(plan: Dict[str, Any]) -> Dict[str, bool]:
+    """Which ready helpers the plan's own declarations call for. Generic —
+    reads only the structured flags the HLD set."""
+    caps = plan.get("capabilities") or []
+    return {
+        "workflow": any(c.get("usesWorkflow") for c in caps) or bool(plan.get("stateMachine")),
+        "config": any(c.get("usesConfig") for c in caps),
+        "money": any(c.get("touchesMoney") for c in caps),
+        "paginate": any(c.get("returnsList") for c in caps),
+    }
+
+
+def _uses_for(flags: Dict[str, bool], *candidates: str) -> list:
+    """The helper directives that apply to a file: the file's candidate
+    helpers intersected with the flags the plan actually set."""
+    return [_HELPER_DIRECTIVE[h] for h in candidates if flags.get(h)]
 
 
 def _persist_prompts(run_dir: Path, system: str, user: str) -> None:

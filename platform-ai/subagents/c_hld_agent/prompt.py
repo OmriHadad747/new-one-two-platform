@@ -301,6 +301,28 @@ CAPABILITY FLAGS:
   │              │ on initial-state inserts that never transition.            │
   └──────────────┴────────────────────────────────────────────────────────────┘
 
+EACH FLAG IS A HELPER BINDING — NOT JUST A TAG. The platform ships finished, \
+tested helpers under `src/lib/`, and each flag binds the capability to one of \
+them. When you set a flag TRUE you are deciding that the coding agent MUST \
+import and reuse that helper instead of re-implementing the logic (the gate \
+checks the import; reinventing it is a defect):
+
+  - returnsList  → `paginate`  (offset pagination + COUNT — never hand-rolled
+                                LIMIT/OFFSET)
+  - touchesMoney → `money`     (currency-correct minor-unit math, all
+                                currencies — never inline parseFloat math)
+  - usesConfig   → `config`    (merchant settings in the platform `app_config`
+                                table — never a hand-declared settings table)
+  - usesWorkflow → `workflow`  (atomic claim/complete/fail/sweepStale lifecycle
+                                — never a hand-rolled claim/try/update loop)
+
+So set each flag deliberately and completely: a missed flag means the agent \
+gets no helper binding and reinvents; a spurious flag forces an import the \
+app does not need. These are the DOMAIN-level binding decisions — they belong \
+here (the design layer), not left to the coding agent to guess per file. \
+(You do not name the helper or write code — the flag IS the binding; do not \
+add helper names to the JSON.)
+
 DECOMPOSITION RULES.
 
   One capability per discrete data need or action. If the system needs to \

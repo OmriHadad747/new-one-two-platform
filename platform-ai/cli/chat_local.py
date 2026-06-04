@@ -248,6 +248,38 @@ def main() -> int:
     return _final_summary(run_dir, halted_after="coding", success=rr.done_called)
 
 
+# ── Run-cost telemetry ────────────────────────────────────────────────────────
+# Directional $ estimate so cost regressions surface in the run summary — NOT a
+# billing figure. Approximate list prices, $ per 1M tokens, as
+# (input, output, cache_read, cache_write) per model family; cache_write priced
+# at the 1h-TTL rate the loop uses. GENERIC — keyed by the model family each
+# stage runs on (mirrors models/agent_models.py), never by app.
+_PRICE_PER_MTOK: Dict[str, Tuple[float, float, float, float]] = {
+    "sonnet": (3.0, 15.0, 0.30, 6.0),
+    "haiku": (1.0, 5.0, 0.10, 2.0),
+}
+_STAGE_MODEL: Dict[str, str] = {
+    "tokens_product": "haiku",
+    "tokens_hld": "sonnet",
+    "tokens_hld_v": "sonnet",
+    "tokens_hld_revise": "sonnet",
+    "tokens_coding": "sonnet",
+    "tokens_validators": "haiku",
+}
+_COST_CEILING_USD = 5.0
+
+
+def _stage_cost_usd(key: str, t: Dict[str, int]) -> float:
+    fam = _STAGE_MODEL.get(key, "sonnet")
+    pi, po, pr, pw = _PRICE_PER_MTOK[fam]
+    return (
+        t.get("in", 0) * pi
+        + t.get("out", 0) * po
+        + t.get("cache_read", 0) * pr
+        + t.get("cache_create", 0) * pw
+    ) / 1e6
+
+
 def _final_summary(run_dir: Path, halted_after: str, success: bool = True) -> int:
     print()
     if halted_after == "coding":
@@ -262,6 +294,7 @@ def _final_summary(run_dir: Path, halted_after: str, success: bool = True) -> in
 
     # Best-effort token totals from state.json
     rows: List[Tuple[str, str]] = [("Output", rel_out)]
+    total_cost = 0.0
     try:
         state = json.loads((run_dir / "state.json").read_text())
         for key, label in [
@@ -275,6 +308,7 @@ def _final_summary(run_dir: Path, halted_after: str, success: bool = True) -> in
             t = state.get(key)
             if not t:
                 continue
+            total_cost += _stage_cost_usd(key, t)
             note = f"in={ui.ktok(t.get('in', 0))} out={ui.ktok(t.get('out', 0))}"
             cache_r = t.get("cache_read", 0)
             if cache_r:
@@ -283,10 +317,25 @@ def _final_summary(run_dir: Path, halted_after: str, success: bool = True) -> in
         turns = state.get("coding_turns_used")
         if turns is not None:
             rows.append(("Turns", ui.c(str(turns), ui.DIM)))
+        # Cost row — green within budget, red over the ceiling.
+        over = total_cost > _COST_CEILING_USD
+        cost_str = f"~${total_cost:.2f}"
+        if over:
+            cost_str += f"  ⚠ over ${_COST_CEILING_USD:.0f} ceiling"
+        rows.append(("Cost (est.)", ui.c(cost_str, ui.RED if over else ui.GREEN)))
     except Exception:
         pass
 
     ui.summary_box(title, rows)
+    if total_cost > _COST_CEILING_USD:
+        print(
+            ui.c(
+                f"  WARN: estimated generation cost ~${total_cost:.2f} exceeds "
+                f"the ${_COST_CEILING_USD:.0f} target — check the per-stage "
+                f"breakdown above.",
+                ui.RED,
+            )
+        )
     print()
     return 0 if success else 2
 

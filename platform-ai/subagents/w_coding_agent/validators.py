@@ -260,13 +260,39 @@ def _select_persistence(scaffold) -> Dict[str, str]:
     )
 
 
-# (name, checklist, file-selector, applies?) — `applies` lets a validator
-# skip cheaply when the plan implies it has nothing to judge.
+# (name, checklist, file-selector) per validator.
 _VALIDATORS = [
     ("write-path-integrity", WRITE_PATH_CHECKLIST, _select_write_path),
     ("shopify-effect-integrity", SHOPIFY_EFFECT_CHECKLIST, _select_shopify_effect),
     ("persistence-safety", PERSISTENCE_CHECKLIST, _select_persistence),
 ]
+
+# The top-level plan keys each validator actually judges against. Sending the
+# WHOLE plan to all three (×every done() pass) re-charges ~8K tokens of plan
+# the validator doesn't use; projecting to the relevant keys cuts that input
+# without weakening the criterion. GENERIC — selected by plan STRUCTURE (the
+# same keys for every app), never by app content. A validator's projection is
+# a superset of what its invariant needs:
+#   - write-path  : reference columns (persistence) ↔ what the UI sends
+#                   (externalContracts) for which capability (capabilities).
+#   - shopify-eff : declared op sequences (capabilities.shopifySteps) + the
+#                   payload bindings that feed ids (triggers).
+#   - persistence : dedup keys / status columns (persistence), terminal states
+#                   (stateMachine), idempotency (triggers), workflow use
+#                   (capabilities).
+_PLAN_KEYS: Dict[str, tuple] = {
+    "write-path-integrity": ("persistence", "externalContracts", "capabilities"),
+    "shopify-effect-integrity": ("capabilities", "triggers"),
+    "persistence-safety": ("persistence", "stateMachine", "triggers", "capabilities"),
+}
+
+
+def _project_plan(plan: Optional[Dict[str, Any]], keys: tuple) -> Dict[str, Any]:
+    """Keep only the plan keys a given validator judges against. Generic — the
+    key set is fixed per validator (structural), not derived from app data."""
+    if not plan:
+        return {}
+    return {k: plan[k] for k in keys if k in plan}
 
 
 # ── Orchestration ────────────────────────────────────────────────────────────
@@ -280,7 +306,7 @@ def run_validators(
     findings (critical/important) as actionable strings; empty = clean.
     Fail-open: any validator that errors is skipped, never blocks."""
     scaffold = ctx.work_dir / "scaffold"
-    plan_json = json.dumps(ctx.plan, indent=2) if getattr(ctx, "plan", None) else "{}"
+    plan = getattr(ctx, "plan", None)
     schema = Findings.model_json_schema()
     model = get_agent_model("codegen_v")
 
@@ -290,6 +316,7 @@ def run_validators(
         files = selector(scaffold)
         if not files:
             continue
+        plan_json = json.dumps(_project_plan(plan, _PLAN_KEYS[name]), indent=2)
         user = _build_user_message(plan_json, files)
         try:
             llm = get_llm(model=model, max_tokens=_MAX_TOKENS)
@@ -303,7 +330,13 @@ def run_validators(
                     "prompt. Empty list if the code is clean."
                 ),
                 tool_input_schema=schema,
+                # The system prompt (static checklist) keeps 1h caching so it
+                # is reused across the 3 validators' shared preamble and across
+                # done() passes/runs. The user message (plan slice + the
+                # specific files) is UNIQUE per call → never a cache read, so
+                # caching it only pays the write premium. Send it uncached.
                 cache_ttl="1h",
+                cache_user=False,
             )
             _accumulate_usage(ctx, result)
             findings = Findings.model_validate(result.structured_output).findings

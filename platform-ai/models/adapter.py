@@ -471,6 +471,7 @@ def _build_user_message(
     retry_suffix: str = "",
     cache_ttl: Optional[str] = None,
     uncached_suffix: str = "",
+    cache_user: bool = True,
 ) -> HumanMessage:
     """
     Build a HumanMessage with optional prompt caching on the stable prefix.
@@ -498,15 +499,24 @@ def _build_user_message(
     every retry. Empirically this brings codegen retry cache-hit ratio
     from ~10% to ~50-70% on backend / storefront / admin_ui.
 
+    cache_user: when False, the `stable` block is NEVER marked cacheable —
+    it rides as plain input. Use this when the user payload is UNIQUE per
+    call and so can never produce a cache READ (e.g. the micro-validators,
+    whose user message is plan-excerpt + the specific files under review,
+    different every call). Caching such a payload only pays the cache-WRITE
+    premium (1.25×/2× input) for bytes that are never re-read — strictly
+    worse than sending them as plain input. The system prompt keeps its own
+    caching independently via `_system_message`.
+
     cache_ttl: see `_cache_control` for accepted values.
     """
     has_suffix = bool(retry_suffix or uncached_suffix)
-    if not has_suffix and len(stable) < _CACHE_MIN_CHARS:
+    if not has_suffix and (not cache_user or len(stable) < _CACHE_MIN_CHARS):
         return HumanMessage(content=stable)
 
     blocks: list[dict] = []
     stable_block: dict = {"type": "text", "text": stable}
-    if len(stable) >= _CACHE_MIN_CHARS:
+    if cache_user and len(stable) >= _CACHE_MIN_CHARS:
         stable_block["cache_control"] = _cache_control(cache_ttl)
     blocks.append(stable_block)
 
@@ -550,6 +560,7 @@ def invoke(
     retry_suffix: str = "",
     cache_ttl: Optional[str] = None,
     uncached_suffix: str = "",
+    cache_user: bool = True,
 ) -> LLMResponse:
     """
     Calls the LLM with a system + user message pair.
@@ -588,6 +599,7 @@ def invoke(
                 retry_suffix,
                 cache_ttl=cache_ttl,
                 uncached_suffix=uncached_suffix,
+                cache_user=cache_user,
             ),
         ],
     )
@@ -620,6 +632,7 @@ def invoke_structured(
     retry_suffix: str = "",
     cache_ttl: Optional[str] = None,
     uncached_suffix: str = "",
+    cache_user: bool = True,
 ) -> StructuredLLMResponse:
     """
     Structured-output variant of `invoke()`. The model MUST reply with a
@@ -696,6 +709,7 @@ def invoke_structured(
                 retry_suffix,
                 cache_ttl=cache_ttl,
                 uncached_suffix=uncached_suffix,
+                cache_user=cache_user,
             ),
         ],
     )

@@ -89,6 +89,29 @@ iterate the plan's own declarations and check internal consistency):
       it. Quote the unreachable dataNeed verbatim; if you cannot show
       that no upstream supplies it, drop the finding.
 
+  (C) Helper-binding flags match the capability. Each capability flag binds
+      the capability to a ready platform helper the coding agent MUST reuse
+      (returnsList→paginate, touchesMoney→money, usesConfig→config,
+      usesWorkflow→workflow). The flag is the only signal the downstream
+      gate has, so a wrong flag either forces a needless import or — worse —
+      lets the agent reinvent the helper. Flag a clear mismatch between a
+      flag and the capability's OWN description/dataNeeds:
+        - description plainly reads/writes/computes a monetary value
+          (price, total, refund, tax, discount, fee, payout) but
+          `touchesMoney` is false;
+        - description plainly reads/writes a merchant-tunable setting
+          (rate, threshold, toggle, TTL) but `usesConfig` is false;
+        - the capability owns status transitions / is bound to a table's
+          statusField but `usesWorkflow` is false;
+        - the capability returns a browsable/filterable list (or its
+          `externalContract` returns a `list`) but `returnsList` is false;
+        - the inverse: a flag is true with nothing in the description or
+          dataNeeds to justify it.
+      Quote the capability's description (or the contract) AND the flag
+      value verbatim; if you cannot show the mismatch from the plan text,
+      drop the finding. Do NOT infer a flag from the app's domain — judge
+      only against what the capability itself declares.
+
 For each finding:
   - `location`: exact plan path (e.g. "capabilities[3]",
     "persistence[1].columns[7]", "triggers[0].signalFields",
