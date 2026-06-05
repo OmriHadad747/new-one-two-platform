@@ -1,0 +1,24 @@
+```json
+{
+  "status": "ready",
+  "summary": "What this app does:\nLets shoppers request email notifications when sold-out products are back in stock, and shows you admin dashboards of demand, signup records, and restock performance.\n\nWhen it runs:\n• When a shopper taps \"Notify me\" on a sold-out product or variant page\n• When you restock an item, waiting shoppers are emailed automatically in signup order\n• When you click Run Now or set a schedule to manually trigger sends\n• When a shopper clicks the unsubscribe link in an email\n\nWhat you'll see:\n• A dashboard ranking products by waitlist size\n• A drill-in view for each product showing individual email signups with one-click CSV export\n• An editor for the notification email subject and body, with placeholders for product name and variant details\n• A setting for quiet hours (e.g., no sends between 10pm–8am)\n• A metrics page showing total signups, emails sent, and how many recipients bought within 7 days\n• A button to manually trigger restock sends instead of waiting for the schedule\n\nWhat customers see:\n• A \"Notify me when back in stock\" button on sold-out product pages, positioned below the sold-out text\n• An inline email form that slides out; after submission, a confirmation message appears\n• No button or form on in-stock items\n• For multi-variant products, the button appears on each variant's view once that variant sells out\n• An unsubscribe link in every notification email\n\nWhat this app does NOT do:\n• Won't send SMS — only email\n• Won't notify for low stock or \"coming soon\" — only fully sold-out items\n• Won't sync signups to Klaviyo, Mailchimp, or external CRM\n• Won't automatically re-notify a shopper if stock dips and rises again — each restock event triggers one send per shopper\n• Won't let you set per-product notification rules or queue limits (notification goes to the configured number of waitlist members per restock, same for all products)",
+  "intent": {
+    "triggerTypes": [
+      "widget",
+      "webhook",
+      "cron",
+      "admin"
+    ],
+    "resources": [
+      "products",
+      "inventory",
+      "customers",
+      "orders"
+    ],
+    "desiredOutcome": "Recover lost sales by capturing shopper demand for sold-out items, notifying them reliably when stock returns, and measuring how many sales result.",
+    "cronHint": "Every 30 minutes (or merchant-configurable schedule) during quiet hours",
+    "appCategory": "storefront_backend_admin",
+    "qualityBrief": "A polished back-in-stock app handles duplicate webhook delivery (idempotent signup and restock sends), guest checkout (no customer ID, email alone is the key), partial restocks (queue management and per-restock-per-shopper deduplication), deleted/unpublished products (safe cascade of waitlist), and variant-level subscriptions correctly (same product, different variants = separate queues). UX must show empty states gracefully, give instant inline confirmation to the shopper, and let the merchant export CSV reliably. The metrics page must track signup → send → purchase attribution within the 7-day window, account for bounced emails and unsubscribes in the send count, and survive duplicate restock events without double-crediting. Quiet hours must be timezone-aware and merchant-configurable. The email template must render product images, variant-specific details (size, color label), and a one-click unsubscribe that works without re-entering the email."
+  }
+}
+```
