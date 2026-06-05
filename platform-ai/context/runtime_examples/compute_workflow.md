@@ -1,6 +1,9 @@
-# Runtime example: `compute_workflow`
+# Helper: `workflow`
 
-Canonical working snippet. Adapt the names but preserve the shape — imports, error handling, contract checks.
+Use the `workflow` helper for every multi-state row lifecycle (`pending → running
+→ done/failed`, `draft → submitted → approved`, …). Storage: the table needs a
+`status TEXT` column; optional `started_at`/`finished_at TIMESTAMPTZ`,
+`failure_reason TEXT` are written when present. State names are yours.
 
 ```ts
 import { workflow } from "../lib/workflow.js";
@@ -14,26 +17,27 @@ const result = await workflow.attempt<RuleRun, void>(
   runId,
   { from: "pending" },
   async (row) => {
-    // Side effects here. If this throws, helper persists status='failed'
-    // with err.message (truncated) and re-throws so the cron-runner sees it.
-    await processRow(row);
+    await processRow(row); // side effects; on throw → status='failed' + re-throw
   },
 );
 if (!result) return; // someone else claimed it
 
 // Primitives for non-canonical flows (multi-step, branching terminals):
 const claimed = await workflow.claim<Approval>(
-  "approvals",
-  approvalId,
-  { from: "draft", to: "submitted" },
+  "approvals", approvalId, { from: "draft", to: "submitted" },
 );
 if (!claimed) return;
-// … do work …
 await workflow.complete("approvals", approvalId, { to: "approved" });
-// or:
-await workflow.fail("approvals", approvalId, "policy violation: …");
+// or: await workflow.fail("approvals", approvalId, "policy violation: …");
 
 // Stale sweeper — call from a low-frequency cron tick (every ~10 min):
 const swept = await workflow.sweepStale("rule_runs", { ttlMinutes: 30 });
-console.log(JSON.stringify({ event: "sweep", count: swept.count }));
 ```
+
+Rules:
+- Wrap the work in `workflow.attempt(...)` — do NOT hand-roll
+  `claim → try/catch → update`. The helper persists `failure_reason` and
+  re-throws so the cron-runner can retry.
+- Custom state names are fine: `claim(t, id, { from: "approved", to: "shipped" })`.
+- **Every** workflow-bearing table needs a `sweepStale` cron (e.g. `*/10 * * * *`),
+  or crashed rows stay `running` forever.

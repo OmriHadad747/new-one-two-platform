@@ -10,6 +10,7 @@ the Pydantic model.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from subagents.c_hld_agent.schema import HLDPlan
 
@@ -350,6 +351,15 @@ app does not need. These are the DOMAIN-level binding decisions — they belong 
 here (the design layer), not left to the coding agent to guess per file. \
 (You do not name the helper or write code — the flag IS the binding; do not \
 add helper names to the JSON.)
+
+THE PLATFORM ALSO PROVIDES MORE THAN THOSE FOUR. The four flags cover the most \
+common helpers, but the platform ships more ready primitives — design around \
+them instead of inventing app-specific machinery. The menu below is what \
+exists; you do not write code or name a helper in the JSON — you express each \
+choice through the plan field shown (a flag, a trigger, an integration, etc.), \
+and the coding agent wires the actual helper:
+
+__PLATFORM_INDEX__
 
 DECOMPOSITION RULES.
 
@@ -753,8 +763,24 @@ __SCHEMA_JSON__
 def build_system_prompt() -> str:
     """
     Render the HLD agent's system prompt with the live `HLDPlan` JSON schema
-    substituted in. The Pydantic model is the single source of truth —
-    bumping `HLDPlan` automatically updates what the agent sees.
+    and the platform-helpers index substituted in. The Pydantic model is the
+    single source of truth for the schema; `platform_helpers.md` is the single
+    source of truth for the helper menu (the same index the coding agent sees),
+    so the HLD designs around every platform primitive without a read tool.
     """
     schema_json = json.dumps(HLDPlan.model_json_schema())
-    return SYSTEM_PROMPT_TEMPLATE.replace("__SCHEMA_JSON__", schema_json)
+    return (
+        SYSTEM_PROMPT_TEMPLATE
+        .replace("__PLATFORM_INDEX__", _load_platform_index())
+        .replace("__SCHEMA_JSON__", schema_json)
+    )
+
+
+# platform-ai/subagents/c_hld_agent/prompt.py → context dir is parents[2]/context.
+_CONTEXT_DIR = Path(__file__).resolve().parents[2] / "context"
+
+
+def _load_platform_index() -> str:
+    """The platform-helpers index (menu of every primitive). Same file the
+    coding agent injects at §6.1 — one source of truth for the menu."""
+    return (_CONTEXT_DIR / "platform_helpers.md").read_text().strip()

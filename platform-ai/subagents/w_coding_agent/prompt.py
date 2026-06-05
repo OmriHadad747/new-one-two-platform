@@ -4,7 +4,7 @@ System prompt for the single coding agent.
 The runtime prompt is the static meta-content below (§1-5) plus the
 five heavy-content blocks injected by `build_system_prompt(...)` into §6:
 
-  __PLATFORM_HELPERS__      — workflow / config / money / paginate / email / files APIs
+  __PLATFORM_HELPERS__      — platform helpers INDEX (menu of every primitive; detail read lazily from runtime_examples)
   __SHOPIFY_WEBHOOKS__      — webhook cluster index
   __SHOPIFY_AJAX__          — full Ajax reference (no detail lookup)
   __SHOPIFY_STOREFRONT__    — Storefront GraphQL cluster index
@@ -475,7 +475,11 @@ These have all caused real failures. Do not:
 §6. REFERENCE
 ═══════════════════════════════════════════════════════════════════════
 
-─── 6.1 PLATFORM HELPERS ───
+─── 6.1 PLATFORM HELPERS (index) ───
+
+This is the menu of every platform primitive. When you use one, read its detail
+doc (the `read_file` path in the table) for the exact API + rules before writing
+that file — do not guess the signature, and do not re-implement it.
 
 __PLATFORM_HELPERS__
 
