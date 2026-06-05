@@ -1,8 +1,0 @@
-{
-  "content": "import type postgres from \"postgres\";\n\nexport interface PaginateInput {\n  page?: number | string | null;\n  page_size?: number | string | null;\n}\n\nexport interface PaginateOptions {\n  maxPageSize?: number;\n}\n\nexport interface PaginatedResponse<T> {\n  items: T[];\n  total: number;\n  page: number;\n  page_size: number;\n}\n\nexport async function paginate<T extends postgres.Row>(\n  sql: postgres.Sql,\n  baseQuery: postgres.PendingQuery<T[]>,\n  input: PaginateInput,\n  options: PaginateOptions = {},\n): Promise<PaginatedResponse<T>> {\n  const maxPageSize = options.maxPageSize ?? 100;\n  const pageNum = input.page == null ? 1 : Number(input.page);\n  const sizeNum = input.page_size == null ? 20 : Number(input.page_size);\n  const page = Math.max(1, Number.isFinite(pageNum) ? pageNum : 1);\n  const pageSize = Math.min(maxPageSize, Math.max(1, Number.isFinite(sizeNum) ? sizeNum : 20));\n  const offset = (page - 1) * pageSize;\n\n  const [countResult, rows] = await Promise.all([\n    sql<{ count: string }[]>`SELECT COUNT(*) AS count FROM (${baseQuery}) AS _count`,\n    sql<T[]>`SELECT * FROM (${baseQuery}) AS _page LIMIT ${pageSize} OFFSET ${offset}`,\n  ]);\n\n  return {\n    items: Array.from(rows) as T[],\n    total: Number(countResult[0]?.count ?? 0),\n    page,\n    page_size: pageSize,\n  };\n}",
-  "total_lines": 43,
-  "returned_lines": [
-    0,
-    43
-  ]
-}

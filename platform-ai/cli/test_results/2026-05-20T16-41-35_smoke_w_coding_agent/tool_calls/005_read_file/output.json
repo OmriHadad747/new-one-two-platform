@@ -1,8 +1,0 @@
-{
-  "content": "import { Router } from \"express\";\nimport { sql } from \"../lib/db.js\";\n\n// /widget/* \u2014 fired by storefront-rendered widgets calling back through\n// the Shopify App Proxy. platform-back has already verified the App\n// Proxy HMAC signature and minted an ID token to call us, so by the\n// time we see a request here, req.platform is trusted.\n//\n// Widget calls are typically *unauthenticated from the customer's\n// perspective* \u2014 there's no logged-in shopper identity. Any per-shopper\n// state (cart, recently-viewed, etc.) must be derived from payload\n// params, not from a session this handler holds.\n\nexport const widgetRouter = Router();\n\n// Example: a \"ping\" route the storefront widget can call to fetch\n// merchant-configured display data. Generator replaces with real routes.\nwidgetRouter.post(\"/:path\", async (req, res) => {\n  const { tenantId } = req.platform!;\n  const { path } = req.params;\n\n  // Trivial example query against tenant schema \u2014 proves wiring.\n  const [{ count }] = await sql<[{ count: string }]>`\n    SELECT count(*)::text AS count FROM processed_webhooks\n  `;\n\n  res.json({ ok: true, tenantId, path, sampleCount: Number(count) });\n});",
-  "total_lines": 28,
-  "returned_lines": [
-    0,
-    28
-  ]
-}

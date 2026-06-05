@@ -1,8 +1,0 @@
-{"idx": 1, "tool": "todo_write", "ms": 0, "ok": true}
-{"idx": 2, "tool": "get_webhook_topic", "ms": 10, "ok": true}
-{"idx": 3, "tool": "get_webhook_topic", "ms": 1, "ok": true}
-{"idx": 4, "tool": "get_webhook_topic", "ms": 3, "ok": true}
-{"idx": 5, "tool": "get_webhook_topic", "ms": 1, "ok": true}
-{"idx": 6, "tool": "get_webhook_topic", "ms": 2, "ok": true}
-{"idx": 7, "tool": "get_shopify_op", "ms": 16, "ok": true}
-{"idx": 8, "tool": "get_shopify_op", "ms": 13, "ok": true}

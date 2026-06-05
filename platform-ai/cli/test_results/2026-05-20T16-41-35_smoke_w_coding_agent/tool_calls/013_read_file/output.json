@@ -1,8 +1,0 @@
-{
-  "content": "import type { Request } from \"express\";\n\nexport type WebhookHandler = (payload: unknown, req: Request) => Promise<void>;\n\n// Generator REPLACES this file. The stub keeps the build green for handlers\n// that declare no webhook topics.\nexport const webhookHandlers: Record<string, WebhookHandler> = {};",
-  "total_lines": 7,
-  "returned_lines": [
-    0,
-    7
-  ]
-}

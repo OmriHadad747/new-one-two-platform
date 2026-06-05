@@ -1,8 +1,0 @@
-{
-  "content": "import { sql } from \"../lib/db.js\";\nimport { money } from \"../lib/money.js\";\nimport { shopifyClientFor } from \"../lib/shopify.js\";\nimport { evaluateBundleHealth, applyBundleHealthEvaluation } from \"../lib/bundle-health.js\";\nimport type {\n  BundleId,\n  BundleItemRow,\n  BundleTierRow,\n  OrderExternalId,\n  OrdersPaidPayload,\n  InventoryLevelsUpdatePayload,\n  ProductsDeletePayload,\n  VariantExternalId,\n  ProductExternalId,\n  InventoryItemId,\n  ObservedAvailability,\n} from \"../types/contracts.js\";\n\n// \u2500\u2500\u2500 Helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n",
-  "total_lines": 279,
-  "returned_lines": [
-    1,
-    21
-  ]
-}

@@ -1,8 +1,0 @@
-{
-  "content": "      SELECT id, bundle_id, variant_external_id, observed_availability\n      FROM bundle_items\n      WHERE product_external_id = ${productExternalId}\n        AND observed_availability != 'deleted'\n    `;\n\n    if (affectedItems.length === 0) {\n      console.log({ topic: \"products/delete\", productExternalId }, \"no affected bundle items, skipping\");\n      return;\n    }\n\n    // Mark all affected items as deleted (terminal state)\n    const affectedVariantIds = [...new Set(affectedItems.map((i) => i.variant_external_id))];\n\n    await sql`\n      UPDATE bundle_items\n      SET observed_availability = 'deleted'\n      WHERE product_external_id = ${productExternalId}\n        AND observed_availability != 'deleted'\n    `;\n\n    console.log(\n      { topic: \"products/delete\", productExternalId, affectedVariantCount: affectedVariantIds.length },\n      \"bundle item variants marked deleted\"\n    );\n\n    // Evaluate health for each affected bundle\n    const affectedBundleIds = [...new Set(affectedItems.map((i) => i.bundle_id))];\n\n    for (const bundleId of affectedBundleIds) {\n      const firstAffectedVariant = affectedItems.find((i) => i.bundle_id === bundleId)?.variant_external_id ?? null;\n      const evaluation = await evaluateBundleHealth(bundleId);\n      if (evaluation) {\n        await applyBundleHealthEvaluation(evaluation, firstAffectedVariant ?? null);\n        console.log(\n          { topic: \"products/delete\", bundleId, evaluation: evaluation.event_kind },\n          \"bundle health updated after product deletion\"\n        );\n      }\n    }\n  },\n};",
-  "total_lines": 279,
-  "returned_lines": [
-    237,
-    279
-  ]
-}

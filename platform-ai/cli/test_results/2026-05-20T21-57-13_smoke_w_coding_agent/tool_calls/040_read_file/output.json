@@ -1,8 +1,0 @@
-{
-  "content": "\n  await sql.begin(async (tx) => {\n    // Delete all existing items\n    await tx`DELETE FROM bundle_items WHERE bundle_id = ${body.bundle_id}`;\n\n    // Insert new items\n    for (let i = 0; i < body.variant_external_ids.length; i++) {\n      const variantId = body.variant_external_ids[i];\n      const productId = body.product_external_ids[i];\n      await tx`\n        INSERT INTO bundle_items (bundle_id, variant_external_id, product_external_id, observed_availability)\n        VALUES (${body.bundle_id}, ${variantId}, ${productId}, 'available')\n        ON CONFLICT (bundle_id, variant_external_id) DO UPDATE\n          SET observed_availability = 'available',\n              product_external_id   = EXCLUDED.product_external_id\n      `;\n    }\n  });\n\n  const resp: SaveBundleItemsResponse = {",
-  "total_lines": 596,
-  "returned_lines": [
-    415,
-    435
-  ]
-}

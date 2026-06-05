@@ -1,8 +1,0 @@
-{
-  "content": "      const allTiers = await sql<BundleTierRow[]>`\n        SELECT * FROM bundle_tiers WHERE bundle_id = ${bundleId}\n      `;\n      const bundleRow = await sql<BundleRow[]>`\n        SELECT * FROM bundles WHERE id = ${bundleId}\n      `;\n\n      if (bundleRow.length === 0) continue;\n\n      const healthResult = evaluateBundleHealth(\n        bundleId,\n        bundleRow[0].mode,\n        allItems,\n        allTiers,\n        productId // use product ID as context since we don't have single variant\n      );\n\n      await applyBundleHealthResult(healthResult);\n\n      console.log(\n        {\n          topic: \"products/delete\",\n          bundleId,\n          productId,\n          newHealth: healthResult.new_health_status,\n        },\n        \"bundle health updated after product deletion\"\n      );\n    }\n  },",
-  "total_lines": 341,
-  "returned_lines": [
-    310,
-    340
-  ]
-}

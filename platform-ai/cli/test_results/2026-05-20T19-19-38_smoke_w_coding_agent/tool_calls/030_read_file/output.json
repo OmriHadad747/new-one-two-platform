@@ -1,8 +1,0 @@
-{
-  "content": "    const orderPlacedAt = new Date(payload.created_at);\n    const currency = payload.currency;\n\n    console.log({ topic: \"orders/paid\", orderId }, \"processing paid order\");\n\n    // Parse order total using money helper\n    const orderTotalMinorUnits = money.toMinorUnits(payload.total_price, currency);\n\n    // Extract variant IDs from line items\n    const lineItemVariantIds = payload.line_items",
-  "total_lines": 279,
-  "returned_lines": [
-    43,
-    53
-  ]
-}

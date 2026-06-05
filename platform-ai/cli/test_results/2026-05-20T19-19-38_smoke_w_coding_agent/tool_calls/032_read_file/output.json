@@ -1,8 +1,0 @@
-{
-  "content": "\n// \u2500\u2500\u2500 Webhook Handlers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nexport const webhookHandlers = {\n  \"orders/paid\": async (payload: OrdersPaidPayload, _req: Request): Promise<void> => {\n    const orderId = payload.id;\n    const orderPlacedAt = new Date(payload.created_at);\n    const currency = payload.currency;",
-  "total_lines": 279,
-  "returned_lines": [
-    37,
-    45
-  ]
-}

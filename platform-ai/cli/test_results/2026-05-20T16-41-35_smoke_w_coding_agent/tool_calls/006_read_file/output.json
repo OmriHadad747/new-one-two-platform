@@ -1,8 +1,0 @@
-{
-  "content": "import { Router } from \"express\";\nimport { sql } from \"../lib/db.js\";\nimport { webhookHandlers } from \"./webhook-handlers.js\";\n\n// Locked down \u2014 generator does NOT replace this file.\n// Business logic lives in webhook-handlers.ts (generator-authored).\n\nexport const webhookRouter = Router();\n\n// Shopify topics contain a slash (e.g. \"orders/create\"), so we capture\n// the full path rather than a single :param segment.\nwebhookRouter.post(\"/*\", async (req, res) => {\n  const topic = req.path.slice(1); // \"/orders/create\" \u2192 \"orders/create\"\n  const envelop = req.body as { webhook_id?: string; payload?: unknown };\n\n  if (typeof envelop.webhook_id !== \"string\" || envelop.webhook_id.length === 0) {\n    res.status(400).json({ error: \"missing_webhook_id\" });\n    return;\n  }\n\n  const inserted = await sql<Array<{ webhook_id: string }>>`\n    INSERT INTO processed_webhooks (webhook_id)\n    VALUES (${envelop.webhook_id})\n    ON CONFLICT (webhook_id) DO NOTHING\n    RETURNING webhook_id\n  `;\n  if (inserted.length === 0) {\n    res.status(200).json({ ok: true, duplicate: true });\n    return;\n  }\n\n  const handler = webhookHandlers[topic];\n  if (!handler) {\n    // Unknown topic \u2014 already marked processed above so we don't hot-loop.\n    res.status(200).json({ ok: true, ignored: true });\n    return;\n  }\n\n  try {\n    await handler(envelop.payload, req);\n    res.status(200).json({ ok: true });\n  } catch (err) {\n    console.error(\n      { err: String(err), topic, webhook_id: envelop.webhook_id },\n      \"webhook handler threw\",\n    );\n    res.status(500).json({ error: \"handler_failed\" });\n  }\n});",
-  "total_lines": 49,
-  "returned_lines": [
-    0,
-    49
-  ]
-}
