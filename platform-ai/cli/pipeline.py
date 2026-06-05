@@ -194,6 +194,7 @@ def run_hld(
     intent: Dict[str, Any],
     run_dir: Path,
     validator_hint: Optional[str] = None,
+    prior_plan: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Tokens]:
     label = "HLD" if validator_hint is None else "HLD (revise)"
     ui.phase_header("HLD design" if validator_hint is None else "HLD revision")
@@ -226,6 +227,7 @@ def run_hld(
                 intent=intent,
                 on_attempt_failed=_on_attempt_failed,
                 validator_hint=validator_hint,
+                prior_plan=prior_plan,
             )
     except HLDValidationError as err:
         sp.stop()

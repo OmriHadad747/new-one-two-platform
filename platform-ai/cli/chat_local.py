@@ -62,6 +62,8 @@ except ImportError:
 
 import ui  # noqa: E402
 import pipeline  # noqa: E402
+from models.agent_models import get_agent_model  # noqa: E402
+from subagents.w_coding_agent.loop import DEFAULT_MODEL as _CODING_MODEL  # noqa: E402
 
 # ── Run dir + state ──────────────────────────────────────────────────────────
 
@@ -210,7 +212,9 @@ def main() -> int:
             f"{f.get('issue', '')} Fix: {f.get('fix', '')}"
             for f in findings
         )
-        plan, h2_tokens = pipeline.run_hld(prompt, intent, run_dir, validator_hint=hint)
+        plan, h2_tokens = pipeline.run_hld(
+            prompt, intent, run_dir, validator_hint=hint, prior_plan=plan
+        )
         _save_state(run_dir, plan=plan, tokens_hld_revise=h2_tokens)
 
     if args.stop_after == "hld_v":
@@ -253,21 +257,38 @@ def main() -> int:
 # billing figure. Approximate list prices, $ per 1M tokens, as
 # (input, output, cache_read, cache_write) per model family; cache_write priced
 # at the 1h-TTL rate the loop uses. GENERIC — keyed by the model family each
-# stage runs on (mirrors models/agent_models.py), never by app.
+# stage runs on (derived from the runtime's own model sources), never by app.
 _PRICE_PER_MTOK: Dict[str, Tuple[float, float, float, float]] = {
     "opus": (15.0, 75.0, 1.50, 30.0),
     "sonnet": (3.0, 15.0, 0.30, 6.0),
     "haiku": (1.0, 5.0, 0.10, 2.0),
 }
-# Mirrors models/agent_models.py: the first HLD pass is Opus, the revise is
-# Sonnet, hld_v is Sonnet. Keep in sync if those change.
+
+
+def _family_of(model_id: str) -> str:
+    """Classify a model id into its pricing family. Substring match so a dated
+    snapshot (e.g. claude-opus-4-8-20260101) still resolves."""
+    m = model_id.lower()
+    if "opus" in m:
+        return "opus"
+    if "haiku" in m:
+        return "haiku"
+    return "sonnet"
+
+
+# DERIVED, never hand-copied: each stage's family is resolved from the SAME
+# source the runtime picks its model from — agent_models.get_agent_model(...)
+# for the pipeline agents, the coding loop's DEFAULT_MODEL for the coding stage.
+# This is what stops the cost estimate from silently mislabelling a stage:
+# change a stage's model in one place and the price follows automatically,
+# instead of drifting from a second hand-maintained copy.
 _STAGE_MODEL: Dict[str, str] = {
-    "tokens_product": "haiku",
-    "tokens_hld": "opus",
-    "tokens_hld_v": "sonnet",
-    "tokens_hld_revise": "sonnet",
-    "tokens_coding": "sonnet",
-    "tokens_validators": "haiku",
+    "tokens_product": _family_of(get_agent_model("product")),
+    "tokens_hld": _family_of(get_agent_model("hld")),
+    "tokens_hld_v": _family_of(get_agent_model("hld_v")),
+    "tokens_hld_revise": _family_of(get_agent_model("hld_revise")),
+    "tokens_coding": _family_of(_CODING_MODEL),
+    "tokens_validators": _family_of(get_agent_model("codegen_v")),
 }
 _COST_CEILING_USD = 5.0
 
