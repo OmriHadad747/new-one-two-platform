@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "      // Check if any purchased variant belongs to the entry's product\n      // variantIdStrings are validated numeric strings from the order payload\n      // Convert to numbers for the ANY() comparison\n      const variantNums = variantIdStrings.map((s) => parseInt(s, 10));\n      const productMatchRows = await sql<{ id: string }[]>`",
-  "new_string": "      // Check if any purchased variant belongs to the entry's product\n      // variantIdStrings are validated numeric strings from the order payload\n      const productMatchRows = await sql<{ id: string }[]>`"
-}

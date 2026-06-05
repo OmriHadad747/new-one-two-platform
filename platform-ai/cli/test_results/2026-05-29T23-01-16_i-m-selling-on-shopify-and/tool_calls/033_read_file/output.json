@@ -1,8 +1,0 @@
-{
-  "content": "# Runtime example: `paginate_offset`\n\nCanonical working snippet. Adapt the names but preserve the shape \u2014 imports, error handling, contract checks.\n\n```ts\nimport { paginate } from \"../lib/paginate.js\";\nimport { sql } from \"../lib/db.js\";\n\n// The bare SELECT from the LLD's sql_select step (no LIMIT, no OFFSET,\n// no COUNT(*)) is wrapped at codegen time. The helper handles input\n// clamping (page>=1, page_size in [1,100]), the COUNT subquery, and\n// the response shape.\nconst rows = await paginate(\n  sql,\n  sql`<your bare SELECT from the sql_select step, ORDER BY required>`,\n  { page: req.body.page, page_size: req.body.page_size },\n);\nres.json(rows); // { items, total, page, page_size }\n\n// Per-route maxPageSize override (when sql_select.purpose hints \"max N\"):\n//   await paginate(sql, sql`...`, { page, page_size }, { maxPageSize: 1000 });\n```",
-  "total_lines": 22,
-  "returned_lines": [
-    0,
-    22
-  ]
-}

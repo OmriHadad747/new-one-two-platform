@@ -1,8 +1,0 @@
-{
-  "content": "          product_external_id: numericId as ShopifyProductExternalId,\n          variant_external_id: null,\n          quantity: 1,\n          position: formComponents.length,\n          label: p.title,\n        });\n      }\n      renderComponents();\n      markDirty();\n    });",
-  "total_lines": 951,
-  "returned_lines": [
-    720,
-    730
-  ]
-}

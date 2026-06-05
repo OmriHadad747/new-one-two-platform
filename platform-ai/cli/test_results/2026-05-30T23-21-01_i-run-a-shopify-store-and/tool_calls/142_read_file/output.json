@@ -1,8 +1,0 @@
-{
-  "content": "    const subscribers: SubscriberItem[] = page.map((e) => ({\n      id: e.id,\n      shopper_email: e.shopper_email,\n      product_external_id: e.product_external_id,\n      variant_external_id: e.variant_external_id,\n      item_display_name: e.item_display_name,\n      signup_level: e.signup_level as SignupLevel,\n      status: e.status as WaitlistStatus,\n      signed_up_at: e.signed_up_at.toISOString(),\n      notified_at: e.notified_at ? e.notified_at.toISOString() : null,\n      notification_batch_id: e.notification_batch_id,\n    }));\n\n    const response: AdminSubscribersResponse = { subscribers, next_cursor: nextCursor, total_count: totalCount };\n    res.json(response);\n  } catch (err) {\n    console.error({ requestId: req.platform!.requestId, err: String(err) }, \"subscribers list failed\");\n    res.status(500).json({ error: \"internal error\" });\n  }\n});\n\n// \u2500\u2500\u2500 GET /admin/subscribers/export \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nadminRouter.get(\"/admin/subscribers/export\", async (req: Request, res: Response): Promise<void> => {\n  const productIdRaw = typeof req.query.product_id === \"string\" ? req.query.product_id : null;\n  const variantIdRaw = typeof req.query.variant_id === \"string\" ? req.query.variant_id : null;\n  const cursorRaw = typeof req.query.cursor === \"string\" ? req.query.cursor : null;\n\n  if (!productIdRaw) {\n    res.status(400).json({ error: \"product_id is required\" });",
-  "total_lines": 623,
-  "returned_lines": [
-    290,
-    320
-  ]
-}

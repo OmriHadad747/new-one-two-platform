@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/app.json",
-  "old_string": "          {\n            \"name\": \"variant_external_id\",\n            \"sqlType\": \"BIGINT\",\n            \"constraints\": \"NULL\",\n            \"purpose\": \"the variant that restocked; null for product-level batches\"\n          },\n          {\n            \"name\": \"available_quantity_at_detection\",",
-  "new_string": "          {\n            \"name\": \"variant_external_id\",\n            \"sqlType\": \"BIGINT\",\n            \"constraints\": \"NULL\",\n            \"purpose\": \"the variant that restocked; null for product-level batches\"\n          },\n          {\n            \"name\": \"variant_gid\",\n            \"sqlType\": \"TEXT\",\n            \"constraints\": \"NULL\",\n            \"purpose\": \"canonical Shopify GID for the variant (gid://shopify/ProductVariant/<id>), stored from the inventoryItem API response for use in subsequent Shopify ops\"\n          },\n          {\n            \"name\": \"available_quantity_at_detection\","
-}

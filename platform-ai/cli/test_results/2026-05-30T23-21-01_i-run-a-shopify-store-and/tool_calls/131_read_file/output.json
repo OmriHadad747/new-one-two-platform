@@ -1,8 +1,0 @@
-{
-  "content": "      'pending',\n      0,\n      ${detectedAt},\n      ${scheduledSendAt}\n    )\n    ON CONFLICT (product_external_id, variant_external_id, detected_at) DO NOTHING\n  `;\n\n  console.log({ productId: productIdStr, variantId: variantIdStr, scheduledSendAt }, \"notification batch created\");\n}\n\n// \u2500\u2500\u2500 Handler: products/delete \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nasync function handleProductsDelete(payload: ProductsDeletePayload): Promise<void> {\n  const productIdStr = String(payload.id);\n\n  console.log({ topic: \"products/delete\", productId: productIdStr }, \"received\");\n\n  await sql.begin(async (tx) => {\n    await tx`\n      UPDATE notification_batches\n      SET status = 'completed', completed_at = now()\n      WHERE product_external_id = ${productIdStr}::bigint\n      AND status = 'pending'\n    `;\n\n    await tx`\n      DELETE FROM waitlist_entries\n      WHERE product_external_id = ${productIdStr}::bigint\n    `;",
-  "total_lines": 389,
-  "returned_lines": [
-    225,
-    255
-  ]
-}

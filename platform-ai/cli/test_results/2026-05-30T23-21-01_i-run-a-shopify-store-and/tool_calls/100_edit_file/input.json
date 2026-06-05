@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "  const variantIdStrings = lineItems\n    .map((li) => li.variant_id)\n    .filter((id): id is number => id !== null && id !== undefined)\n    .map((id) => String(id));\n\n  if (variantIdStrings.length === 0) {\n    console.log({ orderId: orderIdStr }, \"no variant ids in order \u2014 skipping\");\n    return;\n  }\n\n  // Attribution window: 7 days",
-  "new_string": "  // Collect variant ids from line items (may be empty for non-variant products)\n  const variantIdStrings = lineItems\n    .map((li) => li.variant_id)\n    .filter((id): id is number => id !== null && id !== undefined)\n    .map((id) => String(id));\n\n  // Attribution window: 7 days"
-}

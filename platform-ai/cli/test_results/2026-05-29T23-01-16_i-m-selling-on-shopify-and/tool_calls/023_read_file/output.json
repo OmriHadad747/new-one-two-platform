@@ -1,8 +1,0 @@
-{
-  "content": "# Runtime example: `shopify_mutation`\n\nCanonical working snippet. Adapt the names but preserve the shape \u2014 imports, error handling, contract checks.\n\n```ts\nimport { shopifyClientFor } from \"../lib/shopify.js\";\n\nconst shopify = await shopifyClientFor(req.platform!);\n\nconst result = await shopify.graphql<{\n  tagsAdd: { userErrors: { field: string[] | null; message: string }[] };\n}>(\n  `mutation AddTags($id: ID!, $tags: [String!]!) {\n     tagsAdd(id: $id, tags: $tags) {\n       userErrors { field message }\n     }\n   }`,\n  { id: `gid://shopify/Order/${orderId}`, tags: [\"vip\"] },\n);\n\n// userErrors are returned as DATA, not as a thrown exception. A successful\n// await is necessary but NOT sufficient \u2014 a non-empty userErrors[] means\n// Shopify rejected the mutation.\nif (result.tagsAdd.userErrors.length > 0) {\n  throw new Error(\n    `tagsAdd failed: ${result.tagsAdd.userErrors.map((e) => e.message).join(\"; \")}`,\n  );\n}\n```",
-  "total_lines": 29,
-  "returned_lines": [
-    0,
-    29
-  ]
-}

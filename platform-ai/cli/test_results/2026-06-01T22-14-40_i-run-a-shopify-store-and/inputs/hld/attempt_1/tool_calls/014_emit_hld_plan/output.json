@@ -1,6 +1,0 @@
-{
-  "ok": false,
-  "errors": [
-    "triggers.0.external-event: Value error, payloadBindings ['product external id', 'variant external id'] reference fields not in signalFields ['available quantity', 'inventory item external id', 'location external id']"
-  ]
-}

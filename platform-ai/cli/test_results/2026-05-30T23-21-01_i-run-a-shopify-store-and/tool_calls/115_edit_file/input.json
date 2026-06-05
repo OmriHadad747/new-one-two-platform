@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/widget.ts",
-  "old_string": "    // data.product.id is the canonical GID confirmed by Shopify's response\n    const confirmedProductGid = data.product?.id;\n\n    if (!data.product) {",
-  "new_string": "    if (!data.product) {"
-}

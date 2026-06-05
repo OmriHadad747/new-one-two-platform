@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "  if (discountCodes.length === 0) {\n    // No discount codes on this order \u2014 not a bundle attribution event\n    return;\n  }\n\n  for (const dc of discountCodes) {",
-  "new_string": "  // Process all discount codes \u2014 loop body handles non-bundle codes gracefully\n  for (const dc of discountCodes) {"
-}

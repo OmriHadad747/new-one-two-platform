@@ -1,8 +1,0 @@
-{
-  "content": "# Runtime example: `email_send`\n\nCanonical working snippet. Adapt the names but preserve the shape \u2014 imports, error handling, contract checks.\n\n```ts\nimport { platform, QuotaExceeded } from \"../lib/platform.js\";\n\ntry {\n  const result = await platform.email.send({\n    to: customerEmail,\n    data: { customerName, productTitle, variantName },\n  });\n\n  if (result.delivered) {\n    console.log({ deliveryId: result.deliveryId }, \"email sent\");\n  } else {\n    // result.reason is one of: \"suppressed\" | \"missing_config\" | \"provider_failed\"\n    console.warn({ reason: result.reason }, \"email not delivered\");\n  }\n} catch (err) {\n  if (err instanceof QuotaExceeded) {\n    // err.kind === \"email\"; err.limit, err.current, err.resetsAt\n    console.warn({ limit: err.limit, resetsAt: err.resetsAt }, \"email quota exceeded\");\n    return; // monthly cap hit \u2014 stop the loop\n  }\n  throw err;\n}\n```",
-  "total_lines": 28,
-  "returned_lines": [
-    0,
-    28
-  ]
-}

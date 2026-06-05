@@ -1,8 +1,0 @@
-{
-  "content": "  // Validate that extracted IDs are numeric (GID format guarantee: gid://shopify/Type/123)\n  if (!/^\\d+$/.test(variantIdStr) || !/^\\d+$/.test(productIdStr)) {\n    console.warn({ variantGid, productGid }, \"GID-extracted IDs are not numeric \u2014 skipping\");\n    return;\n  }\n\n  // Log the canonical Shopify GIDs used for this batch\n  console.log({ variantGid, productGid, variantIdStr, productIdStr }, \"resolved variant and product from inventoryItem\");\n\n  // Check for active waitlist entries\n  const [entryCount] = await sql<{ count: string }[]>`\n    SELECT COUNT(*) AS count\n    FROM waitlist_entries\n    WHERE (\n      (signup_level = 'variant' AND variant_external_id = ${variantIdStr}::bigint AND product_external_id = ${productIdStr}::bigint)\n      OR\n      (signup_level = 'product' AND product_external_id = ${productIdStr}::bigint)\n    )\n    AND status = 'active'\n  `;\n\n  const activeCount = parseInt(entryCount?.count ?? \"0\", 10);\n  if (activeCount === 0) {\n    console.log({ variantId: variantIdStr, productId: productIdStr }, \"no active waitlist entries \u2014 skipping\");\n    return;\n  }\n\n  // Only proceed with notification batch creation when stock is positive\n  if (available === null || available <= 0) {\n    console.log({ inventoryItemId, available }, \"no positive stock \u2014 not creating notification batch\");\n    return;\n  }\n\n  // Use the actual restock detection timestamp from the webhook payload\n  const now = new Date();\n  const detectedAt = updatedAt ? new Date(updatedAt) : now;\n\n  // Load quiet hours settings\n  const [settings] = await sql<{\n    quiet_hours_start: string;",
-  "total_lines": 389,
-  "returned_lines": [
-    155,
-    195
-  ]
-}

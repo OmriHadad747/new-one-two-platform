@@ -1,8 +1,0 @@
-{
-  "content": "  `;\n\n  if (existing) {\n    console.log({ orderId: orderIdStr }, \"conversion already recorded \u2014 skipping\");\n    return;\n  }\n\n  // Collect variant ids from line items (may be empty for non-variant products)\n  const variantIdStrings = lineItems\n    .map((li) => li.variant_id)\n    .filter((id): id is number => id !== null && id !== undefined)\n    .map((id) => String(id));\n\n  // Attribution window: 7 days\n  const attributionWindowMs = 7 * 24 * 60 * 60 * 1000;\n  const windowStart = new Date(processedAt.getTime() - attributionWindowMs);\n\n  const safeEmail = buyerEmail.replace(/\\0/g, \"\");\n\n  const notifiedEntries = await sql<{\n    id: string;\n    product_external_id: string;\n    variant_external_id: string | null;\n    notified_at: Date;\n  }[]>`\n    SELECT id,\n           product_external_id::text,\n           variant_external_id::text,\n           notified_at\n    FROM waitlist_entries",
-  "total_lines": 381,
-  "returned_lines": [
-    280,
-    310
-  ]
-}

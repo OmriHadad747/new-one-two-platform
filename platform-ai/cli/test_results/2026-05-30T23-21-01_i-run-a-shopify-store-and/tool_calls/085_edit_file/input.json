@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "  if (!variantIdStr || !productIdStr) {\n    console.warn({ variantGid, productGid }, \"could not extract numeric ids \u2014 skipping\");\n    return;\n  }",
-  "new_string": "  if (!variantIdStr || !productIdStr) {\n    console.warn({ variantGid, productGid }, \"could not extract numeric ids \u2014 skipping\");\n    return;\n  }\n\n  // Validate that extracted IDs are numeric before using them in any DB or GID operation\n  if (!/^\\d+$/.test(variantIdStr) || !/^\\d+$/.test(productIdStr)) {\n    console.warn({ variantIdStr, productIdStr }, \"extracted IDs are not numeric \u2014 skipping\");\n    return;\n  }"
-}

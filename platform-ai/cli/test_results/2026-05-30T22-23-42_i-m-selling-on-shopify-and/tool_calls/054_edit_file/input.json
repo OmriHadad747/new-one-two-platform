@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/admin/ui.ts",
-  "old_string": "          label: p.title,\n        });\n      }\n      renderComponents();\n      markDirty();\n    });\n\n    // Add specific variant",
-  "new_string": "          label: p.title ?? `Product ${numericId}`,\n        });\n      }\n      renderComponents();\n      markDirty();\n    });\n\n    // Add specific variant"
-}

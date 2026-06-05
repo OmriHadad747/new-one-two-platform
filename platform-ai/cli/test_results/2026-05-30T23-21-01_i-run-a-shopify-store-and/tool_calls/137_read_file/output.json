@@ -1,8 +1,0 @@
-{
-  "content": "      `;\n      isMatch = productMatchRows.length > 0;\n    }\n\n    if (!isMatch) continue;\n\n    if (entry.variant_external_id !== null) {\n      const varExtId = entry.variant_external_id;\n      await sql`\n        INSERT INTO conversions (\n          waitlist_entry_id, order_external_id, shopper_email,\n          product_external_id, variant_external_id, notified_at, converted_at\n        ) VALUES (\n          ${entry.id}, ${orderIdStr}::bigint, ${safeEmail},\n          ${entry.product_external_id}::bigint, ${varExtId}::bigint,\n          ${entry.notified_at}, ${processedAt}\n        )\n        ON CONFLICT (order_external_id, waitlist_entry_id) DO NOTHING\n      `;\n    } else {\n      await sql`\n        INSERT INTO conversions (\n          waitlist_entry_id, order_external_id, shopper_email,\n          product_external_id, variant_external_id, notified_at, converted_at\n        ) VALUES (\n          ${entry.id}, ${orderIdStr}::bigint, ${safeEmail},\n          ${entry.product_external_id}::bigint, NULL,\n          ${entry.notified_at}, ${processedAt}\n        )\n        ON CONFLICT (order_external_id, waitlist_entry_id) DO NOTHING\n      `;\n    }\n\n    await sql`\n      UPDATE waitlist_entries\n      SET status = 'converted'\n      WHERE id = ${entry.id}\n      AND status = 'notified'\n    `;\n  }",
-  "total_lines": 387,
-  "returned_lines": [
-    330,
-    370
-  ]
-}

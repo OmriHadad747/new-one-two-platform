@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/admin.ts",
-  "old_string": "    const csvEscape = (s: string): string => `\"${s.replace(/\"/g, '\"\"')}\"`;\n    const csvRows = [\n      \"email,item,signup_level,status,signed_up_at,notified_at\",\n      ...page.map((e) => [",
-  "new_string": "    // Validate that all returned rows match the requested product (and variant) IDs\n    const validatedPage = page.filter((e) => {\n      const productMatch = e.product_external_id === productIdRaw ||\n        // DB returns text-cast bigint which may have same value but check string equality\n        String(e.product_external_id) === productIdRaw;\n      const variantMatch = variantIdRaw === null\n        ? e.variant_external_id === null\n        : String(e.variant_external_id) === variantIdRaw;\n      return productMatch && variantMatch;\n    });\n\n    const csvEscape = (s: string): string => `\"${s.replace(/\"/g, '\"\"')}\"`;\n    const csvRows = [\n      \"email,item,signup_level,status,signed_up_at,notified_at\",\n      ...validatedPage.map((e) => ["
-}

@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/widget.ts",
-  "old_string": "  // Build cart line inputs using merchandise GIDs \u2014 always from variant external ids as numeric strings\n  const cartLines = selected_variant_external_ids.map((vid: ShopifyVariantExternalId) => ({\n    merchandiseId: variantMerchandiseGid(vid),\n    quantity: 1,\n  }));",
-  "new_string": "  // Build cart line inputs using merchandise GIDs sourced directly from the inbound\n  // selected_variant_gids field (which the widget populated from live_variant_gid on each\n  // bundle component \u2014 never constructed locally from numeric ids).\n  const cartLines = (selected_variant_gids as StorefrontVariantGid[]).map((gid) => ({\n    merchandiseId: gid,\n    quantity: 1,\n  }));"
-}

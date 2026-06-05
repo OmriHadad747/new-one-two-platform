@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/admin.ts",
-  "old_string": "/** Extract the numeric legacy id from a Shopify GID */\nfunction legacyIdFromGid(gid: string): string {\n  const parts = gid.split(\"/\");\n  return parts[parts.length - 1];\n}",
-  "new_string": "/** Extract the numeric legacy id from a Shopify GID */\nfunction legacyIdFromGid(gid: string): string {\n  const parts = gid.split(\"/\");\n  return parts[parts.length - 1] ?? gid;\n}"
-}

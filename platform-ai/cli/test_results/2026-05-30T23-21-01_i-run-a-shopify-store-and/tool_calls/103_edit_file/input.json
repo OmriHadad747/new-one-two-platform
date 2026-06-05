@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "  // Idempotency: use detected_at truncated to UTC day so the unique constraint\n  // (product_external_id, variant_external_id, detected_at) enforces one batch per day per item.\n  const now = new Date();\n  // Truncate to UTC day start so same-day events resolve to the same timestamp for dedup\n  const detectedAt = new Date(now);\n  detectedAt.setUTCHours(0, 0, 0, 0);",
-  "new_string": "  // Use the actual restock detection timestamp from the webhook payload\n  const now = new Date();\n  const detectedAt = updatedAt ? new Date(updatedAt) : now;"
-}

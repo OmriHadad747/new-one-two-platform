@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "  await sql`\n    INSERT INTO notification_batches (\n      product_external_id,\n      variant_external_id,\n      available_quantity_at_detection,\n      status,\n      entries_notified,\n      detected_at,\n      scheduled_send_at\n    ) VALUES (\n      ${productIdStr}::bigint,\n      ${variantIdStr}::bigint,\n      ${available},\n      'pending',\n      0,\n      ${detectedAt},\n      ${scheduledSendAt}\n    )\n    ON CONFLICT (product_external_id, variant_external_id, detected_at) DO NOTHING\n  `;",
-  "new_string": "  // Insert batch (webhook dedup via processed_webhooks ensures single delivery per event)\n  await sql`\n    INSERT INTO notification_batches (\n      product_external_id,\n      variant_external_id,\n      available_quantity_at_detection,\n      status,\n      entries_notified,\n      detected_at,\n      scheduled_send_at\n    ) VALUES (\n      ${productIdStr}::bigint,\n      ${variantIdStr}::bigint,\n      ${available},\n      'pending',\n      0,\n      ${detectedAt},\n      ${scheduledSendAt}\n    )\n  `;"
-}

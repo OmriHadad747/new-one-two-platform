@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "  if (!itemData.inventoryItem) {\n    console.warn({ inventoryItemId }, \"inventoryItem not found \u2014 skipping\");\n    return;\n  }",
-  "new_string": "  if (!itemData.inventoryItem) {\n    throw new Error(`inventoryItem not found for id=${inventoryItemId} \u2014 cannot resolve variant`);\n  }"
-}

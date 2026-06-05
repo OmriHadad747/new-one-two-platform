@@ -1,8 +1,0 @@
-{
-  "content": "# Runtime example: `shopify_graphql`\n\nCanonical working snippet. Adapt the names but preserve the shape \u2014 imports, error handling, contract checks.\n\n```ts\nimport { shopifyClientFor, ShopifyRateLimitError } from \"../lib/shopify.js\";\n\nconst shopify = await shopifyClientFor(req.platform!); // cron path: shopifyClientFor()\n\nconst data = await shopify.graphql<{\n  order: { id: string; name: string; totalPriceSet: { shopMoney: { amount: string; currencyCode: string } } } | null;\n}>(\n  `query GetOrder($id: ID!) {\n     order(id: $id) {\n       id\n       name\n       totalPriceSet { shopMoney { amount currencyCode } }\n     }\n   }`,\n  { id: `gid://shopify/Order/${orderId}` },\n);\n\nif (!data.order) return; // deleted / not visible\n\n// Money \u2014 Shopify returns decimal strings; persist as integer minor units.\nconst amountCents = Math.round(parseFloat(data.order.totalPriceSet.shopMoney.amount) * 100);\n```",
-  "total_lines": 27,
-  "returned_lines": [
-    0,
-    27
-  ]
-}

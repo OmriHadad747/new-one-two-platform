@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/types/contracts.ts",
-  "old_string": "// POST /widget/bundle/preview-total\nexport interface WidgetPreviewTotalRequest {\n  bundle_id: BundleId;\n  selected_variant_external_ids: ShopifyVariantExternalId[];\n  item_count: number;\n}",
-  "new_string": "// POST /widget/bundle/preview-total\nexport interface WidgetPreviewTotalRequest {\n  bundle_id: BundleId;\n  /** Numeric variant external ids \u2014 sourced from component.variant_external_id\n   *  values returned by GET /widget/bundles */\n  selected_variant_external_ids: ShopifyVariantExternalId[];\n  item_count: number;\n}\n\n/** Storefront GID for a variant: gid://shopify/ProductVariant/<id> */\nexport type StorefrontVariantGid = string & { __brand: \"StorefrontVariantGid\" };"
-}

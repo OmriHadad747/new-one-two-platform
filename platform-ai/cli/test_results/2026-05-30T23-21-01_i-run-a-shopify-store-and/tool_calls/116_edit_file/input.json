@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "  if (available === null || available <= 0) {\n    console.log({ inventoryItemId, available }, \"no positive stock \u2014 skipping\");\n    return;\n  }\n\n  // Validate inventoryItemId is numeric before constructing GID",
-  "new_string": "  // Validate inventoryItemId is numeric before constructing GID"
-}

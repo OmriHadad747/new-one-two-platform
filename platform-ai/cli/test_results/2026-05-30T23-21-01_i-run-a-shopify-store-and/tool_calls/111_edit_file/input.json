@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/cron.ts",
-  "old_string": "  const pendingBatches = await sql<{\n    id: string;\n    product_external_id: string;\n    variant_external_id: string | null;\n    available_quantity_at_detection: number;\n  }[]>`\n    SELECT id,\n           product_external_id::text,\n           variant_external_id::text,\n           available_quantity_at_detection\n    FROM notification_batches\n    WHERE status = 'pending'\n    AND scheduled_send_at <= ${now}\n    ORDER BY scheduled_send_at ASC\n    LIMIT 50\n  `;",
-  "new_string": "  const pendingBatches = await sql<{\n    id: string;\n    product_external_id: string;\n    variant_external_id: string | null;\n    variant_gid: string | null;\n    available_quantity_at_detection: number;\n  }[]>`\n    SELECT id,\n           product_external_id::text,\n           variant_external_id::text,\n           variant_gid,\n           available_quantity_at_detection\n    FROM notification_batches\n    WHERE status = 'pending'\n    AND scheduled_send_at <= ${now}\n    ORDER BY scheduled_send_at ASC\n    LIMIT 50\n  `;"
-}

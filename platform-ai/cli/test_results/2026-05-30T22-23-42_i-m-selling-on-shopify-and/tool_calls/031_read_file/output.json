@@ -1,8 +1,0 @@
-{
-  "content": "        const provisioned = provisionedTiers[i];\n        await tx`\n          INSERT INTO bundle_discount_tiers\n            (bundle_id, min_item_count, discount_value, discount_amount, free_item_count,\n             discount_code, discount_external_id, created_at)\n          VALUES (\n            ${bundleId},\n            ${tier.min_item_count},\n            ${tier.discount_value != null ? String(tier.discount_value) : null},\n            ${tier.discount_amount != null ? String(tier.discount_amount) : null},\n            ${tier.free_item_count ?? null},\n            ${provisioned.discountCode},\n            ${provisioned.discountExternalId},\n            now()\n          )\n          ON CONFLICT (bundle_id, min_item_count) DO NOTHING\n        `;\n      }\n\n      return bundleId;\n    });\n\n    newBundleId = result;\n  } catch (err) {\n    console.error({ requestId: req.platform!.requestId, err: String(err) }, \"DB insert failed during bundle create\");",
-  "total_lines": 872,
-  "returned_lines": [
-    455,
-    480
-  ]
-}

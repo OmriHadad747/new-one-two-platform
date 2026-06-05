@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "type WebhookHandler = (payload: never, req: Request) => Promise<void>;\n\nexport const webhookHandlers: Record<string, WebhookHandler> = {",
-  "new_string": "// eslint-disable-next-line @typescript-eslint/no-explicit-any\nexport const webhookHandlers: Record<string, (payload: any, req: Request) => Promise<void>> = {"
-}

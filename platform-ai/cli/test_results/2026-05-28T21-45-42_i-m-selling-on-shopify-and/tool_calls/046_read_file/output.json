@@ -1,8 +1,0 @@
-{
-  "content": "# component_rules/admin.md\n\nConventions for the admin embedded panel \u2014 `scaffold/admin/ui.ts`. Read\nthis before writing any admin code.\n\n## What the admin module is\n\nA self-contained JavaScript ES module that runs inside a Shopify Admin\niframe. The Shopify shell calls:\n\n```ts\npanel.mount(container, bridge) // your only export\n```\n\nYou render UI inside `container` and reach the outside world only\nthrough `bridge`. Anything touching the DOM / network / storage outside\n`container` and `bridge` is rejected by the sandbox.\n\n## Output rules\n\n- **Type the SDK** \u2014 this file IS type-checked. Start with exactly one\n  type-only import and annotate `bridge` with `AdminBridge`:\n\n  ```ts\n  import type { AdminBridge } from \"@platform/admin-sdk\";\n\n  export function mount(container: HTMLElement, bridge: AdminBridge): void {\n    // ...\n  }\n  ```",
-  "total_lines": 186,
-  "returned_lines": [
-    0,
-    30
-  ]
-}

@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/cron.ts",
-  "old_string": "      const unsubscribeUrl = `https://placeholder-domain.myshopify.com/apps/back-in-stock/unsubscribe?token=${entry.unsubscribe_token}`;",
-  "new_string": "      // Build unsubscribe URL using the shop domain from the Shopify client context\n      const shopDomain = (shopify as { shop?: string }).shop ?? process.env[\"SHOP_DOMAIN\"] ?? \"\";\n      const unsubscribeUrl = `https://${shopDomain}/apps/back-in-stock/unsubscribe?token=${entry.unsubscribe_token}`;"
-}

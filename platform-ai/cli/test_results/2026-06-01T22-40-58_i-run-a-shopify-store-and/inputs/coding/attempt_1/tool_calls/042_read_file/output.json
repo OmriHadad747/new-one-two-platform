@@ -1,8 +1,0 @@
-{
-  "content": "    `;\n\n    if (!restockEvent) {\n      console.log(\n        { topic: \"inventory_levels/update\", inventoryItemId },\n        \"restock event insert conflict (race), no-op\"\n      );\n      return;\n    }\n\n    console.log(\n      { topic: \"inventory_levels/update\", restockEventId: restockEvent.id, notificationBudget },\n      \"restock event created\"\n    );\n\n    // Load notification settings for quiet hours check and template\n    const [settings] = await sql<NotificationSettingsRow[]>`\n      SELECT * FROM notification_settings LIMIT 1\n    `;\n\n    if (settings && isInQuietHours(settings)) {\n      console.log(\n        { topic: \"inventory_levels/update\", restockEventId: restockEvent.id },\n        \"quiet hours active, deferring notifications\"\n      );\n      // Leave status as 'open'; a future re-delivery or cron could pick this up.\n      // The plan states we hold the entire batch during quiet hours.\n      return;\n    }\n",
-  "total_lines": 402,
-  "returned_lines": [
-    135,
-    165
-  ]
-}

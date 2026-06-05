@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "    // Idempotency: check for an open or dispatching restock event for this inventory item\n    const [existingEvent] = await sql<RestockEventRow[]>`\n      SELECT *\n      FROM restock_events\n      WHERE inventory_item_external_id = ${inventoryItemId}\n        AND status IN ('open', 'dispatching')\n      LIMIT 1\n    `;\n\n    if (existingEvent) {\n      console.log(\n        { topic: \"inventory_levels/update\", inventoryItemId, eventId: existingEvent.id },\n        \"restock event already open or dispatching, no-op\"\n      );\n      return;\n    }\n\n    // Resolve variant external id via Admin GraphQL inventoryItem query",
-  "new_string": "    // Resolve variant external id via Admin GraphQL inventoryItem query"
-}

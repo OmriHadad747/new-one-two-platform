@@ -1,7 +1,0 @@
-I have a complete, well-scoped request. One clarification before I spec:
-
-**Quiet hours** — you said "nothing sends late at night". Do you mean:
-  • A time window you set once in settings (e.g. "don't send between 10pm–6am in my timezone"), OR
-  • A per-email opt-in checkbox ("only send me restocks during business hours")
-
-Also, for the **"recovered demand" metric** — you want to track signups → notifications sent → purchases within a week. That last part (linking a purchase back to a specific waitlist signup) requires us to match the customer's email at checkout to their waitlist entry, then watch their order for 7 days. This is doable but adds complexity. Should I include that full funnel, or would you prefer a simpler version that just counts signups + notifications sent?

@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "      // Check if any purchased variant belongs to the entry's product\n      // Use IN clause with individually parameterized values for safety\n      const variantBigints = variantIdStrings.map((s) => `${s}::bigint`).join(\", \");\n      const productMatchRows = await sql<{ id: string }[]>`\n        SELECT id FROM waitlist_entries\n        WHERE product_external_id = ${entry.product_external_id}::bigint\n        AND variant_external_id IN (${sql.unsafe(variantBigints)})\n        LIMIT 1\n      `;",
-  "new_string": "      // Check if any purchased variant belongs to the entry's product\n      // variantIdStrings are validated numeric strings from the order payload\n      // Convert to numbers for the ANY() comparison\n      const variantNums = variantIdStrings.map((s) => parseInt(s, 10));\n      const productMatchRows = await sql<{ id: string }[]>`\n        SELECT id FROM waitlist_entries\n        WHERE product_external_id = ${entry.product_external_id}::bigint\n        AND variant_external_id::text = ANY(${variantIdStrings})\n        LIMIT 1\n      `;"
-}
