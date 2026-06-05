@@ -1,0 +1,359 @@
+{
+  "edits": [
+    {
+      "path": "persistence[app_settings].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": "singleton row; application code ensures exactly one row exists"
+        },
+        {
+          "name": "quiet_hours_start",
+          "role": "count",
+          "nullable": false,
+          "purpose": "hour of day 0-23 when the quiet window begins; emails are deferred if the current hour is within the window"
+        },
+        {
+          "name": "quiet_hours_end",
+          "role": "count",
+          "nullable": false,
+          "purpose": "hour of day 0-23 when the quiet window ends; deferred batches resume at this hour"
+        },
+        {
+          "name": "notify_quota",
+          "role": "count",
+          "nullable": false,
+          "purpose": "maximum subscribers to notify per restock event dispatch run; remainder waits for the next restock"
+        },
+        {
+          "name": "conversion_window_days",
+          "role": "count",
+          "nullable": false,
+          "purpose": "number of days after a notification is sent within which a purchase counts as a conversion"
+        },
+        {
+          "name": "email_subject_template",
+          "role": "text",
+          "nullable": false,
+          "purpose": "merchant-configured email subject line template, may include placeholders for product name and item details"
+        }
+      ]
+    },
+    {
+      "path": "externalContracts",
+      "value": [
+        {
+          "surface": "widget",
+          "path": "/widget/availability",
+          "method": "GET",
+          "purpose": "Check whether a specific item (variant or product) is currently out of stock, so the widget knows whether to render the signup form.",
+          "requestShape": {
+            "item_key": "identifier",
+            "item_type": "status"
+          },
+          "responseShape": {
+            "is_out_of_stock": "flag",
+            "item_label": "text"
+          }
+        },
+        {
+          "surface": "widget",
+          "path": "/widget/waitlist",
+          "method": "GET",
+          "purpose": "Return the current signup state for an email address on a specific item so the widget can render the correct initial UI without requiring a form submission.",
+          "requestShape": {
+            "item_key": "identifier",
+            "email": "text"
+          },
+          "responseShape": {
+            "is_signed_up": "flag"
+          }
+        },
+        {
+          "surface": "widget",
+          "path": "/widget/waitlist",
+          "method": "POST",
+          "purpose": "Add a shopper's email to the waitlist for a specific out-of-stock item.",
+          "requestShape": {
+            "item_key": "identifier",
+            "item_type": "status",
+            "product_external_id": "reference",
+            "variant_external_id": "reference",
+            "email": "text"
+          },
+          "responseShape": {
+            "success": "flag",
+            "message": "text"
+          }
+        },
+        {
+          "surface": "widget",
+          "path": "/widget/unsubscribe",
+          "method": "GET",
+          "purpose": "Process a one-click unsubscribe link from a notification email, removing the shopper from all their active waitlist entries.",
+          "requestShape": {
+            "token": "text"
+          },
+          "responseShape": {
+            "success": "flag",
+            "message": "text"
+          }
+        },
+        {
+          "surface": "admin",
+          "path": "/admin/dashboard",
+          "method": "GET",
+          "purpose": "Return a paginated list of products/variants ranked by waitlist size for the merchant overview.",
+          "requestShape": {
+            "cursor": "text"
+          },
+          "responseShape": {
+            "items": "list",
+            "next_cursor": "text",
+            "total_count": "count"
+          }
+        },
+        {
+          "surface": "admin",
+          "path": "/admin/waitlist",
+          "method": "GET",
+          "purpose": "Return a paginated list of individual subscriber entries for a specific item so the merchant can drill in.",
+          "requestShape": {
+            "item_key": "identifier",
+            "cursor": "text"
+          },
+          "responseShape": {
+            "entries": "list",
+            "next_cursor": "text",
+            "total_count": "count"
+          }
+        },
+        {
+          "surface": "admin",
+          "path": "/admin/waitlist/export",
+          "method": "GET",
+          "purpose": "Export all subscriber entries for a specific item as a CSV file download.",
+          "requestShape": {
+            "item_key": "identifier"
+          },
+          "responseShape": {
+            "csv_content": "text"
+          }
+        },
+        {
+          "surface": "admin",
+          "path": "/admin/settings",
+          "method": "GET",
+          "purpose": "Return the current app settings including email subject template, quiet hours window, and notify quota.",
+          "requestShape": {},
+          "responseShape": {
+            "settings": "object"
+          }
+        },
+        {
+          "surface": "admin",
+          "path": "/admin/settings",
+          "method": "POST",
+          "purpose": "Save updated app settings for email subject template, quiet hours, and notify quota.",
+          "requestShape": {
+            "email_subject_template": "text",
+            "quiet_hours_start": "count",
+            "quiet_hours_end": "count",
+            "notify_quota": "count",
+            "conversion_window_days": "count"
+          },
+          "responseShape": {
+            "success": "flag"
+          }
+        },
+        {
+          "surface": "admin",
+          "path": "/admin/metrics",
+          "method": "GET",
+          "purpose": "Return demand-recovery metrics: total signups, total notified, and confirmed conversions per item.",
+          "requestShape": {
+            "cursor": "text"
+          },
+          "responseShape": {
+            "total_signups": "count",
+            "total_notified": "count",
+            "total_converted": "count",
+            "items": "list",
+            "next_cursor": "text",
+            "total_count": "count"
+          }
+        }
+      ]
+    },
+    {
+      "path": "capabilities[send-restock-email].dataNeeds",
+      "value": [
+        "recipient email",
+        "product name",
+        "item details",
+        "unsubscribe URL",
+        "email subject template"
+      ]
+    },
+    {
+      "path": "triggers",
+      "value": [
+        {
+          "kind": "external-event",
+          "event": "an inventory level is updated at a location",
+          "signalFields": [
+            "inventory item identifier",
+            "available quantity",
+            "location identifier",
+            "inventory level updated at"
+          ],
+          "idempotency": "if a restock_event already exists for this inventory item at this inventory_level_updated_at timestamp, treat the event as a no-op",
+          "shopifyTopic": "inventory_levels/update",
+          "payloadBindings": [
+            {
+              "signalField": "inventory item identifier",
+              "source": "payload",
+              "payloadPath": "inventory_item_id",
+              "resolution": null
+            },
+            {
+              "signalField": "available quantity",
+              "source": "payload",
+              "payloadPath": "available",
+              "resolution": null
+            },
+            {
+              "signalField": "location identifier",
+              "source": "payload",
+              "payloadPath": "location_id",
+              "resolution": null
+            },
+            {
+              "signalField": "inventory level updated at",
+              "source": "payload",
+              "payloadPath": "updated_at",
+              "resolution": null
+            }
+          ]
+        },
+        {
+          "kind": "external-event",
+          "event": "a product is deleted from the store",
+          "signalFields": [
+            "product identifier"
+          ],
+          "idempotency": "if the product's waitlist entries are already removed, treat the event as a no-op",
+          "shopifyTopic": "products/delete",
+          "payloadBindings": [
+            {
+              "signalField": "product identifier",
+              "source": "payload",
+              "payloadPath": "id",
+              "resolution": null
+            }
+          ]
+        },
+        {
+          "kind": "external-event",
+          "event": "an order is paid by a customer",
+          "signalFields": [
+            "order identifier",
+            "buyer email",
+            "purchased item variant identifiers"
+          ],
+          "idempotency": "if a conversion_event already exists for this order identifier, treat the event as a no-op",
+          "shopifyTopic": "orders/paid",
+          "payloadBindings": [
+            {
+              "signalField": "order identifier",
+              "source": "payload",
+              "payloadPath": "id",
+              "resolution": null
+            },
+            {
+              "signalField": "buyer email",
+              "source": "payload",
+              "payloadPath": "email",
+              "resolution": null
+            },
+            {
+              "signalField": "purchased item variant identifiers",
+              "source": "payload",
+              "payloadPath": "line_items[].variant_id",
+              "resolution": null
+            }
+          ]
+        },
+        {
+          "kind": "schedule",
+          "cadence": "every hour",
+          "jobPurpose": "Dispatch back-in-stock notification emails for pending restock events, respecting quiet hours and per-restock notify quotas.",
+          "perTickWork": "For each pending restock_event not yet fully dispatched, select waitlist entries at the front of the queue up to the configured notify-quota that have not already been notified for this restock event, create a notification_batch, enqueue one notification_record per recipient, send emails, and mark the batch dispatched.",
+          "bulkFetchRule": false
+        }
+      ]
+    },
+    {
+      "path": "persistence[restock_events].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "item_key",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "item that became available, matches waitlist_entries.item_key"
+        },
+        {
+          "name": "inventory_item_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "Shopify inventory item id from the webhook, part of the dedup key"
+        },
+        {
+          "name": "inventory_level_updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": "value of updated_at bound from the inventory_levels/update webhook payload; used as the dedup key partner so two re-deliveries of the same webhook event carry the same timestamp and the unique constraint on (inventory_item_external_id, inventory_level_updated_at) prevents a duplicate restock_event row"
+        },
+        {
+          "name": "status",
+          "role": "status",
+          "nullable": false,
+          "purpose": "lifecycle: pending (awaiting dispatch), dispatching (job in progress), completed (all eligible subscribers notified for this event)"
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ]
+    },
+    {
+      "path": "persistence[restock_events].keyedByColumns",
+      "value": [
+        "inventory_item_external_id",
+        "inventory_level_updated_at"
+      ]
+    },
+    {
+      "path": "persistence[restock_events].statusField",
+      "value": null
+    },
+    {
+      "path": "persistence[notification_batches].statusField",
+      "value": null
+    },
+    {
+      "path": "persistence[notification_records].statusField",
+      "value": null
+    }
+  ]
+}

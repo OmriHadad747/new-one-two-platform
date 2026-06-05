@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "persistence[6] (app_settings) + externalContracts[8] (POST /admin/settings) + capabilities[\"send-restock-email\"]",
+      "issue": "The `app_settings` table declares columns `[id, quiet_hours_start, quiet_hours_end, notify_quota, conversion_window_days]` \u2014 there is no `email_subject_template` or `email_body_template` column. Yet `POST /admin/settings` requestShape includes `\"email_subject_template\": \"text\"`, and the `send-restock-email` capability lists `\"email subject template\"` as a dataNeed. The admin contract writes a setting that has no backing column; the notify capability consumes a value that nothing stores. This is phantom storage: the coding agent will either fabricate a column name or silently drop the template feature.",
+      "fix": "Add `email_subject_template` (role: text, nullable: false) and `email_body_template` (role: text, nullable: false) columns to `app_settings`, and add `email_body_template` to the `POST /admin/settings` requestShape."
+    },
+    {
+      "severity": "important",
+      "location": "persistence[1] (restock_events).keyedByColumns + triggers[0].payloadBindings",
+      "issue": "The `restock_events` dedup key is `[\"inventory_item_external_id\", \"detected_at\"]`, and the column's purpose states it holds \"the timestamp of the inventory_levels/update webhook.\" However, the `inventory_levels/update` payloadBindings bind only `inventory_item_id`, `available`, and `location_id` \u2014 no timestamp field is bound from the payload. If `detected_at` is set to `NOW()` at insertion time, two re-deliveries of the same webhook will each get a different wall-clock value and the dedup key will not fire. The coding agent has no declared source for the timestamp value that the dedup actually depends on.",
+      "fix": "Add a `signalField` of \"inventory level updated at\" to the `inventory_levels/update` trigger with a payloadBinding to `payloadPath: \"updated_at\"` (present on the payload), rename the `restock_events` column accordingly, and use that bound value \u2014 not `NOW()` \u2014 as the dedup timestamp."
+    },
+    {
+      "severity": "important",
+      "location": "persistence[1] (restock_events).statusField, persistence[2] (notification_batches).statusField, persistence[3] (notification_records).statusField",
+      "issue": "The spec states `statusField` is \"RESERVED for binding a column to a non-null stateMachine.\" The only declared `stateMachine` in the plan is bound to `item_availability_snapshots.availability_status`. Yet `restock_events`, `notification_batches`, and `notification_records` all declare a non-null `statusField: \"status\"` with no corresponding stateMachine. These are internal application workflow lifecycles (correctly excluded from a stateMachine per spec), so their `statusField` should be `null`; the `usesWorkflow` flag on the owning capabilities already binds the workflow helper for those columns.",
+      "fix": "Set `statusField: null` on `restock_events`, `notification_batches`, and `notification_records`; the `usesWorkflow: true` flags on `detect-restock`, `dispatch-notification-batch`, and `record-notification-outcome` are the correct and sufficient binding for the workflow helper."
+    }
+  ]
+}

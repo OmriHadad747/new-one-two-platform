@@ -1,0 +1,171 @@
+{
+  "edits": [
+    {
+      "path": "persistence[app_settings].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": "singleton row; application code ensures exactly one row exists"
+        },
+        {
+          "name": "quiet_hours_start",
+          "role": "count",
+          "nullable": false,
+          "purpose": "hour of day 0-23 when the quiet window begins; emails are deferred if the current hour is within the window"
+        },
+        {
+          "name": "quiet_hours_end",
+          "role": "count",
+          "nullable": false,
+          "purpose": "hour of day 0-23 when the quiet window ends; deferred batches resume at this hour"
+        },
+        {
+          "name": "notify_quota",
+          "role": "count",
+          "nullable": false,
+          "purpose": "maximum subscribers to notify per restock event dispatch run; remainder waits for the next restock"
+        },
+        {
+          "name": "conversion_window_days",
+          "role": "count",
+          "nullable": false,
+          "purpose": "number of days after a notification is sent within which a purchase counts as a conversion"
+        },
+        {
+          "name": "email_subject_template",
+          "role": "text",
+          "nullable": false,
+          "purpose": "merchant-configured email subject line template, may include placeholders for product name and item details"
+        },
+        {
+          "name": "email_body_template",
+          "role": "text",
+          "nullable": false,
+          "purpose": "merchant-configured email body template, may include placeholders for product name, item details, and unsubscribe URL"
+        }
+      ]
+    },
+    {
+      "path": "externalContracts[8].requestShape",
+      "value": {
+        "email_subject_template": "text",
+        "email_body_template": "text",
+        "quiet_hours_start": "count",
+        "quiet_hours_end": "count",
+        "notify_quota": "count",
+        "conversion_window_days": "count"
+      }
+    },
+    {
+      "path": "capabilities[send-restock-email].dataNeeds",
+      "value": [
+        "recipient email",
+        "product name",
+        "item details",
+        "unsubscribe URL",
+        "email subject template",
+        "email body template"
+      ]
+    },
+    {
+      "path": "triggers[0].signalFields",
+      "value": [
+        "inventory item identifier",
+        "available quantity",
+        "location identifier",
+        "inventory level updated at"
+      ]
+    },
+    {
+      "path": "triggers[0].payloadBindings",
+      "value": [
+        {
+          "signalField": "inventory item identifier",
+          "source": "payload",
+          "payloadPath": "inventory_item_id",
+          "resolution": null
+        },
+        {
+          "signalField": "available quantity",
+          "source": "payload",
+          "payloadPath": "available",
+          "resolution": null
+        },
+        {
+          "signalField": "location identifier",
+          "source": "payload",
+          "payloadPath": "location_id",
+          "resolution": null
+        },
+        {
+          "signalField": "inventory level updated at",
+          "source": "payload",
+          "payloadPath": "updated_at",
+          "resolution": null
+        }
+      ]
+    },
+    {
+      "path": "persistence[restock_events].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "item_key",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "item that became available, matches waitlist_entries.item_key"
+        },
+        {
+          "name": "inventory_item_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "Shopify inventory item id from the webhook used for dedup key"
+        },
+        {
+          "name": "inventory_level_updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": "value of updated_at from the inventory_levels/update webhook payload; used as the dedup key partner so two re-deliveries of the same event share the same value and the unique constraint prevents a duplicate restock_event row"
+        },
+        {
+          "name": "status",
+          "role": "status",
+          "nullable": false,
+          "purpose": "lifecycle: pending (awaiting dispatch), dispatching (job in progress), completed (all eligible subscribers notified for this event)"
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ]
+    },
+    {
+      "path": "persistence[restock_events].keyedByColumns",
+      "value": [
+        "inventory_item_external_id",
+        "inventory_level_updated_at"
+      ]
+    },
+    {
+      "path": "persistence[restock_events].statusField",
+      "value": null
+    },
+    {
+      "path": "persistence[notification_batches].statusField",
+      "value": null
+    },
+    {
+      "path": "persistence[notification_records].statusField",
+      "value": null
+    }
+  ]
+}
