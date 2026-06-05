@@ -20,15 +20,17 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import anthropic
 from pydantic import ValidationError
 
+from subagents.c_hld_agent.patch import PatchError, apply_edits
 from subagents.c_hld_agent.schema import HLDPlan
 from subagents.w_coding_agent.tools import (
     TOOL_DEFINITIONS as _CODING_TOOL_DEFINITIONS,
+)
+from subagents.w_coding_agent.tools import (
     RunnerContext,
     call_tool,
 )
@@ -46,6 +48,7 @@ DEFAULT_MAX_TURNS = 40
 DEFAULT_MAX_TOKENS = 32000
 
 EMIT_TOOL = "emit_hld_plan"
+PATCH_TOOL = "patch_plan"
 
 # The read-only catalog lookups the HLD agent may call during Phase-2
 # resolution. Defined in the coding agent; filtered by name here so the two
@@ -97,9 +100,61 @@ def _emit_tool_definition() -> Dict[str, Any]:
     }
 
 
-def _tool_definitions() -> List[Dict[str, Any]]:
+def _patch_tool_definition() -> Dict[str, Any]:
+    return {
+        "name": PATCH_TOOL,
+        "description": (
+            "Revise the prior HLD plan by applying ONLY the edits each reviewer "
+            "finding requires, then finish — this is the terminal tool for a "
+            "revision (there is no emit step). Everything you do not edit is "
+            "carried over from the prior plan unchanged. Address each edit by "
+            "identity, not position: a capability field as "
+            "`capabilities[<id>].<field>` (e.g. `capabilities[process-restock-queue].kind`), "
+            "a table field as `persistence[<name>].<field>`, a whole element as "
+            "`capabilities[<id>]` / `persistence[<name>]`, or a top-level field by "
+            "name (`dataFlow`, `complexity`, `edgeCases`). For a list field "
+            "(keyedByColumns, shopifySteps, edgeCases) supply the FULL new list as "
+            "the value. The edited plan is validated as a whole; if it fails you "
+            "get the errors back — fix the edits and call again. Call once with all "
+            "edits."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "edits": {
+                    "type": "array",
+                    "minItems": 1,
+                    "description": "Every change the findings require, addressed by id/name.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": (
+                                    "Where to set: '<field>' (top-level), "
+                                    "'capabilities[<id>]' / 'persistence[<name>]' (whole "
+                                    "element), or '<coll>[<key>].<field>' (one field)."
+                                ),
+                            },
+                            "value": {
+                                "description": "The full new value for that path (any JSON type)."
+                            },
+                        },
+                        "required": ["path", "value"],
+                    },
+                }
+            },
+            "required": ["edits"],
+        },
+    }
+
+
+def _tool_definitions(prior_plan: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     catalog = [d for d in _CODING_TOOL_DEFINITIONS if d["name"] in _CATALOG_TOOL_NAMES]
-    return catalog + [_emit_tool_definition()]
+    # Revise mode (a prior plan to edit) exposes patch_plan as the terminal;
+    # the first pass exposes emit_hld_plan. Only one terminal is ever offered.
+    terminal = _patch_tool_definition() if prior_plan is not None else _emit_tool_definition()
+    return catalog + [terminal]
 
 
 def _format_pydantic_errors(err: ValidationError) -> List[str]:
@@ -119,10 +174,18 @@ def run_hld_loop(
     max_turns: int = DEFAULT_MAX_TURNS,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     on_tool_call: Optional[Callable[[str], None]] = None,
+    prior_plan: Optional[Dict[str, Any]] = None,
 ) -> HLDLoopResult:
-    """Drive the HLD agent until it emits a valid plan or the budget runs out."""
+    """Drive the HLD agent until it produces a valid plan or the budget runs out.
+
+    First pass (`prior_plan is None`): the terminal tool is `emit_hld_plan` and
+    the model submits the whole plan. Revise (`prior_plan` set): the terminal is
+    `patch_plan` — the model submits only the edits each finding needs, applied to
+    the prior plan and re-validated as a whole. Either way the loop ends when a
+    valid plan results.
+    """
     client = anthropic.Anthropic()
-    tools = _tool_definitions()
+    tools = _tool_definitions(prior_plan)
 
     messages: List[Dict[str, Any]] = [
         {
@@ -206,6 +269,24 @@ def run_hld_loop(
                     emitted_plan = plan.model_dump(mode="json", by_alias=True)
                     result: Dict[str, Any] = {"ok": True}
                     last_errors = []
+                except ValidationError as e:
+                    last_errors = _format_pydantic_errors(e)
+                    result = {"ok": False, "errors": last_errors}
+            elif tu.name == PATCH_TOOL:
+                # Revise terminal: apply the edits to the prior plan and validate
+                # the whole candidate. Atomic — on any path or schema error nothing
+                # is committed and the model gets the errors back to retry.
+                try:
+                    if prior_plan is None:
+                        raise PatchError("patch_plan called with no prior plan to edit")
+                    candidate = apply_edits(prior_plan, tool_input.get("edits"))
+                    plan = HLDPlan.model_validate(candidate)
+                    emitted_plan = plan.model_dump(mode="json", by_alias=True)
+                    result = {"ok": True}
+                    last_errors = []
+                except PatchError as e:
+                    last_errors = [f"patch: {e}"]
+                    result = {"ok": False, "errors": last_errors}
                 except ValidationError as e:
                     last_errors = _format_pydantic_errors(e)
                     result = {"ok": False, "errors": last_errors}
@@ -303,7 +384,12 @@ def _cli_line(name: str, tool_input: Dict[str, Any], result: Dict[str, Any]) -> 
         summary = f"{tool_input.get('cluster', '')} ({tool_input.get('surface', '')})"
     elif name == EMIT_TOOL:
         summary = "ok" if result.get("ok") else f"{len(result.get('errors', []))} errors"
+    elif name == PATCH_TOOL:
+        n = len(tool_input.get("edits") or [])
+        status = "ok" if result.get("ok") else f"{len(result.get('errors', []))} errors"
+        summary = f"{n} edits → {status}"
     else:
         summary = ""
-    mark = "✗" if (isinstance(result, dict) and (result.get("ok") is False or "error" in result)) else "✓"
+    failed = isinstance(result, dict) and (result.get("ok") is False or "error" in result)
+    mark = "✗" if failed else "✓"
     return f"[hld] {name:20s} {summary}  {mark}"

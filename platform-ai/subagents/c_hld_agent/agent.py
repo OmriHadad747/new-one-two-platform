@@ -65,21 +65,32 @@ Merchant request: {prompt}
 Product-agent intent (use as context):
 {intent_json}
 
-REVISE the prior HLD plan below to address every reviewer finding, then call
-emit_hld_plan with the corrected plan.
+REVISE the prior HLD plan to address every reviewer finding. For THIS task the
+terminal tool is `patch_plan`, NOT `emit_hld_plan` — you do not re-emit the
+plan. Call `patch_plan` ONCE with the minimal set of edits; everything you do
+not edit is carried over from the prior plan byte-for-byte.
 
-PRIOR PLAN — sections the reviewer did NOT flag must be carried over
-unchanged. Do not drop, rename, reorder, or reword unflagged capabilities,
-tables, columns, contracts, bindings, edge cases, or dataFlow phrasing. Do
-not add anything beyond what a finding's fix requires. Re-verify any binding
-you change against the catalog tools before emitting.
+Address each edit by identity, mirroring the finding's location:
+  - a capability field : capabilities[<id>].<field>
+        e.g. capabilities[process-restock-queue].kind  ->  "write"
+  - a table field      : persistence[<name>].<field>
+        e.g. persistence[restock_events].keyedByColumns  ->  ["item_external_id", "status"]
+  - a whole element    : capabilities[<id>]  or  persistence[<name>]  (object value)
+  - a top-level field  : dataFlow, complexity, edgeCases, ...
+For a list field (keyedByColumns, shopifySteps, edgeCases) supply the FULL new
+list as the value. Make ONLY the changes a finding's fix requires — do not
+touch unflagged capabilities, tables, columns, contracts, bindings, or edge
+cases. Re-verify any Shopify binding you change against the catalog tools
+first. The edited plan is validated as a whole; if it fails you get the errors
+back — fix the edits and call `patch_plan` again.
+
+PRIOR PLAN (reference — do NOT re-emit it):
 
 ```json
 {prior_plan_json}
 ```
 
-REVIEWER FINDINGS — apply each finding's fix to the relevant section; leave
-everything else untouched.
+REVIEWER FINDINGS — apply each fix as one or more edits:
 
 {findings_text}"""
 
@@ -138,6 +149,9 @@ def run_hld_agent(
         user_message=user,
         model=model,
         max_tokens=_MAX_TOKENS,
+        # Revise mode: hand the loop the prior plan so the terminal tool becomes
+        # patch_plan (edit-in-place) instead of emit_hld_plan (full re-emit).
+        prior_plan=prior_plan if is_revise else None,
     )
 
     if result.plan is not None:
