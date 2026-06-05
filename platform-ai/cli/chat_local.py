@@ -255,12 +255,15 @@ def main() -> int:
 # at the 1h-TTL rate the loop uses. GENERIC — keyed by the model family each
 # stage runs on (mirrors models/agent_models.py), never by app.
 _PRICE_PER_MTOK: Dict[str, Tuple[float, float, float, float]] = {
+    "opus": (15.0, 75.0, 1.50, 30.0),
     "sonnet": (3.0, 15.0, 0.30, 6.0),
     "haiku": (1.0, 5.0, 0.10, 2.0),
 }
+# Mirrors models/agent_models.py: the first HLD pass is Opus, the revise is
+# Sonnet, hld_v is Sonnet. Keep in sync if those change.
 _STAGE_MODEL: Dict[str, str] = {
     "tokens_product": "haiku",
-    "tokens_hld": "sonnet",
+    "tokens_hld": "opus",
     "tokens_hld_v": "sonnet",
     "tokens_hld_revise": "sonnet",
     "tokens_coding": "sonnet",

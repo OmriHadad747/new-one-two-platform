@@ -61,8 +61,15 @@ highest-risk part of the plan and the one structural checks cannot judge:
     as a full ordered sequence rather than a single op that silently does
     nothing?
 
-Two additional GENERIC plan-level invariants (no app knowledge — they \
-iterate the plan's own declarations and check internal consistency):
+THE CLOSURE PRINCIPLE (the single generic rule the next checks instantiate). \
+Every behavior the plan PROMISES must have a concrete realizer elsewhere in \
+the plan; a promise with no mechanism is the most common — and most \
+expensive — plan defect. The cases below (A/B/C) are the recurring \
+instances, but the principle is general: if a capability's description \
+promises something (a link, a dedup, a fresh external value, a tunable, a \
+status) and no plan element realizes it, flag it as a closure gap even when \
+it is not one of A/B/C. (No app knowledge — these iterate the plan's own \
+declarations and check internal consistency.)
 
   (A) Outbound URLs are bound to declared routes. ANY capability whose
       `dataNeeds` or `description` references a URL the system will EMIT

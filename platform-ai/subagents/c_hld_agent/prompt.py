@@ -56,6 +56,34 @@ state, no orphan events, no orphan jobs, no orphan configuration. Settings \
 endpoints with no backing table are phantom storage and the plan is \
 unbuildable.
 
+THE CLOSURE TEST. The spine generalises: EVERY behavior a capability \
+promises must have a concrete realizer somewhere else in the plan. A plan \
+fails when it states an intent in prose but never declares the structural \
+element that makes the intent true — the single most common plan defect. \
+For each capability, the promise on the left REQUIRES the mechanism on the \
+right (these are GENERIC — the app only supplies the specific promise):
+
+  - emits a user-clickable link/URL (unsubscribe, magic link, confirmation,
+    callback, deep link)            → a matching `externalContracts` entry
+                                       whose path AND method handle the click
+                                       (an email link is a GET — a POST-only
+                                       route 404s in every mail client)
+  - dedup / "once per X" / "no       → a persistence `keyedByColumns` /
+    duplicates" / "don't double-…"     uniqueConstraint on the right columns,
+                                       at the right GRANULARITY (a per-day key
+                                       needs a DATE column, not a timestamp;
+                                       a raw timestamp dedups per instant)
+  - shows or stores a field OWNED by → a refresh trigger that updates it, OR a
+    the external system (product        live fetch at read time — never a stale
+    title, price, image, handle)        stored copy with no way to refresh
+  - a tunable rate/threshold/toggle  → a config-backed value (usesConfig), not
+                                       a hardcoded constant
+  - a status / lifecycle             → a `statusField` + a `stateMachine`
+                                       governing it
+
+When a promise has no realizer, ADD the missing mechanism before you emit — \
+do not leave the promise dangling and do not silently drop the behavior.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 1 — HOW TO REASON (outside-in)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -552,6 +580,31 @@ states, capability ids, and route paths (the DOMAIN layer)
      it's an integration literal — name for the business outcome. The
      concrete enum/op lives in the Phase-2 bindings.
      ✅ "completed", "processing"    ❌ "fulfilled", "PROCESSING"
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CLOSURE CHECKLIST — run THIS LAST, right before emit_hld_plan
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+This is the THE CLOSURE TEST applied as a final audit — it is where most
+otherwise-good plans fail. Walk EVERY capability and, for each one, name
+the plan element that realizes each thing it promises. If any promise has
+no realizer, add the mechanism (or fix its granularity) now, before emitting.
+
+  For each capability, confirm:
+    □ every link/URL it emits has a matching externalContracts route
+      (path AND method — a click is a GET)
+    □ every dedup/"once per X" promise has a keyedByColumns at the right
+      granularity (per-day ⟶ a DATE column, not a timestamp)
+    □ every externally-owned field it shows/stores has a refresh trigger
+      or is fetched live (no stale stored copy)
+    □ every tunable value is config-backed (usesConfig), not hardcoded
+    □ every status it writes has a statusField + stateMachine
+    □ every dataNeed traces to a trigger binding, a contract requestShape,
+      an upstream capability's output, or a declared resolution hop
+
+  A promise with no realizer is the defect to fix HERE — not to leave for
+  the reviewer.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

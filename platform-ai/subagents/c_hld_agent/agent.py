@@ -106,7 +106,8 @@ def run_hld_agent(
         cannot produce a valid plan. Message carries the last error list.
     """
     system = build_system_prompt()
-    if validator_hint and prior_plan is not None:
+    is_revise = validator_hint is not None and prior_plan is not None
+    if is_revise:
         user = _REVISE_TEMPLATE.format(
             prompt=prompt,
             intent_json=json.dumps(intent),
@@ -115,6 +116,11 @@ def run_hld_agent(
         )
     else:
         user = _USER_TEMPLATE.format(prompt=prompt, intent_json=json.dumps(intent))
+
+    # The first pass runs on the (stronger) "hld" model; the revise is a
+    # constrained fix task on the cheaper "hld_revise" model. See
+    # models/agent_models.py for the rationale.
+    model = get_agent_model("hld_revise" if is_revise else "hld")
 
     # Catalog tools resolve repo-relative paths off repo_root; the HLD agent
     # has no scaffold, so work_dir / run_dir are unused (set to repo_root).
@@ -130,7 +136,7 @@ def run_hld_agent(
         ctx,
         system_prompt=system,
         user_message=user,
-        model=get_agent_model("hld"),
+        model=model,
         max_tokens=_MAX_TOKENS,
     )
 
