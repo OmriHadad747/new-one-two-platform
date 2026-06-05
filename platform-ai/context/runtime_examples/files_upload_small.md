@@ -1,6 +1,10 @@
-# Runtime example: `files_upload_small`
+# Helper: `files`
 
-Canonical working snippet. Adapt the names but preserve the shape — imports, error handling, contract checks.
+Use the `files` helper (`platform.files.upload`) to store and serve any file —
+receipts, small CSVs, thumbnails. Storage (GCS), signed URLs, the size cap, and
+the storage quota are platform-owned; you never touch a bucket or credentials.
+`upload` is the inline path for typical artefacts (≤25 MiB); reach for
+`uploadLarge` (see `files_upload_large.md`) only when you'd exceed it.
 
 ```ts
 import { platform, PayloadTooLarge, QuotaExceeded } from "../lib/platform.js";
@@ -27,3 +31,11 @@ try {
   throw err;
 }
 ```
+
+Rules:
+- `upload` is for ≤25 MiB inline payloads; on `PayloadTooLarge` switch to
+  `uploadLarge` (resumable, ≤500 MiB) — don't retry `upload` with the same bytes.
+- The returned `url` is short-lived (~15 min) — persist `fileId`, not the URL,
+  and mint a fresh link with `platform.files.signReadUrl` when serving it later.
+- `QuotaExceeded` (`kind: "storage"`) is a permanent cap (`resetsAt` is `null`) —
+  it won't clear on its own; stop writing rather than looping.
