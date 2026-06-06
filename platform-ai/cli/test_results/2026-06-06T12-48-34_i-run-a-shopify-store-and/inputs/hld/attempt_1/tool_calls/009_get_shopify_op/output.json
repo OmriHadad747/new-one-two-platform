@@ -1,0 +1,16 @@
+{
+  "args": [
+    {
+      "name": "id",
+      "required": true,
+      "type": "ID!"
+    }
+  ],
+  "examples": [],
+  "inputTypesSdl": {},
+  "isConnection": false,
+  "kind": "query",
+  "returnTypeName": "InventoryItem",
+  "returnTypeSdl": "type InventoryItem implements LegacyInteroperability & Node {\n  countryCodeOfOrigin: CountryCode\n  countryHarmonizedSystemCodes(first: Int, after: String, last: Int, before: String, reverse: Boolean): CountryHarmonizedSystemCodeConnection!\n  createdAt: DateTime!\n  duplicateSkuCount: Int!\n  harmonizedSystemCode: String\n  id: ID!\n  inventoryHistoryUrl: URL\n  inventoryLevel(locationId: ID!, includeInactive: Boolean): InventoryLevel\n  inventoryLevels(includeInactive: Boolean, first: Int, after: String, last: Int, before: String, reverse: Boolean, query: String): InventoryLevelConnection!\n  legacyResourceId: UnsignedInt64!\n  locationsCount: Count\n  measurement: InventoryItemMeasurement!\n  provinceCodeOfOrigin: String\n  requiresShipping: Boolean!\n  sku: String\n  tracked: Boolean!\n  trackedEditable: EditableProperty!\n  unitCost: MoneyV2\n  updatedAt: DateTime!\n  variant: ProductVariant!\n  variants(first: Int, after: String, last: Int, before: String): ProductVariantConnection\n}",
+  "userErrorsField": null
+}

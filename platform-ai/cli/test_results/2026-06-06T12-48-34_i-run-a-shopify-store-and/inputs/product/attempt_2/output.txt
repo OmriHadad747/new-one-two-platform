@@ -1,0 +1,14 @@
+```json
+{
+  "status": "needs_clarification",
+  "questions": [
+    {
+      "question": "You want to notify all subscribers when stock comes back. If 100 shoppers are waiting but only 5 units restock, should the app send the notification email to all 100 (and let them know stock is limited), or send emails only to as many as there are units in stock (5 emails, keep the other 95 queued for the next restock)?",
+      "suggestions": [
+        "Email all subscribers, mention stock is limited",
+        "Email only as many as units available, queue the rest"
+      ]
+    }
+  ]
+}
+```

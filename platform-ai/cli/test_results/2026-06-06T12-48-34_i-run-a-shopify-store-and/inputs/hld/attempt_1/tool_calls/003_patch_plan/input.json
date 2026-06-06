@@ -1,0 +1,180 @@
+{
+  "edits": [
+    {
+      "path": "capabilities[check-item-availability].returnsList",
+      "value": false
+    },
+    {
+      "path": "externalContracts",
+      "value": [
+        {
+          "surface": "widget",
+          "path": "/widget/waitlist/availability",
+          "method": "GET",
+          "purpose": "Tell the storefront widget whether an item is sold out and whether to show a product-level or variant-level signup, and whether this shopper is already on the waitlist; returns the full variant list atomically so the picker renders correctly.",
+          "requestShape": {
+            "product_external_id": "reference",
+            "variant_external_id": "reference",
+            "email": "text",
+            "cursor": "text"
+          },
+          "responseShape": {
+            "is_sold_out": "flag",
+            "signup_level": "status",
+            "variants": "list",
+            "already_subscribed": "flag",
+            "next_cursor": "text",
+            "total_count": "count"
+          }
+        },
+        {
+          "surface": "widget",
+          "path": "/widget/waitlist/subscribe",
+          "method": "POST",
+          "purpose": "Record a shopper's back-in-stock signup for a specific product or variant.",
+          "requestShape": {
+            "product_external_id": "reference",
+            "variant_external_id": "reference",
+            "email": "text"
+          },
+          "responseShape": {
+            "already_subscribed": "flag",
+            "subscription": "object"
+          }
+        },
+        {
+          "surface": "widget",
+          "path": "/widget/waitlist/unsubscribe",
+          "method": "GET",
+          "purpose": "One-click unsubscribe link from an email that removes the shopper from every waitlist they are on.",
+          "requestShape": {
+            "unsubscribe_token": "text"
+          },
+          "responseShape": {
+            "removed_count": "count"
+          }
+        },
+        {
+          "surface": "admin",
+          "path": "/admin/waitlists",
+          "method": "GET",
+          "purpose": "Dashboard ranking products and variants by current waitlist size.",
+          "requestShape": {
+            "cursor": "text"
+          },
+          "responseShape": {
+            "items": "list",
+            "next_cursor": "text",
+            "total_count": "count"
+          }
+        },
+        {
+          "surface": "admin",
+          "path": "/admin/waitlists/subscribers",
+          "method": "GET",
+          "purpose": "Drill into the individual subscribers waiting on a specific item, for review or CSV export.",
+          "requestShape": {
+            "product_external_id": "reference",
+            "variant_external_id": "reference",
+            "cursor": "text"
+          },
+          "responseShape": {
+            "subscribers": "list",
+            "next_cursor": "text",
+            "total_count": "count"
+          }
+        },
+        {
+          "surface": "admin",
+          "path": "/admin/settings",
+          "method": "GET",
+          "purpose": "Read merchant notification settings including quiet-hours window.",
+          "requestShape": {},
+          "responseShape": {
+            "settings": "object"
+          }
+        },
+        {
+          "surface": "admin",
+          "path": "/admin/settings",
+          "method": "PUT",
+          "purpose": "Update merchant notification settings including the quiet-hours window.",
+          "requestShape": {
+            "quiet_hours_start": "text",
+            "quiet_hours_end": "text",
+            "quiet_hours_timezone": "text"
+          },
+          "responseShape": {
+            "settings": "object"
+          }
+        }
+      ]
+    },
+    {
+      "path": "persistence[restock_cycles].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "the item that restocked"
+        },
+        {
+          "name": "variant_external_id",
+          "role": "reference",
+          "nullable": true,
+          "purpose": "the specific variant that restocked; null for product-level items"
+        },
+        {
+          "name": "cycle_key",
+          "role": "text",
+          "nullable": false,
+          "purpose": "stable dedup key combining product, variant, and the calendar date of the restock, preventing duplicate cycles from concurrent webhook deliveries on the same day"
+        },
+        {
+          "name": "available_quantity",
+          "role": "count",
+          "nullable": false,
+          "purpose": "units available at restock, bounding how many front-of-queue subscribers are notified this cycle"
+        },
+        {
+          "name": "detected_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": "when this restock was first observed; new restock only opens after stock had dropped to zero again"
+        },
+        {
+          "name": "notified_count",
+          "role": "count",
+          "nullable": false,
+          "purpose": "how many subscribers have been emailed in this cycle so far"
+        }
+      ]
+    },
+    {
+      "path": "persistence[restock_cycles].keyedByColumns",
+      "value": [
+        "product_external_id",
+        "variant_external_id",
+        "cycle_key"
+      ]
+    },
+    {
+      "path": "capabilities[send-deferred-notifications].description",
+      "value": "Send notify-pending emails whose quiet-hours window has now passed, sourcing the work set from waitlist subscriptions in notify-pending status whose quiet-hours window has expired."
+    },
+    {
+      "path": "capabilities[send-deferred-notifications].dataNeeds",
+      "value": [
+        "quiet hours window",
+        "notify-pending subscription ids"
+      ]
+    }
+  ]
+}

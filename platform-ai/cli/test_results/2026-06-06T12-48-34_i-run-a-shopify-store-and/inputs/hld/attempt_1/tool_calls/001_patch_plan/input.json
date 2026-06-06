@@ -1,0 +1,91 @@
+{
+  "edits": [
+    {
+      "path": "capabilities[check-item-availability].returnsList",
+      "value": false
+    },
+    {
+      "path": "externalContracts[0].requestShape",
+      "value": {
+        "product_external_id": "reference",
+        "variant_external_id": "reference",
+        "email": "text"
+      }
+    },
+    {
+      "path": "externalContracts[0].responseShape",
+      "value": {
+        "is_sold_out": "flag",
+        "signup_level": "status",
+        "variants": "list",
+        "already_subscribed": "flag"
+      }
+    },
+    {
+      "path": "persistence[restock_cycles].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "the item that restocked"
+        },
+        {
+          "name": "variant_external_id",
+          "role": "reference",
+          "nullable": true,
+          "purpose": "the specific variant that restocked; null for product-level items"
+        },
+        {
+          "name": "cycle_key",
+          "role": "text",
+          "nullable": false,
+          "purpose": "stable dedup key combining product, variant, and the calendar date of the restock, preventing duplicate cycles from concurrent webhook deliveries on the same day"
+        },
+        {
+          "name": "available_quantity",
+          "role": "count",
+          "nullable": false,
+          "purpose": "units available at restock, bounding how many front-of-queue subscribers are notified this cycle"
+        },
+        {
+          "name": "detected_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": "when this restock was first observed; new restock only opens after stock had dropped to zero again"
+        },
+        {
+          "name": "notified_count",
+          "role": "count",
+          "nullable": false,
+          "purpose": "how many subscribers have been emailed in this cycle so far"
+        }
+      ]
+    },
+    {
+      "path": "persistence[restock_cycles].keyedByColumns",
+      "value": [
+        "product_external_id",
+        "variant_external_id",
+        "cycle_key"
+      ]
+    },
+    {
+      "path": "capabilities[send-deferred-notifications].description",
+      "value": "Send notify-pending emails whose quiet-hours window has now passed, sourcing the work set from waitlist subscriptions in notify-pending status whose quiet-hours window has expired."
+    },
+    {
+      "path": "capabilities[send-deferred-notifications].dataNeeds",
+      "value": [
+        "quiet hours window",
+        "notify-pending subscription ids"
+      ]
+    }
+  ]
+}

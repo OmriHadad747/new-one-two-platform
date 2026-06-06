@@ -1,0 +1,14 @@
+```json
+{
+  "status": "ready",
+  "summary": "What this app does:\nLets shoppers sign up for back-in-stock alerts on sold-out products or variants, and emails them the moment stock returns. You see which products have the most demand and can export subscriber lists to track conversions yourself.\n\nWhen it runs:\n• When a shopper enters their email on a sold-out product or variant page\n• When you restock an item, every subscriber for that item is emailed automatically\n• When a shopper clicks unsubscribe in an email\n\nWhat you'll see:\n• A dashboard ranking products by waitlist size\n• A drill-in page showing individual subscribers per product, with a CSV export button\n• A settings form to edit the notification email subject and body (includes product name, variant details, and unsubscribe link)\n• No quiet hours — emails send immediately when stock is restocked\n\nWhat customers see:\n• A \"Notify me when back in stock\" button on sold-out product pages, positioned below the sold-out indicator\n• An inline email entry field and confirmation message\n• The button does not appear on products that are in stock\n• An unsubscribe link in every notification email\n\nWhat this app does NOT do:\n• Won't auto-track purchases after notification — you'll export the notified-email list and match it to your sales reports\n• Won't send SMS — only email\n• Won't hold back emails during quiet hours — all notifications send immediately\n• Won't limit notifications by stock quantity — all subscribers for an item get notified even if stock is limited",
+  "intent": {
+    "triggerTypes": ["webhook", "widget", "admin"],
+    "resources": ["inventory", "customers", "products"],
+    "desiredOutcome": "Capture and convert lost demand by letting sold-out shoppers request notifications and emailing them instantly when items restock.",
+    "cronHint": null,
+    "appCategory": "storefront_backend_admin",
+    "qualityBrief": "A polished back-in-stock notifier handles variant-level signup (detecting whether to show product or variant picker based on the product's structure), deduplication (same email + same item = ignored, same email + different items = separate entries), and deleted products (cleanly remove associated waitlists without errors). The widget shows only on sold-out items and confirms inline without page reload. The admin dashboard ranks by demand and exports CSVs with full metadata. Emails include product/variant details and a working one-click unsubscribe that removes the shopper from ALL their waitlists. The app must tolerate duplicate inventory webhooks (a restock event arriving twice should email each subscriber once, not twice), guest checkout (many emails have no matching customer record), and partial restocks (all subscribers get notified, email explains stock may be limited). Export data for conversion tracking must include notification timestamp so the merchant can join it to their sales ledger."
+  }
+}
+```
