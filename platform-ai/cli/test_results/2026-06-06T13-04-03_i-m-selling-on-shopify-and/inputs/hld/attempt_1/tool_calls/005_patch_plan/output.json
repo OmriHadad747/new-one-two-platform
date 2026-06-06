@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "errors": [
+    "patch: no capabilities element with id='update-bundle-discount'"
+  ]
+}

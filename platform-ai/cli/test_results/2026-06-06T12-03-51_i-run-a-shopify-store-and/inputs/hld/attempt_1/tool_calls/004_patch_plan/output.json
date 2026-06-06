@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "errors": [
+    "patch: collection 'triggers' is not addressable by key (addressable: ['capabilities', 'persistence'])"
+  ]
+}

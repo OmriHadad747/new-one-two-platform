@@ -1,0 +1,101 @@
+{
+  "edits": [
+    {
+      "path": "stateMachine",
+      "value": null
+    },
+    {
+      "path": "persistence[bundle_discount_tiers].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "bundle_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "owning bundle"
+        },
+        {
+          "name": "min_quantity",
+          "role": "count",
+          "nullable": false,
+          "purpose": "minimum item count at which this tier activates"
+        },
+        {
+          "name": "discount_ratio",
+          "role": "ratio",
+          "nullable": true,
+          "purpose": "percentage expressed as 0\u20131 for percentage-kind tiers; null for flat_amount and bxgy kinds"
+        },
+        {
+          "name": "discount_amount",
+          "role": "money",
+          "nullable": true,
+          "purpose": "minor-unit flat discount amount for flat_amount-kind tiers; null for percentage and bxgy kinds; exactly one of discount_ratio and discount_amount is non-null per row"
+        },
+        {
+          "name": "discount_external_id",
+          "role": "reference",
+          "nullable": true,
+          "purpose": "Shopify automatic discount node id for this tier; null until successfully created"
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ]
+    },
+    {
+      "path": "capabilities[notify-merchant-bundle-disabled]",
+      "value": {
+        "id": "notify-merchant-bundle-disabled",
+        "description": "Send the merchant an email notification when a bundle is disabled, reporting the bundle title and the reason (product deletion or tier-update failure).",
+        "kind": "notify",
+        "dataNeeds": [
+          "bundle id",
+          "bundle title",
+          "disabled reason"
+        ],
+        "integration": "email",
+        "shopifySteps": [],
+        "returnsList": false,
+        "touchesMoney": false,
+        "usesConfig": false,
+        "usesWorkflow": false
+      }
+    },
+    {
+      "path": "externalContracts[6]",
+      "value": {
+        "surface": "widget",
+        "path": "/widget/bundle",
+        "method": "GET",
+        "purpose": "Return the bundle definition, members with variant options, discount tiers, and current enable status for the storefront widget to render.",
+        "requestShape": {
+          "product_external_id": "reference"
+        },
+        "responseShape": {
+          "bundle": "object"
+        }
+      }
+    },
+    {
+      "path": "edgeCases",
+      "value": [
+        "Duplicate products/delete delivery for the same product \u2014 the app checks current bundle status before writing; if already disabled, exit without additional Shopify calls.",
+        "Duplicate orders/paid delivery for the same order \u2014 the unique constraint on bundle_purchase_events(bundle_id, order_external_id) prevents double-counting; the purchase_count increment is guarded by the insert.",
+        "Merchant edits discount tiers on an enabled bundle \u2014 the app must update Shopify discount nodes atomically per tier; if any node update fails, the bundle is set to disabled and the merchant is notified via the notify-merchant-bundle-disabled capability.",
+        "A bundle is auto-disabled because a member product is deleted \u2014 the auto-disable-on-product-deletion capability deactivates all Shopify discount nodes and then invokes notify-merchant-bundle-disabled so the merchant can remediate.",
+        "A flexible-bundle customer selects a variant that sells out between widget load and cart submission \u2014 the Storefront cartLinesAdd returns a CartWarning for the out-of-stock line; the widget surfaces this and prompts the customer to reselect.",
+        "A bundle contains more than 100 component products \u2014 Shopify's productBundleCreate has component count limits; the app must validate member count against the platform limit before submission and reject the bundle creation with a clear admin error.",
+        "A merchant applies both a bundle discount and a manual discount code at checkout \u2014 the bundle's automatic discount is scoped to bundle product variants; the app should configure combinesWith: false on order discounts to prevent double-discounting on the same items."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+```json
+{
+  "status": "ready",
+  "summary": "What this app does:\nLets you create fixed and flexible product bundles with tiered discounts to increase order value. Customers configure bundles on the storefront, see the discount live, and add all items to cart at once with the discount automatically applied.\n\nWhen it runs:\n• When you create, edit, or enable/disable a bundle in the admin\n• When a customer opens a product page and sees the bundle widget\n• When a customer selects items and adds the bundle to their cart\n• When you view your bundle performance dashboard\n\nWhat you'll see:\n• A bundle management table in the admin listing all bundles with edit/enable/disable controls\n• A count of purchases for each bundle\n• Settings to define bundle type (fixed or flexible), which products/variants are included, pool size for flexible bundles, discount type (percent, flat amount, or BOGO), and tiered discount rules\n\nWhat customers see:\n• A bundle widget on product pages for items in your pools\n• For flexible bundles: a picker to select N items from the pool, with a live total showing the discounted price\n• An \"Add bundle to cart\" button that adds all chosen items as separate line items\n• The discount code applied automatically at checkout\n\nWhat this app does NOT do:\n• Won't merge bundle items into a single \"wrapper\" line in the cart — each item appears separately\n• Won't add a custom checkout step or modify the checkout experience itself\n• Won't apply discounts at the product page level — discount is only visible after adding to cart\n• Won't sync bundle data to external systems like Klaviyo",
+  "intent": {
+    "triggerTypes": ["admin", "widget"],
+    "resources": ["products", "discounts"],
+    "desiredOutcome": "Merchants can create and manage product bundles with tiered discounts from the admin, and customers configure and purchase bundles from the storefront with automatic discount application.",
+    "cronHint": null,
+    "appCategory": "storefront_backend_admin",
+    "qualityBrief": "A polished bundle app handles variant selection (not just products), prevents out-of-stock items from being added, enforces tiered discount logic correctly (a 4-item bundle gets the 4-item tier, not all lower tiers), and avoids double-discounting if a customer manually adds the same product outside the bundle. The storefront widget must show real-time pricing as items are toggled, handle mobile touch interactions smoothly, and recover gracefully if a selected variant sells out before checkout. The admin must support bulk enable/disable, export purchase history, and let merchants adjust discount tiers without losing existing bundle config. Edge case: if a bundle's anchor product is deleted, the bundle should disable automatically and the merchant should be notified."
+  }
+}
+```

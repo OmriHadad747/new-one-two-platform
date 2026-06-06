@@ -1,0 +1,28 @@
+{
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "stateMachine",
+      "issue": "The plan declares a `stateMachine` for the bundle `enabled`/`disabled` lifecycle with transitions triggered by \"merchant enables the bundle\", \"merchant disables the bundle\", and \"a member product is deleted from the catalog\". The spec requires: \"Declare a stateMachine ONLY when the system must DETECT a change in a value that comes from OUTSIDE this app \u2014 typically a Shopify enum field.\" Bundle status is owned and written entirely by this app (via enable-bundle, disable-bundle, auto-disable-on-product-deletion capabilities); it is never observed from an external system. The spec is explicit: \"DO NOT use stateMachine for Application workflow states.\" Declaring a stateMachine here will cause the coding agent to implement an external-state observer pattern (last-seen-value tracking, transition detection) for a field the app itself writes \u2014 generating dead machinery and masking the correct realizer (the `workflow` helper already bound via `usesWorkflow: true` on the three write capabilities).",
+      "fix": "Remove the `stateMachine` block entirely and set it to null; the `bundles.status` column with `statusField: \"status\"` plus `usesWorkflow: true` on enable-bundle, disable-bundle, and auto-disable-on-product-deletion already correctly realize the lifecycle \u2014 no state-machine declaration is needed or correct here."
+    },
+    {
+      "severity": "important",
+      "location": "persistence[2].columns[3] (bundle_discount_tiers.discount_value)",
+      "issue": "The column's `role` is `\"ratio\"`, which the spec defines as \"fractional values bounded between 0 and 1\", but the `purpose` states it also stores \"minor-unit amount for flat_amount kind\". A flat-amount discount (e.g. $10.00 = 1000 in minor units) is a monetary value unbounded above 1.0 \u2014 it cannot be represented by a ratio column without silent data truncation or corruption. The coding agent will generate DDL and validation logic appropriate for a 0\u20131 fraction and will mishandle flat-amount tiers.",
+      "fix": "Split into two nullable columns: `discount_ratio` (role `ratio`, nullable, for percentage tiers) and `discount_amount` (role `money`, nullable, for flat-amount tiers), with a purpose note on each explaining the mutual-exclusivity rule; update `keyedByColumns` and `queryPatterns` accordingly."
+    },
+    {
+      "severity": "important",
+      "location": "edgeCases[2] and capabilities[auto-disable-on-product-deletion]",
+      "issue": "Edge case 2 states \"the merchant is notified of the partial failure\" (tier update failure) and the quality brief requires merchant notification when a bundle is auto-disabled by product deletion, yet the plan declares no `notify` capability, no `integration: \"email\"` capability, and no `externalContracts` GET route for an in-admin notification surface. This is a Closure Test failure: the promise of merchant notification has no concrete realizer anywhere in the plan \u2014 neither a notify capability nor an in-app alert mechanism.",
+      "fix": "Add a `notify` capability (e.g. `id: \"notify-merchant-bundle-disabled\"`, `kind: \"notify\"`, `integration: \"email\"`) that accepts bundle id and reason, and is invoked by both auto-disable-on-product-deletion and any tier-update-failure path; the platform email helper realizes the delivery without an additional persistence table."
+    },
+    {
+      "severity": "minor",
+      "location": "externalContracts[6] (GET /widget/bundle)",
+      "issue": "The route's `responseShape` contains `\"next_cursor\": \"text\"` and `\"total_count\": \"count\"` alongside `\"bundle\": \"object\"`, but the route looks up a single bundle by `product_external_id` and returns a single `object` \u2014 not a list. A `cursor` is also present in `requestShape`. Pagination fields on a single-object fetch are meaningless and will confuse the coding agent into implementing cursor logic (and the `paginate` helper) for a route that returns at most one record.",
+      "fix": "Remove `cursor`, `next_cursor`, and `total_count` from this route's request and response shapes; if a product can be the anchor for multiple bundles and a list is genuinely needed, change `\"bundle\": \"object\"` to `\"bundles\": \"list\"` and retain the pagination fields."
+    }
+  ]
+}

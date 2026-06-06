@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 
 from pydantic import ValidationError
 
-from models.adapter import extract_json, get_llm, invoke, invoke_conversation
+from models.adapter import dump_output, extract_json, get_llm, invoke, invoke_conversation
 from models.agent_models import get_agent_model
 from subagents.a_product_agent.prompt import (
     PRODUCT_ANALYZE_BASE,
@@ -87,6 +87,7 @@ def run_product_agent(prompt: str) -> Tuple[Dict[str, Any], int, int]:
         )
         total_in += result.input_tokens
         total_out += result.output_tokens
+        dump_output(result.content)  # trace alongside the attempt's system/user
 
         try:
             raw_json = extract_json(result.content)
@@ -118,8 +119,13 @@ def run_product_agent_analyze(
 
     Returns (response_dict, metrics_dict):
       response_dict is one of:
-        {"status": "needs_clarification", "question": "...", "suggestions": [...]}
+        {"status": "needs_clarification", "questions": [{"question": "...",
+                                                          "suggestions": [...]}, ...]}
         {"status": "ready", "summary": "...", "intent": {<ProductIntent>}}
+      The clarify branch always emits a `questions` list (1-3 entries, each
+      INDEPENDENT). Legacy callers that read `question: str` still work —
+      the parser also populates the singular keys with the first question
+      for one round of back-compat.
       metrics_dict carries the per-call token totals so the CLI can render
       cache-hit ratios live during the clarification loop:
         {"in": int, "out": int, "cache_read": int, "cache_create": int}
@@ -148,6 +154,7 @@ def run_product_agent_analyze(
     result = invoke_conversation(
         llm, PRODUCT_ANALYZE_BASE, history, cache_ttl="1h"
     )
+    dump_output(result.content)  # trace alongside the attempt's system/user
     metrics: Dict[str, int] = {
         "in": result.input_tokens,
         "out": result.output_tokens,
@@ -196,11 +203,20 @@ def run_product_agent_analyze(
 
     # Anything other than "ready" — including missing status — falls back
     # to a clarification request the API endpoint can show the merchant.
+    questions = _coerce_questions(parsed)
+    first = questions[0] if questions else {
+        "question": _default_clarification_question(),
+        "suggestions": [],
+    }
     return (
         {
             "status": "needs_clarification",
-            "question": parsed.get("question") or _default_clarification_question(),
-            "suggestions": parsed.get("suggestions") or [],
+            "questions": questions or [first],
+            # Legacy singular keys, mirrored from the first question so any
+            # un-updated caller still works. Drop after every caller reads
+            # the list form.
+            "question": first["question"],
+            "suggestions": list(first.get("suggestions") or []),
         },
         metrics,
     )
@@ -249,10 +265,58 @@ def _format_retry_suffix(errors: List[str]) -> str:
     )
 
 
+_MAX_QUESTIONS = 3
+
+
+def _coerce_questions(parsed: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Normalise the clarify branch into a list of {question, suggestions}.
+
+    Accepts both shapes:
+      - NEW: {"questions": [{"question": "...", "suggestions": [...]}, ...]}
+      - OLD: {"question": "...", "suggestions": [...]}  (single)
+    Caps the list at _MAX_QUESTIONS — extras are dropped (the prompt
+    already says 1-3, this is the safety net). Each entry's
+    `suggestions` is normalised to a list of strings."""
+    out: List[Dict[str, Any]] = []
+    raw = parsed.get("questions")
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            q = (item.get("question") or "").strip()
+            if not q:
+                continue
+            sugg = item.get("suggestions") or []
+            if not isinstance(sugg, list):
+                sugg = []
+            out.append(
+                {
+                    "question": q,
+                    "suggestions": [str(s) for s in sugg if s],
+                }
+            )
+    elif parsed.get("question"):
+        # Legacy single-question shape — wrap as a one-item list.
+        out.append(
+            {
+                "question": str(parsed["question"]).strip(),
+                "suggestions": [
+                    str(s)
+                    for s in (parsed.get("suggestions") or [])
+                    if s
+                ],
+            }
+        )
+    return out[:_MAX_QUESTIONS]
+
+
 def _needs_clarification() -> Dict[str, Any]:
+    q = _default_clarification_question()
     return {
         "status": "needs_clarification",
-        "question": _default_clarification_question(),
+        "questions": [{"question": q, "suggestions": []}],
+        # Legacy singular keys — keep mirrored for any un-updated caller.
+        "question": q,
         "suggestions": [],
     }
 
@@ -267,13 +331,15 @@ def _truncated_clarification() -> Dict[str, Any]:
     operator sees the warning in the log; the merchant sees a question
     that prompts them to compress their answer.
     """
+    q = (
+        "I started to draft your app spec but ran out of room before "
+        "finishing. Could you state the most important requirement in "
+        "one short sentence so I can produce the spec?"
+    )
     return {
         "status": "needs_clarification",
-        "question": (
-            "I started to draft your app spec but ran out of room before "
-            "finishing. Could you state the most important requirement in "
-            "one short sentence so I can produce the spec?"
-        ),
+        "questions": [{"question": q, "suggestions": []}],
+        "question": q,
         "suggestions": [],
     }
 

@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "errors": [
+    "<root>: Value error, tables ['bundles'] declare a statusField but stateMachine is null; statusField is only valid when a state machine governs the column"
+  ]
+}

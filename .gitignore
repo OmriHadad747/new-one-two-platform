@@ -49,4 +49,7 @@ handler.js
 
 generator/shopify_mcp/cache/
 
-.claude
+.claude/*
+!.claude/skills/
+
+# test_results/
