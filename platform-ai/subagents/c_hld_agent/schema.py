@@ -25,10 +25,48 @@ Validation policy
   alone enforces them, no validator code needed.
 - The validators below are deliberate enforcement of cross-field
   invariants and deny-listed values picked under the policy
-  "cheap, safe, reliable, very low FP, high blast radius". The full
-  catalog of candidate rules lives in `HLD_AGENT_RULES.md`; only rules
-  earning a slot today are coded here.
+  "cheap, safe, reliable, very low FP, high blast radius". The
+  "Invariant catalog" comment block below is the single place that
+  answers "what's covered and what's left"; only rules that are
+  deterministic and zero-FP earn a coded slot — everything else stays
+  in the prompt or with the `hld_v` reviewer.
 """
+
+# ── Invariant catalog ─────────────────────────────────────────────────
+# One line per recurring HLD defect class and where it is handled. A class
+# is CODED here only when the check is deterministic and zero-FP; a class
+# whose only signal is free-text prose is left to the prompt (steer the
+# generator) or the `hld_v` reviewer (semantic judgement). This is the map
+# for "are we done?": new generations DISCOVER which class to encode — they
+# are not themselves the fix. Done = new runs surface only cataloged
+# classes or one-off model noise.
+#
+#   Coded validators (deterministic, zero-FP):
+#     #20  capability ids unique ........................ HLDPlan
+#     #40  statusField names a real column .............. Table
+#     #42  stateMachine <-> statusField bound both ways . HLDPlan
+#     #46  no platform-owned (email-template) columns ... Column
+#     #50  state refs (initial/from/to) resolve ........ StateMachine
+#     #58  archetype <-> externalContract surfaces ..... HLDPlan
+#     #62  contract path well-formed (no :param) ....... ExternalContract
+#     #65  shape values are semantic kinds ............. ExternalContract
+#     X2   list-returning GET must paginate ............ ExternalContract
+#     --   payloadBindings cover all signalFields ...... ExternalEventTrigger
+#     --   shopifySteps <-> integration ............... Capability
+#     --   keyedByColumns name real columns ........... Table
+#     C    no timestamp-role column in a uniqueness key  Table
+#     d1   cursor in responseShape implies a list ...... ExternalContract
+#
+#   Prompt-only (signal lives in prose; a validator would risk FPs):
+#     B    polymorphic value (ratio OR money by kind) ->
+#          split into one typed column per kind ........ prompt.py
+#     d2   returnsList = the response is itself a list,
+#          not a record with nested lists ............. prompt.py
+#
+#   Reviewer-only (`hld_v`, semantic; no controlled vocabulary):
+#     A    dataNeeds closure / dangling realizer (a need
+#          with no supplier) -- free text, high FP.
+# ──────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
@@ -332,6 +370,32 @@ class Table(_StrictModel):
             )
         return self
 
+    # Rule C — no `timestamp`-role column may appear in keyedByColumns. A
+    # timestamp dedups "per instant", which silently defeats the intended
+    # "once per X" identity (e.g. keying a back-in-stock notice on
+    # `detected_at` lets the same restock notify on every webhook redelivery
+    # instead of once). The fix the generator should reach for is a derived
+    # calendar/bucket column (role `text`/`reference`, e.g. `detected_date`)
+    # whose `purpose` explains the bucketing — never the raw timestamp.
+    # Roles are already typed, so this is deterministic and zero-FP; it pulls
+    # the "calendar-date vs timestamp" check forward to HLD emit time (it was
+    # deferred to the downstream integrity gate) so it's fixed in-loop.
+    @model_validator(mode="after")
+    def _no_timestamp_in_uniqueness_key(self) -> "Table":
+        if not self.keyedByColumns:
+            return self
+        role_by_name = {c.name: c.role for c in self.columns}
+        offending = [k for k in self.keyedByColumns if role_by_name.get(k) == "timestamp"]
+        if offending:
+            raise ValueError(
+                f"keyedByColumns {offending} on table '{self.name}' have role "
+                "'timestamp'; a timestamp dedups per-instant and defeats the "
+                "natural 'once per X' identity. Key on a derived calendar/bucket "
+                "column instead (e.g. a 'detected_date' with role 'text' or "
+                "'reference'), and justify it in that column's purpose."
+            )
+        return self
+
 
 # ── State machine ─────────────────────────────────────────────────────
 
@@ -388,6 +452,18 @@ class StateMachine(_StrictModel):
 # form text input — naming is the only structural signal we have here.
 _PAGINATION_CURSOR_KEYS: frozenset[str] = frozenset(
     {"cursor", "page", "page_cursor", "after", "before"}
+)
+
+# Response-side pagination markers — a responseShape carrying any of these
+# is advertising "there are more pages of a collection", which is only
+# coherent if the response also returns a `list`. Named-whitelist for the
+# same reason as _PAGINATION_CURSOR_KEYS: a cursor is "text" in the kind
+# vocabulary, so the field name is the only structural signal. Kept to
+# unambiguous cursor names so the check stays zero-FP (a bare `count` value
+# is deliberately NOT a marker — a single record can legitimately carry a
+# scalar count).
+_PAGINATION_RESPONSE_KEYS: frozenset[str] = _PAGINATION_CURSOR_KEYS | frozenset(
+    {"next_cursor", "next_page", "next"}
 )
 
 
@@ -449,6 +525,26 @@ class ExternalContract(_StrictModel):
                 f"with kind 'text') so the endpoint is paginable at scale."
             )
         return self
+
+    # Rule d1 — the inverse of X2: a responseShape that advertises pagination
+    # (a cursor field) but returns no `list` value is contradictory — a
+    # single record dressed up as a paginated collection. Catches the
+    # "next_cursor + total_count on a single object" shape. Structural and
+    # zero-FP: it fires only on the named cursor markers, never on a list
+    # that simply lacks a cursor (that case is X2's job, request-side).
+    @model_validator(mode="after")
+    def _pagination_response_implies_list(self) -> "ExternalContract":
+        cursor_keys = sorted(k for k in self.responseShape if k in _PAGINATION_RESPONSE_KEYS)
+        if not cursor_keys:
+            return self
+        if any(v == "list" for v in self.responseShape.values()):
+            return self
+        raise ValueError(
+            f"{self.method} {self.path} responseShape advertises pagination "
+            f"({cursor_keys}) but returns no 'list' value. A cursor implies a "
+            "browsable collection: either return the page itself as a 'list', "
+            "or drop the cursor if the response is a single record."
+        )
 
 
 # ── HLD plan (top-level) ──────────────────────────────────────────────

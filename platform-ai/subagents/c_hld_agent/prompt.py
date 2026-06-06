@@ -280,6 +280,19 @@ with `keyedByColumns: []` (no natural uniqueness — guarded by code to \
 keep exactly one row) and a `purpose` on the row's id column explaining \
 the singleton intent.
 
+ONE COLUMN, ONE TYPE — SPLIT POLYMORPHIC VALUES. When a value's meaning \
+depends on a sibling "kind" enum — the classic case is a discount that is \
+EITHER a percentage OR a flat money amount depending on a `discount_kind` \
+— never store it in one overloaded column. A single column has one `role`, \
+and `ratio` (a 0–1 fraction) and `money` (a currency amount) are not \
+interchangeable: one column cannot be both, and downstream math (the \
+`money` helper vs. ratio arithmetic) picks the wrong path. Declare ONE \
+typed, nullable column PER kind instead — e.g. `discount_ratio` (role \
+`ratio`, nullable) AND `discount_amount` (role `money`, nullable) — with \
+exactly one populated per row, and note the mutual exclusivity in each \
+column's `purpose`. The same rule applies to any value that is a \
+percentage-or-amount, a count-or-ratio, or otherwise changes type by kind.
+
 PRE-AGGREGATION CONSISTENCY. If the qualityBrief calls for "instant \
 load", "responsive at scale", or similar fast-read requirements and you \
 introduce a snapshot/rollup table to satisfy ONE metric on a dashboard, \
@@ -337,6 +350,17 @@ CAPABILITY FLAGS:
   │              │ the status transitions. False on read-only consumers and   │
   │              │ on initial-state inserts that never transition.            │
   └──────────────┴────────────────────────────────────────────────────────────┘
+
+returnsList IS ABOUT THE RESPONSE SHAPE, NOT THE DATA INSIDE IT. Set it \
+TRUE only when the capability's OWN top-level response is a browsable \
+collection of records — a list the user sorts, filters, or paginates. A \
+capability that returns ONE record which merely NESTS child arrays is \
+returnsList:false: "get one bundle" returning its line items and price \
+tiers as nested arrays is a single object, not a list. The matching \
+externalContract makes this concrete — returnsList:true means the \
+responseShape has a top-level `list` value (and, per the schema's list \
+rules, a pagination cursor); a single record with nested arrays has \
+neither.
 
 EACH FLAG IS A HELPER BINDING — NOT JUST A TAG. The platform ships finished, \
 tested helpers under `src/lib/`, and each flag binds the capability to one of \
