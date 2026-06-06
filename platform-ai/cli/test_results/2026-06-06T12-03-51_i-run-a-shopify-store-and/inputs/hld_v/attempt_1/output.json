@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "persistence[2].columns (restock_events.inventory_updated_at) + triggers[0].signalFields + triggers[0].payloadBindings",
+      "issue": "The `restock_events` table's dedup key is `[\"inventory_item_external_id\", \"inventory_updated_at\"]` and the trigger's `idempotency` field states \"if a restock_event already exists for the same inventory item and the same updated_at timestamp\" \u2014 but `inventory_updated_at` (or any `updated_at` equivalent) is absent from the trigger's `signalFields` list and has no corresponding `payloadBinding`. The coding agent has no declared source for this value and will either fabricate it, use `NOW()` (which breaks idempotency entirely since two deliveries of the same event would produce different timestamps), or omit the column. The dedup guarantee \u2014 the plan's entire guard against double-enqueuing notifications \u2014 collapses silently.",
+      "fix": "Add `\"inventory updated at\"` to the trigger's `signalFields` and add a payloadBinding `{signalField: \"inventory updated at\", source: \"payload\", payloadPath: \"updated_at\"}` so the coding agent reads the real webhook timestamp; then surface it in `record-restock-event`'s `dataNeeds` so it is threaded into the INSERT."
+    },
+    {
+      "severity": "important",
+      "location": "capabilities[5] (record-restock-event), persistence[1] (item_availability_states.statusField = \"availability_status\")",
+      "issue": "`item_availability_states` declares `statusField: \"availability_status\"` which the spec requires to be paired with at least one write capability that has `usesWorkflow: true` (binding the `workflow` helper for atomic claim/complete/fail lifecycle). `record-restock-event` is the only capability that writes to this table and transitions `availability_status` (its description says \"update the item's last-observed availability state\"), yet it declares `usesWorkflow: false`. Without the flag the coding agent will hand-roll an UPDATE instead of using the atomic workflow helper, creating an inventory-race window where two concurrent webhook deliveries both pass the transition check before either commits.",
+      "fix": "Set `usesWorkflow: true` on `record-restock-event`; the `workflow` helper's atomic claim-then-complete pattern is exactly the concurrency guard needed when two `inventory_levels/update` deliveries race on the same `inventory_item_external_id`."
+    },
+    {
+      "severity": "important",
+      "location": "capabilities[6] (send-restock-email).dataNeeds[\"item page url\"]",
+      "issue": "`send-restock-email` declares `\"item page url\"` in its `dataNeeds`, but no plan element supplies this value: the `inventory_levels/update` payload bindings carry no URL, no upstream Shopify step fetches a product handle or online-store URL, and `notification_queue` stores no URL column. The coding agent has no described source and will either invent a URL construction scheme or silently omit the link from the email \u2014 breaking the core click-through path that drives the \"lost demand recovered\" metric.",
+      "fix": "Either (a) add a `product_handle` column to `notification_queue` (populated at enqueue time from the `detect-restock` Shopify step which already produces product metadata) and list `\"product handle\"` in `send-restock-email`'s `dataNeeds`, or (b) add a resolution note to the `detect-restock` shopifySteps entry stating that `onlineStoreUrl` or handle is captured and threaded through `record-restock-event` into `notification_queue`."
+    }
+  ]
+}

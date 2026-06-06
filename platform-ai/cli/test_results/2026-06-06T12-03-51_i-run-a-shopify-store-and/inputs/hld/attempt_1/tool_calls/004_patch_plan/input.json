@@ -1,0 +1,227 @@
+{
+  "edits": [
+    {
+      "path": "triggers[0].signalFields",
+      "value": [
+        "inventory item external id",
+        "available quantity",
+        "location external id",
+        "variant external id",
+        "inventory updated at"
+      ]
+    },
+    {
+      "path": "triggers[0].payloadBindings",
+      "value": [
+        {
+          "signalField": "inventory item external id",
+          "source": "payload",
+          "payloadPath": "inventory_item_id",
+          "resolution": null
+        },
+        {
+          "signalField": "available quantity",
+          "source": "payload",
+          "payloadPath": "available",
+          "resolution": null
+        },
+        {
+          "signalField": "location external id",
+          "source": "payload",
+          "payloadPath": "location_id",
+          "resolution": null
+        },
+        {
+          "signalField": "inventory updated at",
+          "source": "payload",
+          "payloadPath": "updated_at",
+          "resolution": null
+        },
+        {
+          "signalField": "variant external id",
+          "source": "resolved",
+          "payloadPath": null,
+          "resolution": "resolve from inventory_item_id via the inventoryItem admin GraphQL query (inventoryItem.variant.id)"
+        }
+      ]
+    },
+    {
+      "path": "persistence[restock_events].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "variant_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "inventory_item_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "used as the idempotency key together with inventory_updated_at"
+        },
+        {
+          "name": "inventory_updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": "timestamp from the webhook payload's updated_at field; forms the dedup key with inventory_item_external_id \u2014 using the webhook-supplied value (not NOW()) ensures two deliveries of the same event produce the same key and the INSERT is a no-op"
+        },
+        {
+          "name": "available_quantity",
+          "role": "count",
+          "nullable": false,
+          "purpose": "stock count at restock time; caps the number of notifications enqueued"
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ]
+    },
+    {
+      "path": "capabilities[record-restock-event].dataNeeds",
+      "value": [
+        "variant external id",
+        "product external id",
+        "new available quantity",
+        "inventory item external id",
+        "inventory updated at",
+        "product handle"
+      ]
+    },
+    {
+      "path": "capabilities[record-restock-event].usesWorkflow",
+      "value": true
+    },
+    {
+      "path": "capabilities[detect-restock].shopifySteps",
+      "value": [
+        {
+          "op": "inventoryItem",
+          "produces": "variant id, variant title, product id, product title, product handle",
+          "consumes": "inventory item external id"
+        }
+      ]
+    },
+    {
+      "path": "persistence[notification_queue].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "subscription_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "links to the waitlist_subscriptions row being notified"
+        },
+        {
+          "name": "restock_event_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "links to the triggering restock_event; used for per-restock dedup"
+        },
+        {
+          "name": "shopper_email",
+          "role": "text",
+          "nullable": false,
+          "purpose": "denormalized for fast queue-drain queries without joins"
+        },
+        {
+          "name": "item_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "item_display_name",
+          "role": "text",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_handle",
+          "role": "text",
+          "nullable": false,
+          "purpose": "populated at enqueue time from detect-restock's product handle; used by send-restock-email to construct the item page URL without a live Shopify fetch"
+        },
+        {
+          "name": "status",
+          "role": "status",
+          "nullable": false,
+          "purpose": "workflow status: pending, sending, delivered, failed"
+        },
+        {
+          "name": "earliest_send_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": "set to the end of the quiet-hours window when enqueued during quiet hours; otherwise set to now so the drain picks it up immediately"
+        },
+        {
+          "name": "sent_at",
+          "role": "timestamp",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "failure_reason",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ]
+    },
+    {
+      "path": "capabilities[enqueue-restock-notifications].dataNeeds",
+      "value": [
+        "restock event id",
+        "variant external id",
+        "product external id",
+        "new available quantity",
+        "product handle",
+        "quiet hours start",
+        "quiet hours end",
+        "merchant timezone"
+      ]
+    },
+    {
+      "path": "capabilities[send-restock-email].dataNeeds",
+      "value": [
+        "subscriber email",
+        "item display name",
+        "product title",
+        "product handle",
+        "unsubscribe target url"
+      ]
+    }
+  ]
+}

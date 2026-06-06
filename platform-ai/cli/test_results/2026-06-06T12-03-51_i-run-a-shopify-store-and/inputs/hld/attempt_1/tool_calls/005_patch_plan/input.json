@@ -1,0 +1,293 @@
+{
+  "edits": [
+    {
+      "path": "triggers",
+      "value": [
+        {
+          "kind": "external-event",
+          "event": "an inventory level is updated",
+          "signalFields": [
+            "inventory item external id",
+            "available quantity",
+            "location external id",
+            "variant external id",
+            "inventory updated at"
+          ],
+          "idempotency": "if a restock_event already exists for the same inventory item and the same updated_at timestamp treat the delivery as a no-op",
+          "shopifyTopic": "inventory_levels/update",
+          "payloadBindings": [
+            {
+              "signalField": "inventory item external id",
+              "source": "payload",
+              "payloadPath": "inventory_item_id",
+              "resolution": null
+            },
+            {
+              "signalField": "available quantity",
+              "source": "payload",
+              "payloadPath": "available",
+              "resolution": null
+            },
+            {
+              "signalField": "location external id",
+              "source": "payload",
+              "payloadPath": "location_id",
+              "resolution": null
+            },
+            {
+              "signalField": "inventory updated at",
+              "source": "payload",
+              "payloadPath": "updated_at",
+              "resolution": null
+            },
+            {
+              "signalField": "variant external id",
+              "source": "resolved",
+              "payloadPath": null,
+              "resolution": "resolve from inventory_item_id via the inventoryItem admin GraphQL query (inventoryItem.variant.id)"
+            }
+          ]
+        },
+        {
+          "kind": "external-event",
+          "event": "a product is deleted from the store",
+          "signalFields": [
+            "product external id"
+          ],
+          "idempotency": "deletion of an already-cleared product is a no-op; guard by checking whether any subscriptions exist for the product before attempting deletes",
+          "shopifyTopic": "products/delete",
+          "payloadBindings": [
+            {
+              "signalField": "product external id",
+              "source": "payload",
+              "payloadPath": "id",
+              "resolution": null
+            }
+          ]
+        },
+        {
+          "kind": "external-event",
+          "event": "an order is paid",
+          "signalFields": [
+            "order external id",
+            "buyer email",
+            "ordered variant external ids"
+          ],
+          "idempotency": "if conversion rows already exist keyed on order external id and variant external id treat duplicate delivery as a no-op",
+          "shopifyTopic": "orders/paid",
+          "payloadBindings": [
+            {
+              "signalField": "order external id",
+              "source": "payload",
+              "payloadPath": "id",
+              "resolution": null
+            },
+            {
+              "signalField": "buyer email",
+              "source": "payload",
+              "payloadPath": "email",
+              "resolution": null
+            },
+            {
+              "signalField": "ordered variant external ids",
+              "source": "payload",
+              "payloadPath": "line_items[].variant_id",
+              "resolution": null
+            }
+          ]
+        },
+        {
+          "kind": "schedule",
+          "cadence": "every 5 minutes",
+          "jobPurpose": "Drain the notification queue by sending pending emails that have passed the quiet-hours window.",
+          "perTickWork": "Fetch all notification_queue rows in 'pending' status whose earliest_send_at is now in the past, send each email, and mark each row delivered or failed.",
+          "bulkFetchRule": false
+        }
+      ]
+    },
+    {
+      "path": "capabilities[record-restock-event].dataNeeds",
+      "value": [
+        "variant external id",
+        "product external id",
+        "new available quantity",
+        "inventory item external id",
+        "inventory updated at",
+        "product handle"
+      ]
+    },
+    {
+      "path": "capabilities[record-restock-event].usesWorkflow",
+      "value": true
+    },
+    {
+      "path": "capabilities[detect-restock].shopifySteps",
+      "value": [
+        {
+          "op": "inventoryItem",
+          "produces": "variant id, variant title, product id, product title, product handle",
+          "consumes": "inventory item external id"
+        }
+      ]
+    },
+    {
+      "path": "persistence[restock_events].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "variant_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "inventory_item_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "used as the idempotency key together with inventory_updated_at"
+        },
+        {
+          "name": "inventory_updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": "timestamp from the webhook payload's updated_at field; using the webhook-supplied value (not NOW()) ensures two deliveries of the same event produce the same key and the INSERT is a no-op"
+        },
+        {
+          "name": "available_quantity",
+          "role": "count",
+          "nullable": false,
+          "purpose": "stock count at restock time; caps the number of notifications enqueued"
+        },
+        {
+          "name": "product_handle",
+          "role": "text",
+          "nullable": false,
+          "purpose": "resolved from inventoryItem.variant.product.handle at restock detection time; stored here and copied to notification_queue at enqueue time so email construction never requires a live Shopify fetch"
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ]
+    },
+    {
+      "path": "persistence[notification_queue].columns",
+      "value": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "subscription_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "links to the waitlist_subscriptions row being notified"
+        },
+        {
+          "name": "restock_event_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "links to the triggering restock_event; used for per-restock dedup"
+        },
+        {
+          "name": "shopper_email",
+          "role": "text",
+          "nullable": false,
+          "purpose": "denormalized for fast queue-drain queries without joins"
+        },
+        {
+          "name": "item_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "item_display_name",
+          "role": "text",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "product_handle",
+          "role": "text",
+          "nullable": false,
+          "purpose": "copied from restock_events.product_handle at enqueue time; used by send-restock-email to construct the item page URL without a live Shopify fetch at send time"
+        },
+        {
+          "name": "status",
+          "role": "status",
+          "nullable": false,
+          "purpose": "workflow status: pending, sending, delivered, failed"
+        },
+        {
+          "name": "earliest_send_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": "set to the end of the quiet-hours window when enqueued during quiet hours; otherwise set to now so the drain picks it up immediately"
+        },
+        {
+          "name": "sent_at",
+          "role": "timestamp",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "failure_reason",
+          "role": "text",
+          "nullable": true,
+          "purpose": null
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ]
+    },
+    {
+      "path": "capabilities[enqueue-restock-notifications].dataNeeds",
+      "value": [
+        "restock event id",
+        "variant external id",
+        "product external id",
+        "new available quantity",
+        "product handle",
+        "quiet hours start",
+        "quiet hours end",
+        "merchant timezone"
+      ]
+    },
+    {
+      "path": "capabilities[send-restock-email].dataNeeds",
+      "value": [
+        "subscriber email",
+        "item display name",
+        "product title",
+        "product handle",
+        "unsubscribe target url"
+      ]
+    }
+  ]
+}
