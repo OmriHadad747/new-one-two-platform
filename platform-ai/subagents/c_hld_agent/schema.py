@@ -68,16 +68,22 @@ ShapeKind = Literal[
 _VALID_SHAPE_KINDS: frozenset[str] = frozenset(get_args(ShapeKind))
 
 # Forbidden column names.
-# Email-template fields are platform-owned (the platform stores subject /
-# body / CTA / from-name on its own — declaring them in app DDL collides
-# with the platform's migration).
+# Email-template fields are platform-owned: the platform stores subject /
+# heading / body / CTA / from-name on its own AND the merchant edits them
+# through the platform's email editor — declaring them in app DDL collides
+# with the platform's migration. Listed exhaustively so the
+# `platform_helpers.md` "Platform contract" section can mirror this set
+# verbatim; tests/test_platform_contract_parity.py fails if the two drift.
 _PLATFORM_OWNED_COLUMNS: frozenset[str] = frozenset(
     {
         "email_subject",
+        "email_subject_template",
         "email_body",
         "email_body_template",
+        "email_heading_template",
         "email_cta_label",
         "email_cta_url",
+        "email_cta_url_template",
         "email_from_name",
     }
 )

@@ -24,3 +24,31 @@ How each primitive is signalled in the HLD plan (so the coding agent reuses it):
 - email → a capability with `integration: "email"`.
 - shopify ops → the capability's `shopifySteps` (resolved op sequence).
 - files / db → described in the capability / persistence (no dedicated flag).
+
+## Platform contract — what the platform OWNS / MANAGES / FORBIDS
+
+The platform doesn't just lend helpers — it OWNS whole concerns. The app must not
+model, store, or rebuild these. A merchant need met by one of them is **already
+realized by the platform**; its absence from the app plan is CORRECT, not a gap —
+do not add a column, route, capability, or table for it, and do not flag it as
+missing.
+
+- **Email content is platform-owned.** The platform stores the subject, heading,
+  body, CTA label/URL, and from-name AND lets the merchant edit them through its
+  own email editor. The app passes ONLY the dynamic `data` (variables like name,
+  product, unsubscribe target) to `platform.email.send`. So "let the merchant
+  edit the email subject/body" is the platform editor — do NOT declare a column,
+  settings field, admin route, or capability to store or edit email content.
+  Rejected column names (any of these fail validation): `email_subject`,
+  `email_subject_template`, `email_body`, `email_body_template`,
+  `email_heading_template`, `email_cta_label`, `email_cta_url`,
+  `email_cta_url_template`, `email_from_name`.
+- **App settings are platform-owned.** Merchant settings live in the platform
+  `app_config` table via the `config` helper — never declare an app settings table.
+- **File storage and the job queue are platform-owned.** GCS storage (the `files`
+  helper) and the `cron_queue` (the `queue` helper / `enqueueJob`) are managed by
+  the platform — never model a bucket, credentials, or a jobs/polling table.
+- **Template-shipped tables already exist.** `processed_webhooks`, `cron_queue`,
+  and `app_config` ship with every handler — never redeclare them.
+- **No tenant isolation columns.** Each tenant gets its own DB schema — never add
+  a `tenant_id` column or any row-level tenant filter.

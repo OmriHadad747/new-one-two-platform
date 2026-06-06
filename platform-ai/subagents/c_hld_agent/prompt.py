@@ -81,9 +81,17 @@ right (these are GENERIC — the app only supplies the specific promise):
                                        a hardcoded constant
   - a status / lifecycle             → a `statusField` + a `stateMachine`
                                        governing it
+  - a need met by a PLATFORM-OWNED   → NO app-side realizer. The platform IS the
+    concern (see the Platform           mechanism (e.g. "let the merchant edit the
+    contract in the menu below:          email subject/body" → the platform email
+    email content, app settings,         editor; "store the file" → the files
+    file storage, the job queue)         helper). Do NOT add a column, route, or
+                                         capability for it; its absence is correct.
 
-When a promise has no realizer, ADD the missing mechanism before you emit — \
-do not leave the promise dangling and do not silently drop the behavior.
+When a promise has no realizer AND is not met by a platform-owned concern, ADD \
+the missing mechanism before you emit — do not leave the promise dangling and \
+do not silently drop the behavior. A promise the platform already realizes is \
+closed; do not invent app machinery (or, as reviewer, flag its absence) for it.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 1 — HOW TO REASON (outside-in)
