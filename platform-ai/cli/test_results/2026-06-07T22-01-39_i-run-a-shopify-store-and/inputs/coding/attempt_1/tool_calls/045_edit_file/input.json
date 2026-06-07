@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/webhook-handlers.ts",
+  "old_string": "  // \u2500\u2500 products/delete \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  \"products/delete\": async (\n    payload: ProductDeletePayload,\n    _req: Request,\n  ): Promise<void> => {",
+  "new_string": "  // \u2500\u2500 products/delete \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  \"products/delete\": async (\n    rawPayload: unknown,\n    _req: Request,\n  ): Promise<void> => {\n    const payload = rawPayload as ProductDeletePayload;"
+}

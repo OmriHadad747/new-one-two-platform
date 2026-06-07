@@ -1,0 +1,8 @@
+{
+  "content": "  if (startMins < endMins) {\n    // same-day window e.g. 02:00-06:00\n    return nowMins >= startMins && nowMins < endMins;\n  }\n  // overnight window e.g. 22:00-08:00\n  return nowMins >= startMins || nowMins < endMins;\n}\n\n// \u2500\u2500\u2500 restock notification dispatcher \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n/**\n * Given an open batch (and its pending sends), dispatch emails.\n * Respects quiet hours: if currently quiet, returns without sending.\n * Used by both the webhook handler and the cron deferred-dispatch job.\n */\nexport async function dispatchBatchEmails(\n  batchId: NotificationBatchId,\n  itemExternalId: string,\n): Promise<void> {\n  const quietStart: string = await config.get(\"notification_quiet_start\", \"22:00\");\n  const quietEnd: string = await config.get(\"notification_quiet_end\", \"08:00\");\n\n  if (isInQuietHours(quietStart, quietEnd)) {\n    console.log(\n      { batchId, itemExternalId },\n      \"quiet hours active \u2014 deferring email dispatch\",\n    );\n    return;\n  }\n\n  // Fetch all pending sends for this batch, joined with signup data\n  const sends = await sql<\n    {\n      send_id: NotificationSendId;\n      batch_id: NotificationBatchId;",
+  "total_lines": 724,
+  "returned_lines": [
+    40,
+    75
+  ]
+}

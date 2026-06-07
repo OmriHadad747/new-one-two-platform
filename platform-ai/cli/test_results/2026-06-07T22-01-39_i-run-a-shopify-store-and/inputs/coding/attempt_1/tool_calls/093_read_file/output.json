@@ -1,0 +1,8 @@
+{
+  "content": "      { topic: \"products/delete\", productExternalId },\n      \"cascade-delete completed\",\n    );\n  },\n\n  // \u2500\u2500 orders/paid \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  \"orders/paid\": async (\n    rawPayload: unknown,\n    _req: Request,\n  ): Promise<void> => {\n    const payload = rawPayload as OrderPaidPayload;\n    const orderExternalId = String(payload.id);\n    const buyerEmail = payload.email;\n    const lineItems = payload.line_items;\n\n    console.log(\n      { topic: \"orders/paid\", orderExternalId, buyerEmail },\n      \"checking for conversions\",\n    );\n\n    if (!buyerEmail) {\n      console.log(\n        { topic: \"orders/paid\", orderExternalId },\n        \"no buyer email \u2014 skipping conversion check\",\n      );\n      return;\n    }\n\n    const attributionDays: number = await config.get(\n      \"conversion_attribution_window_days\",",
+  "total_lines": 719,
+  "returned_lines": [
+    520,
+    550
+  ]
+}

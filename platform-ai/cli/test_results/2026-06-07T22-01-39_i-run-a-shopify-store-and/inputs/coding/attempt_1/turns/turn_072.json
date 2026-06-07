@@ -1,0 +1,12 @@
+{
+  "turn": 72,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 47,
+  "cache_read_tokens": 112171,
+  "cache_creation_tokens": 56,
+  "tool_uses": [
+    "done"
+  ],
+  "assistant_text": "TSC is clean. Let me call `done()`:"
+}

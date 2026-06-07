@@ -1,0 +1,8 @@
+{
+  "content": "# Helper: `paginate`\n\nUse the `paginate` helper for every offset-paginated list route (a GET that\nreturns a list). It handles input clamping, the `COUNT`, and the response shape\n\u2014 do NOT write your own `LIMIT`/`OFFSET` or a separate count query.\n\n```ts\nimport { paginate } from \"../lib/paginate.js\";\nimport { sql } from \"../lib/db.js\";\n\n// Hand paginate a BARE SELECT (no LIMIT, no OFFSET, no COUNT(*); ORDER BY\n// required). The helper clamps page>=1 and page_size to [1,100], runs the\n// COUNT subquery, and returns the response shape.\nconst rows = await paginate(\n  sql,\n  sql`SELECT * FROM <table> WHERE <filters> ORDER BY <col>`,\n  { page: req.body.page, page_size: req.body.page_size },\n);\nres.json(rows); // { items, total, page, page_size }\n\n// Per-route cap override (default cap is 100):\n//   await paginate(sql, sql`...`, { page, page_size }, { maxPageSize: 1000 });\n```\n\nRules:\n- Request carries `page` and `page_size` (numbers); response is exactly\n  `{ items, total, page, page_size }`.\n- One bare `SELECT` (no `LIMIT`/`OFFSET`/`COUNT(*)`) handed to `paginate`.",
+  "total_lines": 28,
+  "returned_lines": [
+    0,
+    28
+  ]
+}

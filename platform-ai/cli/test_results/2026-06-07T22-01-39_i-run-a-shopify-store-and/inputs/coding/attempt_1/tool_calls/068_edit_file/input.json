@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/cron.ts",
+  "old_string": "import type { NotificationBatchId } from \"../types/contracts.js\";",
+  "new_string": "import type { NotificationBatchId, NotificationBatchRow } from \"../types/contracts.js\";"
+}

@@ -1,0 +1,8 @@
+{
+  "content": "  let productTitle: string | null = null;\n  let variantTitle: string | null = null;\n\n  if (itemType === \"variant\") {\n    const variantGid = `gid://shopify/ProductVariant/${itemExternalId}`;\n    const data = await shopify.graphql<{\n      productVariant: {\n        displayName: string;\n        product: { title: string };\n      } | null;\n    }>(\n      `query GetVariantSnapshot($id: ID!) {\n        productVariant(id: $id) {\n          displayName\n          product { title }\n        }\n      }`,\n      { id: variantGid },\n    );\n    if (data.productVariant) {\n      productTitle = safe(data.productVariant.product.title);\n      variantTitle = safe(data.productVariant.displayName);\n    }\n  } else {\n    const productGid = `gid://shopify/Product/${itemExternalId}`;",
+  "total_lines": 719,
+  "returned_lines": [
+    250,
+    275
+  ]
+}

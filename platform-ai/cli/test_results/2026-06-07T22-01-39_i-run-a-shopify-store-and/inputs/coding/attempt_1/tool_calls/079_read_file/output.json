@@ -1,0 +1,8 @@
+{
+  "content": "  const firstSend = sends[0];\n  if (!firstSend) return;\n\n  const itemType = firstSend.item_type;\n  const itemId = firstSend.item_external_id;\n\n  let productTitle = \"your waitlisted item\";\n  let variantTitle = \"\";\n  let productUrl = \"\";\n  let variantImageUrl: string | null = null;\n\n  if (itemType === \"variant\") {\n    const variantGid = `gid://shopify/ProductVariant/${itemId}`;\n    const variantData = await shopify.graphql<{\n      productVariant: {\n        id: string;\n        displayName: string;\n        title: string;\n        image: { url: string } | null;\n        product: {\n          id: string;\n          title: string;\n          onlineStoreUrl: string | null;\n        };\n      } | null;\n    }>(\n      `query GetVariantForEmail($id: ID!) {\n        productVariant(id: $id) {\n          id\n          displayName",
+  "total_lines": 713,
+  "returned_lines": [
+    95,
+    125
+  ]
+}

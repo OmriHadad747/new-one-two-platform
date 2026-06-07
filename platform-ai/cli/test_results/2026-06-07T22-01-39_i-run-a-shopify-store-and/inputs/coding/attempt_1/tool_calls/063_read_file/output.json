@@ -1,0 +1,8 @@
+{
+  "content": "      sendId: s.send_id,\n    },\n  }));\n\n  let emailsSentCount = 0;\n\n  try {\n    const batchResult = await platform.email.sendBatch(emailItems);\n\n    for (const item of batchResult.items) {\n      const send = sends[item.index];\n      if (!send) continue;\n\n      if (item.status === 200 && item.result.delivered) {\n        await sql`\n          UPDATE notification_sends\n          SET status = 'sent', sent_at = now()\n          WHERE id = ${send.send_id}\n        `;\n        emailsSentCount++;\n      } else if (item.status === 429) {\n        // quota exceeded for this item\n        console.warn(\n          { sendId: send.send_id, batchId },\n          \"email quota exceeded \u2014 stopping batch dispatch\",\n        );\n        break;\n      } else {\n        await sql`\n          UPDATE notification_sends\n          SET status = 'failed'\n          WHERE id = ${send.send_id}\n        `;\n        console.warn(\n          { sendId: send.send_id, status: item.status },\n          \"email send failed for recipient\",\n        );\n      }\n    }\n  } catch (err) {\n    console.error({ batchId, err: String(err) }, \"sendBatch threw unexpectedly\");\n  }\n\n  // Increment emails_sent counter on batch\n  if (emailsSentCount > 0) {\n    await sql`\n      UPDATE notification_batches\n      SET emails_sent = emails_sent + ${emailsSentCount}\n      WHERE id = ${batchId}\n    `;",
+  "total_lines": 737,
+  "returned_lines": [
+    195,
+    245
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "turn": 7,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 119,
+  "cache_read_tokens": 42666,
+  "cache_creation_tokens": 1222,
+  "tool_uses": [
+    "read_file",
+    "read_file"
+  ],
+  "assistant_text": ""
+}

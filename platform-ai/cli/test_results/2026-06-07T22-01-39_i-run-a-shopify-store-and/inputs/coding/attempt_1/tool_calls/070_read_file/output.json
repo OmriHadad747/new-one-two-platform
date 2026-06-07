@@ -1,0 +1,8 @@
+{
+  "content": "\n  if (!newBatchId) return;\n\n  console.log(\n    { itemExternalId, batchId: newBatchId, signupsSelected: signupsToNotify.length },\n    \"notification batch created\",\n  );\n\n  // Use workflow.attempt to drive the batch through email dispatch (processing \u2192 completed/failed)\n  const claimed = await workflow.attempt<NotificationBatchRow, void>(\n    \"notification_batches\",\n    newBatchId,\n    { from: \"processing\" },\n    async (_row) => {\n      // Dispatch emails (respects quiet hours; if in quiet hours, sends are left pending for cron)\n      await dispatchBatchEmails(newBatchId as NotificationBatchId, itemExternalId);\n    },\n  );\n\n  if (!claimed) {\n    console.log({ batchId: newBatchId }, \"batch already claimed by another worker\");\n  }\n\n  // Refresh demand stats snapshot regardless of email dispatch outcome\n  await refreshDemandStatsSnapshot(itemExternalId, itemType, productExternalId);\n}",
+  "total_lines": 721,
+  "returned_lines": [
+    695,
+    721
+  ]
+}

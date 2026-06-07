@@ -1,0 +1,8 @@
+{
+  "content": "        SET status = 'notified'\n        WHERE id = ${signup.id}\n      `;\n\n      await tx`\n        INSERT INTO notification_sends (batch_id, signup_id, status)\n        VALUES (${batch.id}, ${signup.id}, 'pending')\n        ON CONFLICT (batch_id, signup_id) DO NOTHING\n      `;\n    }\n  });\n\n  if (!newBatchId) return;\n\n  console.log(\n    { itemExternalId, batchId: newBatchId, signupsSelected: signupsToNotify.length },\n    \"notification batch created\",\n  );\n\n  // Check quiet hours \u2014 if active, leave batch pending for the cron to dispatch\n  const quietStart: string = await config.get(\"notification_quiet_start\", \"22:00\");\n  const quietEnd: string = await config.get(\"notification_quiet_end\", \"08:00\");\n\n  if (isInQuietHours(quietStart, quietEnd)) {\n    console.log({ batchId: newBatchId }, \"quiet hours active \u2014 deferring to cron\");\n  } else {\n    // Dispatch immediately using workflow to drive the lifecycle\n    await workflow.attempt<NotificationBatchRow, void>(\n      \"notification_batches\",\n      newBatchId,",
+  "total_lines": 715,
+  "returned_lines": [
+    675,
+    705
+  ]
+}

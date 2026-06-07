@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/webhook-handlers.ts",
+  "old_string": "export const webhookHandlers = {",
+  "new_string": "export const webhookHandlers: Record<\n  string,\n  (payload: unknown, req: Request) => Promise<void>\n> = {"
+}

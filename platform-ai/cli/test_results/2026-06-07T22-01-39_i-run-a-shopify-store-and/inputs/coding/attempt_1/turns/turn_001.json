@@ -1,0 +1,12 @@
+{
+  "turn": 1,
+  "stop_reason": "tool_use",
+  "input_tokens": 3,
+  "output_tokens": 3084,
+  "cache_read_tokens": 0,
+  "cache_creation_tokens": 24977,
+  "tool_uses": [
+    "todo_write"
+  ],
+  "assistant_text": "I'll start by laying out the complete plan with all file todos and their plan slices."
+}

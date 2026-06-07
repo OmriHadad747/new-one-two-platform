@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/webhook-handlers.ts",
+  "old_string": "    if (!batch) throw new Error(\"Failed to create notification_batch\");\n    newBatchId = batch.id;",
+  "new_string": "    if (!batch) {\n      // ON CONFLICT hit \u2014 batch already exists for this item+date. Idempotent no-op.\n      console.log({ itemExternalId, dateBucket }, \"batch already exists \u2014 idempotent no-op\");\n      return; // exits the sql.begin callback; newBatchId stays null\n    }\n    newBatchId = batch.id;"
+}

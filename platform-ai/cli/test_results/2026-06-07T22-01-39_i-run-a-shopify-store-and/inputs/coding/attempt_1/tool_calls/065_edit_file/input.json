@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/webhook-handlers.ts",
+  "old_string": "  if (sends.length === 0) {\n    // All already dispatched \u2014 mark batch completed if still processing\n    await sql`\n      UPDATE notification_batches\n      SET status = 'completed'\n      WHERE id = ${batchId} AND status = 'processing'\n    `;\n    return;\n  }",
+  "new_string": "  if (sends.length === 0) {\n    // All already dispatched \u2014 nothing more to do (caller manages batch status via workflow)\n    return;\n  }"
+}

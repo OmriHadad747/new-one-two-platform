@@ -19,7 +19,7 @@ _DEFAULTS: dict[str, str] = {
     # model on a fixed prompt. Revert to "claude-opus-4-8" when the comparison
     # is done. (The cost telemetry derives its price from this value, so it
     # reprices the hld stage as Sonnet automatically — no other edit needed.)
-    "hld": "claude-opus-4-8",
+    "hld": "claude-sonnet-4-6",
     "hld_revise": "claude-sonnet-4-6",
     "hld_v": "claude-sonnet-4-6",
     # Downstream micro-validators — narrow, single-invariant checks, so a

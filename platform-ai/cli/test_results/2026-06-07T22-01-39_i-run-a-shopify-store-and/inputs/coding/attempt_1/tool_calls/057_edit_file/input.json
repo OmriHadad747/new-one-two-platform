@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/cron.ts",
+  "old_string": "import { sql } from \"../lib/db.js\";\nimport { config } from \"../lib/config.js\";\nimport { dispatchBatchEmails } from \"./webhook-handlers.js\";\nimport type { NotificationBatchId } from \"../types/contracts.js\";",
+  "new_string": "import { sql } from \"../lib/db.js\";\nimport { config } from \"../lib/config.js\";\nimport { workflow } from \"../lib/workflow.js\";\nimport { dispatchBatchEmails } from \"./webhook-handlers.js\";\nimport type { NotificationBatchId } from \"../types/contracts.js\";"
+}

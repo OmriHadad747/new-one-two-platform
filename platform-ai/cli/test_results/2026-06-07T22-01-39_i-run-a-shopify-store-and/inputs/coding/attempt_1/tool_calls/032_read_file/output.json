@@ -1,0 +1,8 @@
+{
+  "content": "        r.signed_up_at,\n      ].join(\",\");\n    });\n    const csvContent = header + csvLines.join(\"\\n\");\n\n    // Upload to platform files storage\n    const csvBytes = Buffer.from(csvContent, \"utf8\");\n    const filename = `subscribers-${itemExternalId}-${Date.now()}.csv`;\n    const uploadResult = await platform.files.upload(filename, csvBytes, {\n      contentType: \"text/csv\",\n    });\n\n    const response: AdminSubscribersExportResponse = {\n      csv_url: uploadResult.url,\n    };\n\n    res.json(response);\n  },\n);\n",
+  "total_lines": 319,
+  "returned_lines": [
+    220,
+    240
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "turn": 14,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 75,
+  "cache_read_tokens": 53382,
+  "cache_creation_tokens": 525,
+  "tool_uses": [
+    "get_shopify_op"
+  ],
+  "assistant_text": ""
+}

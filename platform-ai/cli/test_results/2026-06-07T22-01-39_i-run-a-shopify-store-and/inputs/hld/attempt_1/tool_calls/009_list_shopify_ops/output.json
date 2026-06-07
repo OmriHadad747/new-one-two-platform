@@ -1,0 +1,38 @@
+{
+  "cluster": "order",
+  "surface": "admin",
+  "queries": [
+    "order(id: ID!): Order",
+    "orderByIdentifier(identifier: OrderIdentifierInput!): Order",
+    "orderEditSession(id: ID!): OrderEditSession",
+    "orderPaymentStatus(paymentReferenceId: String!, orderId: ID!): OrderPaymentStatus",
+    "orderSavedSearches(first: Int, after: String, last: Int, before: String, reverse: Boolean): SavedSearchConnection!"
+  ],
+  "mutations": [
+    "orderCancel(orderId: ID!, refundMethod: OrderCancelRefundMethodInput, restock: Boolean!, reason: OrderCancelReason!, notifyCustomer: Boolean, staffNote: String): OrderCancelPayload",
+    "orderCapture(input: OrderCaptureInput!): OrderCapturePayload",
+    "orderClose(input: OrderCloseInput!): OrderClosePayload",
+    "orderCreate(order: OrderCreateOrderInput!, options: OrderCreateOptionsInput): OrderCreatePayload",
+    "orderCreateMandatePayment(id: ID!, paymentScheduleId: ID, idempotencyKey: String!, mandateId: ID!, amount: MoneyInput, autoCapture: Boolean): OrderCreateMandatePaymentPayload",
+    "orderCreateManualPayment(id: ID!, amount: MoneyInput, paymentMethodName: String, processedAt: DateTime): OrderCreateManualPaymentPayload",
+    "orderCustomerRemove(orderId: ID!): OrderCustomerRemovePayload",
+    "orderCustomerSet(orderId: ID!, customerId: ID!): OrderCustomerSetPayload",
+    "orderDelete(orderId: ID!): OrderDeletePayload",
+    "orderEditAddCustomItem(id: ID!, title: String!, locationId: ID, price: MoneyInput!, quantity: Int!, taxable: Boolean, requiresShipping: Boolean): OrderEditAddCustomItemPayload",
+    "orderEditAddLineItemDiscount(id: ID!, lineItemId: ID!, discount: OrderEditAppliedDiscountInput!): OrderEditAddLineItemDiscountPayload",
+    "orderEditAddShippingLine(id: ID!, shippingLine: OrderEditAddShippingLineInput!): OrderEditAddShippingLinePayload",
+    "orderEditAddVariant(id: ID!, variantId: ID!, locationId: ID, quantity: Int!, allowDuplicates: Boolean): OrderEditAddVariantPayload",
+    "orderEditBegin(id: ID!): OrderEditBeginPayload",
+    "orderEditCommit(id: ID!, notifyCustomer: Boolean, staffNote: String): OrderEditCommitPayload",
+    "orderEditRemoveDiscount(id: ID!, discountApplicationId: ID!): OrderEditRemoveDiscountPayload",
+    "orderEditRemoveShippingLine(id: ID!, shippingLineId: ID!): OrderEditRemoveShippingLinePayload",
+    "orderEditSetQuantity(id: ID!, lineItemId: ID!, quantity: Int!, restock: Boolean): OrderEditSetQuantityPayload",
+    "orderEditUpdateDiscount(id: ID!, discount: OrderEditAppliedDiscountInput!, discountApplicationId: ID!): OrderEditUpdateDiscountPayload",
+    "orderEditUpdateShippingLine(id: ID!, shippingLine: OrderEditUpdateShippingLineInput!, shippingLineId: ID!): OrderEditUpdateShippingLinePayload",
+    "orderInvoiceSend(id: ID!, email: EmailInput): OrderInvoiceSendPayload",
+    "orderMarkAsPaid(input: OrderMarkAsPaidInput!): OrderMarkAsPaidPayload",
+    "orderOpen(input: OrderOpenInput!): OrderOpenPayload",
+    "orderRiskAssessmentCreate(orderRiskAssessmentInput: OrderRiskAssessmentCreateInput!): OrderRiskAssessmentCreatePayload",
+    "orderUpdate(input: OrderInput!): OrderUpdatePayload"
+  ]
+}

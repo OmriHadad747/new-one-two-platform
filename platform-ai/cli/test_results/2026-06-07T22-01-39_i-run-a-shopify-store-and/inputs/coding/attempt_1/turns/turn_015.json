@@ -1,0 +1,12 @@
+{
+  "turn": 15,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 6730,
+  "cache_read_tokens": 53907,
+  "cache_creation_tokens": 2174,
+  "tool_uses": [
+    "write_file"
+  ],
+  "assistant_text": "Now I have enough context. Let me write the webhook handler:"
+}

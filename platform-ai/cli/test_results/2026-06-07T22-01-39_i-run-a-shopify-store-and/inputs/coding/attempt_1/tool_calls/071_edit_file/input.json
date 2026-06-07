@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/webhook-handlers.ts",
+  "old_string": "  // Use workflow.attempt to drive the batch through email dispatch (processing \u2192 completed/failed)\n  const claimed = await workflow.attempt<NotificationBatchRow, void>(\n    \"notification_batches\",\n    newBatchId,\n    { from: \"processing\" },\n    async (_row) => {\n      // Dispatch emails (respects quiet hours; if in quiet hours, sends are left pending for cron)\n      await dispatchBatchEmails(newBatchId as NotificationBatchId, itemExternalId);\n    },\n  );",
+  "new_string": "  // Use workflow.attempt to drive the batch through email dispatch (pending \u2192 running \u2192 completed/failed)\n  const claimed = await workflow.attempt<NotificationBatchRow, void>(\n    \"notification_batches\",\n    newBatchId,\n    { from: \"pending\" },\n    async (_row) => {\n      // Dispatch emails (respects quiet hours; if in quiet hours, sends are left pending for cron)\n      await dispatchBatchEmails(newBatchId as NotificationBatchId, itemExternalId);\n    },\n  );"
+}

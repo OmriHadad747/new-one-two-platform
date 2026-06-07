@@ -1,0 +1,23 @@
+```json
+{
+  "status": "needs_clarification",
+  "questions": [
+    {
+      "question": "For the 'lost demand recovered' metric — when a shopper gets notified and buys within a week, how should the app know they bought BECAUSE of the notification vs. just happened to buy anyway? Should we attribute the sale if they bought the same variant within 7 days, or do you want a different signal (e.g., they click a link in the email)?",
+      "suggestions": [
+        "Attribute any purchase of that variant within 7 days",
+        "Only attribute if they click the notification email link first",
+        "Track both; let me see them separately in the dashboard"
+      ]
+    },
+    {
+      "question": "For quiet hours — should emails be blocked entirely during those hours, or should they queue up and send first thing when quiet hours end?",
+      "suggestions": [
+        "Block and discard — don't send if stock returns during quiet hours",
+        "Queue and send at the start of business hours next morning",
+        "Send immediately regardless — quiet hours are just a setting I won't use"
+      ]
+    }
+  ]
+}
+```

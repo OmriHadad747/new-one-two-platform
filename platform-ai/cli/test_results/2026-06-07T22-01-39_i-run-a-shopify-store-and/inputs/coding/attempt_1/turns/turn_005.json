@@ -1,0 +1,13 @@
+{
+  "turn": 5,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 134,
+  "cache_read_tokens": 37876,
+  "cache_creation_tokens": 3808,
+  "tool_uses": [
+    "read_file",
+    "read_file"
+  ],
+  "assistant_text": "Now read the runtime examples for the key patterns I'll need:"
+}

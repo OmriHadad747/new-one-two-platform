@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/admin/ui.ts",
+  "old_string": "    form.addEventListener(\"submit\", async (e) => {\n      e.preventDefault();\n      const formData = bridge.getFormData(form);\n\n      const body: AdminSettingsSaveRequest = {\n        batch_size: parseInt(String(formData.batch_size), 10),\n        quiet_hours_start: String(formData.quiet_hours_start),\n        quiet_hours_end: String(formData.quiet_hours_end),\n        conversion_attribution_window_days: parseInt(\n          String(formData.conversion_attribution_window_days),\n          10,\n        ),\n      };",
+  "new_string": "    form.addEventListener(\"submit\", async (e) => {\n      e.preventDefault();\n\n      const body: AdminSettingsSaveRequest = {\n        batch_size: parseInt(batchInput.value, 10),\n        quiet_hours_start: quietStartInput.value,\n        quiet_hours_end: quietEndInput.value,\n        conversion_attribution_window_days: parseInt(attrInput.value, 10),\n      };"
+}

@@ -1,0 +1,8 @@
+{
+  "content": "  await sql.begin(async (tx) => {\n    // Create the notification batch\n    const [batch] = await tx<NotificationBatchRow[]>`\n      INSERT INTO notification_batches\n        (item_external_id, item_type, product_external_id, restock_date_bucket,\n         signups_selected, emails_sent, status)\n      VALUES\n        (${itemExternalId}, ${itemType}, ${productExternalId}, ${dateBucket},\n         ${signupsToNotify.length}, 0, 'processing')\n      RETURNING id, item_external_id, item_type, product_external_id, restock_date_bucket,\n                signups_selected, emails_sent, status, created_at, deleted_at\n    `;\n\n    if (!batch) throw new Error(\"Failed to create notification_batch\");\n    newBatchId = batch.id;\n\n    // Mark signups as notified and create send rows\n    for (const signup of signupsToNotify) {\n      await tx`\n        UPDATE waitlist_signups\n        SET status = 'notified'\n        WHERE id = ${signup.id}\n      `;\n\n      await tx`\n        INSERT INTO notification_sends (batch_id, signup_id, status)\n        VALUES (${batch.id}, ${signup.id}, 'pending')\n        ON CONFLICT (batch_id, signup_id) DO NOTHING\n      `;\n    }\n  });\n\n  if (!newBatchId) return;\n\n  console.log(\n    { itemExternalId, batchId: newBatchId, signupsSelected: signupsToNotify.length },\n    \"notification batch created\",\n  );\n\n  // Dispatch emails (respects quiet hours)\n  await dispatchBatchEmails(newBatchId, itemExternalId);\n\n  // Refresh demand stats snapshot\n  await refreshDemandStatsSnapshot(itemExternalId, itemType, productExternalId);\n}",
+  "total_lines": 725,
+  "returned_lines": [
+    680,
+    725
+  ]
+}

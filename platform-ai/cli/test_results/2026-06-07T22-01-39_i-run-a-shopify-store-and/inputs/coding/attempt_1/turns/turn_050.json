@@ -1,0 +1,12 @@
+{
+  "turn": 50,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 1251,
+  "cache_read_tokens": 92979,
+  "cache_creation_tokens": 655,
+  "tool_uses": [
+    "edit_file"
+  ],
+  "assistant_text": "I need to integrate `workflow` into the notification_batches lifecycle. The batch is created in `processing` state and completed/failed. I'll use `workflow.attempt` to drive the dispatch. The key issue is that `workflow.attempt` works on an existing row \u2014 so I'll create the batch then use `workflow.attempt` to drive it through the email dispatch:"
+}

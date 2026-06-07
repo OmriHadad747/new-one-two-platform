@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/app.json",
+  "old_string": "          {\n            \"name\": \"status\",\n            \"sqlType\": \"TEXT\",\n            \"constraints\": \"NOT NULL DEFAULT 'processing'\",\n            \"enum\": [\"processing\", \"completed\", \"failed\"],\n            \"purpose\": \"Lifecycle: processing, completed, failed\"\n          },",
+  "new_string": "          {\n            \"name\": \"status\",\n            \"sqlType\": \"TEXT\",\n            \"constraints\": \"NOT NULL DEFAULT 'pending'\",\n            \"enum\": [\"pending\", \"running\", \"completed\", \"failed\"],\n            \"purpose\": \"Lifecycle: pending (batch created, not yet dispatched), running (dispatch in progress), completed, failed\"\n          },"
+}

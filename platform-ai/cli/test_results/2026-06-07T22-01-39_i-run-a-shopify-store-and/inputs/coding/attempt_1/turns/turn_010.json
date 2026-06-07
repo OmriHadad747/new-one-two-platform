@@ -1,0 +1,12 @@
+{
+  "turn": 10,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 540,
+  "cache_read_tokens": 46387,
+  "cache_creation_tokens": 3509,
+  "tool_uses": [
+    "todo_write"
+  ],
+  "assistant_text": ""
+}

@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/webhook-handlers.ts",
+  "old_string": "  // Check if all sends are complete and mark batch completed\n  const [pending] = await sql<{ cnt: string }[]>`\n    SELECT COUNT(*) AS cnt\n    FROM notification_sends\n    WHERE batch_id = ${batchId} AND status = 'pending'\n  `;\n  if ((parseInt(pending?.cnt ?? \"0\", 10)) === 0) {\n    await sql`\n      UPDATE notification_batches\n      SET status = 'completed'\n      WHERE id = ${batchId} AND status = 'processing'\n    `;\n  }\n}",
+  "new_string": "  // Note: notification_batches.status is managed by workflow.attempt (caller-side)\n  // This function only updates notification_sends rows and the emails_sent counter.\n}"
+}

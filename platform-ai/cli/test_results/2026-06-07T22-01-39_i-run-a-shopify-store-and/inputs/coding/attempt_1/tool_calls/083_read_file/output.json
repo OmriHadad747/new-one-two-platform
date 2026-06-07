@@ -1,0 +1,8 @@
+{
+  "content": "\n// \u2500\u2500\u2500 refresh demand stats snapshot \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nasync function refreshDemandStatsSnapshot(\n  itemExternalId: string,\n  itemType: string,\n  productExternalId: string,\n): Promise<void> {\n  const shopify = await shopifyClientFor();\n\n  let productTitle: string | null = null;\n  let variantTitle: string | null = null;\n\n  if (itemType === \"variant\") {\n    const variantGid = `gid://shopify/ProductVariant/${itemExternalId}`;",
+  "total_lines": 719,
+  "returned_lines": [
+    240,
+    255
+  ]
+}
