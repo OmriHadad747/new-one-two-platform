@@ -190,7 +190,6 @@ def run_product_analysis(
 
 
 def run_hld(
-    prompt: str,
     intent: Dict[str, Any],
     run_dir: Path,
     validator_hint: Optional[str] = None,
@@ -223,7 +222,6 @@ def run_hld(
         log_name = "hld" if validator_hint is None else "hld_revise"
         with input_log(log_name, run_dir):
             plan, in_tok, out_tok, cache_r, cache_c = run_hld_agent(
-                prompt=prompt,
                 intent=intent,
                 on_attempt_failed=_on_attempt_failed,
                 validator_hint=validator_hint,
@@ -269,7 +267,6 @@ def run_hld(
 
 def run_hld_validation(
     plan: Dict[str, Any],
-    prompt: str,
     intent: Dict[str, Any],
     run_dir: Path,
 ) -> Tuple[List[Dict[str, Any]], Tokens]:
@@ -281,7 +278,7 @@ def run_hld_validation(
     in_tok = out_tok = cache_r = cache_c = 0
     try:
         with input_log("hld_v", run_dir):
-            found, in_tok, out_tok, cache_r, cache_c = run_hld_validator(plan, prompt, intent)
+            found, in_tok, out_tok, cache_r, cache_c = run_hld_validator(plan, intent)
     except Exception as exc:
         sp.stop()
         ui.note(f"hld_v failed ({exc}) — fail-open", ui.YELLOW)

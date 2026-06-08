@@ -192,7 +192,7 @@ def main() -> int:
         plan = state["plan"]
         ui.agent_line("HLD", True, None, ui.c("(resumed)", ui.DIM))
     else:
-        plan, h_tokens = pipeline.run_hld(prompt, intent, run_dir)
+        plan, h_tokens = pipeline.run_hld(intent, run_dir)
         _save_state(run_dir, plan=plan, tokens_hld=h_tokens)
 
     if args.stop_after == "hld":
@@ -203,7 +203,7 @@ def main() -> int:
         findings = state["hld_v_findings"]
         ui.agent_line("HLD Check", True, None, ui.c("(resumed)", ui.DIM))
     else:
-        findings, v_tokens = pipeline.run_hld_validation(plan, prompt, intent, run_dir)
+        findings, v_tokens = pipeline.run_hld_validation(plan, intent, run_dir)
         _save_state(run_dir, hld_v_findings=findings, tokens_hld_v=v_tokens)
 
     if findings and "tokens_hld_revise" not in state:
@@ -213,7 +213,7 @@ def main() -> int:
             for f in findings
         )
         plan, h2_tokens = pipeline.run_hld(
-            prompt, intent, run_dir, validator_hint=hint, prior_plan=plan
+            intent, run_dir, validator_hint=hint, prior_plan=plan
         )
         _save_state(run_dir, plan=plan, tokens_hld_revise=h2_tokens)
 

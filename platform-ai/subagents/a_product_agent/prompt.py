@@ -168,7 +168,8 @@ response of PRODUCT_ANALYZE_BASE):
     "desiredOutcome": "<one sentence, merchant- or customer-perspective>",
     "cronHint":       "<brief schedule, e.g. 'every 6 hours'>" | null,
     "appCategory":    "backend" | "backend_admin" | "storefront_backend" | "storefront_backend_admin",
-    "qualityBrief":   "<3-5 sentences describing what a polished version of THIS app does well>"
+    "qualityBrief":   "<the complete minimal spec for THIS app — see QUALITY BRIEF below>",
+    "excluded":       ["<feature explicitly ruled out>", ...]   // [] if none
   }
 
 Hard cross-rules — your output MUST satisfy all three:
@@ -176,24 +177,42 @@ Hard cross-rules — your output MUST satisfy all three:
   2. appCategory starts with "storefront_" IFF "widget" is in triggerTypes.
   3. "admin" in triggerTypes ⇒ appCategory ends with "_admin".
 
-══════════════════ QUALITY BRIEF — be specific ══════════════════
+══════════════════ QUALITY BRIEF — the authoritative spec ══════════════════
 
-`qualityBrief` is the 3-5-sentence spec downstream agents read to decide
-edge-case coverage. Be specific to THIS app type.
+`qualityBrief` is the SINGLE source of truth the downstream design agents
+build from — they do NOT see the raw merchant request, only this brief.
+Write it as the minimal, COMPLETE set of requirements to implement the
+merchant's request perfectly. If it isn't in the brief, it won't get built.
 
-  • What edge cases must this app handle? (duplicate webhook delivery,
+COMPLETENESS — enumerate, in the merchant's domain language:
+  • Every feature / surface / behavior the app must have (the WHAT). Each
+    trigger, each thing the merchant or customer can do, each thing the app
+    produces or records.
+  • The edge cases this app type must handle (duplicate webhook delivery,
     guest checkout with no customer, deleted products, partial refunds,
-    inventory races, …)
-  • What UX details matter? (instant feedback, empty states, social proof
-    counter, copy-to-clipboard for codes, mobile breakpoints, …)
-  • What separates a 5-star version from a 3-star version of this app
-    type?
-  • What mistakes do cheap versions of this app type make? (e.g.
-    double-crediting on retry, not clamping balance to zero, no manual
-    override for the merchant.)
+    inventory races, …).
+  • The UX details that separate a 5-star version from a 3-star one (instant
+    feedback, empty states, copy-to-clipboard for codes, mobile breakpoints,
+    …) and the mistakes cheap versions make (double-crediting on retry, not
+    clamping balance to zero, no manual override for the merchant).
 
-Generic advice ("handle errors gracefully") is not useful. Name the
-actual scenarios.
+MINIMALITY — do NOT include any feature, metric, surface, or capability the
+merchant did not ask for (or that was dropped/redirected — those go in
+`excluded`, never here). The brief covers exactly the requested app, no more.
+
+Be specific — name the actual scenarios for THIS app type. Generic advice
+("handle errors gracefully") is not useful. Length is whatever it takes to
+be complete-but-minimal; there is no sentence cap.
+
+══════════════════ EXCLUDED — the blocklist ══════════════════
+
+`excluded` lists features explicitly ruled out: anything the merchant
+dropped, skipped, or said "don't" to during clarification, and anything you
+redirected as out-of-scope. Phrase each as the concrete feature in domain
+language (e.g. "quiet-hours / send-time windows", "purchase-conversion
+metric"). The design agents treat this as a hard blocklist — they will not
+re-introduce anything on it. Use [] when nothing was explicitly excluded;
+do NOT pad it with capabilities that simply weren't requested.
 """
 
 
@@ -227,8 +246,13 @@ mismatch. Do NOT refuse to classify; do NOT emit any other JSON shape.
   "desiredOutcome": "...",
   "cronHint":       null | "...",
   "appCategory":    "...",
-  "qualityBrief":   "..."
+  "qualityBrief":   "...",
+  "excluded":       [...]
 }
+
+In the one-shot path there is no clarification, so `excluded` is usually
+[] — populate it only when you actively redirect part of the request as
+out-of-scope.
 """
 
 
@@ -383,6 +407,12 @@ Sections:
   • Examples: "Won't send SMS — only email." / "Won't change anything
     during checkout." / "Won't sync to Klaviyo or Mailchimp." / "Won't run
     automatically — you trigger each run from the admin."
+
+  Any feature the merchant explicitly DROPPED or you REDIRECTED during the
+  conversation MUST appear both here (in merchant language) and in the
+  intent's `excluded` list (in domain language) — the design stage reads
+  `excluded` as a hard blocklist. A feature merely not requested does not
+  belong in `excluded`; only things actively ruled out do.
 
 WORKED EXAMPLE — copy this STRUCTURE (every label on its own line, blank line
 after each label, "• " bullets), NOT the content. This example is a different

@@ -12,7 +12,7 @@ warning rather than raising, so a validator failure never blocks the pipeline.
 Flow
 ----
 1. Build the system prompt via `prompt.build_system_prompt()`.
-2. Build a user message with the merchant request, intent, and plan JSON.
+2. Build a user message with the (authoritative) intent and plan JSON.
 3. Invoke the LLM, extract JSON, parse with `HLDVOutput.model_validate_json`.
 4. Return `(findings_as_dicts, in_tokens, out_tokens)`.
 """
@@ -47,10 +47,9 @@ _MAX_OUTPUT_TOKENS = 7000
 _THINKING_BUDGET = 4000
 
 _USER_TEMPLATE = """\
-MERCHANT REQUEST
-{prompt}
-
-INTENT
+INTENT (the authoritative spec — review the plan against THIS, not any raw
+merchant request; the qualityBrief is the complete requirement set and
+`excluded` lists features that must NOT appear in the plan)
 {intent_json}
 
 HLD PLAN
@@ -59,7 +58,6 @@ HLD PLAN
 
 def run_hld_validator(
     plan: Dict[str, Any],
-    prompt: str,
     intent: Dict[str, Any],
 ) -> Tuple[List[Dict[str, Any]], int, int, int, int]:
     """
@@ -75,7 +73,6 @@ def run_hld_validator(
     """
     system = build_system_prompt()
     user = _USER_TEMPLATE.format(
-        prompt=prompt,
         intent_json=json.dumps(intent),
         plan_json=json.dumps(plan),
     )

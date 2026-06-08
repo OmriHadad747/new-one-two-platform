@@ -43,10 +43,11 @@ _MAX_TOKENS = 32000
 
 
 _USER_TEMPLATE = """\
-Merchant request: {prompt}
-
-Product-agent intent (use as context — pick the archetype, capabilities,
-and contracts from the merchant's actual needs):
+Product-agent intent — the AUTHORITATIVE, complete spec. Build EXACTLY the
+app it describes: pick the archetype, capabilities, and contracts from this
+intent alone. The qualityBrief is the full requirement set — design nothing
+outside it, and never design a capability, table, trigger, contract, or
+metric for anything listed in `excluded`.
 {intent_json}
 
 Work in two phases, then call emit_hld_plan:
@@ -60,9 +61,8 @@ Work in two phases, then call emit_hld_plan:
 Then call emit_hld_plan once with the complete plan."""
 
 _REVISE_TEMPLATE = """\
-Merchant request: {prompt}
-
-Product-agent intent (use as context):
+Product-agent intent — the AUTHORITATIVE, complete spec (design only what it
+describes; never (re-)introduce anything in `excluded`):
 {intent_json}
 
 REVISE the prior HLD plan to address every reviewer finding. For THIS task the
@@ -96,7 +96,6 @@ REVIEWER FINDINGS — apply each fix as one or more edits:
 
 
 def run_hld_agent(
-    prompt: str,
     intent: Dict[str, Any],
     on_attempt_failed: Optional[Callable[[int, List[str], int, int, int, int], None]] = None,
     validator_hint: Optional[str] = None,
@@ -120,13 +119,12 @@ def run_hld_agent(
     is_revise = validator_hint is not None and prior_plan is not None
     if is_revise:
         user = _REVISE_TEMPLATE.format(
-            prompt=prompt,
             intent_json=json.dumps(intent),
             prior_plan_json=json.dumps(prior_plan),
             findings_text=validator_hint,
         )
     else:
-        user = _USER_TEMPLATE.format(prompt=prompt, intent_json=json.dumps(intent))
+        user = _USER_TEMPLATE.format(intent_json=json.dumps(intent))
 
     # The first pass runs on the (stronger) "hld" model; the revise is a
     # constrained fix task on the cheaper "hld_revise" model. See

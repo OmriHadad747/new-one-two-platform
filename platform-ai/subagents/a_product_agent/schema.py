@@ -68,8 +68,21 @@ class ProductIntent(BaseModel):
     `_storefront_widget_biconditional` + `_admin_trigger_implies_admin_archetype`)."""
 
     qualityBrief: str = Field(min_length=1)
-    """3–5 sentences describing what makes a GOOD version of this app.
-    Surfaced to downstream agents so they can prioritise UX choices."""
+    """The authoritative, minimal-complete spec for this app — the minimal
+    set of requirements to implement the merchant's request perfectly.
+    Enumerates every feature, surface, and behavior the app must have (the
+    WHAT, in domain language) plus the edge cases it must cover. This is the
+    SOLE source the HLD family designs from; the raw merchant prompt is not
+    passed downstream, so anything omitted here will not be built (and
+    anything added here that the merchant didn't ask for is scope creep)."""
+
+    excluded: List[str] = Field(default_factory=list)
+    """Features explicitly ruled out — dropped during clarification
+    ("drop/skip/don't" answers) or redirected as out-of-scope. A positive
+    blocklist for the HLD family: never design a capability, table, trigger,
+    contract, or metric for anything listed here. Mirrors the "What this app
+    does NOT do" summary the analyze flow shows the merchant. Empty when
+    nothing was explicitly excluded."""
 
     # ── Cross-field invariants ─────────────────────────────────────────
 

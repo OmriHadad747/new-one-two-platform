@@ -28,7 +28,7 @@ the complete plan.
 
   PHASE 1 — DOMAIN DESIGN (integration-agnostic). Archetype, triggers, \
 external contracts, persistence, capabilities, data flow, state machine, \
-edge cases — all in the merchant's domain language.
+edge cases — all in the intent's domain language.
 
   PHASE 2 — SHOPIFY RESOLUTION (concrete). Using the catalog tools, bind \
 each external event to a real webhook topic + per-field payload bindings, \
