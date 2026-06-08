@@ -1,0 +1,13 @@
+{
+  "turn": 7,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 118,
+  "cache_read_tokens": 41132,
+  "cache_creation_tokens": 707,
+  "tool_uses": [
+    "get_webhook_topic",
+    "get_shopify_op"
+  ],
+  "assistant_text": ""
+}

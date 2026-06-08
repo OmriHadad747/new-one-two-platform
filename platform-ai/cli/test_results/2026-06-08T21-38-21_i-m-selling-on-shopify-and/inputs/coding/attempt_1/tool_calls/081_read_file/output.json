@@ -1,0 +1,8 @@
+{
+  "content": "\n  // \u2500\u2500 Boot \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  async function init(): Promise<void> {\n    state.loading = true;\n    render();\n\n    try {\n      const productId = await resolveProductId();\n      if (!productId) {\n        // Not a product page \u2014 render nothing\n        root.innerHTML = \"\";\n        return;\n      }\n      state.productExternalId = productId;\n\n      const resp = (await host.call(\"/widget/bundles\", {\n        product_external_id: productId,\n      })) as WidgetListBundlesResponse;\n\n      state.bundles = resp.bundles;\n\n      // Pre-select if only one bundle\n      if (state.bundles.length === 1) {\n        state.selectedBundleIdx = 0;\n      }\n\n      state.loading = false;\n\n      if (state.bundles.length === 0) {\n        root.innerHTML = \"\";\n        return;\n      }\n\n      render();\n    } catch {\n      // Fall open \u2014 don't block the customer's page\n      state.loading = false;\n      root.innerHTML = \"\";\n    }\n  }\n\n  init();\n}",
+  "total_lines": 693,
+  "returned_lines": [
+    650,
+    693
+  ]
+}

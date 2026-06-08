@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/admin.ts",
+  "old_string": "  } else {\n    const amountMinor = topTier.discount_amount ?? 0;\n    const amountMajor = (amountMinor / 100).toFixed(2);\n    customerGetsValue = {\n      discountAmount: { amount: amountMajor, appliesOnEachItem: false },\n    };\n  }\n\n  const result = await shopify.graphql<DiscountCodeBasicUpdateResponse>(",
+  "new_string": "  } else {\n    const amountMinor = topTier.discount_amount ?? 0;\n    const amountMajor = money.format(amountMinor, \"USD\");\n    customerGetsValue = {\n      discountAmount: { amount: amountMajor, appliesOnEachItem: false },\n    };\n  }\n\n  const result = await shopify.graphql<DiscountCodeBasicUpdateResponse>("
+}

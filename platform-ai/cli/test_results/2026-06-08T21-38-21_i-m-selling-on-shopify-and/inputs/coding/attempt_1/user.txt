@@ -1,0 +1,851 @@
+You are starting a new run. Read everything in this message carefully — it is the only application-specific information you will receive.
+
+═══ MERCHANT REQUEST ═══
+
+I'm selling on Shopify and want to start offering product bundles to lift my average order value. Customers buy single products today; if I bundle related products with a discount I think I can get them to add more to the cart. I should be able to create and manage bundles myself from the Shopify admin — no developer help needed once it's set up. Two bundle types matter. Fixed: I pick the exact products and the customer buys the whole pack or nothing. Flexible: I define a pool and a count ("pick any 3 from this list") and the customer chooses which items they want. Each bundle should let me pick products or specific variants. The discount should be configurable per bundle. I want to choose between three discount kinds: percentage off the bundle total, a flat amount off, or buy-X-get-Y-free where one of the items is effectively included free. On top of that I want tiered discounts — the more items in the bundle the bigger the cut. For example 2 items 10% off, 3 items 20% off, 4 items 30% off. On the storefront the bundle UI should appear on the product page itself. The customer picks their items (for flexible bundles), sees the discounted total live, and adds the whole bundle to cart in one click — discount applied automatically at checkout. In the admin I want a table of all my bundles, edit any field, enable/disable per bundle, and a count of times each was bought.
+
+═══ PRODUCT INTENT (from a_product_agent) ═══
+
+{
+  "triggerTypes": [
+    "widget",
+    "admin"
+  ],
+  "resources": [
+    "products",
+    "discounts"
+  ],
+  "desiredOutcome": "Merchants create and manage fixed and flexible product bundles with tiered percentage, flat, or BXGY discounts; customers configure bundles on any product page, see live totals, and add all items to cart with discount auto-applied.",
+  "cronHint": null,
+  "appCategory": "storefront_backend_admin",
+  "qualityBrief": "BUNDLE TYPES\n\u2022 Fixed: Merchant defines exact products/variants; customer sees pre-selected items and adds all or nothing.\n\u2022 Flexible: Merchant defines a pool and a count (e.g., pick 3 from 5 items); customer chooses which specific items meet the count, must reach the minimum to add to cart.\n\nADMIN BUNDLE MANAGEMENT\n\u2022 Create/edit/delete bundles from an admin form.\n\u2022 For each bundle: name, type (fixed/flexible), product selection (manual search and add, one at a time), variant selection (per product, pick specific variants or allow all), discount configuration, enabled/disabled toggle.\n\u2022 Discount configuration: choose discount type (percentage off, flat amount off, BXGY with one item free); for all types, add tiered rules (e.g., 2 items = 10% off, 3 items = 20%, 4 items = 30%). Tiers apply to bundle total, not per-item.\n\u2022 Admin table showing all bundles with name, type, status (enabled/disabled), purchase count, and edit/delete buttons. Purchase count increments each time a bundle is added to cart.\n\nSTOREFRONT WIDGET \u2014 DEPLOYMENT & BEHAVIOR\n\u2022 Widget appears on every product page, regardless of whether that product is part of any bundle.\n\u2022 Widget is a single, multi-step form mounted in a single DOM container.\n\u2022 Step 1: Customer chooses which bundles to configure (if multiple bundles include products on this page, they can pick which one to build; if only one bundle is eligible, pre-select it).\n\u2022 Step 2 (flexible bundles only): Customer selects items from the pool to reach the required count. A progress indicator shows \"X of Y items selected\". The Add to Cart button is disabled until the count is met.\n\u2022 Step 2 (fixed bundles): Items are pre-shown; customer simply reviews.\n\u2022 Step 3: Live price calculation. Show the bundle total (sum of item prices), the discount (percentage/amount), and the final discounted total. Update in real time as selections change.\n\u2022 Button: \"Add Bundle to Cart\" \u2014 disabled until the bundle is valid (flexible: count met; fixed: always enabled).\n\u2022 On click: add each item as a separate line item to the cart via Shopify Cart API, generate a unique discount code (or reuse an existing one for this bundle), and apply it to the cart. The code auto-applies at checkout.\n\u2022 Success feedback: brief toast or inline message (\"Bundle added, discount applied\").\n\u2022 Empty/error states: if a bundle product is out of stock or deleted, show a disabled state with explanation.\n\u2022 Mobile responsive: form stacks vertically, buttons are touch-friendly.\n\nDISCOUNT CODE GENERATION & APPLICATION\n\u2022 One discount code per bundle (or shared across all uses of that bundle). The code is percentage-off, fixed-amount, or BXGY as configured.\n\u2022 Tiered rules are embedded in the code's logic: a single code applies the best-match tier based on the number of items in the bundle (e.g., a 4-item bundle gets 30% off if that's the highest tier \u2264 4).\n\u2022 Codes are created via Admin GraphQL (Discount Create mutation) at bundle creation time and updated if the bundle is edited.\n\u2022 When a customer adds a bundle to cart, apply the code via Cart API; it discounts automatically at checkout.\n\u2022 Codes are EITHER automatic (Shopify applies silently) OR customer-facing (merchant chooses). Default to automatic for simplicity.\n\nEDGE CASES & ROBUSTNESS\n\u2022 Deleted or unavailable products: if a product is deleted or goes out of stock, the widget shows it as unavailable and disables the bundle or removes it from the pool.\n\u2022 Variant discontinuation: if a specific variant becomes unavailable, fall back to another variant of the same product or disable the bundle.\n\u2022 Duplicate discount application: ensure only one discount code per bundle is applied to the cart at once (no re-applying on retry).\n\u2022 Guest checkout: widget and discount application work for guest customers (no account required).\n\u2022 Bundle edit after purchase: if a bundle is edited after a customer adds it to cart, the cart still applies the old discount code (no retroactive price updates).\n\u2022 Tiered discount boundaries: clamp tiers so a customer with 2 items gets the 2-item tier, not 0 discount; if no tier matches, apply the lowest tier.\n\u2022 Cart manipulation race: if a customer manually removes a bundle item from the cart, the discount code may over- or under-apply. Document this as a known behavior; do not auto-correct.\n\nPURCHASE TRACKING\n\u2022 Increment purchase count on the bundle record each time a bundle is added to cart (via Cart API add event or webhook on order/create filtering for orders containing the discount code).\n\u2022 Display purchase count in the admin table. This is a read-only display, not editable.",
+  "excluded": []
+}
+
+═══ HLD PLAN (validated by e_hld_v_agent) ═══
+
+{
+  "schema_version": "1",
+  "archetype": "backend+admin+storefront",
+  "feasibility": "feasible",
+  "blockedReason": null,
+  "complexity": "high",
+  "dataFlow": "A merchant creates a bundle via the admin form; the backend persists the bundle record (including its discount tiers), creates the corresponding code-based discount in Shopify (percentage or flat via discountCodeBasicCreate, BXGY via discountCodeBxgyCreate), and stores both the returned Shopify DiscountCodeNode id and the generated code string on the bundle record. When the merchant edits or deletes a bundle, the backend syncs the change to the Shopify discount code accordingly via discountCodeBasicUpdate / discountCodeBxgyUpdate / discountCodeDelete. On the storefront, the widget loads eligible bundles for the current product page via a GET, the customer configures their selection, and on \"Add Bundle to Cart\" the backend receives the selection, computes the best-match tier, adds all line items to the Shopify cart via cartLinesAdd, then applies the bundle's stored discount code string to the cart via cartDiscountCodesUpdate so it auto-applies at checkout. An orders/create webhook fires when a Shopify order is placed; the backend matches each code in the order's discount_codes[].code array against the stored discount_code_string on bundle records and, for each match, inserts a deduplication row in bundle_order_increments and increments the bundle's purchase count. Product updates and deletions are also captured via webhooks so that bundle-item availability flags stay current without the widget relying solely on stale cached data.",
+  "triggers": [
+    {
+      "kind": "external-event",
+      "event": "a Shopify order is created containing a bundle discount",
+      "signalFields": [
+        "order external id",
+        "applied discount code strings"
+      ],
+      "idempotency": "if a purchase-count increment record already exists for this order external id, treat as no-op",
+      "shopifyTopic": "orders/create",
+      "payloadBindings": [
+        {
+          "signalField": "order external id",
+          "source": "payload",
+          "payloadPath": "id",
+          "resolution": null
+        },
+        {
+          "signalField": "applied discount code strings",
+          "source": "payload",
+          "payloadPath": "discount_codes[].code",
+          "resolution": null
+        }
+      ]
+    },
+    {
+      "kind": "external-event",
+      "event": "a product is updated or its variants change availability",
+      "signalFields": [
+        "product external id",
+        "product status",
+        "variant availability list"
+      ],
+      "idempotency": "always process the latest payload \u2014 overwrite the availability flag keyed on product external id",
+      "shopifyTopic": "products/update",
+      "payloadBindings": [
+        {
+          "signalField": "product external id",
+          "source": "payload",
+          "payloadPath": "id",
+          "resolution": null
+        },
+        {
+          "signalField": "product status",
+          "source": "payload",
+          "payloadPath": "status",
+          "resolution": null
+        },
+        {
+          "signalField": "variant availability list",
+          "source": "payload",
+          "payloadPath": "variants",
+          "resolution": null
+        }
+      ]
+    },
+    {
+      "kind": "external-event",
+      "event": "a product is deleted from the store",
+      "signalFields": [
+        "product external id"
+      ],
+      "idempotency": "marking an already-unavailable product unavailable is a no-op",
+      "shopifyTopic": "products/delete",
+      "payloadBindings": [
+        {
+          "signalField": "product external id",
+          "source": "payload",
+          "payloadPath": "id",
+          "resolution": null
+        }
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "list-bundles-admin",
+      "description": "Return a paginated list of all bundles with their name, type, status, and purchase count for the admin table.",
+      "kind": "read",
+      "dataNeeds": [
+        "page cursor"
+      ],
+      "integration": null,
+      "shopifySteps": [],
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "search-products-admin",
+      "description": "Query Shopify for products matching a search term to support the one-at-a-time product selector in the bundle admin form.",
+      "kind": "read",
+      "dataNeeds": [
+        "search query",
+        "page cursor"
+      ],
+      "integration": "shopify-admin",
+      "shopifySteps": [
+        {
+          "op": "products",
+          "produces": "paginated list of product ids, titles, and variant connections",
+          "consumes": "search query string, pagination cursor"
+        }
+      ],
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "create-bundle",
+      "description": "Persist a new bundle with its items, variant constraints, and discount tiers, then provision the corresponding Shopify automatic discount and store its id.",
+      "kind": "write",
+      "dataNeeds": [
+        "bundle name",
+        "bundle type",
+        "enabled flag",
+        "required item count",
+        "bundle items with variant mode",
+        "discount type",
+        "discount tiers"
+      ],
+      "integration": "shopify-admin",
+      "shopifySteps": [
+        {
+          "op": "discountCodeBasicCreate",
+          "produces": "Shopify DiscountCodeNode id and code string for percentage or flat bundles",
+          "consumes": "discount type, tiers, product ids"
+        },
+        {
+          "op": "discountCodeBxgyCreate",
+          "produces": "Shopify DiscountCodeNode id and code string for BXGY bundles",
+          "consumes": "discount type, tiers, product ids"
+        }
+      ],
+      "returnsList": false,
+      "touchesMoney": true,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "update-bundle",
+      "description": "Update an existing bundle's definition and sync the change to the associated Shopify automatic discount.",
+      "kind": "write",
+      "dataNeeds": [
+        "bundle id",
+        "bundle name",
+        "bundle type",
+        "enabled flag",
+        "required item count",
+        "bundle items with variant mode",
+        "discount type",
+        "discount tiers",
+        "Shopify discount node id"
+      ],
+      "integration": "shopify-admin",
+      "shopifySteps": [
+        {
+          "op": "discountCodeBasicUpdate",
+          "produces": "updated DiscountCodeNode confirmation for percentage or flat bundles",
+          "consumes": "Shopify discount node id, updated tiers"
+        },
+        {
+          "op": "discountCodeBxgyUpdate",
+          "produces": "updated DiscountCodeNode confirmation for BXGY bundles",
+          "consumes": "Shopify discount node id, updated tiers"
+        }
+      ],
+      "returnsList": false,
+      "touchesMoney": true,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "delete-bundle",
+      "description": "Delete a bundle record and remove its associated Shopify automatic discount.",
+      "kind": "write",
+      "dataNeeds": [
+        "bundle id",
+        "Shopify discount node id"
+      ],
+      "integration": "shopify-admin",
+      "shopifySteps": [
+        {
+          "op": "discountCodeDelete",
+          "produces": "deleted DiscountCodeNode id confirmation",
+          "consumes": "Shopify discount node id"
+        }
+      ],
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "load-widget-bundles",
+      "description": "Return all enabled bundles relevant to the current product page, including items, availability flags, and discount tiers, so the widget can render the bundle selector and live pricing.",
+      "kind": "read",
+      "dataNeeds": [
+        "product external id",
+        "page cursor"
+      ],
+      "integration": null,
+      "shopifySteps": [],
+      "returnsList": true,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "compute-bundle-price",
+      "description": "Given a customer's selected variant list for a bundle, compute the best-match discount tier, the undiscounted total, the discount value, and the final total.",
+      "kind": "compute",
+      "dataNeeds": [
+        "selected variants with prices",
+        "discount tiers",
+        "discount type",
+        "selected item count"
+      ],
+      "integration": null,
+      "shopifySteps": [],
+      "returnsList": false,
+      "touchesMoney": true,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "add-bundle-to-cart",
+      "description": "Add all selected bundle line items to the Shopify cart and apply the bundle's automatic discount so it triggers at checkout.",
+      "kind": "write",
+      "dataNeeds": [
+        "cart external id",
+        "selected variant ids with quantities",
+        "bundle discount identifier"
+      ],
+      "integration": "shopify-storefront",
+      "shopifySteps": [
+        {
+          "op": "cartLinesAdd",
+          "produces": "updated cart with new line items",
+          "consumes": "cart external id, selected variant merchandise ids"
+        },
+        {
+          "op": "cartDiscountCodesUpdate",
+          "produces": "cart with discount applied",
+          "consumes": "cart external id, bundle discount code string"
+        }
+      ],
+      "returnsList": false,
+      "touchesMoney": true,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "increment-purchase-count",
+      "description": "Increment the purchase count on a bundle exactly once per order when an order containing that bundle's discount code is created.",
+      "kind": "write",
+      "dataNeeds": [
+        "bundle id",
+        "order external id",
+        "applied discount code strings"
+      ],
+      "integration": null,
+      "shopifySteps": [],
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    },
+    {
+      "id": "refresh-item-availability",
+      "description": "Update the availability flag on all bundle items matching a product that has been updated or deleted in Shopify.",
+      "kind": "write",
+      "dataNeeds": [
+        "product external id",
+        "product status",
+        "variant availability list"
+      ],
+      "integration": null,
+      "shopifySteps": [],
+      "returnsList": false,
+      "touchesMoney": false,
+      "usesConfig": false,
+      "usesWorkflow": false
+    }
+  ],
+  "persistence": [
+    {
+      "name": "bundles",
+      "purpose": "Master record for each merchant-defined bundle, its type, enabled state, and the Shopify discount node backing it.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "name",
+          "role": "text",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "bundle_type",
+          "role": "status",
+          "nullable": false,
+          "purpose": "fixed or flexible"
+        },
+        {
+          "name": "enabled",
+          "role": "flag",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "required_item_count",
+          "role": "count",
+          "nullable": true,
+          "purpose": "for flexible bundles: how many items the customer must pick from the pool"
+        },
+        {
+          "name": "discount_type",
+          "role": "status",
+          "nullable": false,
+          "purpose": "percentage, flat, or bxgy"
+        },
+        {
+          "name": "shopify_discount_external_id",
+          "role": "reference",
+          "nullable": true,
+          "purpose": "Shopify DiscountCodeNode id, stored so the discount can be updated or deleted when the bundle changes"
+        },
+        {
+          "name": "discount_code_string",
+          "role": "text",
+          "nullable": true,
+          "purpose": "the code string generated by Shopify at bundle creation time; used to apply the discount via cartDiscountCodesUpdate and to match against discount_codes[].code in the orders/create webhook payload for purchase-count attribution"
+        },
+        {
+          "name": "purchase_count",
+          "role": "count",
+          "nullable": false,
+          "purpose": "incremented each time this bundle is added to a cart and confirmed via order creation"
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "updated_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedByColumns": [
+        "id"
+      ],
+      "keyedBy": null,
+      "statusField": null,
+      "queryPatterns": [
+        "all bundles ordered by creation time, cursor-paginated, for admin table",
+        "enabled bundles that contain a given product external id, for widget load"
+      ]
+    },
+    {
+      "name": "bundle_items",
+      "purpose": "Each product/variant slot that belongs to a bundle's fixed set or flexible pool.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "bundle_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "parent bundle"
+        },
+        {
+          "name": "product_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "Shopify product id for this slot"
+        },
+        {
+          "name": "variant_mode",
+          "role": "status",
+          "nullable": false,
+          "purpose": "all (any variant) or specific (only listed variants)"
+        },
+        {
+          "name": "available",
+          "role": "flag",
+          "nullable": false,
+          "purpose": "set false when products/update shows the product inactive or products/delete fires; widget reads this to show disabled state"
+        }
+      ],
+      "keyedByColumns": [
+        "bundle_id",
+        "product_external_id"
+      ],
+      "keyedBy": null,
+      "statusField": null,
+      "queryPatterns": [
+        "all items for a given bundle id",
+        "items matching a product external id across all bundles (for availability refresh)"
+      ]
+    },
+    {
+      "name": "bundle_item_variants",
+      "purpose": "Explicit variant constraints for bundle items whose variant_mode is 'specific'.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "bundle_item_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "parent bundle item"
+        },
+        {
+          "name": "variant_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "Shopify ProductVariant id allowed for this slot"
+        }
+      ],
+      "keyedByColumns": [
+        "bundle_item_id",
+        "variant_external_id"
+      ],
+      "keyedBy": null,
+      "statusField": null,
+      "queryPatterns": [
+        "all permitted variants for a given bundle item id"
+      ]
+    },
+    {
+      "name": "bundle_discount_tiers",
+      "purpose": "Tiered discount rules for a bundle; the best-matching tier is selected at checkout based on item count.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "bundle_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "parent bundle"
+        },
+        {
+          "name": "min_item_count",
+          "role": "count",
+          "nullable": false,
+          "purpose": "minimum number of items in the bundle to qualify for this tier"
+        },
+        {
+          "name": "discount_ratio",
+          "role": "ratio",
+          "nullable": true,
+          "purpose": "populated when discount_type is percentage; mutually exclusive with discount_amount"
+        },
+        {
+          "name": "discount_amount",
+          "role": "money",
+          "nullable": true,
+          "purpose": "populated when discount_type is flat; mutually exclusive with discount_ratio"
+        },
+        {
+          "name": "is_bxgy",
+          "role": "flag",
+          "nullable": false,
+          "purpose": "true when this tier represents a buy-X-get-one-free rule; discount_ratio and discount_amount are both null in this case"
+        }
+      ],
+      "keyedByColumns": [
+        "bundle_id",
+        "min_item_count"
+      ],
+      "keyedBy": null,
+      "statusField": null,
+      "queryPatterns": [
+        "all tiers for a given bundle ordered by min_item_count ascending (for best-match tier selection)"
+      ]
+    },
+    {
+      "name": "bundle_order_increments",
+      "purpose": "Deduplication ledger ensuring purchase_count is incremented at most once per order per bundle.",
+      "columns": [
+        {
+          "name": "id",
+          "role": "identifier",
+          "nullable": false,
+          "purpose": null
+        },
+        {
+          "name": "bundle_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "bundle whose count was incremented"
+        },
+        {
+          "name": "order_external_id",
+          "role": "reference",
+          "nullable": false,
+          "purpose": "Shopify order id that triggered the increment"
+        },
+        {
+          "name": "created_at",
+          "role": "timestamp",
+          "nullable": false,
+          "purpose": null
+        }
+      ],
+      "keyedByColumns": [
+        "bundle_id",
+        "order_external_id"
+      ],
+      "keyedBy": null,
+      "statusField": null,
+      "queryPatterns": [
+        "existence check on bundle_id + order_external_id to prevent double-increment"
+      ]
+    }
+  ],
+  "stateMachine": null,
+  "externalContracts": [
+    {
+      "surface": "admin",
+      "path": "/admin/bundles",
+      "method": "GET",
+      "purpose": "Return a paginated list of all bundles with name, type, status, and purchase count for the admin table.",
+      "requestShape": {
+        "cursor": "text"
+      },
+      "responseShape": {
+        "bundles": "list",
+        "next_cursor": "text",
+        "total_count": "count"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/bundles/create",
+      "method": "POST",
+      "purpose": "Create a new bundle with its items, variant constraints, and discount tiers; provisions the Shopify automatic discount.",
+      "requestShape": {
+        "name": "text",
+        "bundle_type": "status",
+        "enabled": "flag",
+        "items": "list",
+        "discount_type": "status",
+        "discount_tiers": "list"
+      },
+      "responseShape": {
+        "bundle_id": "identifier",
+        "status": "status"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/bundles/update",
+      "method": "PUT",
+      "purpose": "Update an existing bundle's definition and sync the change to the Shopify discount.",
+      "requestShape": {
+        "bundle_id": "identifier",
+        "name": "text",
+        "bundle_type": "status",
+        "enabled": "flag",
+        "items": "list",
+        "discount_type": "status",
+        "discount_tiers": "list"
+      },
+      "responseShape": {
+        "status": "status"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/bundles/delete",
+      "method": "DELETE",
+      "purpose": "Delete a bundle record and remove the associated Shopify automatic discount.",
+      "requestShape": {
+        "bundle_id": "identifier"
+      },
+      "responseShape": {
+        "status": "status"
+      }
+    },
+    {
+      "surface": "admin",
+      "path": "/admin/products/search",
+      "method": "GET",
+      "purpose": "Search Shopify products by title to support the one-at-a-time product selector in the bundle admin form.",
+      "requestShape": {
+        "query": "text",
+        "cursor": "text"
+      },
+      "responseShape": {
+        "products": "list",
+        "next_cursor": "text",
+        "total_count": "count"
+      }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/bundles",
+      "method": "GET",
+      "purpose": "Return all enabled bundles that include the given product, with their items and discount tiers, so the widget can render the bundle selector.",
+      "requestShape": {
+        "product_external_id": "reference",
+        "cursor": "text"
+      },
+      "responseShape": {
+        "bundles": "list",
+        "next_cursor": "text",
+        "total_count": "count"
+      }
+    },
+    {
+      "surface": "widget",
+      "path": "/widget/bundles/add-to-cart",
+      "method": "POST",
+      "purpose": "Add all selected bundle items to the Shopify cart as individual line items and apply the bundle's automatic discount.",
+      "requestShape": {
+        "bundle_id": "identifier",
+        "cart_external_id": "reference",
+        "selected_variant_ids": "list"
+      },
+      "responseShape": {
+        "cart_external_id": "reference",
+        "status": "status",
+        "discount_applied": "flag"
+      }
+    }
+  ],
+  "edgeCases": [
+    "Duplicate orders/create delivery for the same order \u2014 existence check on bundle_order_increments keyed by bundle_id + order_external_id guarantees the purchase count is incremented at most once.",
+    "A product is deleted while a customer is mid-configuration in the widget \u2014 the widget must re-fetch bundle availability before allowing add-to-cart and show the affected item as unavailable with an explanation.",
+    "A bundle is edited after a customer has already added it to cart \u2014 the cart retains the old discount code; the new discount applies only to future cart additions, so existing carts are not retroactively repriced.",
+    "A flexible bundle's item count falls to zero eligible in-stock products \u2014 the bundle should appear disabled in the widget with a 'currently unavailable' state rather than allowing an impossible selection.",
+    "The Shopify discount creation or update API returns a user error \u2014 the bundle record must not be saved or updated without a valid Shopify discount node id; the error must be surfaced to the merchant with the rejection reason.",
+    "A customer manually removes one bundle line item from the cart after the discount is applied \u2014 the discount code remains on the cart and may over-apply; this is documented known behavior and no automatic correction is made."
+  ]
+}
+
+═══ FILE-LEVEL PLAN SLICES ═══
+
+The plan above has been sliced per scaffold file. When you call `todo_write`
+for any of these files, COPY the matching slice into the todo's
+`implements` / `consumes` / `produces` / `do_not` fields VERBATIM (don't
+paraphrase — paraphrasing is how producer/consumer bugs sneak in). Add
+more entries if your design needs them; never drop the ones below.
+
+▸ scaffold/src/routes/webhook-handlers.ts  — webhook handlers (one entry per declared trigger)
+  implements:
+    - a Shopify order is created containing a bundle discount
+    - a product is updated or its variants change availability
+    - a product is deleted from the store
+  consumes:
+    - [orders/create] event: a Shopify order is created containing a bundle discount
+    -   'order external id' ← payload.id
+    -   'applied discount code strings' ← payload.discount_codes[].code
+    - [products/update] event: a product is updated or its variants change availability
+    -   'product external id' ← payload.id
+    -   'product status' ← payload.status
+    -   'variant availability list' ← payload.variants
+    - [products/delete] event: a product is deleted from the store
+    -   'product external id' ← payload.id
+  produces:
+    - idempotent DB writes per the capability each trigger drives
+    - ON CONFLICT on every dedup-keyed insert (per persistence keyedBy)
+  do_not:
+    - early-return when a declared signalField is empty (silently disables the trigger)
+    - read an undeclared payload field (paths above are the contract)
+    - ignore a declared payloadBinding — every signalField above must be read at least once
+  use_helpers:
+    - use money.toMinorUnits/sum/percentage for monetary values — do NOT inline Math.round(parseFloat(x)*100) or raw +/*
+
+▸ scaffold/src/routes/admin.ts  — admin route handlers (the admin UI calls these)
+  implements:
+    - search-products-admin
+    - create-bundle
+    - update-bundle
+    - delete-bundle
+  consumes:
+    - GET /admin/bundles requestShape: cursor
+    - POST /admin/bundles/create requestShape: bundle_type, discount_tiers, discount_type, enabled, items, name
+    - PUT /admin/bundles/update requestShape: bundle_id, bundle_type, discount_tiers, discount_type, enabled, items, name
+    - DELETE /admin/bundles/delete requestShape: bundle_id
+    - GET /admin/products/search requestShape: cursor, query
+    - [search-products-admin/products] consumes: search query string, pagination cursor
+    - [create-bundle/discountCodeBasicCreate] consumes: discount type, tiers, product ids
+    - [create-bundle/discountCodeBxgyCreate] consumes: discount type, tiers, product ids
+    - [update-bundle/discountCodeBasicUpdate] consumes: Shopify discount node id, updated tiers
+    - [update-bundle/discountCodeBxgyUpdate] consumes: Shopify discount node id, updated tiers
+    - [delete-bundle/discountCodeDelete] consumes: Shopify discount node id
+  produces:
+    - GET /admin/bundles responseShape: bundles, next_cursor, total_count
+    - POST /admin/bundles/create responseShape: bundle_id, status
+    - PUT /admin/bundles/update responseShape: status
+    - DELETE /admin/bundles/delete responseShape: status
+    - GET /admin/products/search responseShape: next_cursor, products, total_count
+    - [search-products-admin/products] produces: paginated list of product ids, titles, and variant connections
+    - [create-bundle/discountCodeBasicCreate] produces: Shopify DiscountCodeNode id and code string for percentage or flat bundles
+    - [create-bundle/discountCodeBxgyCreate] produces: Shopify DiscountCodeNode id and code string for BXGY bundles
+    - [update-bundle/discountCodeBasicUpdate] produces: updated DiscountCodeNode confirmation for percentage or flat bundles
+    - [update-bundle/discountCodeBxgyUpdate] produces: updated DiscountCodeNode confirmation for BXGY bundles
+    - [delete-bundle/discountCodeDelete] produces: deleted DiscountCodeNode id confirmation
+  do_not:
+    - pass a literal/placeholder GID (e.g. 'gid://shopify/Product/0') to any Shopify op — fail-fast instead
+    - call a bound op only to discard its returned id — every produces above must be persisted or threaded forward
+    - provision Shopify side-effects outside the DB transaction without a rollback path
+  use_helpers:
+    - call paginate() for list routes — do NOT write LIMIT/OFFSET or a separate COUNT(*)
+    - use money.toMinorUnits/sum/percentage for monetary values — do NOT inline Math.round(parseFloat(x)*100) or raw +/*
+
+▸ scaffold/src/routes/widget.ts  — storefront route handlers (the widget calls these)
+  implements:
+    - add-bundle-to-cart
+  consumes:
+    - GET /widget/bundles requestShape: cursor, product_external_id
+    - POST /widget/bundles/add-to-cart requestShape: bundle_id, cart_external_id, selected_variant_ids
+    - [add-bundle-to-cart/cartLinesAdd] consumes: cart external id, selected variant merchandise ids
+    - [add-bundle-to-cart/cartDiscountCodesUpdate] consumes: cart external id, bundle discount code string
+  produces:
+    - GET /widget/bundles responseShape: bundles, next_cursor, total_count
+    - POST /widget/bundles/add-to-cart responseShape: cart_external_id, discount_applied, status
+    - [add-bundle-to-cart/cartLinesAdd] produces: updated cart with new line items
+    - [add-bundle-to-cart/cartDiscountCodesUpdate] produces: cart with discount applied
+    - for every member/row this route returns: include resolved `live.<field>` for any reference the storefront will pass to cartCreate (so the widget never has to fall back to a raw DB column)
+  do_not:
+    - fall back from a resolved live.<field> to the raw DB column it shadows (e.g. `?? member.product_external_id`)
+    - accept caller-supplied ids without validating shape (variant ids are numeric strings; merchandise GIDs go to ProductVariant, not Product)
+  use_helpers:
+    - call paginate() for list routes — do NOT write LIMIT/OFFSET or a separate COUNT(*)
+    - use money.toMinorUnits/sum/percentage for monetary values — do NOT inline Math.round(parseFloat(x)*100) or raw +/*
+
+▸ scaffold/admin/ui.ts  — admin UI surface
+  implements:
+    - /admin/bundles
+    - /admin/bundles/create
+    - /admin/bundles/update
+    - /admin/bundles/delete
+    - /admin/products/search
+  consumes:
+    - calls GET /admin/bundles — responseShape: bundles, next_cursor, total_count
+    - calls POST /admin/bundles/create — responseShape: bundle_id, status
+    - calls PUT /admin/bundles/update — responseShape: status
+    - calls DELETE /admin/bundles/delete — responseShape: status
+    - calls GET /admin/products/search — responseShape: next_cursor, products, total_count
+  produces:
+    - sends GET /admin/bundles — requestShape: cursor
+    - sends POST /admin/bundles/create — requestShape: bundle_type, discount_tiers, discount_type, enabled, items, name
+    - sends PUT /admin/bundles/update — requestShape: bundle_id, bundle_type, discount_tiers, discount_type, enabled, items, name
+    - sends DELETE /admin/bundles/delete — requestShape: bundle_id
+    - sends GET /admin/products/search — requestShape: cursor, query
+    - UI inputs for these nullable-with-purpose columns (every row's purpose is a stated feature):
+    -   • bundles.required_item_count — for flexible bundles: how many items the customer must pick from the pool
+    -   • bundles.shopify_discount_external_id — Shopify DiscountCodeNode id, stored so the discount can be updated or deleted when the bundle changes
+    -   • bundles.discount_code_string — the code string generated by Shopify at bundle creation time; used to apply the discount via cartDiscountCodesUpdate and to match against discount_codes[].code in the orders/create webhook payload for purchase-count attribution
+    -   • bundle_discount_tiers.discount_ratio — populated when discount_type is percentage; mutually exclusive with discount_amount
+    -   • bundle_discount_tiers.discount_amount — populated when discount_type is flat; mutually exclusive with discount_ratio
+  do_not:
+    - send a placeholder/sentinel (e.g. '0', '', null) for a reference column the plan declares NOT NULL — use real picker data
+    - omit a UI affordance for a nullable-with-purpose column above (the merchant has no other way to set it)
+    - store a variant id where a product id is required (or vice versa)
+
+▸ scaffold/widget/widget.ts  — storefront widget UI
+  implements:
+    - /widget/bundles
+    - /widget/bundles/add-to-cart
+  consumes:
+    - calls GET /widget/bundles — responseShape: bundles, next_cursor, total_count
+    - calls POST /widget/bundles/add-to-cart — responseShape: cart_external_id, discount_applied, status
+    - for ANY response field shaped `live.<field>` or a resolved id, USE that field for selection / cart / submit — never the raw DB column it shadows
+  produces:
+    - sends GET /widget/bundles — requestShape: cursor, product_external_id
+    - sends POST /widget/bundles/add-to-cart — requestShape: bundle_id, cart_external_id, selected_variant_ids
+  do_not:
+    - use `member.variant_external_id ?? member.product_external_id` (or any analogue) — a product id wrapped as a variant GID breaks cartCreate
+    - build a `gid://shopify/ProductVariant/<id>` from anything that wasn't returned by the backend as a variant id
+    - enable a CTA whose preconditions (selection count, availability) the plan declares — the backend re-validates anyway, but the UI must mirror it
+
+▸ scaffold/src/types/contracts.ts  — shared type contracts (imported by every other file)
+  implements:
+    - type-level spine for all contracts above
+  consumes:
+    - every externalContract requestShape + responseShape (define an aliased type per endpoint)
+    - every trigger payload (define a typed shape per topic)
+    - every persistence table (define a Row type)
+    - for routes that augment rows with resolved data, define a `<Row>WithLive` shape that includes the resolved live.<field>
+  produces:
+    - named, branded id types where the plan implies an id (avoid raw `string`)
+    - exported types every route + UI file imports — no cross-file structural typing
+  do_not:
+    - use `any` for any field the plan typed
+    - let UI files import from route files or vice versa — contracts.ts is the only shared shape
+
+═══ YOUR JOB ═══
+
+Build the app under `scaffold/`. Follow the loop: plan (todo_write) → spine (app.json, contracts.ts) → bodies (per-file) → verify (run_tsc) → done().
+
+Start with `todo_write` to lay out your plan. Each file todo must carry its slice from above.

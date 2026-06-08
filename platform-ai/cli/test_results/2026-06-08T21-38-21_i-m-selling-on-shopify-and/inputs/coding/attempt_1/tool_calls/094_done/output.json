@@ -1,0 +1,9 @@
+{
+  "ok": false,
+  "incomplete_reason": [
+    "[write-path-integrity] important src/routes/widget.ts:160 \u2014 `live_variant_gid` is constructed as `gid://shopify/ProductVariant/${String(vr.variant_external_id)}` instead of being returned from a real Shopify API response or stored in the database; the widget relies on this hardcoded-format value being valid. FIX: Store the live_variant_gid (or at minimum the full Shopify variant GID) in the bundle_item_variants table when variants are first persisted, so it comes from real data rather than reconstructed format."
+  ],
+  "attempt": 2,
+  "retries_remaining": 2,
+  "note": "done() attempt 2/4 \u2014 2 retry(ies) remain before forced acceptance. Apply the fixes prescribed above; do not re-investigate findings you've already considered if you have a defensible reason to disagree (note: validators can over-fire)."
+}

@@ -1,0 +1,70 @@
+{
+  "todos": [
+    {
+      "content": "Read db.md and backend.md component rules",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json (spine)",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts (spine)",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts",
+      "status": "in_progress",
+      "activeForm": "write_file",
+      "implements": [
+        "load-widget-bundles",
+        "compute-bundle-price",
+        "add-bundle-to-cart"
+      ],
+      "consumes": [
+        "GET /widget/bundles requestShape: cursor, product_external_id",
+        "POST /widget/bundles/add-to-cart requestShape: bundle_id, cart_external_id, selected_variant_ids",
+        "[add-bundle-to-cart/cartLinesAdd] consumes: cart external id, selected variant merchandise ids",
+        "[add-bundle-to-cart/cartDiscountCodesUpdate] consumes: cart external id, bundle discount code string"
+      ],
+      "produces": [
+        "GET /widget/bundles responseShape: bundles, next_cursor, total_count",
+        "POST /widget/bundles/add-to-cart responseShape: cart_external_id, discount_applied, status",
+        "[add-bundle-to-cart/cartLinesAdd] produces: updated cart with new line items",
+        "[add-bundle-to-cart/cartDiscountCodesUpdate] produces: cart with discount applied"
+      ],
+      "do_not": [
+        "fall back from a resolved live.<field> to the raw DB column it shadows",
+        "accept caller-supplied ids without validating shape"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "run_tsc"
+    }
+  ]
+}

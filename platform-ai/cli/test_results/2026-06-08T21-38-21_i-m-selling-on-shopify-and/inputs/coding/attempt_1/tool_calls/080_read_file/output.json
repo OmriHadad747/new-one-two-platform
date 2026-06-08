@@ -1,0 +1,8 @@
+{
+  "content": "              // Store a sentinel \u2014 we'll resolve actual GID before submission\n              state.selectedVariants.set(\n                item.id,\n                `__resolve:product:${item.product_external_id}` as VariantMerchandiseGid\n              );\n            } else {\n              state.selectedVariants.delete(item.id);\n            }\n            render();\n          });\n          checkLabel.appendChild(checkbox);\n          const checkText = document.createTextNode(\"Include this product\");\n          checkLabel.appendChild(checkText);\n          li.appendChild(checkLabel);\n        }\n      }\n\n      list.appendChild(li);\n    }\n\n    root.appendChild(list);\n\n    const btnRow = document.createElement(\"div\");\n\n    const backBtn = document.createElement(\"button\");\n    backBtn.className = \"bw-btn bw-btn-secondary\";\n    backBtn.textContent = \"\u2190 Back\";\n    backBtn.addEventListener(\"click\", () => {\n      state.step = 1;\n      render();",
+  "total_lines": 693,
+  "returned_lines": [
+    390,
+    420
+  ]
+}

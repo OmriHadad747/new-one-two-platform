@@ -1,0 +1,8 @@
+{
+  "content": "      minimumFractionDigits: 2,\n    }).format(cents / 100);\n  }\n\n  // \u2500\u2500 Render \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  function render(): void {\n    root.innerHTML = \"\";\n\n    if (state.loading) {\n      const p = document.createElement(\"p\");\n      p.textContent = \"Loading bundles\u2026\";\n      p.style.color = \"#6d7175\";\n      root.appendChild(p);\n      return;\n    }\n\n    if (state.bundles.length === 0) {\n      // No bundles for this product \u2014 render nothing (or empty).\n      return;\n    }\n\n    if (state.step === 1) renderStep1();\n    else if (state.step === 2) renderStep2();\n    else renderStep3();\n  }",
+  "total_lines": 714,
+  "returned_lines": [
+    155,
+    180
+  ]
+}

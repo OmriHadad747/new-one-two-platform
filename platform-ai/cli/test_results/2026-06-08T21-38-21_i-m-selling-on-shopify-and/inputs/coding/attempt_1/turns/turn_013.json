@@ -1,0 +1,12 @@
+{
+  "turn": 13,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 89,
+  "cache_read_tokens": 51074,
+  "cache_creation_tokens": 3084,
+  "tool_uses": [
+    "read_file"
+  ],
+  "assistant_text": "Now let me read the shopify_storefront runtime example and then write admin.ts:"
+}

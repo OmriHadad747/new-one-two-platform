@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "severity": "critical",
+      "location": "capabilities[7] (add-bundle-to-cart) shopifySteps[1] vs capabilities[2] (create-bundle) shopifySteps",
+      "issue": "create-bundle resolves discountAutomaticBasicCreate / discountAutomaticBxgyCreate, which create *automatic* discounts that Shopify applies silently with no code string. add-bundle-to-cart then resolves cartDiscountCodesUpdate, which applies a *discount code string* to the cart. Automatic discounts are not code-based and cannot be applied via cartDiscountCodesUpdate \u2014 there is no code string to pass. The two capabilities are architecturally incompatible: the discount will never be applied to the cart.",
+      "fix": "Choose one discount model and make both capabilities consistent: either (a) switch create-bundle to discountCodeBasicCreate / discountCodeBxgyCreate (code-based discounts), store the generated code string on the bundles table, and keep cartDiscountCodesUpdate in add-bundle-to-cart; or (b) keep automatic discounts but remove cartDiscountCodesUpdate from add-bundle-to-cart entirely (automatic discounts need no application step) and update the bundles table and dataFlow accordingly."
+    },
+    {
+      "severity": "critical",
+      "location": "capabilities[8] (increment-purchase-count) dataNeeds + triggers[0].payloadBindings",
+      "issue": "The dataFlow states the backend 'cross-references the order's discount codes against known bundle discount ids' using the orders/create payloadBinding payloadPath 'discount_codes'. However: (1) automatic discounts (as created by discountAutomaticBasicCreate) do not appear in the order's discount_codes array \u2014 they appear in discount_applications with kind 'automatic', not as code strings; (2) even if the plan switches to code-based discounts, the bundles table has no column storing the discount code string, so there is no stored value to match against discount_codes strings from the payload. The increment-purchase-count capability therefore has no buildable path from order payload to a bundle id.",
+      "fix": "Add a discount_code_string column (role: text, nullable: true) to the bundles table to store the generated code string at bundle creation time; bind the orders/create trigger to payloadPath 'discount_applications[].code' (or 'discount_codes[].code') and add the code string as a signalField so increment-purchase-count can JOIN on it. If automatic discounts are retained, add a signalField for 'automatic discount title' and match via a stored title column instead."
+    },
+    {
+      "severity": "important",
+      "location": "capabilities[1] (search-products-admin) shopifySteps[0].op",
+      "issue": "The resolved op is \"product\" \u2014 the Shopify Admin GraphQL singular query that retrieves one product by its id. It does not accept a free-text search query. The capability's description and dataNeeds explicitly require a search-term lookup ('Query Shopify for products matching a search term'). The coding agent will implement a by-id lookup, and the product-selector search in the admin form will not work.",
+      "fix": "Replace the op with \"products\" (the plural Admin GraphQL query), which accepts a query argument for full-text search and returns a paginated connection of matching products; update produces to 'paginated list of product ids, titles, and variant connections'."
+    }
+  ]
+}

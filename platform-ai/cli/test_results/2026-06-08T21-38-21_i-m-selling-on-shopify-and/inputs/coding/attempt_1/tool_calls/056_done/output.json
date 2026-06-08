@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "incomplete_reason": [
+    "persistence: table 'bundles' has uniqueConstraint [] in app.json but plan.keyedByColumns is ['id'] \u2014 they must reference the same column set. Either update app.json to match the plan, or escalate the plan change.",
+    "helper-reuse: the plan declares a capability that needs the `money` helper, but no generated file imports it. import { money } from \"../lib/money.js\" and use money.toMinorUnits/sum/percentage \u2014 do not inline Math.round(parseFloat(x)*100) or raw +/*.",
+    "helper-reuse: the plan declares a capability that needs the `paginate` helper, but no generated file imports it. import { paginate } from \"../lib/paginate.js\" for the list route(s) \u2014 do not hand-roll LIMIT/OFFSET or a separate COUNT(*) query."
+  ],
+  "attempt": 1,
+  "retries_remaining": 3,
+  "note": "done() attempt 1/4 \u2014 3 retry(ies) remain before forced acceptance. Apply the fixes prescribed above; do not re-investigate findings you've already considered if you have a defensible reason to disagree (note: validators can over-fire)."
+}

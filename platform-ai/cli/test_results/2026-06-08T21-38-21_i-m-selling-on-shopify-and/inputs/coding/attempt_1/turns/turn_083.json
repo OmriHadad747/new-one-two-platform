@@ -1,0 +1,12 @@
+{
+  "turn": 83,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 37,
+  "cache_read_tokens": 131517,
+  "cache_creation_tokens": 246,
+  "tool_uses": [
+    "run_tsc"
+  ],
+  "assistant_text": ""
+}

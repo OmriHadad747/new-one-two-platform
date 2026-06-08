@@ -1,0 +1,8 @@
+{
+  "content": "    nextBtn.addEventListener(\"click\", () => {\n      if (state.currentPage < totalPages) {\n        state.currentPage += 1;\n        loadBundles();\n      }\n    });\n    pag.appendChild(nextBtn);\n\n    root.appendChild(pag);\n\n    // Initial load\n    if (!state.isLoading && state.bundles.length === 0 && state.totalCount === 0) {\n      loadBundles();\n    }\n  }\n\n  async function handleEditClick(bundleId: BundleId): Promise<void> {\n    // Fetch full bundle detail from list data (we only have summary fields here).\n    // Re-fetch via the list to populate form. For edit we'll pre-populate\n    // what we have and ask the merchant to verify.\n    const summary = state.bundles.find((b) => b.id === bundleId);\n    if (!summary) return;\n    state.view = \"edit\";\n    state.editingBundle = bundleId;\n    state.formState = {\n      name: summary.name,\n      bundle_type: summary.bundle_type,\n      enabled: summary.enabled,\n      required_item_count: null,\n      discount_type: \"percentage\",\n      items: [],\n      discount_tiers: [{ min_item_count: 2, discount_ratio: \"0.10\" }],\n      shopify_discount_external_id: null,\n      discount_code_string: null,\n    };\n    bridge.saveBar.show(\"bundle-form\");\n    render();\n  }\n\n  async function handleDeleteClick(bundleId: BundleId, name: string): Promise<void> {",
+  "total_lines": 751,
+  "returned_lines": [
+    245,
+    285
+  ]
+}

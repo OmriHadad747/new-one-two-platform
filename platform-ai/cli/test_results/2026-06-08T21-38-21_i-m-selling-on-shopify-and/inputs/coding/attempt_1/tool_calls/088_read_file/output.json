@@ -1,0 +1,8 @@
+{
+  "content": "    };\n  });\n\n  const response: AdminProductSearchResponse = {\n    products,\n    next_cursor: gqlResult.products.pageInfo.hasNextPage\n      ? (gqlResult.products.pageInfo.endCursor ?? null)\n      : null,\n    total_count: products.length,\n  };\n  res.json(response);\n});\n\n// \u2500\u2500\u2500 POST /admin/bundles/create \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nadminRouter.post(\"/admin/bundles/create\", async (req: Request, res: Response) => {",
+  "total_lines": 705,
+  "returned_lines": [
+    375,
+    390
+  ]
+}

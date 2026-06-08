@@ -1,0 +1,70 @@
+{
+  "todos": [
+    {
+      "content": "Read db.md and backend.md component rules",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json (spine)",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts (spine)",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts",
+      "status": "completed",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts",
+      "status": "in_progress",
+      "activeForm": "write_file",
+      "implements": [
+        "increment-purchase-count",
+        "refresh-item-availability"
+      ],
+      "consumes": [
+        "[orders/create] order external id \u2190 payload.id",
+        "[orders/create] applied discount code strings \u2190 payload.discount_codes[].code",
+        "[products/update] product external id \u2190 payload.id",
+        "[products/update] product status \u2190 payload.status",
+        "[products/update] variant availability list \u2190 payload.variants",
+        "[products/delete] product external id \u2190 payload.id"
+      ],
+      "produces": [
+        "idempotent DB writes per the capability each trigger drives",
+        "ON CONFLICT on every dedup-keyed insert"
+      ],
+      "do_not": [
+        "early-return when a declared signalField is empty",
+        "read an undeclared payload field",
+        "ignore a declared payloadBinding"
+      ]
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts",
+      "status": "pending",
+      "activeForm": "write_file"
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "run_tsc"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/admin/ui.ts",
+  "old_string": "import type {\n  BundleId,\n  BundleType,\n  DiscountType,\n  VariantMode,\n  AdminBundleSummary,\n  AdminListBundlesResponse,\n  AdminCreateBundleRequest,\n  AdminCreateBundleResponse,\n  AdminUpdateBundleRequest,\n  AdminUpdateBundleResponse,\n  AdminDeleteBundleRequest,\n  AdminDeleteBundleResponse,\n  AdminProductSearchResponse,\n  AdminProductShape,\n  AdminProductVariantShape,\n  BundleItemInput,\n  DiscountTierInput,\n} from \"../src/types/contracts.js\";",
+  "new_string": "import type {\n  BundleId,\n  BundleType,\n  DiscountType,\n  VariantMode,\n  AdminBundleSummary,\n  AdminListBundlesResponse,\n  AdminBundleDetailResponse,\n  AdminCreateBundleRequest,\n  AdminCreateBundleResponse,\n  AdminUpdateBundleRequest,\n  AdminUpdateBundleResponse,\n  AdminDeleteBundleRequest,\n  AdminDeleteBundleResponse,\n  AdminProductSearchResponse,\n  AdminProductShape,\n  AdminProductVariantShape,\n  BundleItemInput,\n  DiscountTierInput,\n} from \"../src/types/contracts.js\";"
+}

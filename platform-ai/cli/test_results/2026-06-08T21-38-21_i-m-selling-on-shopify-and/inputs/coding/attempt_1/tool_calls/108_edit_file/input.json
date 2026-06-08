@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/types/contracts.ts",
+  "old_string": "// GET /admin/products/search",
+  "new_string": "// GET /admin/bundles/detail\nexport interface AdminBundleDetailRequest {\n  bundle_id: BundleId;\n}\nexport interface AdminBundleDetailResponse {\n  bundle: BundleWithDetails | null;\n}\n\n// GET /admin/products/search"
+}

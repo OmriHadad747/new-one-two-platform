@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/types/contracts.ts",
+  "old_string": "export interface BundleItemVariantRow {\n  id: BundleItemVariantId;\n  bundle_item_id: BundleItemId;\n  variant_external_id: string; // BIGINT comes back as string\n}",
+  "new_string": "export interface BundleItemVariantRow {\n  id: BundleItemVariantId;\n  bundle_item_id: BundleItemId;\n  variant_external_id: string; // BIGINT comes back as string\n  variant_gid: string;         // Full Shopify GID, e.g. \"gid://shopify/ProductVariant/123\"\n}"
+}

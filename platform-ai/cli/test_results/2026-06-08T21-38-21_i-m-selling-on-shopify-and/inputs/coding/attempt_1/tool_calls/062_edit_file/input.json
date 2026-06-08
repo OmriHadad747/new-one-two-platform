@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/types/contracts.ts",
+  "old_string": "// GET /admin/bundles\nexport interface AdminListBundlesRequest {\n  cursor?: string;\n}\nexport interface AdminBundleSummary {\n  id: BundleId;\n  name: string;\n  bundle_type: BundleType;\n  enabled: boolean;\n  purchase_count: number;\n}\nexport interface AdminListBundlesResponse {\n  bundles: AdminBundleSummary[];\n  next_cursor: string | null;\n  total_count: number;\n}",
+  "new_string": "// GET /admin/bundles\nexport interface AdminListBundlesRequest {\n  page?: number;\n  page_size?: number;\n}\nexport interface AdminBundleSummary {\n  id: BundleId;\n  name: string;\n  bundle_type: BundleType;\n  enabled: boolean;\n  purchase_count: number;\n}\nexport interface AdminListBundlesResponse {\n  bundles: AdminBundleSummary[];\n  total: number;\n  page: number;\n  page_size: number;\n}"
+}

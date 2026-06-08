@@ -1,0 +1,28 @@
+```json
+{
+  "status": "needs_clarification",
+  "questions": [
+    {
+      "question": "For flexible bundles, when a customer picks items from a pool, should the bundle appear as ONE line item in the cart (labeled 'Your Bundle' or similar, with the chosen items listed in the details), or should each chosen product appear as a separate line item, with the discount applied as a separate discount code?",
+      "suggestions": [
+        "One bundle line item, items listed in details",
+        "Separate line items per product, discount code applied"
+      ]
+    },
+    {
+      "question": "When you say the widget appears 'on the product page itself' — do you mean ONLY on bundle product pages (where the merchant creates a bundle and Shopify configures it as its own product), or do you want the widget on ANY product page so a customer can bundle that product with others?",
+      "suggestions": [
+        "Only on dedicated bundle products",
+        "On any product page, bundle it with others"
+      ]
+    },
+    {
+      "question": "For the BXGY option ('buy X get Y free'), do you want to offer that as a CHOICE alongside the other discount types — e.g. you pick 'discount type: BXGY' and define which item is free — or only as an alternative discount mechanism the customer can switch to at bundle creation time?",
+      "suggestions": [
+        "Selectable discount type per bundle",
+        "Only as an alternate discount strategy"
+      ]
+    }
+  ]
+}
+```

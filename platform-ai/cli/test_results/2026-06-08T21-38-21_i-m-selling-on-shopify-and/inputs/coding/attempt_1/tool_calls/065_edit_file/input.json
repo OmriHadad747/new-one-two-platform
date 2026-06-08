@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/routes/admin.ts",
+  "old_string": "import { Router, Request, Response } from \"express\";\nimport { sql } from \"../lib/db.js\";\nimport { shopifyClientFor } from \"../lib/shopify.js\";",
+  "new_string": "import { Router, Request, Response } from \"express\";\nimport { sql } from \"../lib/db.js\";\nimport { shopifyClientFor } from \"../lib/shopify.js\";\nimport { money } from \"../lib/money.js\";\nimport { paginate } from \"../lib/paginate.js\";"
+}

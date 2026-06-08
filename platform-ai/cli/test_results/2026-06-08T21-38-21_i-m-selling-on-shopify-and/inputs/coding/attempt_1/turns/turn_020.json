@@ -1,0 +1,12 @@
+{
+  "turn": 20,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 78,
+  "cache_read_tokens": 67435,
+  "cache_creation_tokens": 2076,
+  "tool_uses": [
+    "read_file"
+  ],
+  "assistant_text": "Now read the admin component rules and write the admin UI:"
+}

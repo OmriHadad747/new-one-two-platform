@@ -1,0 +1,12 @@
+{
+  "turn": 99,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 41,
+  "cache_read_tokens": 138799,
+  "cache_creation_tokens": 178,
+  "tool_uses": [
+    "done"
+  ],
+  "assistant_text": "Clean. Now call done():"
+}

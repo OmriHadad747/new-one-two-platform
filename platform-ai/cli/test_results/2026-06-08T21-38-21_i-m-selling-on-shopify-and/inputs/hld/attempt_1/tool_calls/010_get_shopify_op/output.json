@@ -1,0 +1,28 @@
+{
+  "args": [
+    {
+      "name": "id",
+      "required": true,
+      "type": "ID!"
+    }
+  ],
+  "examples": [
+    {
+      "query": "mutation {\n  discountCodeDelete(id: \"gid://shopify/DiscountCodeNode/206265824\") {\n    deletedCodeDiscountId\n    userErrors {\n      field\n      code\n      message\n    }\n  }\n}",
+      "response": {
+        "discountCodeDelete": {
+          "deletedCodeDiscountId": "gid://shopify/DiscountCodeNode/206265824",
+          "userErrors": []
+        }
+      },
+      "scenario_title": "Delete an amount off discount",
+      "variables": null
+    }
+  ],
+  "inputTypesSdl": {},
+  "isConnection": false,
+  "kind": "mutation",
+  "returnTypeName": "DiscountCodeDeletePayload",
+  "returnTypeSdl": "type DiscountCodeDeletePayload {\n  deletedCodeDiscountId: ID\n  userErrors: [DiscountUserError!]!\n}",
+  "userErrorsField": "userErrors"
+}

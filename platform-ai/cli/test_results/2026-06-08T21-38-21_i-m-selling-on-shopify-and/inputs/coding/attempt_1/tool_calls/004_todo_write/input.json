@@ -1,0 +1,209 @@
+{
+  "todos": [
+    {
+      "content": "Read db.md and backend.md component rules",
+      "status": "completed",
+      "activeForm": "read_file"
+    },
+    {
+      "content": "Write scaffold/app.json (spine)",
+      "status": "in_progress",
+      "activeForm": "write_file",
+      "implements": [
+        "list-bundles-admin",
+        "search-products-admin",
+        "create-bundle",
+        "update-bundle",
+        "delete-bundle",
+        "load-widget-bundles",
+        "add-bundle-to-cart",
+        "increment-purchase-count",
+        "refresh-item-availability"
+      ],
+      "consumes": [
+        "all externalContracts paths",
+        "all persistence tables",
+        "all webhook topics"
+      ],
+      "produces": [
+        "database block",
+        "httpRoutes block",
+        "webhookTopics block"
+      ],
+      "do_not": [
+        "redeclare processed_webhooks, cron_queue, app_config",
+        "add tenant_id columns"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/types/contracts.ts (spine)",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "type-level spine for all contracts above"
+      ],
+      "consumes": [
+        "every externalContract requestShape + responseShape",
+        "every trigger payload",
+        "every persistence table"
+      ],
+      "produces": [
+        "named branded id types",
+        "exported types every route + UI file imports"
+      ],
+      "do_not": [
+        "use `any` for any field the plan typed",
+        "let UI files import from route files or vice versa"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/admin.ts",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "list-bundles-admin",
+        "search-products-admin",
+        "create-bundle",
+        "update-bundle",
+        "delete-bundle"
+      ],
+      "consumes": [
+        "GET /admin/bundles requestShape: cursor",
+        "POST /admin/bundles/create requestShape: bundle_type, discount_tiers, discount_type, enabled, items, name",
+        "PUT /admin/bundles/update requestShape: bundle_id, bundle_type, discount_tiers, discount_type, enabled, items, name",
+        "DELETE /admin/bundles/delete requestShape: bundle_id",
+        "GET /admin/products/search requestShape: cursor, query",
+        "[create-bundle/discountCodeBasicCreate] consumes: discount type, tiers, product ids",
+        "[create-bundle/discountCodeBxgyCreate] consumes: discount type, tiers, product ids",
+        "[update-bundle/discountCodeBasicUpdate] consumes: Shopify discount node id, updated tiers",
+        "[update-bundle/discountCodeBxgyUpdate] consumes: Shopify discount node id, updated tiers",
+        "[delete-bundle/discountCodeDelete] consumes: Shopify discount node id"
+      ],
+      "produces": [
+        "GET /admin/bundles responseShape: bundles, next_cursor, total_count",
+        "POST /admin/bundles/create responseShape: bundle_id, status",
+        "PUT /admin/bundles/update responseShape: status",
+        "DELETE /admin/bundles/delete responseShape: status",
+        "GET /admin/products/search responseShape: next_cursor, products, total_count",
+        "[create-bundle/discountCodeBasicCreate] produces: Shopify DiscountCodeNode id and code string for percentage or flat bundles",
+        "[create-bundle/discountCodeBxgyCreate] produces: Shopify DiscountCodeNode id and code string for BXGY bundles"
+      ],
+      "do_not": [
+        "pass a literal/placeholder GID to any Shopify op",
+        "call a bound op only to discard its returned id",
+        "provision Shopify side-effects outside the DB transaction without a rollback path"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/widget.ts",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "load-widget-bundles",
+        "compute-bundle-price",
+        "add-bundle-to-cart"
+      ],
+      "consumes": [
+        "GET /widget/bundles requestShape: cursor, product_external_id",
+        "POST /widget/bundles/add-to-cart requestShape: bundle_id, cart_external_id, selected_variant_ids",
+        "[add-bundle-to-cart/cartLinesAdd] consumes: cart external id, selected variant merchandise ids",
+        "[add-bundle-to-cart/cartDiscountCodesUpdate] consumes: cart external id, bundle discount code string"
+      ],
+      "produces": [
+        "GET /widget/bundles responseShape: bundles, next_cursor, total_count",
+        "POST /widget/bundles/add-to-cart responseShape: cart_external_id, discount_applied, status",
+        "[add-bundle-to-cart/cartLinesAdd] produces: updated cart with new line items",
+        "[add-bundle-to-cart/cartDiscountCodesUpdate] produces: cart with discount applied"
+      ],
+      "do_not": [
+        "fall back from a resolved live.<field> to the raw DB column it shadows",
+        "accept caller-supplied ids without validating shape"
+      ]
+    },
+    {
+      "content": "Write scaffold/src/routes/webhook-handlers.ts",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "increment-purchase-count",
+        "refresh-item-availability"
+      ],
+      "consumes": [
+        "[orders/create] order external id \u2190 payload.id",
+        "[orders/create] applied discount code strings \u2190 payload.discount_codes[].code",
+        "[products/update] product external id \u2190 payload.id",
+        "[products/update] product status \u2190 payload.status",
+        "[products/update] variant availability list \u2190 payload.variants",
+        "[products/delete] product external id \u2190 payload.id"
+      ],
+      "produces": [
+        "idempotent DB writes per the capability each trigger drives",
+        "ON CONFLICT on every dedup-keyed insert"
+      ],
+      "do_not": [
+        "early-return when a declared signalField is empty",
+        "read an undeclared payload field",
+        "ignore a declared payloadBinding"
+      ]
+    },
+    {
+      "content": "Write scaffold/admin/ui.ts",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "/admin/bundles",
+        "/admin/bundles/create",
+        "/admin/bundles/update",
+        "/admin/bundles/delete",
+        "/admin/products/search"
+      ],
+      "consumes": [
+        "calls GET /admin/bundles \u2014 responseShape: bundles, next_cursor, total_count",
+        "calls POST /admin/bundles/create \u2014 responseShape: bundle_id, status",
+        "calls PUT /admin/bundles/update \u2014 responseShape: status",
+        "calls DELETE /admin/bundles/delete \u2014 responseShape: status",
+        "calls GET /admin/products/search \u2014 responseShape: next_cursor, products, total_count"
+      ],
+      "produces": [
+        "sends GET /admin/bundles \u2014 requestShape: cursor",
+        "sends POST /admin/bundles/create \u2014 requestShape: bundle_type, discount_tiers, discount_type, enabled, items, name",
+        "sends PUT /admin/bundles/update \u2014 requestShape: bundle_id, bundle_type, discount_tiers, discount_type, enabled, items, name",
+        "sends DELETE /admin/bundles/delete \u2014 requestShape: bundle_id",
+        "sends GET /admin/products/search \u2014 requestShape: cursor, query"
+      ],
+      "do_not": [
+        "send a placeholder/sentinel for a reference column the plan declares NOT NULL",
+        "omit a UI affordance for a nullable-with-purpose column",
+        "store a variant id where a product id is required"
+      ]
+    },
+    {
+      "content": "Write scaffold/widget/widget.ts",
+      "status": "pending",
+      "activeForm": "write_file",
+      "implements": [
+        "/widget/bundles",
+        "/widget/bundles/add-to-cart"
+      ],
+      "consumes": [
+        "calls GET /widget/bundles \u2014 responseShape: bundles, next_cursor, total_count",
+        "calls POST /widget/bundles/add-to-cart \u2014 responseShape: cart_external_id, discount_applied, status",
+        "for ANY response field shaped live.<field>, USE that field for selection/cart/submit"
+      ],
+      "produces": [
+        "sends GET /widget/bundles \u2014 requestShape: cursor, product_external_id",
+        "sends POST /widget/bundles/add-to-cart \u2014 requestShape: bundle_id, cart_external_id, selected_variant_ids"
+      ],
+      "do_not": [
+        "use member.variant_external_id ?? member.product_external_id",
+        "build a gid://shopify/ProductVariant/<id> from anything not returned by backend as variant id",
+        "enable a CTA whose preconditions the plan declares"
+      ]
+    },
+    {
+      "content": "Run tsc and fix errors",
+      "status": "pending",
+      "activeForm": "run_tsc"
+    }
+  ]
+}

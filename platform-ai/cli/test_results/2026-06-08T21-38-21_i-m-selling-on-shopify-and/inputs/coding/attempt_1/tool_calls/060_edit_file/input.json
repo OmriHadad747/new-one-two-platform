@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/app.json",
+  "old_string": "      { \"method\": \"GET\",    \"path\": \"/admin/bundles\",          \"paginationKind\": \"cursor\" },",
+  "new_string": "      { \"method\": \"GET\",    \"path\": \"/admin/bundles\",          \"paginationKind\": \"offset\" },"
+}

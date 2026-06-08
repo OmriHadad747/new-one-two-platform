@@ -1,0 +1,12 @@
+{
+  "turn": 48,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 339,
+  "cache_read_tokens": 111632,
+  "cache_creation_tokens": 850,
+  "tool_uses": [
+    "todo_write"
+  ],
+  "assistant_text": "All errors are resolved. Now let me call done():"
+}

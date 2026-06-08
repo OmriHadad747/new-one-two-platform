@@ -1,0 +1,8 @@
+{
+  "content": "# Helper: `money`\n\nUse the `money` helper for every monetary value \u2014 never hand-roll currency math.\nStored as integer minor units in BIGINT. Correct for every Shopify currency,\nincluding zero-decimal (JPY, KRW) and three-decimal (BHD, JOD) where\n`Math.round(parseFloat(x) * 100)` is silently wrong.\n\n```ts\nimport { money } from \"../lib/money.js\";\n\n// Decimal-string from Shopify -> integer minor units (BIGINT in DB):\nconst totalCents = money.toMinorUnits(\n  payload.totalPriceSet.shopMoney.amount,\n  payload.totalPriceSet.shopMoney.currencyCode,\n);\nconst grand = money.sum([itemA, itemB, itemC]); // aggregate (never raw +)\nconst tax = money.percentage(grand, 8.5);        // tax / fee / discount\nconst display = money.format(totalCents, \"USD\"); // \"9.99\"\n```\n\nRules:\n- Decimal string \u2192 minor units: `money.toMinorUnits(value, currency)` \u2014 never\n  `Math.round(parseFloat(x) * 100)`.\n- Totals: `money.sum([...])`, not `+`. Percentage (tax/fee/discount):\n  `money.percentage(amount, pct)`, not `amount * pct / 100`.\n- Currency code is always required \u2014 take it from the same payload that carried\n  the amount (e.g. `\u2026shopMoney.currencyCode`) and persist it alongside the\n  amount in a TEXT column so reads can format correctly.",
+  "total_lines": 28,
+  "returned_lines": [
+    0,
+    28
+  ]
+}

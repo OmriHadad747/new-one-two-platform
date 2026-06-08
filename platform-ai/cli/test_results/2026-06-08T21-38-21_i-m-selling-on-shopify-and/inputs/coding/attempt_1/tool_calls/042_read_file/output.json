@@ -1,0 +1,8 @@
+{
+  "content": "  // Write to DB in a transaction.\n  let newBundleId: BundleId;\n  try {\n    await sql.begin(async (tx) => {\n      const bundleRows = await tx`\n        INSERT INTO bundles\n          (name, bundle_type, enabled, required_item_count, discount_type,\n           shopify_discount_external_id, discount_code_string, purchase_count)\n        VALUES (\n          ${safeName},\n          ${body.bundle_type},\n          ${body.enabled},\n          ${body.required_item_count ?? null},\n          ${body.discount_type},\n          ${shopifyNodeId},",
+  "total_lines": 719,
+  "returned_lines": [
+    450,
+    465
+  ]
+}

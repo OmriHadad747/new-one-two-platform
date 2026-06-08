@@ -1,0 +1,12 @@
+{
+  "turn": 1,
+  "stop_reason": "tool_use",
+  "input_tokens": 3,
+  "output_tokens": 2460,
+  "cache_read_tokens": 0,
+  "cache_creation_tokens": 24529,
+  "tool_uses": [
+    "todo_write"
+  ],
+  "assistant_text": "I'll start by laying out the full plan with todo_write, then systematically build the scaffold."
+}

@@ -1,0 +1,12 @@
+{
+  "turn": 11,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 430,
+  "cache_read_tokens": 49649,
+  "cache_creation_tokens": 968,
+  "tool_uses": [
+    "todo_write"
+  ],
+  "assistant_text": "Now I have enough context. Let me write contracts.ts:"
+}

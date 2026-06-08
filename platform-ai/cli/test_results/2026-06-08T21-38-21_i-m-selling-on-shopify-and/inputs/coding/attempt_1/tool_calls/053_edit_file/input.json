@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/src/types/contracts.ts",
+  "old_string": "export interface BundleItemInput {\n  product_external_id: string;\n  variant_mode: VariantMode;\n  variant_external_ids?: string[]; // required when variant_mode === \"specific\"\n}",
+  "new_string": "export interface BundleItemInput {\n  product_external_id: string;\n  variant_mode: VariantMode;\n  variant_external_ids?: string[] | undefined; // required when variant_mode === \"specific\"\n}"
+}

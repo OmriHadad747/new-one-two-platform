@@ -1,0 +1,8 @@
+{
+  "content": "      card.className =\n        \"bw-selector-card\" +\n        (state.selectedBundleIdx === idx ? \" selected\" : \"\");\n\n      const cardTitle = document.createElement(\"div\");\n      cardTitle.className = \"bw-title\";\n      cardTitle.textContent = bundle.name;\n      card.appendChild(cardTitle);\n\n      const typeLabel = document.createElement(\"div\");\n      typeLabel.className = \"bw-subtitle\";\n      const typeText =\n        bundle.bundle_type === \"fixed\"\n          ? \"Fixed bundle \u2014 all items included\"\n          : `Flexible \u2014 pick ${bundle.required_item_count ?? \"any\"} from ${bundle.items.length} items`;",
+  "total_lines": 714,
+  "returned_lines": [
+    195,
+    210
+  ]
+}

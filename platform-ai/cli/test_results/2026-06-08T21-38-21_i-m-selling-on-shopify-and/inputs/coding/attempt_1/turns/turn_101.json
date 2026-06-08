@@ -1,0 +1,12 @@
+{
+  "turn": 101,
+  "stop_reason": "tool_use",
+  "input_tokens": 1,
+  "output_tokens": 181,
+  "cache_read_tokens": 139490,
+  "cache_creation_tokens": 961,
+  "tool_uses": [
+    "edit_file"
+  ],
+  "assistant_text": "Add the detail route types to contracts.ts:"
+}

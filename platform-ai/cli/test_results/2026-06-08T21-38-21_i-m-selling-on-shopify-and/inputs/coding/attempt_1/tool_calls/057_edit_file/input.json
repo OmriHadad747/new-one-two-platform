@@ -1,0 +1,5 @@
+{
+  "path": "scaffold/app.json",
+  "old_string": "        \"uniqueConstraint\": [],\n        \"indexes\": [[\"enabled\", \"created_at\"]],\n        \"foreignKeys\": []\n      },\n      {\n        \"name\": \"bundle_items\",",
+  "new_string": "        \"uniqueConstraint\": [\"id\"],\n        \"indexes\": [[\"enabled\", \"created_at\"]],\n        \"foreignKeys\": []\n      },\n      {\n        \"name\": \"bundle_items\","
+}
