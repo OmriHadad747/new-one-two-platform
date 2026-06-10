@@ -57,8 +57,11 @@ Work in two phases, then call emit_hld_plan:
      external-event trigger pick the topic and bind every signalField to a
      real payload path (verified with get_webhook_topic) or a declared
      resolution hop; for each shopify-* capability resolve the op(s) (use
-     list_shopify_ops to compare siblings, get_shopify_op for detail).
-Then call emit_hld_plan once with the complete plan."""
+     list_shopify_ops to compare siblings, get_shopify_op for detail;
+     search_shopify_ops when you can't name the cluster).
+Then call emit_hld_plan once with the complete plan. emit_hld_plan is the
+ONLY terminal for this task — patch_plan and emit_hld_findings belong to
+other stages; never call them."""
 
 _REVISE_TEMPLATE = """\
 Product-agent intent — the AUTHORITATIVE, complete spec (design only what it
@@ -66,9 +69,10 @@ describes; never (re-)introduce anything in `excluded`):
 {intent_json}
 
 REVISE the prior HLD plan to address every reviewer finding. For THIS task the
-terminal tool is `patch_plan`, NOT `emit_hld_plan` — you do not re-emit the
-plan. Call `patch_plan` ONCE with the minimal set of edits; everything you do
-not edit is carried over from the prior plan byte-for-byte.
+ONLY terminal tool is `patch_plan` — NOT `emit_hld_plan` (you do not re-emit
+the plan) and NOT `emit_hld_findings` (you are not the reviewer). Call
+`patch_plan` ONCE with the minimal set of edits; everything you do not edit is
+carried over from the prior plan byte-for-byte.
 
 Address each edit by identity, mirroring the finding's location:
   - a capability field : capabilities[<id>].<field>
@@ -146,9 +150,11 @@ def run_hld_agent(
         system_prompt=system,
         user_message=user,
         model=model,
+        # The tools array is identical across modes (shared cache prefix);
+        # mode selects which terminal the loop honors — patch_plan
+        # (edit-in-place) for revise, emit_hld_plan for the first pass.
+        mode="revise" if is_revise else "architect",
         max_tokens=_MAX_TOKENS,
-        # Revise mode: hand the loop the prior plan so the terminal tool becomes
-        # patch_plan (edit-in-place) instead of emit_hld_plan (full re-emit).
         prior_plan=prior_plan if is_revise else None,
     )
 

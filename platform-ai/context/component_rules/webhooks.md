@@ -133,6 +133,14 @@ If `get_webhook_topic` says the field is `nullable: false`, do NOT add
 defensive nullability checks — those tend to silently disable behavior
 when the field actually arrived.
 
+When the handler needs a Shopify value the payload does NOT carry (the
+parent product of an `inventory_item_id`, a live price, a variant's
+gid), resolve it with a real follow-up call — read
+`runtime_examples/shopify_resolutions.md` for the recipe (e.g. the
+inventory_item → variant → product hop). Wrapping a REAL numeric payload
+id as `gid://shopify/<Type>/${id}` is correct plumbing; inventing the id
+itself is the bug.
+
 ## Idempotency
 
 The template's webhook router already deduplicates on

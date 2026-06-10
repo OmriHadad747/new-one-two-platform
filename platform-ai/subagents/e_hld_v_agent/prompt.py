@@ -17,10 +17,7 @@ the small wrapper tail.
 
 from __future__ import annotations
 
-import json
-
 from subagents.c_hld_agent.prompt import build_system_prompt as build_hld_spec
-from subagents.e_hld_v_agent.schema import HLDVOutput
 
 _VALIDATOR_WRAPPER = """\
 
@@ -95,6 +92,15 @@ declarations and check internal consistency.)
       and will either invent one or silently disable the feature — flag
       it. Quote the unreachable dataNeed verbatim; if you cannot show
       that no upstream supplies it, drop the finding.
+      The Shopify-owned special case: a value only Shopify can supply
+      (a live price, a variant gid, a title, an availability flag, a
+      discount code) is reachable ONLY through a `shopifySteps` op, a
+      `payloadBinding`, or a declared resolution hop. A capability that
+      promises such a value (e.g. "compute the bundle's live total")
+      with integration:null and no upstream Shopify source is a
+      finding — the fix is to bind the real source op (the architect
+      has search_shopify_ops/list_shopify_ops to find it), never to
+      assume the coding agent can conjure the value downstream.
 
   (C) Helper-binding flags match the capability. Each capability flag binds
       the capability to a ready platform helper the coding agent MUST reuse
@@ -142,12 +148,16 @@ fill slots, do not weaken your scope to justify a finding, do not chain \
 speculation ("if X happens and then Y under condition Z…") to \
 manufacture severity. If you find yourself reaching, drop the finding.
 
-Return up to 5 findings, highest severity first. Return JSON only — no \
-markdown fences, no prose. Conform to the schema below:
+You may use the catalog tools (list_webhook_family, get_webhook_topic, \
+search_shopify_ops, list_shopify_ops, get_shopify_op) to VERIFY a \
+suspect Phase-2 binding before flagging it — never flag a topic/op/path \
+as wrong on memory alone when a lookup would settle it. A few targeted \
+lookups, not a re-derivation of the plan.
 
-```json
-{schema_json}
-```
+Terminal: call the `emit_hld_findings` tool EXACTLY ONCE with your \
+findings (up to 5, highest severity first; an empty list for a clean \
+plan). NEVER call `emit_hld_plan` or `patch_plan` — those are the \
+architect's terminals, and you are the reviewer.
 """
 
 
@@ -167,8 +177,9 @@ def build_system_prompt() -> list[str]:
     The HLD spec is the single source of truth — when the architect's
     prompt changes, the validator automatically holds new plans to the
     new rules without any further edit here.
+
+    The findings shape is enforced by the `emit_hld_findings` tool's
+    input_schema (HLDVOutput), not by prose — no schema blob needed here.
     """
     hld_spec = build_hld_spec()
-    schema_json = json.dumps(HLDVOutput.model_json_schema())
-    wrapper = _VALIDATOR_WRAPPER.format(schema_json=schema_json)
-    return [hld_spec, wrapper]
+    return [hld_spec, _VALIDATOR_WRAPPER]

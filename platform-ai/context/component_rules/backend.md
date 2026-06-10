@@ -146,7 +146,17 @@ signatures live on disk and are fetched on demand:
      examples.
 
 Never call `get_shopify_op` on an op name you guessed. Never pick
-between similar-sounding ops without listing the cluster first.
+between similar-sounding ops without listing the cluster first. When you
+need an op but can't name its cluster, `search_shopify_ops("<intent
+keywords>", surface)` finds it by intent — a failed cluster guess is
+never a license to fabricate a value.
+
+Before resolving any real Shopify value the plan doesn't hand you — a
+variant gid, a live price, a title/image, an availability flag, a
+discount code, a customer id — read
+`runtime_examples/shopify_resolutions.md` first: the blessed recipe
+(and its gotcha) for each recurring "given X get the real Y" need, plus
+the discovery procedure for needs it doesn't cover.
 
 Before writing your FIRST Shopify GraphQL call, read
 `runtime_examples/shopify_mutation.md` for the exact client pattern — do

@@ -372,8 +372,24 @@ Everything else lives in one of two places:
       Available kinds: email_send, email_send_batch,
       files_upload_small, files_upload_large, shopify_graphql,
       shopify_graphql_paginate, shopify_bulk_query, shopify_mutation,
-      shopify_storefront, enqueue, compute_workflow, compute_money,
-      compute_config, paginate_offset.
+      shopify_storefront, shopify_resolutions, enqueue,
+      compute_workflow, compute_money, compute_config, paginate_offset.
+
+  RESOLUTIONS + DISCOVERY (how to source a Shopify value you don't have).
+  Whenever code needs a REAL Shopify value — a variant gid, a live price,
+  a title/image, an availability flag, a discount code, a customer id —
+  and the plan's shopifySteps/payloadBindings don't already hand it to
+  you, read `runtime_examples/shopify_resolutions.md` FIRST: it has the
+  blessed recipe for every recurring "given X get the real Y" need. If
+  your need isn't covered there, discover the op yourself:
+    1. search_shopify_ops("<intent keywords>", "<surface>") — keyword
+       search over every op; no cluster guessing.
+    2. list_shopify_ops on the matched cluster — compare siblings.
+    3. get_shopify_op on the chosen op — exact args + worked example.
+  A failed cluster guess is never a dead end and never a license to
+  fabricate: search by intent instead. If discovery truly finds nothing,
+  surface the gap explicitly — do not hardcode a value, build a fake gid,
+  or silently drop the feature.
     • Platform template source — last-resort drill-down when the
       helpers reference (§6.1) doesn't cover what you need
         platform-back/templates/handler/src/<path>
@@ -450,7 +466,14 @@ These have all caused real failures. Do not:
     has bound every shopify-* capability to its op sequence. Use those
     op names directly. `get_shopify_op` is allowed only when you need
     the exact `inputTypesSdl` to build the request shape correctly —
-    not to pick which op to call.
+    not to pick which op to call. EXCEPTION — a plan GAP: when code
+    needs a real Shopify value (gid, price, title, stock, code) that NO
+    shopifyStep, payloadBinding, or contract supplies, discovery is
+    REQUIRED, not forbidden: follow the §4 resolutions/discovery path
+    (`shopify_resolutions.md`, then search_shopify_ops →
+    list_shopify_ops → get_shopify_op). Fabricating the value or
+    dropping the feature is the bug; filling the gap with a real op is
+    the fix.
 
 13. END A TURN WITH NO TOOL CALL. Every turn must emit at least one
     tool_use. If the model produces text only, the loop exits and the

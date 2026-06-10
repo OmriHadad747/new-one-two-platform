@@ -37,6 +37,9 @@ and each Shopify capability to its resolved operation(s).
 TOOLS AVAILABLE:
   - list_webhook_family(prefix)      — every topic in a cluster + descriptions
   - get_webhook_topic(name)          — one topic's full payload schema
+  - search_shopify_ops(keyword, surface) — keyword search over ALL ops; use when
+                                       you can't name the cluster — never bind
+                                       (or skip) an op on a guess
   - list_shopify_ops(cluster, surface) — every GraphQL op in a cluster + signatures
   - get_shopify_op(name, surface)    — one op's args, types, and worked examples
   - emit_hld_plan(<plan>)            — terminal; submit the complete plan
@@ -76,7 +79,15 @@ right (these are GENERIC — the app only supplies the specific promise):
                                        a raw timestamp dedups per instant)
   - shows or stores a field OWNED by → a refresh trigger that updates it, OR a
     the external system (product        live fetch at read time — never a stale
-    title, price, image, handle)        stored copy with no way to refresh
+    title, price, image, handle)        stored copy with no way to refresh.
+                                       A live fetch is only real when the
+                                       capability carries the `shopifySteps`
+                                       op that performs it (resolved in
+                                       Phase 2) — a "compute price" capability
+                                       with integration:null and no upstream
+                                       price source leaves the coding agent
+                                       nothing to fetch with, and it will
+                                       fabricate or drop the value
   - a tunable rate/threshold/toggle  → a config-backed value (usesConfig), not
                                        a hardcoded constant
   - a status / lifecycle             → a `statusField` + a `stateMachine`
@@ -565,7 +576,11 @@ wrong topic — go back to 2A.
      side-by-side — names alone don't disambiguate (e.g.
      `discountCodeBasicCreate` vs `discountAutomaticBasicCreate`).
      surface = "admin" for shopify-admin, "storefront" for
-     shopify-storefront.
+     shopify-storefront. Can't name the cluster? Call
+     search_shopify_ops("<intent keywords>", "<surface>") first — it
+     matches op names, signatures, and return-type fields, so the op
+     exists even when the cluster index doesn't suggest it. A failed
+     cluster guess is never grounds to leave the capability unbound.
   2. Call get_shopify_op("<name>", "<surface>") for the chosen op. READ
      THE EXAMPLES — they reveal sequencing: a mutation's response id that
      a later call needs as input.

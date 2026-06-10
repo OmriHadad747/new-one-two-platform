@@ -23,6 +23,7 @@ Conventions:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -377,6 +378,92 @@ def tool_list_shopify_ops(
     }
 
 
+def tool_search_shopify_ops(
+    ctx: RunnerContext, keyword: str, surface: str
+) -> Dict[str, Any]:
+    """Keyword search over a surface's full op catalog — finds ops by
+    INTENT when the cluster name isn't guessable (the failure mode that
+    ends in a fabricated value: guess a cluster, get an error, give up).
+
+    Matches each lowercased query token against the op name (camelCase-
+    split), its signature line from summary.md, and the field names in its
+    returnTypeSdl — so `search_shopify_ops("variant price", "storefront")`
+    surfaces `productVariant` even though "price" never appears in any op
+    name. Returns the top matches ranked by how many distinct tokens hit
+    and where (name > signature > return type).
+    """
+    if surface not in ("admin", "storefront"):
+        return {"error": f"surface must be 'admin' or 'storefront', got {surface!r}"}
+    tokens = [t for t in re.split(r"[^a-z0-9]+", keyword.lower()) if len(t) >= 3]
+    if not tokens:
+        return {"error": "keyword must contain at least one term of 3+ characters"}
+
+    base = ctx.repo_root / "platform-ai" / "catalogs" / f"shopify_{surface}" / SHOPIFY_API_VERSION
+    summary_path = base / "summary.md"
+    detail_path = base / "operations_detail.json"
+    if not summary_path.exists() or not detail_path.exists():
+        return {"error": f"catalog files missing for {surface}"}
+
+    # cluster + signature per op, from the same summary.md list_shopify_ops reads.
+    signatures: Dict[str, tuple] = {}  # name -> (cluster, kind, signature)
+    cluster = kind = None
+    header = re.compile(r"^## (Queries|Mutations) — (\S+) \(")
+    for line in summary_path.read_text().splitlines():
+        m = header.match(line)
+        if m:
+            kind = "query" if m.group(1) == "Queries" else "mutation"
+            cluster = m.group(2)
+            continue
+        if line.startswith("#") or line.startswith("- ") or not line.strip():
+            continue
+        if cluster is None:
+            continue
+        name = line.split("(", 1)[0].split(":", 1)[0].strip()
+        if name:
+            signatures[name] = (cluster, kind, line.strip())
+
+    try:
+        detail = json.loads(detail_path.read_text())
+    except json.JSONDecodeError as e:
+        return {"error": f"operations_detail.json parse error: {e}"}
+
+    def name_words(op: str) -> str:
+        return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", op).lower()
+
+    scored = []
+    for op_name, (op_cluster, op_kind, signature) in signatures.items():
+        nm = name_words(op_name)
+        sig = signature.lower()
+        sdl = str(detail.get(op_name, {}).get("returnTypeSdl", "")).lower()
+        hits = score = 0
+        for t in tokens:
+            if t in nm:
+                hits, score = hits + 1, score + 3
+            elif t in sig:
+                hits, score = hits + 1, score + 2
+            elif t in sdl:
+                hits, score = hits + 1, score + 1
+        if hits:
+            scored.append((hits, score, op_name, op_cluster, op_kind, signature))
+    scored.sort(key=lambda r: (-r[0], -r[1], r[2]))
+
+    if not scored:
+        return {
+            "error": f"no {surface} ops match {keyword!r} — try other terms, or "
+            "the need may be a webhook payload field (list_webhook_family)"
+        }
+    return {
+        "keyword": keyword,
+        "surface": surface,
+        "matches": [
+            {"op": name, "cluster": cl, "kind": kd, "signature": sig}
+            for _, _, name, cl, kd, sig in scored[:15]
+        ],
+        "next": "call list_shopify_ops on the cluster to compare siblings, "
+        "then get_shopify_op for exact args + examples",
+    }
+
+
 def tool_list_webhook_family(ctx: RunnerContext, prefix: str) -> Dict[str, Any]:
     """Return every webhook topic in a resource cluster + its description.
 
@@ -538,6 +625,7 @@ TOOL_DISPATCH: Dict[str, Callable[..., Dict[str, Any]]] = {
     "todo_write": tool_todo_write,
     "list_shopify_ops": tool_list_shopify_ops,
     "get_shopify_op": tool_get_shopify_op,
+    "search_shopify_ops": tool_search_shopify_ops,
     "list_webhook_family": tool_list_webhook_family,
     "get_webhook_topic": tool_get_webhook_topic,
     "run_tsc": tool_run_tsc,
@@ -718,6 +806,35 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                 },
             },
             "required": ["cluster", "surface"],
+        },
+    },
+    {
+        "name": "search_shopify_ops",
+        "description": (
+            "Keyword search across ALL Shopify GraphQL ops on a surface — "
+            "matches op names, signatures, and return-type field names. Use "
+            "this when you need an op but can't name its cluster (e.g. "
+            "search_shopify_ops('variant price', 'storefront')). NEVER "
+            "fabricate an id/price/gid because the right op isn't obvious — "
+            "search for it, then list_shopify_ops the matched cluster and "
+            "get_shopify_op the chosen op."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "keyword": {
+                    "type": "string",
+                    "description": (
+                        "Intent terms, e.g. 'variant price', 'customer email', "
+                        "'discount code create'."
+                    ),
+                },
+                "surface": {
+                    "type": "string",
+                    "enum": ["admin", "storefront"],
+                },
+            },
+            "required": ["keyword", "surface"],
         },
     },
     {

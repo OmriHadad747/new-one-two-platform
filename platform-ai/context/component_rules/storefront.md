@@ -77,6 +77,16 @@ host.storefront(relativePath) → Promise<any>
 - Public Shopify data (product, variant, cart, pricing) → `host.storefront`
 - Your backend (DB state, Admin-API-only data, writes) → `host.call`
 
+Every Shopify value the widget renders or sends — a variant gid, a live
+price/total, an availability flag, a discount code — must come from a
+REAL source: `host.storefront`, a backend route that resolves it, or the
+plan's bindings. Before wiring one, read
+`runtime_examples/shopify_resolutions.md` for the blessed resolution
+(e.g. the cart needs a *variant* gid, never a product id wrapped as one;
+prices are never stored — always fetched live). If the backend doesn't
+expose the value yet, that's a backend route to add — not a value to
+fake or a feature to drop.
+
 ## DOM scoping — STRICT
 
 Preferred: `container.*` for anything the widget owns.

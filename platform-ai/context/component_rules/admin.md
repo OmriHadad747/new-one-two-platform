@@ -36,7 +36,10 @@ through `bridge`. Anything touching the DOM / network / storage outside
   returns `Promise<unknown>` — cast each result to the matching response type
   from `contracts.ts`. For a picked resource, a variant's gid is
   `variants[i].id`; there is no `product_id` on a `PickedResource` (tsc
-  rejects it).
+  rejects it). Any other real Shopify value a form needs (a live price,
+  a default variant, a discount code) comes from a backend route that
+  resolves it — see `runtime_examples/shopify_resolutions.md`; never a
+  hardcoded default standing in for a real fetch.
 - **Imports — type-only, two sources allowed**: the SDK
   (`@platform/admin-sdk`) and the shared contracts
   (`../src/types/contracts.js`) for request/response/row types. IMPORT the
