@@ -401,10 +401,12 @@ Everything else lives in one of two places:
 
 These have all caused real failures. Do not:
 
-1. SYNTHESIZE IDENTIFIERS. Discount codes, gids, node ids must come
-   from a prior call's response or the inbound request body. Never
-   invent strings like `BUNDLE-XXXX-1000` or
-   `gid://shopify/Discount/123`.
+1. SYNTHESIZE IDENTIFIERS. Every gid, code, or node id must trace to a
+   prior call's response or the inbound request — never invent one (a
+   product id wrapped as a variant GID breaks cartCreate; a minted
+   `BUNDLE-XXXX` code is not real). Need a value the plan doesn't hand
+   you? Resolve it for real — see §4 (`shopify_resolutions.md` +
+   search_shopify_ops discovery) — never fabricate or drop the feature.
 
 2. EMPTY A FUNCTION BODY TO SILENCE TSC. If tsc rejects your code,
    fix the body. An empty handler that compiles is worse than a wrong
@@ -437,21 +439,13 @@ These have all caused real failures. Do not:
    `write_file` after the initial creation re-decides every untouched
    region and risks dropping a correct piece while "fixing" another.
 
-9. FALL BACK FROM A RESOLVED `live.<field>` TO THE RAW DB COLUMN IT
-   SHADOWS. If a route resolves an external id and emits it as
-   `live.<field>`, EVERY downstream surface reads `live.<field>`. The
-   pattern `member.variant_external_id ?? member.product_external_id`
-   is the canonical bug — a product id wrapped as a variant GID
-   silently breaks cartCreate. The producer side is yours; the
-   consumer side is also yours; they must agree.
-
-10. FIX A VALIDATOR FINDING BY DROPPING WHAT THE PLAN DECLARED. If
+9. FIX A VALIDATOR FINDING BY DROPPING WHAT THE PLAN DECLARED. If
     your fix removes a capability, a binding, a contract field, or a
     nullable-with-purpose column the plan declared, that's an HLD
     change — escalate it in a `do_not` note rather than silently
     deleting. See the pre-fix plan check in §2 Phase 5.
 
-11. RE-DISCOVER A SHOPIFY TOPIC OR PAYLOAD BINDING. The HLD has
+10. RE-DISCOVER A SHOPIFY TOPIC OR PAYLOAD BINDING. The HLD has
     already chosen every `shopifyTopic` and bound every
     `payloadBinding` (signalField → payloadPath or resolution hop).
     Read them from the plan and use them directly. Calling
@@ -462,7 +456,7 @@ These have all caused real failures. Do not:
     shape — and even then, prefer the existing binding for handler
     wiring; use the schema only for the type declaration.
 
-12. RE-DISCOVER A SHOPIFY OP. Same rule for `shopifySteps`: the HLD
+11. RE-DISCOVER A SHOPIFY OP. Same rule for `shopifySteps`: the HLD
     has bound every shopify-* capability to its op sequence. Use those
     op names directly. `get_shopify_op` is allowed only when you need
     the exact `inputTypesSdl` to build the request shape correctly —
@@ -475,7 +469,7 @@ These have all caused real failures. Do not:
     dropping the feature is the bug; filling the gap with a real op is
     the fix.
 
-13. END A TURN WITH NO TOOL CALL. Every turn must emit at least one
+12. END A TURN WITH NO TOOL CALL. Every turn must emit at least one
     tool_use. If the model produces text only, the loop exits and the
     run is abandoned with NO type check, NO validators, and whatever
     half-done state the scaffold is in. If you genuinely have nothing
@@ -483,7 +477,7 @@ These have all caused real failures. Do not:
     or `done()` (to finish). Text-only turns are a CRASH for the
     pipeline, not a graceful stop.
 
-14. INVENT A LIB IMPORT. The template ships a fixed set of helpers
+13. INVENT A LIB IMPORT. The template ships a fixed set of helpers
     under `scaffold/src/lib/` — `db`, `shopify`, `platform` and the
     helpers exported from each (see `platform_helpers.md` §6.1 inline
     above). Do NOT import from paths that aren't listed there
