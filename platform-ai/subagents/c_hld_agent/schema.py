@@ -53,6 +53,8 @@ Validation policy
 #     X2   list-returning GET must paginate ............ ExternalContract
 #     --   payloadBindings cover all signalFields ...... ExternalEventTrigger
 #     --   shopifySteps <-> integration ............... Capability
+#     --   dataNeed source:shopify -> shopify-typed cap
+#          + a shopifyStep that produces it ........... Capability
 #     --   keyedByColumns name real columns ........... Table
 #     C    no timestamp-role column in a uniqueness key  Table
 #     d1   cursor in responseShape implies a list ...... ExternalContract
@@ -65,7 +67,11 @@ Validation policy
 #
 #   Reviewer-only (`hld_v`, semantic; no controlled vocabulary):
 #     A    dataNeeds closure / dangling realizer (a need
-#          with no supplier) -- free text, high FP.
+#          with no supplier) -- free text, high FP. NOTE: the
+#          Shopify slice ("a need only Shopify can supply has a
+#          real fetch source") is now STRUCTURAL via the
+#          source:shopify validator above; the reviewer keeps
+#          only the remaining trigger/request/upstream closure.
 # ──────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -135,6 +141,14 @@ _ARCHETYPE_SURFACES: dict[str, frozenset[str]] = {
     "backend+storefront": frozenset({"widget"}),
     "backend+admin+storefront": frozenset({"widget", "admin"}),
 }
+
+
+def _normalize(label: str) -> str:
+    """Normalize a free-text domain label for matching a `dataNeed.name`
+    against a `shopifyStep.produces`. Both are authored by the same agent in
+    the same plan, so we only absorb cosmetic drift: casefold, strip, and
+    collapse spaces / underscores to a single space."""
+    return " ".join(label.replace("_", " ").split()).casefold()
 
 
 class _StrictModel(BaseModel):
@@ -252,11 +266,29 @@ class ShopifyStep(_StrictModel):
     consumes: Optional[str] = None
 
 
+class DataNeed(_StrictModel):
+    """One input a capability requires, plus where its value comes from.
+
+    `source` records the origin so "the architect promised a value with no way
+    to get it" becomes checkable. Only `shopify` is enforced structurally (see
+    `Capability._shopify_needs_have_a_step`) — it forces a real fetch op onto
+    the capability. The rest are honest declarations the `hld_v` reviewer still
+    checks semantically (the plan has no structural trigger/contract/upstream
+    graph to validate them against); they mirror the reachability sources the
+    reviewer's Rule B already recognizes — trigger payload, inbound request,
+    a prior capability's output (`upstream`), config, or an in-app constant."""
+
+    name: str  # domain field name, e.g. "variant live price" — NOT an API path
+    source: Literal[
+        "shopify", "trigger", "request", "upstream", "config", "constant"
+    ]
+
+
 class Capability(_StrictModel):
     id: str
     description: str
     kind: Literal["read", "write", "compute", "notify"]
-    dataNeeds: list[str]
+    dataNeeds: list[DataNeed]
     integration: Optional[Literal["shopify-admin", "shopify-storefront", "email"]]
     # ── Phase-2 Shopify binding ──
     # Resolved op(s) for shopify-admin / shopify-storefront capabilities,
@@ -286,6 +318,36 @@ class Capability(_StrictModel):
                 f"is '{self.integration}'; shopifySteps are only for "
                 "shopify-admin / shopify-storefront capabilities"
             )
+        return self
+
+    # A dataNeed the architect marked `source: shopify` is a promise that this
+    # capability fetches that value live from Shopify. Make the promise real:
+    # the capability must be Shopify-typed AND carry a shopifyStep that produces
+    # the named value. This is the structural close on the "compute / null
+    # capability needs a live price but has nothing to fetch with" bug — the
+    # coding agent was handed a sourceless value and fabricated (or dropped) it.
+    @model_validator(mode="after")
+    def _shopify_needs_have_a_step(self) -> "Capability":
+        shopify_needs = [n for n in self.dataNeeds if n.source == "shopify"]
+        if not shopify_needs:
+            return self
+        if self.integration not in ("shopify-admin", "shopify-storefront"):
+            names = [n.name for n in shopify_needs]
+            raise ValueError(
+                f"capability '{self.id}' has dataNeed(s) {names} marked "
+                f"source 'shopify' but integration is '{self.integration}'; a "
+                "value only Shopify can supply must live on a shopify-admin / "
+                "shopify-storefront capability that fetches it"
+            )
+        produced = {_normalize(s.produces) for s in self.shopifySteps if s.produces}
+        for need in shopify_needs:
+            if _normalize(need.name) not in produced:
+                raise ValueError(
+                    f"capability '{self.id}' dataNeed '{need.name}' is marked "
+                    "source 'shopify' but no shopifyStep produces it; resolve "
+                    "the op (search_shopify_ops / get_shopify_op) and name the "
+                    "value in that step's `produces`"
+                )
         return self
 
 

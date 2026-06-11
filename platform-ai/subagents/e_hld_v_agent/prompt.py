@@ -42,9 +42,10 @@ that:
 
 Pydantic has already validated the structural shape of the plan (required \
 fields, enum values, cross-field references — including that every \
-signalField has a payloadBinding and every shopify-* capability has \
-shopifySteps). Do not flag anything a structural check would catch — \
-focus on SEMANTIC issues only.
+signalField has a payloadBinding, every shopify-* capability has \
+shopifySteps, and every dataNeed marked `source:"shopify"` lives on a \
+shopify-typed capability with a `shopifyStep` that produces it). Do not \
+flag anything a structural check would catch — focus on SEMANTIC issues only.
 
 Pay particular attention to the Phase-2 Shopify bindings, the newest and \
 highest-risk part of the plan and the one structural checks cannot judge:
@@ -81,26 +82,33 @@ declarations and check internal consistency.)
       class where an email link emits to `/apps/<thing>/unsubscribe`
       while only `POST /widget/unsubscribe` exists.
 
-  (B) Capability dataNeeds are reachable. Each entry in a capability's
-      `dataNeeds` must trace to one of: (i) a trigger's `payloadBindings`
-      (for capabilities driven by a trigger), (ii) a prior capability's
-      `produces` in a multi-step flow, (iii) an `externalContract`
-      requestShape (for capabilities served by a route), or (iv) a
-      declared `payloadBinding.resolution` hop. If a capability declares
-      it consumes "product_id" but no trigger, contract, or upstream
-      capability supplies it, the coding agent has no described source
-      and will either invent one or silently disable the feature — flag
-      it. Quote the unreachable dataNeed verbatim; if you cannot show
-      that no upstream supplies it, drop the finding.
-      The Shopify-owned special case: a value only Shopify can supply
-      (a live price, a variant gid, a title, an availability flag, a
-      discount code) is reachable ONLY through a `shopifySteps` op, a
-      `payloadBinding`, or a declared resolution hop. A capability that
-      promises such a value (e.g. "compute the bundle's live total")
-      with integration:null and no upstream Shopify source is a
-      finding — the fix is to bind the real source op (the architect
-      has search_shopify_ops/list_shopify_ops to find it), never to
-      assume the coding agent can conjure the value downstream.
+  (B) Capability dataNeeds declare the RIGHT source. Each `dataNeed` now
+      carries a `source` (shopify | trigger | request | upstream | config |
+      constant); your job is no longer "is there a source" but "is the
+      DECLARED source true and reachable":
+        - source:"trigger"  → the driving trigger's `payloadBindings` (or a
+          declared `payloadBinding.resolution` hop) must actually carry it.
+        - source:"request"  → an `externalContract` requestShape on a route
+          this capability is served by must actually carry it.
+        - source:"upstream" → a prior capability's `produces` in the same
+          flow must actually supply it.
+        - source:"config" / "constant" → must genuinely be a tunable setting
+          / an in-app derived value, not an external fact in disguise.
+      If a capability declares source:"trigger" for "product_id" but no
+      trigger/binding supplies it, the coding agent has no described source
+      and will invent one or silently disable the feature — flag it. Quote
+      the dataNeed verbatim; if you cannot show no element supplies it, drop
+      the finding.
+      The Shopify dodge (the case to watch): the source:"shopify" EXISTENCE
+      check is now structural (Pydantic forces a producing `shopifyStep`),
+      so do NOT re-flag a missing step. What you CAN catch is mislabeling: a
+      value only Shopify can supply live (a live price, a variant gid, a
+      live title, an availability flag, a discount code) that is marked
+      `trigger`/`upstream`/`config`/`constant` to dodge the fetch — e.g.
+      "compute the bundle's live total" pulling a price tagged source:
+      "constant". The honest fix is source:"shopify" (which forces the real
+      fetch op), never a cheaper label that lets the coding agent conjure
+      the value downstream.
 
   (C) Helper-binding flags match the capability. Each capability flag binds
       the capability to a ready platform helper the coding agent MUST reuse

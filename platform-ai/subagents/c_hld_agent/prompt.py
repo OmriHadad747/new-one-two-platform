@@ -81,12 +81,16 @@ right (these are GENERIC — the app only supplies the specific promise):
     the external system (product        live fetch at read time — never a stale
     title, price, image, handle)        stored copy with no way to refresh.
                                        A live fetch is only real when the
-                                       capability carries the `shopifySteps`
-                                       op that performs it (resolved in
-                                       Phase 2) — a "compute price" capability
-                                       with integration:null and no upstream
-                                       price source leaves the coding agent
-                                       nothing to fetch with, and it will
+                                       capability MARKS that need `source:
+                                       "shopify"` — which FORCES the capability
+                                       to be shopify-admin/storefront and to
+                                       carry a `shopifySteps` op that `produces`
+                                       the value (enforced, not advisory). A
+                                       "compute price" capability with
+                                       integration:null cannot carry a
+                                       source:shopify need — so type it as the
+                                       shopify fetch it actually is, or the plan
+                                       is rejected before the coding agent can
                                        fabricate or drop the value
   - a tunable rate/threshold/toggle  → a config-backed value (usesConfig), not
                                        a hardcoded constant
@@ -330,9 +334,28 @@ Per capability:
                   "write"   — change data in an external system or DB,
                   "compute" — pure logic over data already in hand,
                   "notify"  — deliver a message to a human.
-  - dataNeeds   : semantic field names the capability requires (e.g.
-                  ["customer email", "cart line items", "cart subtotal"]).
-                  Domain language, NOT API paths.
+  - dataNeeds   : the inputs the capability requires, each as
+                  { name, source }. `name` is the semantic field in domain
+                  language, NOT an API path. `source` is where the value comes
+                  from — one of:
+                    "shopify"  — fetched live from Shopify. ENFORCED: forces
+                                 this capability to be shopify-admin/storefront
+                                 and to carry a `shopifySteps` op that
+                                 `produces` the SAME name (see EXTERNAL-STATE
+                                 list — price, inventory, availability, live
+                                 title, variant gid, discount code are all
+                                 Shopify-owned ⇒ source:shopify).
+                    "trigger"  — delivered in the event/webhook payload (a
+                                 `payloadBinding` on the driving trigger).
+                    "request"  — supplied in the inbound HTTP request
+                                 (an externalContract `requestShape` field).
+                    "upstream" — produced by a prior capability earlier in the
+                                 same in-app flow (e.g. a DB id just inserted).
+                    "config"   — a merchant-tunable setting (usesConfig).
+                    "constant" — a fixed/derived value computed in-app.
+                  e.g. [{name: "customer email", source: "trigger"},
+                        {name: "cart line items", source: "request"},
+                        {name: "variant live price", source: "shopify"}].
   - integration : "shopify-admin" | "shopify-storefront" | "email" | null
                   for purely internal compute / DB.
   - shopifySteps: Phase-2 field — the resolved Shopify op(s). REQUIRED for
@@ -413,7 +436,8 @@ order details", "send email"), not one.
   State transitions on the same record are ONE capability regardless of \
 how many terminal states exist — name it for the outcome being recorded, \
 not per terminal state.
-    ✅ "record-item-outcome"  dataNeeds: [item identifier, outcome, reason]
+    ✅ "record-item-outcome"  dataNeeds: [{item identifier, request},
+       {outcome, request}, {reason, request}]
     ❌ one capability per terminal state — over-decomposition.
 
 STATUSFIELD BINDING. Every persistence table that declares a non-null \
@@ -731,7 +755,11 @@ get_webhook_topic / get_shopify_op would return — never guessed.)
       "id": "queue-issuance",
       "description": "Record a pending discount issuance for a paid order so the attempt can be tracked.",
       "kind": "write",
-      "dataNeeds": ["order external id", "customer external id", "order total"],
+      "dataNeeds": [
+        {"name": "order external id", "source": "trigger"},
+        {"name": "customer external id", "source": "trigger"},
+        {"name": "order total", "source": "trigger"}
+      ],
       "integration": null,
       "shopifySteps": [],
       "returnsList": false, "touchesMoney": true, "usesConfig": false, "usesWorkflow": false
@@ -740,7 +768,7 @@ get_webhook_topic / get_shopify_op would return — never guessed.)
       "id": "issue-discount-code",
       "description": "Create a single-use discount code in Shopify for the customer behind a paid order.",
       "kind": "write",
-      "dataNeeds": ["customer external id"],
+      "dataNeeds": [{"name": "customer external id", "source": "trigger"}],
       "integration": "shopify-admin",
       "shopifySteps": [
         {"op": "discountCodeBasicCreate", "produces": "a single-use discount code node id and code", "consumes": "customer external id"}
@@ -751,7 +779,11 @@ get_webhook_topic / get_shopify_op would return — never guessed.)
       "id": "record-issuance-outcome",
       "description": "Record whether an issuance succeeded or failed and why.",
       "kind": "write",
-      "dataNeeds": ["issuance id", "outcome", "failure reason"],
+      "dataNeeds": [
+        {"name": "issuance id", "source": "upstream"},
+        {"name": "outcome", "source": "upstream"},
+        {"name": "failure reason", "source": "upstream"}
+      ],
       "integration": null,
       "shopifySteps": [],
       "returnsList": false, "touchesMoney": false, "usesConfig": false, "usesWorkflow": true
@@ -760,7 +792,10 @@ get_webhook_topic / get_shopify_op would return — never guessed.)
       "id": "list-issuances",
       "description": "Return a paginated, filterable list of issuances for the admin dashboard.",
       "kind": "read",
-      "dataNeeds": ["status filter", "page cursor"],
+      "dataNeeds": [
+        {"name": "status filter", "source": "request"},
+        {"name": "page cursor", "source": "request"}
+      ],
       "integration": null,
       "shopifySteps": [],
       "returnsList": true, "touchesMoney": false, "usesConfig": false, "usesWorkflow": false
@@ -783,6 +818,10 @@ What this demonstrates:
     have empty `shopifySteps`.
   - Workflow column with statusField=null AND stateMachine=null.
   - dataNeeds are inputs only; touchesMoney where order_total flows.
+  - Every dataNeed names its `source`: webhook-delivered values are
+    `trigger` (NOT `shopify` — `shopify` means a live fetch this capability
+    performs); a value only Shopify can supply live would be `source:shopify`
+    and would force a producing `shopifyStep` here.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
