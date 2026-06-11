@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/admin/ui.ts",
-  "old_string": "export interface BundleItemInput {\n  product_external_id: string;\n  variant_mode: VariantMode;\n  variant_external_ids?: string[] | undefined; // numeric ids; required when variant_mode === \"specific\"\n  variant_gids?: string[] | undefined;          // full GIDs parallel to variant_external_ids\n}",
-  "new_string": "// BundleItemInput is imported from contracts; the variant_gids field is already there.\n"
-}

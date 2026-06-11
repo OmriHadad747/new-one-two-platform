@@ -1,8 +1,0 @@
-{
-  "content": "import { sql } from \"../lib/db.js\";\nimport { shopifyClientFor } from \"../lib/shopify.js\";\nimport { money } from \"../lib/money.js\";\nimport { paginate } from \"../lib/paginate.js\";\nimport type {\n  BundleId,\n  BundleRow,\n  BundleItemRow,\n  BundleItemVariantRow,\n  BundleDiscountTierRow,\n  BundleItemShape,\n  BundleItemVariantShape,\n  BundleWithDetails,\n  DiscountTierShape,\n  WidgetListBundlesResponse,\n  WidgetAddToCartRequest,\n  WidgetAddToCartResponse,\n  CartGid,\n  VariantMerchandiseGid,\n  CartLinesAddResponse,",
-  "total_lines": 276,
-  "returned_lines": [
-    1,
-    21
-  ]
-}

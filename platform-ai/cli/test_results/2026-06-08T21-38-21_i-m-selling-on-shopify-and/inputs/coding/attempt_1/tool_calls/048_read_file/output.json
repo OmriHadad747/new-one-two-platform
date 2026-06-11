@@ -1,8 +1,0 @@
-{
-  "content": "import type { Request } from \"express\";\nimport type {\n  OrdersCreatePayload,\n  ProductsUpdatePayload,\n  ProductsDeletePayload,\n  BundleRow,\n} from \"../types/contracts.js\";\n\n// Webhook handlers: keyed by topic, dispatched by the template webhook router.\n// IMPORTANT: req.platform is NOT available in webhook handlers.\n\nexport const webhookHandlers: Record<\n  string,\n  (payload: unknown, req: Request) => Promise<void>\n> = {\n  // \u2500\u2500\u2500 orders/create \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  // Increment purchase_count exactly once per order per bundle when the order\n  // contains the bundle's discount code.\n  \"orders/create\": async (\n    rawPayload: unknown,",
-  "total_lines": 169,
-  "returned_lines": [
-    1,
-    21
-  ]
-}

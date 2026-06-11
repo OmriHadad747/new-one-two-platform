@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/admin.ts",
-  "old_string": "    // Upload to platform files storage\n    const csvBytes = Buffer.from(csvContent, \"utf8\");\n    const filename = `subscribers-${itemExternalId}-${Date.now()}.csv`;\n    const uploadResult = await platform.files.upload(filename, csvBytes, {\n      contentType: \"text/csv\",\n    });",
-  "new_string": "    // Upload to platform files storage\n    const csvBytes = Buffer.from(csvContent, \"utf8\");\n    const filename = `subscribers-${itemExternalId}-${Date.now()}.csv`;\n    const uploadResult = await platform.files.upload({\n      name: filename,\n      contents: csvBytes,\n      mimeType: \"text/csv\",\n    });"
-}

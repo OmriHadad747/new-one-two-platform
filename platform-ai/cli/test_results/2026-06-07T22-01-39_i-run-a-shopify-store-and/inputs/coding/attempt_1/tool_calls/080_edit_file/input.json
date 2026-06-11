@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "  const firstSend = sends[0];\n  if (!firstSend) return;\n\n  const itemType = firstSend.item_type;\n  const itemId = firstSend.item_external_id;\n\n  let productTitle = \"your waitlisted item\";\n  let variantTitle = \"\";\n  let productUrl = \"\";\n  let variantImageUrl: string | null = null;\n\n  if (itemType === \"variant\") {\n    const variantGid = `gid://shopify/ProductVariant/${itemId}`;",
-  "new_string": "  const firstSend = sends[0];\n  if (!firstSend) return;\n\n  const itemType = firstSend.item_type;\n  const itemId = firstSend.item_external_id;\n\n  // Validate itemId is numeric before constructing any GID\n  if (!/^\\d+$/.test(itemId)) {\n    console.warn({ batchId, itemId }, \"item_external_id is not numeric \u2014 skipping GID construction\");\n    return;\n  }\n\n  let productTitle = \"your waitlisted item\";\n  let variantTitle = \"\";\n  let productUrl = \"\";\n  let variantImageUrl: string | null = null;\n\n  if (itemType === \"variant\") {\n    const variantGid = `gid://shopify/ProductVariant/${itemId}`;"
-}

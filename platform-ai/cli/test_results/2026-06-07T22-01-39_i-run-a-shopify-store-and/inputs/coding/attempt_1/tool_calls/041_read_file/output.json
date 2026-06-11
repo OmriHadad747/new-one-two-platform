@@ -1,8 +1,0 @@
-{
-  "content": "    saveBtn.style.marginTop = \"16px\";\n    form.appendChild(saveBtn);\n\n    form.addEventListener(\"submit\", async (e) => {\n      e.preventDefault();\n      const formData = bridge.getFormData(form);\n\n      const body: AdminSettingsSaveRequest = {\n        batch_size: parseInt(String(formData.batch_size), 10),\n        quiet_hours_start: String(formData.quiet_hours_start),\n        quiet_hours_end: String(formData.quiet_hours_end),\n        conversion_attribution_window_days: parseInt(\n          String(formData.conversion_attribution_window_days),\n          10,\n        ),\n      };\n\n      try {\n        const resp = (await bridge.call(\"/admin/settings\", body)) as AdminSettingsSaveResponse;\n        isDirty = false;\n        bridge.saveBar.hide(\"settings\");\n        bridge.notify(\"Settings saved.\", \"success\");\n        renderSettings(resp.settings);\n      } catch {\n        bridge.notify(\"Failed to save settings. Please try again.\", \"error\");",
-  "total_lines": 602,
-  "returned_lines": [
-    555,
-    580
-  ]
-}

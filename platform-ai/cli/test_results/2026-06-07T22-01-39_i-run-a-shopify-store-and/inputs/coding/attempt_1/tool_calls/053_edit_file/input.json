@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "import { sql } from \"../lib/db.js\";\nimport { shopifyClientFor } from \"../lib/shopify.js\";\nimport { config } from \"../lib/config.js\";\nimport { platform, QuotaExceeded } from \"../lib/platform.js\";\nimport type {\n  InventoryLevelUpdatePayload,\n  ProductDeletePayload,\n  OrderPaidPayload,\n  WaitlistSignupRow,\n  NotificationBatchRow,\n  NotificationSendRow,\n  NotificationSendId,\n  NotificationBatchId,\n  WaitlistSignupId,\n} from \"../types/contracts.js\";",
-  "new_string": "import { sql } from \"../lib/db.js\";\nimport { shopifyClientFor } from \"../lib/shopify.js\";\nimport { config } from \"../lib/config.js\";\nimport { platform } from \"../lib/platform.js\";\nimport { workflow } from \"../lib/workflow.js\";\nimport type {\n  InventoryLevelUpdatePayload,\n  ProductDeletePayload,\n  OrderPaidPayload,\n  WaitlistSignupRow,\n  NotificationBatchRow,\n  NotificationSendId,\n  NotificationBatchId,\n  WaitlistSignupId,\n} from \"../types/contracts.js\";"
-}

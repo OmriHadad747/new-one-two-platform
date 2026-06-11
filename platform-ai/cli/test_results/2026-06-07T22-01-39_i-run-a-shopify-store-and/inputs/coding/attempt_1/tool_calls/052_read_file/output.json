@@ -1,8 +1,0 @@
-{
-  "content": "import { sql } from \"../lib/db.js\";\nimport { shopifyClientFor } from \"../lib/shopify.js\";\nimport { config } from \"../lib/config.js\";\nimport { platform, QuotaExceeded } from \"../lib/platform.js\";\nimport type {\n  InventoryLevelUpdatePayload,\n  ProductDeletePayload,\n  OrderPaidPayload,\n  WaitlistSignupRow,\n  NotificationBatchRow,\n  NotificationSendRow,\n  NotificationSendId,\n  NotificationBatchId,\n  WaitlistSignupId,\n} from \"../types/contracts.js\";",
-  "total_lines": 725,
-  "returned_lines": [
-    1,
-    16
-  ]
-}

@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/types/contracts.ts",
-  "old_string": "export interface AdminCreateBundleRequest {\n  name: string;\n  bundle_type: BundleType;\n  enabled: boolean;\n  required_item_count?: number; // for flexible bundles\n  items: BundleItemInput[];\n  discount_type: DiscountType;\n  discount_tiers: DiscountTierInput[];\n}",
-  "new_string": "export interface AdminCreateBundleRequest {\n  name: string;\n  bundle_type: BundleType;\n  enabled: boolean;\n  required_item_count?: number | undefined; // for flexible bundles\n  items: BundleItemInput[];\n  discount_type: DiscountType;\n  discount_tiers: DiscountTierInput[];\n}"
-}

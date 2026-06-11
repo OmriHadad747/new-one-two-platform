@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/types/contracts.ts",
-  "old_string": "/** GET /admin/dashboard */\nexport interface AdminDashboardRequest {\n  cursor?: string;\n}\n\nexport interface AdminDashboardResponse {\n  products: DemandStatsSnapshotRow[];\n  next_cursor: string | null;\n  total_count: number;\n}\n\n/** GET /admin/products/subscribers */\nexport interface AdminSubscribersRequest {\n  item_external_id: string;\n  cursor?: string;\n}\n\nexport interface AdminSubscribersResponse {\n  subscribers: WaitlistSignupRow[];\n  next_cursor: string | null;\n  total_count: number;\n}",
-  "new_string": "/** GET /admin/dashboard */\nexport interface AdminDashboardRequest {\n  page?: number;\n  page_size?: number;\n}\n\nexport interface AdminDashboardResponse {\n  items: DemandStatsSnapshotRow[];\n  total: number;\n  page: number;\n  page_size: number;\n}\n\n/** GET /admin/products/subscribers */\nexport interface AdminSubscribersRequest {\n  item_external_id: string;\n  page?: number;\n  page_size?: number;\n}\n\nexport interface AdminSubscribersResponse {\n  items: WaitlistSignupRow[];\n  total: number;\n  page: number;\n  page_size: number;\n}"
-}

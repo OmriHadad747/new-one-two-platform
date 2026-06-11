@@ -1,8 +1,0 @@
-{
-  "content": "# Helper: `email.sendBatch`\n\nBatch variant of `email.send` \u2014 one call sends many messages and returns a\nper-item result array, so a partial failure doesn't abort the rest. Use it\nwhenever you'd otherwise loop `email.send`.\n\n```ts\nimport { platform } from \"../lib/platform.js\";\n\nconst batch = await platform.email.sendBatch(\n  rows.map((r) => ({ to: r.email, data: { name: r.name, productTitle: r.title } })),\n);\n\nfor (const item of batch.items) {\n  if (item.status === 200 && item.result.delivered) {\n    // mark sent for rows[item.index]\n  }\n  // item.status === 429 \u2192 quota_exceeded for THIS item (item.limit, item.current)\n  // item.status === 500 \u2192 send_failed for THIS item\n}\n```\n\nRules:\n- Outcomes are PER ITEM via `item.status` (200 / 429 / 500) \u2014 the call itself\n  does NOT throw `QuotaExceeded`; inspect each item.\n- `item.index` maps back to the input row \u2014 use it to mark exactly the rows that\n  delivered, not the whole batch.",
-  "total_lines": 27,
-  "returned_lines": [
-    0,
-    27
-  ]
-}

@@ -1,8 +1,0 @@
-{
-  "content": "};\n\n// \u2500\u2500\u2500 processRestockForItem \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nasync function processRestockForItem(\n  itemExternalId: string,\n  itemType: string,\n  productExternalId: string,\n  dateBucket: string,\n  batchSize: number,\n): Promise<void> {\n  // Idempotency: check if a batch already exists for this item+date\n  const [existingBatch] = await sql<NotificationBatchRow[]>`\n    SELECT id, status\n    FROM notification_batches\n    WHERE item_external_id = ${itemExternalId}\n      AND restock_date_bucket = ${dateBucket}\n      AND deleted_at IS NULL\n    LIMIT 1\n  `;",
-  "total_lines": 729,
-  "returned_lines": [
-    620,
-    640
-  ]
-}

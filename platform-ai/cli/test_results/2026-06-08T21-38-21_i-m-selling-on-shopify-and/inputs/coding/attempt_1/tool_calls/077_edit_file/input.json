@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/admin/ui.ts",
-  "old_string": "  const state: AppState = {\n    view: \"list\",\n    bundles: [],\n    totalCount: 0,\n    pageCursor: null,\n    nextCursor: null,\n    cursorStack: [],\n    editingBundle: null,\n    formState: emptyForm(),\n    isLoading: false,\n    productSearchResults: [],\n    productSearchCursor: null,\n    productSearchQuery: \"\",\n  };",
-  "new_string": "  const state: AppState = {\n    view: \"list\",\n    bundles: [],\n    totalCount: 0,\n    currentPage: 1,\n    pageSize: 20,\n    editingBundle: null,\n    formState: emptyForm(),\n    isLoading: false,\n    productSearchResults: [],\n    productSearchPage: 1,\n    productSearchQuery: \"\",\n  };"
-}

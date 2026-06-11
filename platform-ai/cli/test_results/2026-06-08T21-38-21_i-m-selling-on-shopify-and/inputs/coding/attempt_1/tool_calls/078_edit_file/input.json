@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/admin/ui.ts",
-  "old_string": "  async function loadBundles(): Promise<void> {\n    state.isLoading = true;\n    render();\n    const resp = (await bridge.call(\"/admin/bundles\", {\n      cursor: state.pageCursor ?? undefined,\n    })) as AdminListBundlesResponse;\n    state.bundles = resp.bundles;\n    state.totalCount = resp.total_count;\n    state.nextCursor = resp.next_cursor ?? null;\n    state.isLoading = false;\n    render();\n  }",
-  "new_string": "  async function loadBundles(): Promise<void> {\n    state.isLoading = true;\n    render();\n    const resp = (await bridge.call(\"/admin/bundles\", {\n      page: state.currentPage,\n      page_size: state.pageSize,\n    })) as AdminListBundlesResponse;\n    state.bundles = resp.bundles;\n    state.totalCount = resp.total;\n    state.isLoading = false;\n    render();\n  }"
-}

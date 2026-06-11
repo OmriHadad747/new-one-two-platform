@@ -1,8 +1,0 @@
-{
-  "content": "        product: { title: string };\n      } | null;\n    }>(\n      `query GetVariantSnapshot($id: ID!) {\n        productVariant(id: $id) {\n          displayName\n          product { title }\n        }\n      }`,\n      { id: variantGid },\n    );\n    if (data.productVariant) {\n      productTitle = safe(data.productVariant.product.title);\n      variantTitle = safe(data.productVariant.displayName);\n    }",
-  "total_lines": 719,
-  "returned_lines": [
-    279,
-    294
-  ]
-}

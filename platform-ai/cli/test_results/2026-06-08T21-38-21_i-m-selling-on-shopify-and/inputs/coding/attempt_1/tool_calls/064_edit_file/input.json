@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/types/contracts.ts",
-  "old_string": "// GET /widget/bundles\nexport interface WidgetListBundlesRequest {\n  product_external_id: string;\n  cursor?: string;\n}\nexport interface WidgetListBundlesResponse {\n  bundles: BundleWithDetails[];\n  next_cursor: string | null;\n  total_count: number;\n}",
-  "new_string": "// GET /widget/bundles\nexport interface WidgetListBundlesRequest {\n  product_external_id: string;\n  page?: number;\n  page_size?: number;\n}\nexport interface WidgetListBundlesResponse {\n  bundles: BundleWithDetails[];\n  total: number;\n  page: number;\n  page_size: number;\n}"
-}

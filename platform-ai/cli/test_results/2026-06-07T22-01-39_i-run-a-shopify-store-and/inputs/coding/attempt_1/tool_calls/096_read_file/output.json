@@ -1,8 +1,0 @@
-{
-  "content": "          signupRow.product_external_id,\n        );\n      }\n    }\n\n    console.log(\n      { topic: \"orders/paid\", orderExternalId, purchasedVariantCount: purchasedVariantIds.length },\n      \"conversion check complete\",\n    );\n  },\n};\n\n// \u2500\u2500\u2500 processRestockForItem \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nasync function processRestockForItem(\n  itemExternalId: string,\n  itemType: string,\n  productExternalId: string,\n  dateBucket: string,\n  batchSize: number,\n): Promise<void> {\n  // Select front-of-queue signups up to batchSize\n  const signupsToNotify = await sql<WaitlistSignupRow[]>`\n    SELECT id, email, item_external_id, item_type, product_external_id, unsubscribe_token, status, signed_up_at, deleted_at\n    FROM waitlist_signups",
-  "total_lines": 709,
-  "returned_lines": [
-    600,
-    625
-  ]
-}

@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/types/contracts.ts",
-  "old_string": "export type BatchStatus = \"processing\" | \"completed\" | \"failed\";",
-  "new_string": "export type BatchStatus = \"pending\" | \"running\" | \"completed\" | \"failed\";"
-}

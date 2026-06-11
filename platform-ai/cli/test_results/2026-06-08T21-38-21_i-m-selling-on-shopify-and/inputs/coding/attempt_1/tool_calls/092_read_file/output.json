@@ -1,8 +1,0 @@
-{
-  "content": "\n        const countTd = document.createElement(\"td\");\n        countTd.textContent = String(bundle.purchase_count);\n        tr.appendChild(countTd);\n\n        const actionsTd = document.createElement(\"td\");\n        actionsTd.className = \"actions\";\n\n        const editBtn = document.createElement(\"button\");\n        editBtn.className = \"btn-secondary\";\n        editBtn.textContent = \"Edit\";\n        editBtn.addEventListener(\"click\", () => handleEditClick(bundle.id));\n        actionsTd.appendChild(editBtn);\n\n        const deleteBtn = document.createElement(\"button\");\n        deleteBtn.className = \"btn-destructive\";\n        deleteBtn.textContent = \"Delete\";\n        deleteBtn.addEventListener(\"click\", () => handleDeleteClick(bundle.id, bundle.name));\n        actionsTd.appendChild(deleteBtn);\n\n        tr.appendChild(actionsTd);\n        tbody.appendChild(tr);\n      }\n      table.appendChild(tbody);\n      root.appendChild(table);\n    }\n\n    // Pagination\n    const pag = document.createElement(\"div\");\n    pag.className = \"pagination\";\n\n    const totalPages = Math.ceil(state.totalCount / state.pageSize) || 1;\n\n    const prevBtn = document.createElement(\"button\");\n    prevBtn.className = \"btn-secondary\";\n    prevBtn.textContent = \"\u2190 Prev\";\n    prevBtn.disabled = state.currentPage <= 1;\n    prevBtn.addEventListener(\"click\", () => {\n      if (state.currentPage > 1) {\n        state.currentPage -= 1;",
-  "total_lines": 751,
-  "returned_lines": [
-    190,
-    230
-  ]
-}

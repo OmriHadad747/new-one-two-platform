@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/types/contracts.ts",
-  "old_string": "export interface DiscountTierInput {\n  min_item_count: number;\n  discount_ratio?: string;   // e.g. \"0.10\" for 10%\n  discount_amount?: number;  // minor units (cents)\n  is_bxgy?: boolean;\n}",
-  "new_string": "export interface DiscountTierInput {\n  min_item_count: number;\n  discount_ratio?: string | undefined;   // e.g. \"0.10\" for 10%\n  discount_amount?: number | undefined;  // minor units (cents)\n  is_bxgy?: boolean | undefined;\n}"
-}

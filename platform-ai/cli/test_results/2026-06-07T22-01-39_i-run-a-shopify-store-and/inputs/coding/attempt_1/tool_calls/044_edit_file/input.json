@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/src/routes/webhook-handlers.ts",
-  "old_string": "export const webhookHandlers: Record<\n  string,\n  (payload: unknown, req: Request) => Promise<void>\n> = {\n  // \u2500\u2500 inventory_levels/update \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  \"inventory_levels/update\": async (\n    payload: InventoryLevelUpdatePayload,\n    _req: Request,\n  ): Promise<void> => {",
-  "new_string": "export const webhookHandlers: Record<\n  string,\n  (payload: unknown, req: Request) => Promise<void>\n> = {\n  // \u2500\u2500 inventory_levels/update \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  \"inventory_levels/update\": async (\n    rawPayload: unknown,\n    _req: Request,\n  ): Promise<void> => {\n    const payload = rawPayload as InventoryLevelUpdatePayload;"
-}

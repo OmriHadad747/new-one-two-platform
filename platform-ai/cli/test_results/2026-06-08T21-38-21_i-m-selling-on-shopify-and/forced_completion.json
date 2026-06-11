@@ -1,7 +1,0 @@
-{
-  "findings": [
-    "[write-path-integrity] critical widget/widget.ts:451 \u2014 In `renderStep3()`, the line `const selectedGids = ... .filter((gid) => gid.startsWith(\"gid://shopify/ProductVariant/\"))` excludes sentinel placeholders, causing `validGidCount` to be zero for flexible bundles where all selected items are in \"all\" variant mode, which allows the \"Add Bundle to Cart\" button to remain enabled even when zero real variants will be sent to the backend. FIX: In `renderStep3()`, before filtering out sentinels from `state.selectedVariants`, resolve all sentinel placeholders to real variant GIDs synchronously so that `selectedGids` and `validGidCount` reflect the actual number of real variants that will be submitted."
-  ],
-  "forced": true,
-  "count": 1
-}

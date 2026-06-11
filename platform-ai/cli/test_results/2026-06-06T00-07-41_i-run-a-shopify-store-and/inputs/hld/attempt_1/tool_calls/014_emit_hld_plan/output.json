@@ -1,6 +1,0 @@
-{
-  "ok": false,
-  "errors": [
-    "persistence.6.columns.2.name: Value error, column name 'email_body_template' is platform-owned (email template fields are managed by the platform; do not declare them in HLD)"
-  ]
-}

@@ -1,8 +1,0 @@
-{
-  "content": "import type {\n  BundleId,\n  BundleType,\n  DiscountType,\n  VariantMode,\n  AdminBundleSummary,\n  AdminListBundlesResponse,\n  AdminCreateBundleRequest,\n  AdminCreateBundleResponse,\n  AdminUpdateBundleRequest,\n  AdminUpdateBundleResponse,\n  AdminDeleteBundleRequest,\n  AdminDeleteBundleResponse,\n  AdminProductSearchResponse,\n  AdminProductShape,\n  AdminProductVariantShape,\n  BundleItemInput,\n  DiscountTierInput,\n} from \"../src/types/contracts.js\";\n\n// \u2500\u2500\u2500 State \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\ninterface AppState {\n  view: \"list\" | \"create\" | \"edit\";\n  bundles: AdminBundleSummary[];\n  totalCount: number;\n  currentPage: number;\n  pageSize: number;\n  editingBundle: BundleId | null;\n  formState: BundleFormState;",
-  "total_lines": 751,
-  "returned_lines": [
-    1,
-    31
-  ]
-}

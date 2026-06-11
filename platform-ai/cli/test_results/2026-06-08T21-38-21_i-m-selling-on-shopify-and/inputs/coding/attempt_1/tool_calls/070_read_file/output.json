@@ -1,8 +1,0 @@
-{
-  "content": "            available: item.available,\n            variants: variantShapes,\n          };\n        })\n      );\n\n      const tierRows = await sql<BundleDiscountTierRow[]>`\n        SELECT id, bundle_id, min_item_count, discount_ratio, discount_amount, is_bxgy\n        FROM bundle_discount_tiers\n        WHERE bundle_id = ${bundle.id}\n        ORDER BY min_item_count ASC\n      `;\n\n      const discountTiers: DiscountTierShape[] = tierRows.map((t) => ({\n        min_item_count: t.min_item_count,\n        discount_ratio: t.discount_ratio,\n        discount_amount: t.discount_amount,\n        is_bxgy: t.is_bxgy,\n      }));\n\n      return {\n        ...bundle,\n        items: itemsWithVariants,\n        discount_tiers: discountTiers,\n      };\n    })\n  );\n\n  const response: WidgetListBundlesResponse = {\n    bundles: enrichedBundles,\n    next_cursor: nextCursor,\n    total_count: totalCount,\n  };\n  res.json(response);\n});\n\n// \u2500\u2500\u2500 POST /widget/bundles/add-to-cart \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nwidgetRouter.post(\"/widget/bundles/add-to-cart\", async (req: Request, res: Response) => {\n  const body = req.body as WidgetAddToCartRequest;\n",
-  "total_lines": 275,
-  "returned_lines": [
-    100,
-    140
-  ]
-}

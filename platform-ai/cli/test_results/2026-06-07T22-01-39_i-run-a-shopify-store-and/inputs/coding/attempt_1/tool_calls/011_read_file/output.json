@@ -1,8 +1,0 @@
-{
-  "content": "# Helper: `config`\n\nUse the `config` helper for every app-wide setting (rate, threshold, toggle,\nTTL, choice). Backed by the platform-owned `app_config` table \u2014 do NOT declare a\nconfig/settings table and do NOT read settings with a raw `SELECT`.\n\n```ts\nimport { config } from \"../lib/config.js\";\n\n// Reads always supply a default \u2014 never assume a key is set on first run.\nconst rate: number = await config.get(\"points_per_dollar\", 1);\nconst enabled: boolean = await config.get(\"notifications_enabled\", false);\n\nawait config.set(\"points_per_dollar\", req.body.rate); // write (upsert)\nconst subset = await config.getMany([\"points_per_dollar\", \"alert_thresholds\"]);\nconst all = await config.getAll(); // admin \"list all settings\" page\n```\n\nRules:\n- Always pass a default to `get` \u2014 never assume a key is set on first run.\n- Keys: lowercase snake_case, `^[a-z][a-z0-9_]{0,62}$`; group by prefix\n  (`notification_*`, `discount_*`) so an admin page can list them coherently.\n- An admin \"save settings\" route collapses to: validate \u2192 `config.set` \u2192 200.\n- Writes are last-writer-wins; for a counter-style value use a real DB column.",
-  "total_lines": 24,
-  "returned_lines": [
-    0,
-    24
-  ]
-}

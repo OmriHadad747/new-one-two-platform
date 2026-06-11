@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/admin/ui.ts",
-  "old_string": "interface AppState {\n  view: \"list\" | \"create\" | \"edit\";\n  bundles: AdminBundleSummary[];\n  totalCount: number;\n  pageCursor: string | null;\n  nextCursor: string | null;\n  cursorStack: string[];\n  editingBundle: BundleId | null;\n  formState: BundleFormState;\n  isLoading: boolean;\n  productSearchResults: AdminProductShape[];\n  productSearchCursor: string | null;\n  productSearchQuery: string;\n}",
-  "new_string": "interface AppState {\n  view: \"list\" | \"create\" | \"edit\";\n  bundles: AdminBundleSummary[];\n  totalCount: number;\n  currentPage: number;\n  pageSize: number;\n  editingBundle: BundleId | null;\n  formState: BundleFormState;\n  isLoading: boolean;\n  productSearchResults: AdminProductShape[];\n  productSearchPage: number;\n  productSearchQuery: string;\n}"
-}

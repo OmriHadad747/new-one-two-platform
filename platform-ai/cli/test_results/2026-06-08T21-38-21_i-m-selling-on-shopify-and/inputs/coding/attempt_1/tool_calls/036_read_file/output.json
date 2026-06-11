@@ -1,8 +1,0 @@
-{
-  "content": "          ${body.bundle_type},\n          ${body.enabled},\n          ${body.required_item_count ?? null},\n          ${body.discount_type},\n          ${shopifyNodeId},\n          ${discountCodeStr},\n          0\n        )\n        RETURNING *\n      `;\n      if (!bundleRow) throw new Error(\"Failed to insert bundle\");\n      newBundleId = bundleRow.id;\n\n      for (const item of body.items) {\n        const safeProductId = String(item.product_external_id).replace(/\\u0000/g, \"\");\n        const [itemRow] = await tx<BundleItemRow[]>`\n          INSERT INTO bundle_items (bundle_id, product_external_id, variant_mode, available)\n          VALUES (${newBundleId}, ${BigInt(safeProductId)}, ${item.variant_mode}, true)\n          ON CONFLICT (bundle_id, product_external_id) DO UPDATE\n            SET variant_mode = EXCLUDED.variant_mode",
-  "total_lines": 716,
-  "returned_lines": [
-    460,
-    480
-  ]
-}

@@ -1,8 +1,0 @@
-{
-  "content": "import type {\n  AdminDashboardRequest,\n  AdminDashboardResponse,\n  AdminSubscribersRequest,\n  AdminSubscribersResponse,\n  AdminSubscribersExportRequest,\n  AdminSubscribersExportResponse,\n  AdminSettingsResponse,\n  AdminSettingsSaveRequest,\n  AdminSettingsSaveResponse,\n  DemandStatsSnapshotRow,\n  WaitlistSignupRow,\n  AppSettings,\n} from \"../src/types/contracts.js\";\n\nexport function mount(container: HTMLElement, bridge: AdminBridge): void {\n  // \u2500\u2500 Styles \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  const style = document.createElement(\"style\");\n  style.textContent = `\n    .bis-app { font-family: sans-serif; padding: 16px; }\n    .bis-nav { display: flex; gap: 8px; margin-bottom: 16px; }\n    .bis-page { display: none; }\n    .bis-page.active { display: block; }\n    .bis-table { width: 100%; border-collapse: collapse; margin-top: 8px; }\n    .bis-table th, .bis-table td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--p-color-bg-surface); }\n    .bis-table th { font-weight: 600; color: var(--p-color-text-subdued); }\n    .bis-pagination { display: flex; gap: 8px; margin-top: 12px; align-items: center; }\n    .bis-form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }\n    .bis-form-row label { font-weight: 500; font-size: 14px; }\n    .bis-form-row input { padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }",
-  "total_lines": 598,
-  "returned_lines": [
-    1,
-    31
-  ]
-}

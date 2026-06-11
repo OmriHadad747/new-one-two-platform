@@ -1,5 +1,0 @@
-{
-  "path": "scaffold/app.json",
-  "old_string": "      { \"method\": \"GET\",    \"path\": \"/admin/bundles\",          \"paginationKind\": \"offset\" },\n      { \"method\": \"POST\",   \"path\": \"/admin/bundles/create\" },\n      { \"method\": \"PUT\",    \"path\": \"/admin/bundles/update\" },\n      { \"method\": \"DELETE\", \"path\": \"/admin/bundles/delete\" },\n      { \"method\": \"GET\",    \"path\": \"/admin/products/search\",  \"paginationKind\": \"offset\" }",
-  "new_string": "      { \"method\": \"GET\",    \"path\": \"/admin/bundles\",          \"paginationKind\": \"offset\" },\n      { \"method\": \"GET\",    \"path\": \"/admin/bundles/detail\" },\n      { \"method\": \"POST\",   \"path\": \"/admin/bundles/create\" },\n      { \"method\": \"PUT\",    \"path\": \"/admin/bundles/update\" },\n      { \"method\": \"DELETE\", \"path\": \"/admin/bundles/delete\" },\n      { \"method\": \"GET\",    \"path\": \"/admin/products/search\",  \"paginationKind\": \"offset\" }"
-}

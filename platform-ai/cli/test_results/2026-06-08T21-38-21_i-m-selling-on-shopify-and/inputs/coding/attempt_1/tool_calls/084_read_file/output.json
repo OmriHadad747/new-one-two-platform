@@ -1,8 +1,0 @@
-{
-  "content": "        status: \"error\",\n        error: `Invalid variant id format: ${gid}`,\n        discount_applied: false,\n        cart_external_id: cartExternalId,\n      });\n      return;\n    }\n  }\n\n  // Fetch the bundle.\n  const [bundle] = await sql<BundleRow[]>`\n    SELECT * FROM bundles WHERE id = ${bundleId} AND enabled = true\n  `;\n  if (!bundle) {\n    res.status(404).json({ status: \"error\", error: \"Bundle not found or disabled\", discount_applied: false, cart_external_id: cartExternalId });\n    return;\n  }\n  if (!bundle.discount_code_string) {\n    res.status(422).json({ status: \"error\", error: \"Bundle has no discount code\", discount_applied: false, cart_external_id: cartExternalId });\n    return;\n  }\n\n  // Validate flexible bundle count.\n  if (bundle.bundle_type === \"flexible\" && bundle.required_item_count !== null) {\n    if (selectedVariantIds.length < bundle.required_item_count) {\n      res.status(400).json({\n        status: \"error\",\n        error: `Must select at least ${bundle.required_item_count} items`,\n        discount_applied: false,\n        cart_external_id: cartExternalId,\n      });\n      return;\n    }\n  }\n\n  const shopify = await shopifyClientFor(req.platform!);\n\n  // Step 1: Add all selected variants to the cart.\n  const cartLines = selectedVariantIds.map((gid) => ({\n    merchandiseId: gid,",
-  "total_lines": 276,
-  "returned_lines": [
-    170,
-    210
-  ]
-}

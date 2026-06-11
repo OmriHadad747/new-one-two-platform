@@ -1,6 +1,0 @@
-{
-  "ok": false,
-  "errors": [
-    "patch: collection 'externalContracts' is not addressable by key (addressable: ['capabilities', 'persistence'])"
-  ]
-}

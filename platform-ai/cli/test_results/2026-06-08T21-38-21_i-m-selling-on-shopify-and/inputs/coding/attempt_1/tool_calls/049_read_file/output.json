@@ -1,8 +1,0 @@
-{
-  "content": "\n    const addTierBtn = document.createElement(\"button\");\n    addTierBtn.className = \"btn-secondary\";\n    addTierBtn.textContent = \"+ Add Tier\";\n    addTierBtn.addEventListener(\"click\", () => {\n      const lastTier = state.formState.discount_tiers[state.formState.discount_tiers.length - 1];\n      const nextMin = lastTier ? lastTier.min_item_count + 1 : 2;\n      state.formState.discount_tiers.push({\n        min_item_count: nextMin,\n        discount_ratio:\n          state.formState.discount_type === \"percentage\" ? \"0.10\" : undefined,\n        discount_amount:\n          state.formState.discount_type === \"flat\" ? 500 : undefined,\n        is_bxgy: state.formState.discount_type === \"bxgy\",\n      });",
-  "total_lines": 751,
-  "returned_lines": [
-    495,
-    510
-  ]
-}

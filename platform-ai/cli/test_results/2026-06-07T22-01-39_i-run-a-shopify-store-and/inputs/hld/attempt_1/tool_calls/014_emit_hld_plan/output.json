@@ -1,7 +1,0 @@
-{
-  "ok": false,
-  "errors": [
-    "triggers.0.external-event: Value error, payloadBindings ['product external id', 'variant external id'] reference fields not in signalFields ['available quantity', 'inventory item external id', 'location external id']",
-    "persistence.1: Value error, keyedByColumns ['restock_date'] on table 'notification_batches' have role 'timestamp'; a timestamp dedups per-instant and defeats the natural 'once per X' identity. Key on a derived calendar/bucket column instead (e.g. a 'detected_date' with role 'text' or 'reference'), and justify it in that column's purpose."
-  ]
-}
